@@ -53,7 +53,16 @@ export default function Index() {
           </Link>
         </View>
       )}
-      ListHeaderComponent={<AuthButtons />}
+      ListHeaderComponent={
+        <>
+          <AuthButtons />
+          <Link href="/nearby" asChild>
+            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12 }}>
+              <Text style={{ textAlign: 'center' }}>Find nearby activities</Text>
+            </Pressable>
+          </Link>
+        </>
+      }
     />
   );
 }
