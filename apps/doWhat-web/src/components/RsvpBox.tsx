@@ -18,6 +18,8 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [goingCount, setGoingCount] = useState<number | null>(null);
+  const [interestedCount, setInterestedCount] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -43,6 +45,26 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
           else setStatus((data?.status as Status) ?? null);
         }
       }
+
+      // counts
+      try {
+        const [{ count: going }, { count: interested }] = await Promise.all([
+          sb
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "going"),
+          sb
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "interested"),
+        ]);
+        if (mounted) {
+          setGoingCount(going ?? 0);
+          setInterestedCount(interested ?? 0);
+        }
+      } catch {}
     })();
     return () => { mounted = false; };
   }, [activityId, sb]);
@@ -74,6 +96,24 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
           ? "Marked interested."
           : "Marked declined."
       );
+
+      // refresh counts after upsert
+      try {
+        const [{ count: going }, { count: interested }] = await Promise.all([
+          sb
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "going"),
+          sb
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "interested"),
+        ]);
+        setGoingCount(going ?? 0);
+        setInterestedCount(interested ?? 0);
+      } catch {}
     } catch (e: any) {
       setErr(e.message ?? "Something went wrong");
     } finally {
@@ -122,6 +162,10 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
 
       {msg && <div className="mt-3 text-sm text-green-700">{msg}</div>}
       {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
+      <div className="mt-3 text-xs text-gray-600">
+        <span className="mr-4">Going: {goingCount ?? "—"}</span>
+        <span>Interested: {interestedCount ?? "—"}</span>
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import { Link } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { formatDateRange, formatPrice } from '@dowhat/shared';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type SessionRow = {
   session_id: string;
@@ -56,6 +57,21 @@ export default function Nearby() {
 
   useEffect(() => {
     (async () => {
+      // restore last search
+      try {
+        const raw = await AsyncStorage.getItem('nearby:last');
+        if (raw) {
+          const cache = JSON.parse(raw) as Partial<{
+            lat: string; lng: string; km: string; day: string; act: string[];
+          }>;
+          if (cache.lat) setLat(cache.lat);
+          if (cache.lng) setLng(cache.lng);
+          if (cache.km) setKm(cache.km);
+          if (cache.day) setDay(cache.day);
+          if (cache.act) setSelectedIds(cache.act);
+        }
+      } catch {}
+
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
@@ -113,6 +129,11 @@ export default function Nearby() {
     );
     setRows(sorted);
     setLoading(false);
+
+    // cache for convenience
+    try {
+      await AsyncStorage.setItem('nearby:last', JSON.stringify({ lat, lng, km, day, act: selectedIds }));
+    } catch {}
   }
 
   return (
@@ -211,4 +232,3 @@ export default function Nearby() {
     </View>
   );
 }
-
