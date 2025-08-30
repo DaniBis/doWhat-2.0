@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
 import { Link } from "expo-router";
+import AuthButtons from "../components/AuthButtons";
 
 export default function Index() {
   const [rows, setRows] = useState<ActivityRow[]>([]);
@@ -52,6 +53,7 @@ export default function Index() {
           </Link>
         </View>
       )}
+      ListHeaderComponent={<AuthButtons />}
     />
   );
 }
