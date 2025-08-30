@@ -187,8 +187,7 @@ export default function NearbyPage() {
         p_km: kmNum,
         activities: chosenActivities,
         day: dayStr,
-      })
-      .returns<SessionRow[]>();
+      });
 
     if (error) {
       setErr(error.message);
@@ -197,8 +196,9 @@ export default function NearbyPage() {
     }
 
     // tie-breaker sort (distance, then start time)
-    const sorted = (data ?? []).sort(
-      (a, b) =>
+    const rows = (data ?? []) as SessionRow[];
+    const sorted = rows.sort(
+      (a: SessionRow, b: SessionRow) =>
         a.distance_km - b.distance_km ||
         +new Date(a.starts_at) - +new Date(b.starts_at)
     );

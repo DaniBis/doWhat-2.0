@@ -20,6 +20,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState<number | null>(null);
   const [interestedCount, setInterestedCount] = useState<number | null>(null);
+  const [attendees, setAttendees] = useState<{ initial: string }[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -48,7 +49,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
 
       // counts
       try {
-        const [{ count: going }, { count: interested }] = await Promise.all([
+        const [{ count: going }, { count: interested }, people] = await Promise.all([
           sb
             .from("rsvps")
             .select("status", { count: "exact", head: true })
@@ -59,10 +60,21 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
             .select("status", { count: "exact", head: true })
             .eq("activity_id", activityId)
             .eq("status", "interested"),
+          sb
+            .from("rsvps")
+            .select("users(full_name,email)")
+            .eq("activity_id", activityId)
+            .eq("status", "going"),
         ]);
         if (mounted) {
           setGoingCount(going ?? 0);
           setInterestedCount(interested ?? 0);
+          const initials = (people.data ?? []).map((r: any) => {
+            const name = r.users?.full_name || r.users?.email || "?";
+            const init = String(name).trim().slice(0, 1).toUpperCase();
+            return { initial: init };
+          });
+          setAttendees(initials);
         }
       } catch {}
     })();
@@ -166,6 +178,23 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
         <span className="mr-4">Going: {goingCount ?? "—"}</span>
         <span>Interested: {interestedCount ?? "—"}</span>
       </div>
+      {attendees.length > 0 && (
+        <div className="mt-2 flex gap-2">
+          {attendees.slice(0, 8).map((p, i) => (
+            <div
+              key={i}
+              className="grid h-6 w-6 place-items-center rounded-full bg-brand-teal/10"
+            >
+              <span className="text-xs font-semibold text-brand-teal">
+                {p.initial}
+              </span>
+            </div>
+          ))}
+          {attendees.length > 8 && (
+            <span className="text-xs text-gray-500">+{attendees.length - 8}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

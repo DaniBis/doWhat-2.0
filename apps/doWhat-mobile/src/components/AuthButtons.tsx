@@ -17,7 +17,7 @@ function useSupabaseOAuthListener() {
     }
 
     const sub = Linking.addEventListener('url', ({ url }) => handleURL(url));
-    Linking.getInitialURL().then((url) => url && handleURL(url));
+    Linking.getInitialURL().then((url) => { if (url) handleURL(url); });
     return () => sub.remove();
   }, []);
 }
@@ -56,7 +56,8 @@ export default function AuthButtons() {
       return;
     }
     if (data?.url) {
-      await AuthSession.startAsync({ authUrl: data.url });
+      // Open in system browser; deep link will bring us back
+      await Linking.openURL(data.url);
     }
   }
 
@@ -81,4 +82,3 @@ export default function AuthButtons() {
     </View>
   );
 }
-

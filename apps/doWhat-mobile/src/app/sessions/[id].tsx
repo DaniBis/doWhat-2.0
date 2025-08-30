@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { formatDateRange, formatPrice } from "@dowhat/shared";
 import * as AuthSession from "expo-auth-session";
+import * as Linking from "expo-linking";
 import { Link } from "expo-router";
 
 type Status = "going" | "interested" | "declined";
@@ -16,6 +17,8 @@ export default function SessionDetails() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [goingCount, setGoingCount] = useState<number | null>(null);
+  const [interestedCount, setInterestedCount] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -44,6 +47,26 @@ export default function SessionDetails() {
           .maybeSingle();
         if (!rerr && rsvp) setStatus(rsvp.status as Status);
       }
+
+      // counts for going/interested
+      try {
+        const [{ count: going }, { count: interested }] = await Promise.all([
+          supabase
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "going"),
+          supabase
+            .from("rsvps")
+            .select("status", { count: "exact", head: true })
+            .eq("activity_id", activityId)
+            .eq("status", "interested"),
+        ]);
+        if (mounted) {
+          setGoingCount(going ?? 0);
+          setInterestedCount(interested ?? 0);
+        }
+      } catch {}
     })();
     return () => {
       mounted = false;
@@ -56,7 +79,7 @@ export default function SessionDetails() {
       provider: "google",
       options: { redirectTo, skipBrowserRedirect: true },
     });
-    if (!error && data?.url) await AuthSession.startAsync({ authUrl: data.url });
+    if (!error && data?.url) await Linking.openURL(data.url);
   }
 
   async function doRsvp(next: Status) {
@@ -138,6 +161,9 @@ export default function SessionDetails() {
         )}
         {msg && <Text style={{ marginTop: 8, color: '#065f46' }}>{msg}</Text>}
         {error && <Text style={{ marginTop: 8, color: '#b91c1c' }}>{error}</Text>}
+        <Text style={{ marginTop: 8, color: '#374151' }}>
+          Going: {goingCount ?? '—'}   Interested: {interestedCount ?? '—'}
+        </Text>
       </View>
     </View>
   );
