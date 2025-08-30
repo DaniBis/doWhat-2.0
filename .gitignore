@@ -16,6 +16,15 @@
 # next.js
 /.next/
 /out/
+# monorepo app ignores
+apps/**/.next/
+apps/**/out/
+apps/**/node_modules/
+apps/**/dist/
+packages/**/node_modules/
+packages/**/dist/
+.expo/
+apps/**/.expo/
 
 # production
 /build

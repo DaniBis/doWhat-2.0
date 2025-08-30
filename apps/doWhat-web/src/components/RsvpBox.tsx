@@ -1,0 +1,127 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase/browser";
+
+
+type Status = "going" | "interested" | "declined";
+type Props = {
+  activityId: string;
+  disabled?: boolean;   // <— NEW
+};
+
+export default function RsvpBox({ activityId, disabled = false }: Props) {
+  const sb = supabase;
+
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setErr(null);
+      setMsg(null);
+      // get user
+      const { data: auth } = await sb.auth.getUser();
+      const uid = auth?.user?.id ?? null;
+      if (mounted) setUserId(uid);
+
+      // get current RSVP
+      if (uid) {
+        const { data, error } = await sb
+          .from("rsvps")
+          .select("status")
+          .eq("activity_id", activityId)
+          .eq("user_id", uid)
+          .maybeSingle();
+
+        if (mounted) {
+          if (error) setErr(error.message);
+          else setStatus((data?.status as Status) ?? null);
+        }
+      }
+    })();
+    return () => { mounted = false; };
+  }, [activityId, sb]);
+
+  async function doRsvp(next: Status) {
+    if (loading) return;
+    setLoading(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data: auth } = await sb.auth.getUser();
+      const uid = auth?.user?.id;
+      if (!uid) throw new Error("Please sign in first.");
+
+      const upsert = {
+        activity_id: activityId,
+        user_id: uid,
+        status: next,
+      };
+
+      const { error } = await sb.from("rsvps").upsert(upsert, { onConflict: "activity_id,user_id" });
+      if (error) throw error;
+
+      setStatus(next);
+      setMsg(
+        next === "going"
+          ? "You're going! 🎉"
+          : next === "interested"
+          ? "Marked interested."
+          : "Marked declined."
+      );
+    } catch (e: any) {
+      setErr(e.message ?? "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Button disable logic
+  const disableGoing = loading || disabled || status === "going";
+  const disableInterested = loading || disabled || status === "interested";
+  const disableDeclined = loading || disabled || status === "declined";
+
+  return (
+    <div className="mt-5">
+      <p>
+        Your current status: <b>{status ?? "no rsvp"}</b>
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          className="rounded-xl bg-brand-teal px-4 py-2 text-white disabled:opacity-50"
+          disabled={disableGoing}
+          onClick={() => doRsvp("going")}
+          title={disabled ? "This activity is full" : ""}
+        >
+          I’m going
+        </button>
+
+        <button
+          className="rounded-xl border border-brand-teal/40 px-4 py-2 disabled:opacity-50"
+          disabled={disableInterested}
+          onClick={() => doRsvp("interested")}
+          title={disabled ? "This activity is full" : ""}
+        >
+          I’m interested
+        </button>
+
+        <button
+          className="rounded-xl border border-gray-300 px-4 py-2 disabled:opacity-50"
+          disabled={disableDeclined}
+          onClick={() => doRsvp("declined")}
+        >
+          Can’t make it
+        </button>
+      </div>
+
+      {msg && <div className="mt-3 text-sm text-green-700">{msg}</div>}
+      {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
+    </div>
+  );
+}
