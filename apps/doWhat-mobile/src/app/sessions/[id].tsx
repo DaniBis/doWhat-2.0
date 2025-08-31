@@ -29,7 +29,7 @@ export default function SessionDetails() {
       const { data, error } = await supabase
         .from("sessions")
         .select(
-          "id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name)"
+          "id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name,lat,lng)"
         )
         .eq("id", id)
         .single();
@@ -186,6 +186,15 @@ export default function SessionDetails() {
       <Text style={{ marginTop: 6 }}>{row.venues?.name ?? "Venue"}</Text>
       <Text style={{ marginTop: 6 }}>{formatPrice(row.price_cents)}</Text>
       <Text style={{ marginTop: 6 }}>{formatDateRange(row.starts_at, row.ends_at)}</Text>
+      {row?.venues?.lat != null && row?.venues?.lng != null && (
+        <Pressable style={{ marginTop: 8 }} onPress={() => {
+          const lat = (row as any).venues.lat; const lng = (row as any).venues.lng;
+          const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+          WebBrowser.openBrowserAsync(url);
+        }}>
+          <Text style={{ color: '#0d9488' }}>Open in Maps</Text>
+        </Pressable>
+      )}
       <View style={{ marginTop: 12 }}>
         <Text>Your status: <Text style={{ fontWeight: '700' }}>{status ?? 'no rsvp'}</Text></Text>
         {!userId ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, Pressable, FlatList } from "react-native";
+import { View, Text, Pressable, FlatList, RefreshControl } from "react-native";
 import { supabase } from "../lib/supabase";
 import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
@@ -10,22 +10,51 @@ import RsvpBadges from "../components/RsvpBadges";
 export default function Index() {
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  useEffect(() => {
-    (async () => {
+  async function load() {
+    setError(null);
+    try {
       const { data, error } = await supabase
         .from("sessions")
         .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
         .order("starts_at", { ascending: true })
         .limit(20);
-
       if (error) setError(error.message);
       else setRows((data ?? []) as ActivityRow[]);
-    })();
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
   }, []);
+
+  async function onRefresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
 
   if (error) {
     return <Text style={{ padding: 16, color: "red" }}>Error: {error}</Text>;
+  }
+
+  if (loading) {
+    return (
+      <View style={{ padding: 12, gap: 12 }}>
+        {[0,1,2].map((i) => (
+          <View key={i} style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
+            <View style={{ height: 16, width: 120, backgroundColor: '#e5e7eb', borderRadius: 4 }} />
+            <View style={{ height: 12, width: 180, backgroundColor: '#e5e7eb', borderRadius: 4, marginTop: 8 }} />
+            <View style={{ height: 12, width: 80, backgroundColor: '#e5e7eb', borderRadius: 4, marginTop: 8 }} />
+            <View style={{ height: 12, width: 220, backgroundColor: '#e5e7eb', borderRadius: 4, marginTop: 8 }} />
+          </View>
+        ))}
+      </View>
+    );
   }
 
   if (!rows.length) {
@@ -37,6 +66,7 @@ export default function Index() {
       contentContainerStyle={{ padding: 12, gap: 12 }}
       data={rows}
       keyExtractor={(s) => String(s.id)}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       renderItem={({ item: s }) => (
         <View style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
           <Text style={{ fontSize: 18, fontWeight: "600" }}>
