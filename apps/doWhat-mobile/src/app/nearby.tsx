@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, FlatList } from 'react-native';
+import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import { Link } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { formatDateRange, formatPrice } from '@dowhat/shared';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import RsvpBadges from '../components/RsvpBadges';
 
 type SessionRow = {
   session_id: string;
@@ -217,10 +219,16 @@ export default function Nearby() {
             <Text>{formatDateRange(r.starts_at, r.ends_at)}</Text>
             <Text>{r.distance_km.toFixed(1)} km away</Text>
             {!!r.price_cents && <Text>{formatPrice(r.price_cents)}</Text>}
+            <RsvpBadges activityId={r.activity_id} />
             {r.venue_lat != null && r.venue_lng != null && (
-              <Text style={{ color: '#0d9488', marginTop: 6 }}>
-                Open in Maps: {r.venue_lat}, {r.venue_lng}
-              </Text>
+              <Pressable
+                style={{ marginTop: 6 }}
+                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${r.venue_lat},${r.venue_lng}`)}
+              >
+                <Text style={{ color: '#0d9488' }}>
+                  Open in Maps: {r.venue_lat}, {r.venue_lng}
+                </Text>
+              </Pressable>
             )}
           </View>
         )}

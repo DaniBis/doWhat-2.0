@@ -24,6 +24,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
 
   useEffect(() => {
     let mounted = true;
+    let channel: any;
     (async () => {
       setErr(null);
       setMsg(null);
@@ -47,38 +48,64 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
         }
       }
 
-      // counts
-      try {
-        const [{ count: going }, { count: interested }, people] = await Promise.all([
-          sb
-            .from("rsvps")
-            .select("status", { count: "exact", head: true })
-            .eq("activity_id", activityId)
-            .eq("status", "going"),
-          sb
-            .from("rsvps")
-            .select("status", { count: "exact", head: true })
-            .eq("activity_id", activityId)
-            .eq("status", "interested"),
-          sb
-            .from("rsvps")
-            .select("users(full_name,email)")
-            .eq("activity_id", activityId)
-            .eq("status", "going"),
-        ]);
-        if (mounted) {
-          setGoingCount(going ?? 0);
-          setInterestedCount(interested ?? 0);
-          const initials = (people.data ?? []).map((r: any) => {
-            const name = r.users?.full_name || r.users?.email || "?";
-            const init = String(name).trim().slice(0, 1).toUpperCase();
-            return { initial: init };
-          });
-          setAttendees(initials);
-        }
-      } catch {}
+      async function refreshCountsAndPeople() {
+        try {
+          const [{ count: going }, { count: interested }, goingRows] = await Promise.all([
+            sb
+              .from("rsvps")
+              .select("status", { count: "exact", head: true })
+              .eq("activity_id", activityId)
+              .eq("status", "going"),
+            sb
+              .from("rsvps")
+              .select("status", { count: "exact", head: true })
+              .eq("activity_id", activityId)
+              .eq("status", "interested"),
+            sb
+              .from("rsvps")
+              .select("user_id")
+              .eq("activity_id", activityId)
+              .eq("status", "going"),
+          ]);
+          if (mounted) {
+            setGoingCount(going ?? 0);
+            setInterestedCount(interested ?? 0);
+            const ids = (goingRows.data ?? []).map((r: any) => r.user_id).filter(Boolean);
+            if (ids.length) {
+              const { data: profiles } = await sb
+                .from("profiles")
+                .select("full_name, avatar_url, id")
+                .in("id", ids);
+              const items = (profiles ?? []).map((p: any) => {
+                const name = p.full_name || "?";
+                const init = String(name).trim().slice(0, 1).toUpperCase();
+                return { initial: init, avatar_url: p.avatar_url as string | null } as any;
+              });
+              setAttendees(items);
+            } else {
+              setAttendees([]);
+            }
+          }
+        } catch {}
+      }
+
+      await refreshCountsAndPeople();
+
+      channel = sb
+        .channel(`rsvps:activity:${activityId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rsvps', filter: `activity_id=eq.${activityId}` },
+          () => refreshCountsAndPeople()
+        )
+        .subscribe();
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+      try {
+        if (channel) sb.removeChannel(channel as any);
+      } catch {}
+    };
   }, [activityId, sb]);
 
   async function doRsvp(next: Status) {
@@ -180,15 +207,14 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
       </div>
       {attendees.length > 0 && (
         <div className="mt-2 flex gap-2">
-          {attendees.slice(0, 8).map((p, i) => (
-            <div
-              key={i}
-              className="grid h-6 w-6 place-items-center rounded-full bg-brand-teal/10"
-            >
-              <span className="text-xs font-semibold text-brand-teal">
-                {p.initial}
-              </span>
-            </div>
+          {attendees.slice(0, 8).map((p: any, i) => (
+            p.avatar_url ? (
+              <img key={i} src={p.avatar_url} alt={p.initial} className="h-6 w-6 rounded-full object-cover" />
+            ) : (
+              <div key={i} className="grid h-6 w-6 place-items-center rounded-full bg-brand-teal/10">
+                <span className="text-xs font-semibold text-brand-teal">{p.initial}</span>
+              </div>
+            )
           ))}
           {attendees.length > 8 && (
             <span className="text-xs text-gray-500">+{attendees.length - 8}</span>

@@ -5,6 +5,7 @@ import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
 import { Link } from "expo-router";
 import AuthButtons from "../components/AuthButtons";
+import RsvpBadges from "../components/RsvpBadges";
 
 export default function Index() {
   const [rows, setRows] = useState<ActivityRow[]>([]);
@@ -14,7 +15,7 @@ export default function Index() {
     (async () => {
       const { data, error } = await supabase
         .from("sessions")
-        .select("id, price_cents, starts_at, ends_at, activities(name), venues(name)")
+        .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
         .order("starts_at", { ascending: true })
         .limit(20);
 
@@ -46,6 +47,7 @@ export default function Index() {
           <Text style={{ marginTop: 4 }}>
             {formatDateRange(s.starts_at, s.ends_at)}
           </Text>
+          <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
           <Link href={`/sessions/${s.id}`} asChild>
             <Pressable style={{ marginTop: 12, padding: 10, backgroundColor: "#16a34a", borderRadius: 8 }}>
               <Text style={{ color: "white", textAlign: "center" }}>View details</Text>
@@ -56,6 +58,16 @@ export default function Index() {
       ListHeaderComponent={
         <>
           <AuthButtons />
+          <Link href="/profile" asChild>
+            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
+              <Text style={{ textAlign: 'center' }}>Profile</Text>
+            </Pressable>
+          </Link>
+          <Link href="/my-rsvps" asChild>
+            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
+              <Text style={{ textAlign: 'center' }}>My RSVPs</Text>
+            </Pressable>
+          </Link>
           <Link href="/nearby" asChild>
             <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12 }}>
               <Text style={{ textAlign: 'center' }}>Find nearby activities</Text>

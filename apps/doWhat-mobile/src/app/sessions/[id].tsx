@@ -1,10 +1,11 @@
 import { useLocalSearchParams } from "expo-router";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, Image as RNImage } from "react-native";
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { formatDateRange, formatPrice } from "@dowhat/shared";
 import * as AuthSession from "expo-auth-session";
 import * as Linking from "expo-linking";
+import * as WebBrowser from 'expo-web-browser';
 import { Link } from "expo-router";
 
 type Status = "going" | "interested" | "declined";
@@ -19,13 +20,17 @@ export default function SessionDetails() {
   const [msg, setMsg] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState<number | null>(null);
   const [interestedCount, setInterestedCount] = useState<number | null>(null);
+  const [attendees, setAttendees] = useState<{ initial: string }[]>([]);
 
   useEffect(() => {
     let mounted = true;
+    let channel: any;
     (async () => {
       const { data, error } = await supabase
-        .from("activities_view") // or "sessions" if you prefer
-        .select("*")
+        .from("sessions")
+        .select(
+          "id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name)"
+        )
         .eq("id", id)
         .single();
 
@@ -48,38 +53,91 @@ export default function SessionDetails() {
         if (!rerr && rsvp) setStatus(rsvp.status as Status);
       }
 
-      // counts for going/interested
-      try {
-        const [{ count: going }, { count: interested }] = await Promise.all([
-          supabase
-            .from("rsvps")
-            .select("status", { count: "exact", head: true })
-            .eq("activity_id", activityId)
-            .eq("status", "going"),
-          supabase
-            .from("rsvps")
-            .select("status", { count: "exact", head: true })
-            .eq("activity_id", activityId)
-            .eq("status", "interested"),
-        ]);
-        if (mounted) {
-          setGoingCount(going ?? 0);
-          setInterestedCount(interested ?? 0);
-        }
-      } catch {}
+      async function refreshCountsAndPeople() {
+        try {
+          const [{ count: going }, { count: interested }, goingRows] = await Promise.all([
+            supabase
+              .from("rsvps")
+              .select("status", { count: "exact", head: true })
+              .eq("activity_id", activityId)
+              .eq("status", "going"),
+            supabase
+              .from("rsvps")
+              .select("status", { count: "exact", head: true })
+              .eq("activity_id", activityId)
+              .eq("status", "interested"),
+            supabase
+              .from("rsvps")
+              .select("user_id")
+              .eq("activity_id", activityId)
+              .eq("status", "going"),
+          ]);
+          if (mounted) {
+            setGoingCount(going ?? 0);
+            setInterestedCount(interested ?? 0);
+            const ids = (goingRows.data ?? []).map((r: any) => r.user_id).filter(Boolean);
+            if (ids.length) {
+              const { data: profiles } = await supabase
+                .from('profiles')
+                .select('full_name, avatar_url, id')
+                .in('id', ids);
+              const items = (profiles ?? []).map((p: any) => {
+                const name = p.full_name || '?';
+                const init = String(name).trim().slice(0, 1).toUpperCase();
+                return { initial: init, avatar_url: p.avatar_url as string | null } as any;
+              });
+              setAttendees(items);
+            } else {
+              setAttendees([]);
+            }
+          }
+        } catch {}
+      }
+
+      await refreshCountsAndPeople();
+
+      channel = supabase
+        .channel(`rsvps:activity:${activityId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rsvps', filter: `activity_id=eq.${activityId}` }, () => refreshCountsAndPeople())
+        .subscribe();
+
+      // initial preview handled in refreshCountsAndPeople
     })();
     return () => {
       mounted = false;
+      try { if (channel) supabase.removeChannel(channel); } catch {}
     };
   }, [id]);
 
   async function signIn() {
-    const redirectTo = AuthSession.makeRedirectUri({ scheme: "dowhat" });
+    const redirectTo = 'dowhat://auth-callback';
+    if (__DEV__) console.log('[auth][details] redirectTo', redirectTo);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo, skipBrowserRedirect: true },
     });
-    if (!error && data?.url) await Linking.openURL(data.url);
+    if (__DEV__) console.log('[auth][details] signInWithOAuth error?', error?.message);
+    if (__DEV__) console.log('[auth][details] supabase auth url', data?.url);
+    if (!error && data?.url) {
+      if (__DEV__) console.log('[auth][details] opening browser to', data.url);
+      const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (__DEV__) console.log('[auth][details] auth result', res);
+      if (res.type === 'success' && res.url) {
+        const url = res.url;
+        const fragment = url.split('#')[1] || '';
+        const query = url.split('?')[1] || '';
+        const params = new URLSearchParams(fragment || query);
+        const code = params.get('code') || undefined;
+        const accessToken = params.get('access_token') || undefined;
+        const refreshToken = params.get('refresh_token') || undefined;
+        if (__DEV__) console.log('[auth][details] parsed params', { code, accessToken: !!accessToken, refreshToken: !!refreshToken });
+        if (code) {
+          await supabase.auth.exchangeCodeForSession(code);
+        } else if (accessToken) {
+          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
+        }
+      }
+    }
   }
 
   async function doRsvp(next: Status) {
@@ -164,6 +222,22 @@ export default function SessionDetails() {
         <Text style={{ marginTop: 8, color: '#374151' }}>
           Going: {goingCount ?? '—'}   Interested: {interestedCount ?? '—'}
         </Text>
+        {attendees.length > 0 && (
+          <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+            {attendees.slice(0, 8).map((p: any, i) => (
+              p.avatar_url ? (
+                <RNImage key={i} source={{ uri: p.avatar_url }} style={{ width: 24, height: 24, borderRadius: 12 }} />
+              ) : (
+                <View key={i} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(13,148,136,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#0d9488' }}>{p.initial}</Text>
+                </View>
+              )
+            ))}
+            {attendees.length > 8 && (
+              <Text style={{ fontSize: 12, color: '#6b7280' }}>+{attendees.length - 8}</Text>
+            )}
+          </View>
+        )}
       </View>
     </View>
   );

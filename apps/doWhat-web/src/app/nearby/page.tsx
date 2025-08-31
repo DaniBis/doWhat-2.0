@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/browser";
 import { format } from "date-fns";
+import RsvpBadges from "@/components/RsvpBadges";
 
 // Client-side Supabase instance
 
@@ -415,6 +416,10 @@ export default function NearbyPage() {
                   })}
                 </p>
               )}
+
+              <div className="mt-2">
+                <RsvpBadges activityId={r.activity_id} />
+              </div>
 
               {r.venue_lat != null && r.venue_lng != null && (
                 <a
