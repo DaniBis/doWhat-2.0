@@ -1,5 +1,5 @@
-import React from "react";
 import { Inter } from "next/font/google";
+import React from "react";
 import "./globals.css";
 import dynamic from "next/dynamic";
 const AuthButtons = dynamic(() => import("@/components/AuthButtons"), { ssr: false });

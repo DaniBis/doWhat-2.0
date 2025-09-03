@@ -1,8 +1,9 @@
+import * as AuthSession from 'expo-auth-session';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
-import * as Linking from 'expo-linking';
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
+
 import { supabase } from '../lib/supabase';
 
 function useSupabaseOAuthListener() {

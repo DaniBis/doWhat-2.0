@@ -1,12 +1,13 @@
-import { useLocalSearchParams } from "expo-router";
-import { View, Text, Pressable, Image as RNImage } from "react-native";
-import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
 import { formatDateRange, formatPrice } from "@dowhat/shared";
 import * as AuthSession from "expo-auth-session";
 import * as Linking from "expo-linking";
-import * as WebBrowser from 'expo-web-browser';
+import { useLocalSearchParams } from "expo-router";
 import { Link } from "expo-router";
+import * as WebBrowser from 'expo-web-browser';
+import { useEffect, useState } from "react";
+import { View, Text, Pressable, Image as RNImage } from "react-native";
+
+import { supabase } from "../../lib/supabase";
 
 type Status = "going" | "interested" | "declined";
 

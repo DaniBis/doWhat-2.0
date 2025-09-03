@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/lib/supabase/browser";
 
 
@@ -15,7 +16,6 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
 
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState<number | null>(null);
@@ -31,7 +31,6 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
       // get user
       const { data: auth } = await sb.auth.getUser();
       const uid = auth?.user?.id ?? null;
-      if (mounted) setUserId(uid);
 
       // get current RSVP
       if (uid) {

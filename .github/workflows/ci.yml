@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck web
+        run: pnpm --filter ./apps/doWhat-web exec tsc -p tsconfig.json --noEmit
+      - name: Typecheck mobile
+        run: pnpm --filter ./apps/doWhat-mobile exec tsc -p tsconfig.json --noEmit

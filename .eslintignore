@@ -1,0 +1,11 @@
+node_modules
+dist
+build
+.out
+.next
+.expo
+.expo-shared
+apps/**/.expo
+apps/**/android
+apps/**/ios
+*.d.ts

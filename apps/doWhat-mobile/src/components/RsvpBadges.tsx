@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
+
 import { supabase } from '../lib/supabase';
 
 export default function RsvpBadges({ activityId }: { activityId?: string | null }) {

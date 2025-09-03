@@ -88,6 +88,7 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 
 - `apps/doWhat-web/src/lib/supabase/migrations/002_schema.sql` – core tables example (users, activities, rsvps)
 - `apps/doWhat-web/src/lib/supabase/migrations/003_profiles.sql` – `profiles` table with `id -> auth.users(id)`
+- `apps/doWhat-web/src/lib/supabase/migrations/004_sessions_nearby.sql` – RPC used by web + mobile nearby search
 
 Enable RLS if desired and add policies (examples commented inside the migration file).
 

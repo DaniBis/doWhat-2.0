@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/lib/supabase/browser";
 
 type Row = {
@@ -21,6 +22,7 @@ export default function AdminSessions() {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [editing, setEditing] = useState<Record<string, Partial<Row>>>({});
+  const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -47,6 +49,7 @@ export default function AdminSessions() {
   async function save(id: string) {
     try {
       setErr(null);
+      setMsg(null);
       const patch = editing[id];
       if (!patch) return;
       const payload: any = {};
@@ -57,6 +60,7 @@ export default function AdminSessions() {
       if (error) throw error;
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } as Row : r)));
       setEditing((e) => ({ ...e, [id]: {} }));
+      setMsg('Saved.');
     } catch (e: any) {
       setErr(e.message ?? "Failed to save");
     }
@@ -65,8 +69,10 @@ export default function AdminSessions() {
   async function del(id: string) {
     try {
       setErr(null);
+      setMsg(null);
       await supabase.from("sessions").delete().eq("id", id);
       setRows((prev) => prev.filter((r) => r.id !== id));
+      setMsg('Deleted.');
     } catch (e: any) {
       setErr(e.message ?? "Failed to delete");
     }
@@ -94,6 +100,7 @@ export default function AdminSessions() {
         <h1 className="text-lg font-semibold">Manage Sessions</h1>
       </div>
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
+      {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
       {loading ? (
         <p>Loading…</p>
       ) : (

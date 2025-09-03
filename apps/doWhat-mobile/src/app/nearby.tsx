@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList } from 'react-native';
+import { formatDateRange, formatPrice } from '@dowhat/shared';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import { Link } from 'expo-router';
-import { supabase } from '../lib/supabase';
-import { formatDateRange, formatPrice } from '@dowhat/shared';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, Pressable, FlatList, Platform } from 'react-native';
+
 import RsvpBadges from '../components/RsvpBadges';
+import { supabase } from '../lib/supabase';
 
 type SessionRow = {
   session_id: string;
@@ -56,6 +57,7 @@ export default function Nearby() {
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -80,6 +82,16 @@ export default function Nearby() {
           const loc = await Location.getCurrentPositionAsync({});
           setLat(String(loc.coords.latitude.toFixed(6)));
           setLng(String(loc.coords.longitude.toFixed(6)));
+        }
+        if (!lat || !lng) {
+          // Fall back to profile's last known background location
+          const { data: auth } = await supabase.auth.getUser();
+          const uid = auth?.user?.id ?? null;
+          if (uid) {
+            const { data } = await supabase.from('profiles').select('last_lat,last_lng').eq('id', uid).maybeSingle();
+            const la = (data as any)?.last_lat; const ln = (data as any)?.last_lng;
+            if (la != null && ln != null) { setLat(String(la)); setLng(String(ln)); }
+          }
         }
       } catch {}
     })();
@@ -173,6 +185,51 @@ export default function Nearby() {
         inputMode="numeric"
         style={{ borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 }}
       />
+      <Pressable
+        onPress={async () => {
+          setErr(null);
+          setLocating(true);
+          try {
+            // Check and request permission
+            let perm = await Location.getForegroundPermissionsAsync();
+            if (perm.status !== 'granted') {
+              perm = await Location.requestForegroundPermissionsAsync();
+            }
+            if (perm.status !== 'granted') {
+              setErr('Location permission denied. Enter coordinates or allow permission in settings.');
+              return;
+            }
+            // Try last known position first (faster/more reliable in simulators)
+            let pos = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
+            if (!pos) {
+              pos = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+              });
+            }
+            if (!pos) {
+              if (Platform.OS === 'ios') {
+                setErr('No location available. In the iOS Simulator, set Features → Location to a custom value.');
+              } else {
+                setErr('No location available. Try again outdoors or enter coordinates manually.');
+              }
+              return;
+            }
+            setLat(String(pos.coords.latitude.toFixed(6)));
+            setLng(String(pos.coords.longitude.toFixed(6)));
+          } catch (e: any) {
+            const msg = e?.message || 'Failed to get current location.';
+            setErr(Platform.OS === 'ios' && msg.includes('The operation couldn’t be completed')
+              ? 'Simulator has no GPS point. Set Features → Location to a custom location.'
+              : msg);
+          } finally {
+            setLocating(false);
+          }
+        }}
+        style={{ alignSelf: 'flex-start', marginBottom: 8, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, opacity: locating ? 0.6 : 1 }}
+        disabled={locating}
+      >
+        <Text>{locating ? 'Locating…' : 'Use my location'}</Text>
+      </Pressable>
       <Text style={{ marginBottom: 4 }}>Date</Text>
       <TextInput
         value={day}
@@ -205,7 +262,14 @@ export default function Nearby() {
       </Pressable>
 
       {err ? (
-        <Text style={{ color: '#b91c1c', marginTop: 8 }}>{err}</Text>
+        <View style={{ marginTop: 8 }}>
+          <Text style={{ color: '#b91c1c' }}>{err}</Text>
+          {/permission/i.test(err) && (
+            <Pressable style={{ marginTop: 6 }} onPress={() => Linking.openSettings?.()}>
+              <Text style={{ color: '#0d9488' }}>Open Settings</Text>
+            </Pressable>
+          )}
+        </View>
       ) : null}
 
       <FlatList

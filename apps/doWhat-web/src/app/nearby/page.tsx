@@ -1,11 +1,12 @@
 // src/app/nearby/page.tsx
 "use client";
 
+import { format } from "date-fns";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase/browser";
-import { format } from "date-fns";
+
 import RsvpBadges from "@/components/RsvpBadges";
+import { supabase } from "@/lib/supabase/browser";
 
 // Client-side Supabase instance
 

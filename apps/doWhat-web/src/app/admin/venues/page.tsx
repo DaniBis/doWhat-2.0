@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/lib/supabase/browser";
 
 type Venue = { id: string; name: string; lat: number | null; lng: number | null };
@@ -12,6 +13,7 @@ export default function AdminVenues() {
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -38,6 +40,7 @@ export default function AdminVenues() {
   async function add() {
     try {
       setErr(null);
+      setMsg(null);
       const n = name.trim();
       if (!n) return;
       const payload: any = { name: n };
@@ -48,11 +51,12 @@ export default function AdminVenues() {
       if (error) throw error;
       setRows((prev) => [...prev, data as Venue].sort((a, b) => a.name.localeCompare(b.name)));
       setName(""); setLat(""); setLng("");
+      setMsg('Added.');
     } catch (e: any) { setErr(e.message ?? "Failed to add"); }
   }
 
   async function del(id: string) {
-    try { setErr(null); await supabase.from("venues").delete().eq("id", id); setRows((prev) => prev.filter((r) => r.id !== id)); }
+    try { setErr(null); setMsg(null); await supabase.from("venues").delete().eq("id", id); setRows((prev) => prev.filter((r) => r.id !== id)); setMsg('Deleted.'); }
     catch (e: any) { setErr(e.message ?? "Failed to delete"); }
   }
 
@@ -80,6 +84,7 @@ export default function AdminVenues() {
         <Link href="/admin/activities" className="text-brand-teal">Activities</Link>
       </div>
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
+      {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
 
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New venue name" className="rounded border px-3 py-2" />

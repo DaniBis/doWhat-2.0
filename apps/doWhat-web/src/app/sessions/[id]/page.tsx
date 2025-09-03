@@ -1,5 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
 import RsvpBox from "@/components/RsvpBox";
+import { createClient } from "@/lib/supabase/server";
 
 export default async function ActivityDetails({ params }: { params: { id: string } }) {
   const supabase = createClient();

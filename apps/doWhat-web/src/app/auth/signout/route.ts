@@ -1,7 +1,7 @@
 // src/app/auth/signout/route.ts
-import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies as nextCookies } from "next/headers";
+import { NextResponse } from "next/server";
 
 export async function POST() {
   const res = NextResponse.json({ ok: true });
