@@ -42,5 +42,10 @@
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "0.20.0",
     "tailwindcss-react-native": "^1.7.10"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "@types/react-native": "^0.73.0"
   }
 }

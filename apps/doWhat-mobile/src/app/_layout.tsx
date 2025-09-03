@@ -9,7 +9,13 @@ WebBrowser.maybeCompleteAuthSession();
 
 // Set a basic notifications handler
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: false, shouldSetBadge: false }),
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
 export default function Layout() {
