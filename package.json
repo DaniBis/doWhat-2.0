@@ -8,9 +8,24 @@
     "dev:web": "pnpm --filter doWhat-web dev",
     "dev:mobile": "pnpm --filter doWhat-mobile start",
     "clean": "pnpm -r --filter \"./**\" run clean || true",
-    "typecheck": "pnpm -r --filter \"./**\" run typecheck || true"
+    "typecheck": "pnpm -r --filter \"./**\" run typecheck || true",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx --cache",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --cache --fix"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14",
+    "eslint-plugin-import": "2",
+    "eslint-plugin-react": "7",
+    "eslint-plugin-react-hooks": "4",
     "typescript": "5.5.4"
+  },
+  "dependencies": {
+    "expo-constants": "^16.0.2",
+    "expo-device": "^6.0.2",
+    "expo-maps": "^0.11.0",
+    "expo-notifications": "^0.31.4"
   }
 }

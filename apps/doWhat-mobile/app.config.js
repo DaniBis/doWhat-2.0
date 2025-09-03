@@ -3,9 +3,15 @@ export default {
     name: "doWhat",
     slug: "dowhat",
     scheme: "dowhat",
+    ios: {
+      bundleIdentifier: "com.dowhat.app",
+    },
+    android: {
+      package: "com.dowhat.app",
+    },
     extra: {
-      EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
-      EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY
-    }
+      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+}
   }
 };

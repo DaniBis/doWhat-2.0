@@ -1,20 +1,28 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies as nextCookies } from "next/headers";
+import { cookies } from "next/headers";
 
-// Server Component-safe client: only cookie get is wired; set/remove are no-ops
+
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+
 export function createClient() {
-  const cookieStore = nextCookies();
-  return createServerClient(
+  const cookieStore = cookies();
+
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        // called by the helper internally
+        get: (name: string) => cookieStore.get(name)?.value,
+        set: (name: string, value: string, options: CookieOptions) => {
+          // Next.js writes to cookies() only in server actions/route handlers
+          cookieStore.set({ name, value, ...options });
         },
-        set() {},
-        remove() {},
+        remove: (name: string, options: CookieOptions) => {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        },
       },
     }
   );
+
+  return supabase;
 }

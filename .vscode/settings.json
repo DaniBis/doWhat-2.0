@@ -1,0 +1,20 @@
+{
+  // Copilot/Continue may ignore if not supported, safe to keep.
+  "editor.inlineSuggest.enabled": true,
+  "editor.suggest.snippetsPreventQuickSuggestions": false,
+
+  // Make big diffs readable
+  "diffEditor.maxComputationTime": 0,
+
+  // Keep TS/JS fast in monorepo
+  "typescript.tsserver.maxTsServerMemory": 4096,
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/dist": true
+  },
+  "files.exclude": {
+    "**/.expo": true,
+    "**/.turbo": true
+  }
+}

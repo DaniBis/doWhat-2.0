@@ -1,7 +1,7 @@
 // src/app/auth/callback/route.ts
-import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies as nextCookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);

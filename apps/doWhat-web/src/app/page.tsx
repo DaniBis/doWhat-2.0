@@ -1,6 +1,7 @@
-import { createClient } from "@/lib/supabase/server";
-import ActivityCard from "@/components/ActivityCard";
 import Link from "next/link";
+
+import ActivityCard from "@/components/ActivityCard";
+import { createClient } from "@/lib/supabase/server";
 
 export default async function HomePage() {
   const supabase = createClient();

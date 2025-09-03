@@ -1,4 +1,5 @@
 import Link from "next/link";
+
 import RsvpBadges from "./RsvpBadges";
 
 type Venue = { name?: string | null };

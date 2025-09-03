@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
-import { View, Text } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
+import { useEffect } from 'react';
+import { View, Text } from 'react-native';
+
 import { supabase } from '../lib/supabase';
 
 export default function AuthCallback() {

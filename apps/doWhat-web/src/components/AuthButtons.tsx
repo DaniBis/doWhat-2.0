@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase/browser";
 import Link from "next/link";
+import { useEffect, useState } from "react";
+
+import { supabase } from "@/lib/supabase/browser";
 
 export default function AuthButtons() {
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    let mounted = true;
+    const mounted = true;
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (mounted) setEmail(data.user?.email ?? null);

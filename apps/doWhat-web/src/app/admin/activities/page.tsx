@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/lib/supabase/browser";
 
 type Activity = { id: string; name: string };
@@ -10,6 +11,7 @@ export default function AdminActivities() {
   const [rows, setRows] = useState<Activity[]>([]);
   const [name, setName] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -36,12 +38,14 @@ export default function AdminActivities() {
   async function add() {
     try {
       setErr(null);
+      setMsg(null);
       const n = name.trim();
       if (!n) return;
       const { data, error } = await supabase.from("activities").insert({ name: n }).select("id,name").single();
       if (error) throw error;
       setRows((prev) => [...prev, data as Activity].sort((a, b) => a.name.localeCompare(b.name)));
       setName("");
+      setMsg('Added.');
     } catch (e: any) {
       setErr(e.message ?? "Failed to add");
     }
@@ -50,8 +54,10 @@ export default function AdminActivities() {
   async function del(id: string) {
     try {
       setErr(null);
+      setMsg(null);
       await supabase.from("activities").delete().eq("id", id);
       setRows((prev) => prev.filter((r) => r.id !== id));
+      setMsg('Deleted.');
     } catch (e: any) {
       setErr(e.message ?? "Failed to delete");
     }
@@ -81,6 +87,7 @@ export default function AdminActivities() {
         <Link href="/admin/venues" className="text-brand-teal">Venues</Link>
       </div>
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
+      {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
 
       <div className="mb-4 flex gap-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New activity name" className="flex-1 rounded border px-3 py-2" />

@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "web:dev",
+      "type": "shell",
+      "command": "pnpm --filter dowhat-web dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "mobile:dev",
+      "type": "shell",
+      "command": "pnpm --filter dowhat-mobile exec expo start -c",
+      "problemMatcher": []
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "pnpm -w run typecheck",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "pnpm -w run lint",
+      "problemMatcher": []
+    },
+    {
+      "label": "health",
+      "type": "shell",
+      "command": "curl -s http://localhost:3000/api/health || true",
+      "problemMatcher": []
+    }
+  ]
+}

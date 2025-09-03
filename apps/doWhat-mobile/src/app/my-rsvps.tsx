@@ -1,6 +1,7 @@
+import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable, FlatList } from 'react-native';
-import { Link } from 'expo-router';
+
 import { supabase } from '../lib/supabase';
 
 type Row = { id: string; activity_id: string; status: 'going' | 'interested' | 'declined' };
