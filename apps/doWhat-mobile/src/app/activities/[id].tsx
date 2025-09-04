@@ -1,8 +1,19 @@
 import { formatDateRange, formatPrice } from '@dowhat/shared';
 import * as Linking from 'expo-linking';
-import { useLocalSearchParams, Link } from 'expo-router';
+import { useLocalSearchParams, Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, FlatList } from 'react-native';
+import { View, Text, Pressable, FlatList, SafeAreaView, TouchableOpacity } from 'react-native';
+// Map activity names/ids to icons and colors (should match home.tsx)
+const activityVisuals: Record<string, { icon: string; color: string }> = {
+  'Rock Climbing': { icon: '🧗', color: '#fbbf24' },
+  'Running': { icon: '🏃', color: '#f59e42' },
+  'Yoga': { icon: '🧘', color: '#a3e635' },
+  'Cycling': { icon: '🚴', color: '#38bdf8' },
+  'Swimming': { icon: '🏊', color: '#60a5fa' },
+  'Hiking': { icon: '🥾', color: '#f87171' },
+  'Soccer': { icon: '⚽', color: '#fbbf24' },
+  'Basketball': { icon: '🏀', color: '#f59e42' },
+};
 
 import { supabase } from '../../lib/supabase';
 
@@ -45,6 +56,10 @@ export default function ActivityPage() {
   if (err) return <Text style={{ padding: 16, color: 'red' }}>{err}</Text>;
   if (!rows) return <Text style={{ padding: 16 }}>Loading…</Text>;
 
+  // Use first row for activity name/icon
+  const activityName = rows[0]?.activity_name || 'Activity';
+  const visual = activityVisuals[activityName] || { icon: '🎯', color: '#fbbf24' };
+
   const groups: Record<string, { venue: { id: string; name: string; lat: number | null; lng: number | null }, items: Row[] }> = {};
   for (const r of rows) {
     const key = r.venue_id;
@@ -54,41 +69,60 @@ export default function ActivityPage() {
   const venues = Object.values(groups);
 
   return (
-    <FlatList
-      contentContainerStyle={{ padding: 12, gap: 12 }}
-      data={venues}
-      keyExtractor={(v) => v.venue.id}
-      renderItem={({ item }) => (
-        <View style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700' }}>{item.venue.name}</Text>
-          {item.venue.lat != null && item.venue.lng != null && (
-            <Pressable style={{ marginTop: 6 }} onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${item.venue.lat},${item.venue.lng}`)}>
-              <Text style={{ color: '#0d9488' }}>Open in Maps</Text>
-            </Pressable>
-          )}
-          {item.items.map((s) => (
-            <View key={s.session_id} style={{ marginTop: 8 }}>
-              <Text>{formatDateRange(s.starts_at as any, s.ends_at as any)}</Text>
-              {!!s.price_cents && <Text>{formatPrice(s.price_cents)}</Text>}
-              <Link href={`/sessions/${s.session_id}`} asChild>
-                <Pressable style={{ marginTop: 6, borderWidth: 1, borderRadius: 8, padding: 8 }}>
-                  <Text>View details</Text>
-                </Pressable>
-              </Link>
-            </View>
-          ))}
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Top bar */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50' }}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
+        </TouchableOpacity>
+        <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Activity</Text>
+        <View style={{ width: 32 }} />
+      </View>
+      {/* Activity icon and name */}
+      <View style={{ alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+        <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: visual.color, alignItems: 'center', justifyContent: 'center', marginBottom: 8, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, elevation: 4 }}>
+          <Text style={{ fontSize: 38 }}>{visual.icon}</Text>
         </View>
-      )}
-      ListHeaderComponent={
-        <View style={{ margin: 8 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700' }}>Places for activity</Text>
-          <Link href={`/add-event`} asChild>
-            <Pressable style={{ marginTop: 8, borderWidth: 1, borderRadius: 8, padding: 8 }}>
-              <Text>Create new event</Text>
-            </Pressable>
-          </Link>
-        </View>
-      }
-    />
+        <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 2 }}>{activityName}</Text>
+      </View>
+      {/* Venue cards */}
+      <FlatList
+        contentContainerStyle={{ padding: 12, gap: 16 }}
+        data={venues}
+        keyExtractor={(v) => v.venue.id}
+        renderItem={({ item }) => (
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, marginBottom: 8, shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 8, elevation: 3 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 4 }}>{item.venue.name}</Text>
+            {item.venue.lat != null && item.venue.lng != null && (
+              <Pressable style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }} onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${item.venue.lat},${item.venue.lng}`)}>
+                <Text style={{ fontSize: 16, marginRight: 4 }}>📍</Text>
+                <Text style={{ color: '#0d9488', fontWeight: '600' }}>Open in Maps</Text>
+              </Pressable>
+            )}
+            {item.items.map((s) => (
+              <View key={s.session_id} style={{ marginTop: 10, backgroundColor: '#f9fafb', borderRadius: 10, padding: 10 }}>
+                <Text style={{ fontWeight: '600' }}>{formatDateRange(s.starts_at as any, s.ends_at as any)}</Text>
+                {!!s.price_cents && <Text style={{ color: '#64748b' }}>{formatPrice(s.price_cents)}</Text>}
+                <Link href={`/sessions/${s.session_id}`} asChild>
+                  <Pressable style={{ marginTop: 8, backgroundColor: '#16a34a', borderRadius: 8, padding: 10 }}>
+                    <Text style={{ color: 'white', textAlign: 'center', fontWeight: '600' }}>View details</Text>
+                  </Pressable>
+                </Link>
+              </View>
+            ))}
+          </View>
+        )}
+        ListHeaderComponent={
+          <View style={{ margin: 8, alignItems: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Places for activity</Text>
+            <Link href={`/add-event`} asChild>
+              <Pressable style={{ marginTop: 8, backgroundColor: '#fbbf24', borderRadius: 8, padding: 12, minWidth: 160 }}>
+                <Text style={{ textAlign: 'center', fontWeight: '700', fontSize: 16 }}>+ Create new event</Text>
+              </Pressable>
+            </Link>
+          </View>
+        }
+      />
+    </SafeAreaView>
   );
 }

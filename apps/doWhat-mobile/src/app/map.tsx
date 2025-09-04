@@ -5,7 +5,7 @@ import { View, Text, Pressable, ActivityIndicator, Platform, ScrollView } from '
 // Lazy import expo-maps to avoid crashing if the native module
 // is not present (e.g., running in Expo Go or before rebuilding).
 type MapsModule = typeof import('expo-maps');
-import { useRouter } from 'expo-router';
+import { router } from 'expo-router';
 
 import { getLastKnownBackgroundLocation } from '../lib/bg-location';
 import { supabase } from '../lib/supabase';
@@ -40,7 +40,19 @@ type Cluster = {
 };
 
 export default function MapTab() {
-  const router = useRouter();
+  // Custom marker overlay for Figma-style bold, colorful, rounded markers
+  function renderMarkerOverlay(marker: Marker) {
+    // Use a different color for clusters
+    const isCluster = marker.id.startsWith('cluster:');
+    const bgColor = isCluster ? '#6366f1' : '#f59e42';
+    const borderColor = '#fff';
+    const shadowColor = isCluster ? '#6366f1' : '#f59e42';
+    return (
+      <View style={{ backgroundColor: bgColor, borderRadius: 999, padding: isCluster ? 10 : 12, minWidth: isCluster ? 40 : 44, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor, shadowColor, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } }}>
+        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: isCluster ? 18 : 22 }}>{isCluster ? marker.title.split(' ')[0] : '📍'}</Text>
+      </View>
+    );
+  }
   const [maps, setMaps] = useState<MapsModule | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -216,21 +228,39 @@ export default function MapTab() {
 
   if (!MapView) {
     return (
-      <View style={{ flex: 1, padding: 16 }}>
-        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Map unavailable</Text>
-        <Text style={{ color: '#4b5563' }}>
-          Please rebuild the native app to enable maps. In the project root: cd apps/doWhat-mobile && npx expo run:ios (or run:android). Then restart the app.
-        </Text>
-        <Pressable onPress={load} style={{ marginTop: 12, borderWidth: 1, borderRadius: 8, padding: 10 }}>
-          <Text>Retry</Text>
-        </Pressable>
-        {err && <Text style={{ marginTop: 8, color: '#b91c1c' }}>{err}</Text>}
+      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        {/* Top bar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50' }}>
+          <Pressable onPress={() => router.back()}>
+            <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
+          </Pressable>
+          <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Map</Text>
+          <View style={{ width: 32 }} />
+        </View>
+        <View style={{ flex: 1, padding: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Map unavailable</Text>
+          <Text style={{ color: '#4b5563' }}>
+            Please rebuild the native app to enable maps. In the project root: cd apps/doWhat-mobile && npx expo run:ios (or run:android). Then restart the app.
+          </Text>
+          <Pressable onPress={load} style={{ marginTop: 12, borderWidth: 1, borderRadius: 8, padding: 10 }}>
+            <Text>Retry</Text>
+          </Pressable>
+          {err && <Text style={{ marginTop: 8, color: '#b91c1c' }}>{err}</Text>}
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Top bar */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50', zIndex: 10 }}>
+        <Pressable onPress={() => router.back()}>
+          <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
+        </Pressable>
+        <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Map</Text>
+        <View style={{ width: 32 }} />
+      </View>
       <MapView
         ref={cameraRef as any}
         style={{ flex: 1 }}
@@ -239,6 +269,7 @@ export default function MapTab() {
           id: m.id,
           title: m.title,
           coordinates: { latitude: m.latitude, longitude: m.longitude },
+          overlay: () => renderMarkerOverlay(m),
         })) as any}
         circles={myCircles as any}
         properties={{ isMyLocationEnabled: true }}
@@ -334,18 +365,18 @@ export default function MapTab() {
         </View>
       )}
 
-      {/* Bottom sheet with venue details */}
+      {/* Bottom sheet with venue details (rounded, colorful accent) */}
       {sheet && (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
           <Pressable style={{ flex: 1 }} onPress={() => setSheet(null)} />
-          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700' }}>{sheet.title}</Text>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 2, borderColor: '#f59e42', shadowColor: '#f59e42', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', marginBottom: 4, color: '#2C3E50' }}>{sheet.title}</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-              <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${sheet.lat},${sheet.lng}`)} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Open in Maps</Text>
+              <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${sheet.lat},${sheet.lng}`)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
+                <Text style={{ color: '#6366f1' }}>Open in Maps</Text>
               </Pressable>
-              <Pressable onPress={() => setSheet(null)} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Close</Text>
+              <Pressable onPress={() => setSheet(null)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#f59e42' }}>
+                <Text style={{ color: '#f59e42' }}>Close</Text>
               </Pressable>
             </View>
             {sheetLoading && <ActivityIndicator style={{ marginTop: 8 }} />}
@@ -356,11 +387,10 @@ export default function MapTab() {
                 )}
                 {sheetRows?.map((s: any) => (
                   s.__venue ? (
-                    <View key={s.__venue.id} style={{ borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 }}>
-                      <Text style={{ fontWeight: '600' }}>{s.__venue.title}</Text>
+                    <View key={s.__venue.id} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.04)' }}>
+                      <Text style={{ fontWeight: '600', color: '#2C3E50' }}>{s.__venue.title}</Text>
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
                         <Pressable onPress={() => {
-                          // switch to venue mode and load sessions
                           setSheet({ venueId: s.__venue.id, title: s.__venue.title, lat: s.__venue.latitude, lng: s.__venue.longitude });
                           (async () => {
                             setSheetLoading(true); setSheetRows(null);
@@ -373,21 +403,21 @@ export default function MapTab() {
                             if (!error) setSheetRows((data ?? []) as any[]);
                             setSheetLoading(false);
                           })();
-                        }} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                          <Text>View sessions</Text>
+                        }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
+                          <Text style={{ color: '#6366f1' }}>View sessions</Text>
                         </Pressable>
-                        <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${s.__venue.latitude},${s.__venue.longitude}`)} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                          <Text>Open in Maps</Text>
+                        <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${s.__venue.latitude},${s.__venue.longitude}`)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
+                          <Text style={{ color: '#6366f1' }}>Open in Maps</Text>
                         </Pressable>
                       </View>
                     </View>
                   ) : (
-                    <View key={s.id} style={{ borderWidth: 1, borderRadius: 8, padding: 8, marginBottom: 8 }}>
-                      <Text style={{ fontWeight: '600' }}>{s.activities?.name ?? 'Activity'}</Text>
+                    <View key={s.id} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: '#f59e42', backgroundColor: 'rgba(245,158,66,0.04)' }}>
+                      <Text style={{ fontWeight: '600', color: '#2C3E50' }}>{s.activities?.name ?? 'Activity'}</Text>
                       <Text style={{ marginTop: 2 }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
                       {!!s.price_cents && <Text style={{ marginTop: 2 }}>{formatPrice(s.price_cents)}</Text>}
                       <Link href={`/sessions/${s.id}`} asChild>
-                        <Pressable style={{ marginTop: 6, backgroundColor: '#0d9488', paddingVertical: 8, borderRadius: 6 }}>
+                        <Pressable style={{ marginTop: 6, backgroundColor: '#0d9488', paddingVertical: 8, borderRadius: 8 }}>
                           <Text style={{ color: 'white', textAlign: 'center' }}>View details</Text>
                         </Pressable>
                       </Link>
@@ -400,28 +430,28 @@ export default function MapTab() {
         </View>
       )}
 
-      {/* Filter overlay */}
+      {/* Filter overlay (rounded, colorful accent) */}
       {filtersOpen && (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
           <Pressable style={{ flex: 1 }} onPress={() => setFiltersOpen(false)} />
-          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700' }}>Filter activities</Text>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 2, borderColor: '#6366f1', shadowColor: '#6366f1', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#2C3E50' }}>Filter activities</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
               {allActivities.map((a) => {
                 const sel = selectedActIds.includes(a.id);
                 return (
-                  <Pressable key={a.id} onPress={() => setSelectedActIds((prev) => prev.includes(a.id) ? prev.filter((x) => x !== a.id) : [...prev, a.id])} style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9999, borderWidth: 1, borderColor: sel ? '#0d9488' : '#d1d5db', backgroundColor: sel ? 'rgba(13,148,136,0.08)' : 'white' }}>
-                    <Text style={{ color: sel ? '#0d9488' : '#374151' }}>{a.name}</Text>
+                  <Pressable key={a.id} onPress={() => setSelectedActIds((prev) => prev.includes(a.id) ? prev.filter((x) => x !== a.id) : [...prev, a.id])} style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9999, borderWidth: 2, borderColor: sel ? '#6366f1' : '#d1d5db', backgroundColor: sel ? 'rgba(99,102,241,0.08)' : 'white' }}>
+                    <Text style={{ color: sel ? '#6366f1' : '#374151', fontWeight: sel ? '700' : '400' }}>{a.name}</Text>
                   </Pressable>
                 );
               })}
             </View>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <Pressable onPress={() => { setFiltersOpen(false); load(); }} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Apply</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <Pressable onPress={() => { setFiltersOpen(false); load(); }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
+                <Text style={{ color: '#6366f1' }}>Apply</Text>
               </Pressable>
-              <Pressable onPress={() => { setSelectedActIds([]); setFiltersOpen(false); load(); }} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Clear</Text>
+              <Pressable onPress={() => { setSelectedActIds([]); setFiltersOpen(false); load(); }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#f59e42' }}>
+                <Text style={{ color: '#f59e42' }}>Clear</Text>
               </Pressable>
             </View>
           </View>

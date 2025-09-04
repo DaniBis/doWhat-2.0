@@ -1,13 +1,15 @@
 import { supabase } from "../lib/supabase";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
-
 import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
-import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
-import { Link, useFocusEffect } from "expo-router";
+import { Link, useFocusEffect, router } from "expo-router";
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, Pressable, FlatList, RefreshControl, Platform } from "react-native";
+import { View, Text, Pressable, FlatList, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView } from "react-native";
+import AuthButtons from "../components/AuthButtons";
+import RsvpBadges from "../components/RsvpBadges";
+import SearchBar from "../components/SearchBar";
+import EmptyState from "../components/EmptyState";
 
 // Map activity names/ids to icons and colors (customize as needed)
 const activityVisuals: Record<string, { icon: string; color: string }> = {
@@ -19,14 +21,11 @@ const activityVisuals: Record<string, { icon: string; color: string }> = {
   'Hiking': { icon: '🥾', color: '#f87171' },
   'Soccer': { icon: '⚽', color: '#fbbf24' },
   'Basketball': { icon: '🏀', color: '#f59e42' },
-  // Add more as needed
 };
-import AuthButtons from "../components/AuthButtons";
-import RsvpBadges from "../components/RsvpBadges";
 
 type NearbyActivity = { id: string; name: string; count: number };
 
-export default function Index() {
+function HomeScreen() {
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -35,8 +34,8 @@ export default function Index() {
   const [lat, setLat] = useState<string>("");
   const [lng, setLng] = useState<string>("");
   const [activities, setActivities] = useState<NearbyActivity[] | null>(null);
-  const [bgPerm, setBgPerm] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
-  const [startingBg, setStartingBg] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
 
   async function fetchNearbyActivities(latNow: number | null, lngNow: number | null) {
     const { data: near } = await supabase.rpc('sessions_nearby', {
@@ -62,11 +61,8 @@ export default function Index() {
   async function load() {
     setError(null);
     try {
-      // ensure auth state
       const { data: auth } = await supabase.auth.getSession();
       setSession(auth.session ?? null);
-
-      // try to grab a quick position (non-blocking UI) and use it immediately
       let latNow: number | null = null;
       let lngNow: number | null = null;
       try {
@@ -79,11 +75,9 @@ export default function Index() {
           latNow = Number(last.coords.latitude.toFixed(6));
           lngNow = Number(last.coords.longitude.toFixed(6));
           setLat(String(latNow));
-          setLng(String(lngNow));
+          setLng(String(latNow));
         }
       } catch {}
-
-      // If we still don't have a coordinate, try the background-stored one
       if (latNow == null || lngNow == null) {
         try {
           const cached = await getLastKnownBackgroundLocation();
@@ -106,10 +100,7 @@ export default function Index() {
           }
         } catch {}
       }
-
-      // Preload activities nearby (aggregate from RPC)
       await fetchNearbyActivities(latNow, lngNow);
-
       const { data, error } = await supabase
         .from("sessions")
         .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
@@ -123,23 +114,16 @@ export default function Index() {
   }
 
   useEffect(() => {
-    // Start background location in parallel; ignore if user declines.
     ensureBackgroundLocation().catch(() => {});
     load();
-    // Also read background permission status to show a banner
-    (async () => {
-      try { const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); } catch {}
-    })();
   }, []);
 
-  // Refresh list when screen regains focus (e.g., after background updates)
   useFocusEffect(
     useCallback(() => {
       load();
     }, [])
   );
 
-  // Foreground watcher keeps activities fresh while app is open
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     (async () => {
@@ -160,13 +144,31 @@ export default function Index() {
     return () => { sub?.remove(); };
   }, []);
 
-  // When lat/lng state changes, refresh nearby activities
+  // Simulate search suggestions (replace with real API)
+  const searchSuggestions = activities ? activities
+    .filter(activity =>
+      activity.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
+      activity.name.toLowerCase() !== searchQuery.toLowerCase()
+    )
+    .slice(0, 3)
+    .map(activity => activity.name) : [];
+
   useEffect(() => {
-    const la = parseFloat(lat); const ln = parseFloat(lng);
-    if (!Number.isNaN(la) && !Number.isNaN(ln)) {
-      fetchNearbyActivities(la, ln);
+    if (activities) {
+      const filtered = activities.filter(activity =>
+        activity.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredActivities(filtered);
     }
-  }, [lat, lng]);
+  }, [activities, searchQuery]);
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+  };
+
+  const handleFilter = () => {
+    router.push('/filter');
+  };
 
   async function onRefresh() {
     setRefreshing(true);
@@ -209,50 +211,81 @@ export default function Index() {
   // Show activities grid if we have a nearby list
   if (activities && activities.length) {
     return (
-      <View style={{ flex: 1, padding: 12 }}>
-        <View style={{ marginBottom: 12 }}>
-          <AuthButtons />
-        </View>
-        {bgPerm !== 'granted' && (
-          <View style={{ borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 12, backgroundColor: 'rgba(245, 158, 11, 0.08)', borderColor: '#f59e0b' }}>
-            <Text style={{ fontWeight: '700', marginBottom: 6 }}>Enable background location</Text>
-            <Text style={{ color: '#4b5563' }}>Allow “Always” to keep nearby activities fresh even when the app is closed.</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <Pressable
-                onPress={async () => { setStartingBg(true); const ok = await ensureBackgroundLocation(); setStartingBg(false); const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); if (Platform.OS==='ios' && b.status!== 'granted') Linking.openSettings?.(); }}
-                style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, opacity: startingBg ? 0.6 : 1 }}
-                disabled={startingBg}
-              >
-                <Text>{startingBg ? 'Requesting…' : 'Enable'}</Text>
-              </Pressable>
-              <Pressable onPress={() => Linking.openSettings?.()} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Open Settings</Text>
-              </Pressable>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+        {/* Top bar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50' }}>
+          <TouchableOpacity onPress={() => router.push('/profile')}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fbbf24', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 20 }}>👤</Text>
             </View>
-          </View>
-        )}
-        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Activities near you</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {activities.map((a) => {
-            const visual = activityVisuals[a.name] || { icon: '🎯', color: '#fbbf24' };
-            return (
-              <Link key={a.id} href={`/activities/${a.id}`} asChild>
-                <Pressable style={{ width: '33%', padding: 8, alignItems: 'center' }}>
-                  <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: visual.color, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 28 }}>{visual.icon}</Text>
-                  </View>
-                  <Text numberOfLines={1} style={{ marginTop: 6, fontWeight: '600' }}>{a.name}</Text>
-                  <Text style={{ fontSize: 12, color: '#6b7280' }}>{a.count} places/events</Text>
-                </Pressable>
-              </Link>
-            );
-          })}
+          </TouchableOpacity>
+          <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700', letterSpacing: 1 }}>Activities</Text>
+          <TouchableOpacity onPress={() => router.push('/map')}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#38bdf8', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 20 }}>🗺️</Text>
+            </View>
+          </TouchableOpacity>
         </View>
-        {/* fallback section */}
-        {!activities.length && (
-          <Text style={{ marginTop: 12 }}>No activities found nearby yet.</Text>
-        )}
-      </View>
+        
+        {/* Search Bar */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
+          <SearchBar
+            onSearch={(query) => setSearchQuery(query)}
+            onFilter={handleFilter}
+            suggestedSearches={searchSuggestions}
+            placeholder="Search for activities..."
+          />
+        </View>
+
+        {/* Activity Grid */}
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+          {filteredActivities.length === 0 && searchQuery ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 }}>
+              <EmptyState
+                icon="search"
+                title="No results found"
+                subtitle={`No activities found for "${searchQuery}"`}
+                actionText="Clear Search"
+                onAction={() => setSearchQuery('')}
+              />
+            </View>
+          ) : (
+            <View style={{ flex: 1, paddingVertical: 16 }}>
+              {/* Section Title */}
+              <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#1F2937' }}>
+                  {searchQuery ? `Results for "${searchQuery}"` : 'Nearby Activities'}
+                </Text>
+                <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>
+                  {searchQuery 
+                    ? `${filteredActivities.length} activities found`
+                    : `${activities.length} activities in your area`
+                  }
+                </Text>
+              </View>
+              
+              {/* Activities Grid */}
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 8 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 0 }}>
+                  {(searchQuery ? filteredActivities : activities).map((a, i) => {
+                const visual = activityVisuals[a.name] || { icon: '🎯', color: '#fbbf24' };
+                return (
+                  <Link key={a.id} href={`/activities/${a.id}`} asChild>
+                    <Pressable style={{ width: 100, alignItems: 'center', margin: 12 }}>
+                      <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: visual.color, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, elevation: 4 }}>
+                        <Text style={{ fontSize: 38 }}>{visual.icon}</Text>
+                      </View>
+                      <Text numberOfLines={1} style={{ marginTop: 10, fontWeight: '700', fontSize: 16 }}>{a.name}</Text>
+                    </Pressable>
+                  </Link>
+                );
+              })}
+                </View>
+              </View>
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
@@ -307,3 +340,5 @@ export default function Index() {
     />
   );
 }
+
+export default HomeScreen;

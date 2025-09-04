@@ -23,11 +23,21 @@ export default async function HomePage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-4 flex justify-end gap-4 text-sm">
-        <Link href="/my/rsvps" className="text-brand-teal text-sm">My RSVPs</Link>
-        <Link href="/profile" className="text-brand-teal">Profile</Link>
-        <Link href="/admin/new" className="text-brand-teal">Admin: New Session</Link>
-        <Link href="/admin/sessions" className="text-brand-teal">Admin: Sessions</Link>
+      <div className="mb-6 flex flex-wrap justify-between items-center gap-4">
+        <h1 className="text-2xl font-bold">Discover Events</h1>
+        <div className="flex flex-wrap gap-2 text-sm">
+          <Link href="/create" className="rounded-lg bg-brand-teal px-4 py-2 text-white hover:bg-teal-700 font-medium">
+            + Create Event
+          </Link>
+          <Link href="/search" className="rounded-lg border border-brand-teal px-4 py-2 text-brand-teal hover:bg-teal-50 font-medium">
+            🔍 Search
+          </Link>
+          <Link href="/discover" className="rounded-lg border border-brand-teal px-4 py-2 text-brand-teal hover:bg-teal-50 font-medium">
+            ✨ Discover
+          </Link>
+          <Link href="/my/rsvps" className="text-brand-teal hover:underline">My RSVPs</Link>
+          <Link href="/profile" className="text-brand-teal hover:underline">Profile</Link>
+        </div>
       </div>
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map((s) => (

@@ -10,7 +10,7 @@
     {
       "label": "mobile:dev",
       "type": "shell",
-      "command": "pnpm --filter dowhat-mobile exec expo start -c",
+  "command": "pnpm --filter doWhat-mobile exec expo start -c",
       "problemMatcher": []
     },
     {

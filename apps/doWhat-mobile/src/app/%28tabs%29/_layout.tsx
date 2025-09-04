@@ -5,16 +5,37 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#0d9488',
+        tabBarActiveTintColor: '#2C7BF6',
+        tabBarInactiveTintColor: '#6B7280',
         headerShown: false,
+        tabBarStyle: {
+          backgroundColor: 'white',
+          borderTopWidth: 1,
+          borderTopColor: '#E5E7EB',
+          paddingTop: 8,
+          paddingBottom: 8,
+          height: 88,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '500',
+          marginTop: 4,
+        },
+        tabBarIconStyle: {
+          marginTop: 4,
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Activities',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="fitness-outline" color={color} size={size} />
+          title: 'Discover',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons 
+              name={focused ? 'compass' : 'compass-outline'} 
+              color={color} 
+              size={24} 
+            />
           ),
         }}
       />
@@ -22,8 +43,12 @@ export default function TabsLayout() {
         name="nearby"
         options={{
           title: 'Nearby',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="location-outline" color={color} size={size} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons 
+              name={focused ? 'location' : 'location-outline'} 
+              color={color} 
+              size={24} 
+            />
           ),
         }}
       />
@@ -31,8 +56,12 @@ export default function TabsLayout() {
         name="map"
         options={{
           title: 'Map',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="map-outline" color={color} size={size} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons 
+              name={focused ? 'map' : 'map-outline'} 
+              color={color} 
+              size={24} 
+            />
           ),
         }}
       />
@@ -40,18 +69,19 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-circle-outline" color={color} size={size} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons 
+              name={focused ? 'person-circle' : 'person-circle-outline'} 
+              color={color} 
+              size={24} 
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="location"
         options={{
-          title: 'Location',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="compass-outline" color={color} size={size} />
-          ),
+          href: null, // Hide this tab as it's redundant with nearby
         }}
       />
     </Tabs>

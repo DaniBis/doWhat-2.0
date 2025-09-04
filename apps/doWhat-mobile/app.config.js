@@ -1,17 +1,22 @@
-export default {
-  expo: {
-    name: "doWhat",
-    slug: "dowhat",
-    scheme: "dowhat",
-    ios: {
-      bundleIdentifier: "com.dowhat.app",
+import { ExpoConfig } from 'expo/config';
+
+// Import JSON config
+import appJson from './app.json';
+
+// Read environment variables
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+const config = {
+  ...appJson.expo,
+  extra: {
+    ...appJson.expo.extra,
+    supabaseUrl,
+    supabaseAnonKey,
+    eas: {
+      projectId: "your-eas-project-id", // Replace with your EAS project ID if needed
     },
-    android: {
-      package: "com.dowhat.app",
-    },
-    extra: {
-      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
-      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-}
-  }
+  },
 };
+
+export default config;

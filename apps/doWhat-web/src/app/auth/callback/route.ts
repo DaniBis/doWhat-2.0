@@ -1,6 +1,6 @@
 // src/app/auth/callback/route.ts
 import { createServerClient } from "@supabase/ssr";
-import { cookies as nextCookies } from "next/headers";
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -8,20 +8,19 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
 
   if (code) {
+    const cookieStore = cookies();
     // In a Route Handler we can *safely* wire set/remove to Next's cookies API:
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          // New API: getAll/setAll
-          getAll() {
-            const c = nextCookies();
-            return c.getAll().map((ck) => ({ name: ck.name, value: ck.value }));
+          get: (name: string) => cookieStore.get(name)?.value,
+          set: (name: string, value: string, options: any) => {
+            cookieStore.set({ name, value, ...options });
           },
-          setAll(cookies) {
-            const c = nextCookies();
-            cookies.forEach((ck) => c.set(ck.name, ck.value, ck.options));
+          remove: (name: string, options: any) => {
+            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
           },
         },
       }
