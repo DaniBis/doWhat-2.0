@@ -108,33 +108,44 @@ export default function MapTab() {
       }
       setLat(la); setLng(ln);
 
-      const { data, error } = await supabase.rpc('sessions_nearby', {
-        lat: la ?? null,
-        lng: ln ?? null,
-        p_km: km,
-        activities: selectedActIds.length ? selectedActIds : null,
-        day: null,
-      });
-      if (error) throw error;
-      const arr = (data ?? []) as Row[];
       const map: Record<string, Marker> = {};
-      for (const r of arr) {
-        if (r.venue_lat == null || r.venue_lng == null) continue;
-        if (!map[r.venue_id]) {
-          map[r.venue_id] = {
-            id: r.venue_id,
-            title: r.venue_name,
-            latitude: r.venue_lat,
-            longitude: r.venue_lng,
-            activity_id: r.activity_id,
+
+      // Fetch nearby activities from the web API (uses PostGIS and server-side filters)
+      const baseUrl = process.env.EXPO_PUBLIC_SITE_URL || 'http://localhost:3002';
+      const url = new URL('/api/nearby', baseUrl);
+      if (la != null && ln != null) {
+        url.searchParams.set('lat', String(la));
+        url.searchParams.set('lng', String(ln));
+      }
+      url.searchParams.set('radius', String(Math.round(km * 1000)));
+      if (selectedActIds.length) url.searchParams.set('types', selectedActIds.join(','));
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      const acts = Array.isArray(json.activities) ? json.activities : [];
+      for (const a of acts) {
+        const latA = Number(a.lat);
+        const lngA = Number(a.lng);
+        if (!Number.isFinite(latA) || !Number.isFinite(lngA)) continue;
+        const id = String(a.id);
+        if (!map[id]) {
+          map[id] = {
+            id,
+            title: a.name ?? 'Activity',
+            latitude: latA,
+            longitude: lngA,
+            activity_id: id,
           };
         }
       }
+
       const base = Object.values(map);
+
+      // Recompute base after adding activities
+      const base2 = Object.values(map);
       // Simple grid-based clustering (~300m cells)
       const cell = 0.003; // degrees
       const buckets: Record<string, Marker[]> = {};
-      for (const m of base) {
+      for (const m of base2) {
         const key = `${Math.round(m.latitude / cell)}:${Math.round(m.longitude / cell)}`;
         (buckets[key] ||= []).push(m);
       }

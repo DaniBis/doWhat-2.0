@@ -17,8 +17,12 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules')
 ];
 
-// Fix for pnpm: resolve real paths, not symlinks
-config.resolver.symlinks = false;
+// pnpm + monorepo resolution stability
+// Prefer resolving from the explicit nodeModulesPaths above
+config.resolver.disableHierarchicalLookup = true;
+// Enable symlinks and package exports support (recommended for pnpm + RN >=0.73)
+config.resolver.unstable_enableSymlinks = true;
+config.resolver.unstable_enablePackageExports = true;
 
 // Helpful in monorepos
 config.transformer.unstable_allowRequireContext = true;

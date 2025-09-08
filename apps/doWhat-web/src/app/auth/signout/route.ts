@@ -1,10 +1,9 @@
 // src/app/auth/signout/route.ts
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST() {
-  const res = NextResponse.json({ ok: true });
+export async function POST(request: NextRequest) {
   const cookieStore = cookies();
 
   const supabase = createServerClient(
@@ -14,15 +13,17 @@ export async function POST() {
       cookies: {
         get: (name: string) => cookieStore.get(name)?.value,
         set: (name: string, value: string, options: any) => {
-          res.cookies.set({ name, value, ...options });
+          cookieStore.set({ name, value, ...options });
         },
         remove: (name: string, options: any) => {
-          res.cookies.set({ name, value: "", ...options, maxAge: 0 });
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
     }
   );
 
   await supabase.auth.signOut();
-  return res;
+  
+  // Redirect to home page after signout
+  return NextResponse.redirect(new URL("/", request.url));
 }

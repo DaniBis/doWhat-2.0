@@ -1,15 +1,34 @@
 import Link from "next/link";
-
 import ActivityCard from "@/components/ActivityCard";
 import { createClient } from "@/lib/supabase/server";
+import dynamic from "next/dynamic";
 
-export default async function HomePage() {
+type SearchParams = { [k: string]: string | string[] | undefined };
+
+const NearbyDiscoverList = dynamic(() => import("@/components/home/NearbyDiscoverList"), { ssr: false });
+
+export default async function HomePage({ searchParams }: { searchParams?: SearchParams }) {
   const supabase = createClient();
-  const { data, error } = await supabase
+
+  const typesCsv = (typeof searchParams?.types === 'string' ? searchParams?.types : Array.isArray(searchParams?.types) ? searchParams?.types[0] : '') || '';
+  const types = typesCsv.split(',').map((s) => s.trim()).filter(Boolean);
+  const priceMin = Number(typeof searchParams?.price_min === 'string' ? searchParams?.price_min : Array.isArray(searchParams?.price_min) ? searchParams?.price_min[0] : '0') || 0;
+  const priceMax = Number(typeof searchParams?.price_max === 'string' ? searchParams?.price_max : Array.isArray(searchParams?.price_max) ? searchParams?.price_max[0] : '100') || 100;
+
+  let query = supabase
     .from("sessions")
-    .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
+    .select("id, price_cents, starts_at, ends_at, activities!inner(id,name), venues(name)")
     .order("starts_at", { ascending: true })
     .limit(20);
+
+  if (priceMin > 0) query = query.gte('price_cents', Math.round(priceMin * 100));
+  if (priceMax < 100) query = query.lte('price_cents', Math.round(priceMax * 100));
+  if (types.length) {
+    const ors = types.map((t) => `activities.name.ilike.%${t}%`).join(',');
+    query = query.or(ors);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return <pre>Error: {error.message}</pre>;
@@ -17,32 +36,49 @@ export default async function HomePage() {
 
   const rows = data ?? [];
 
-  if (rows.length === 0) {
-    return <p className="p-4 opacity-70">No sessions yet.</p>;
-  }
-
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex flex-wrap justify-between items-center gap-4">
-        <h1 className="text-2xl font-bold">Discover Events</h1>
-        <div className="flex flex-wrap gap-2 text-sm">
-          <Link href="/create" className="rounded-lg bg-brand-teal px-4 py-2 text-white hover:bg-teal-700 font-medium">
-            + Create Event
-          </Link>
-          <Link href="/search" className="rounded-lg border border-brand-teal px-4 py-2 text-brand-teal hover:bg-teal-50 font-medium">
-            🔍 Search
-          </Link>
-          <Link href="/discover" className="rounded-lg border border-brand-teal px-4 py-2 text-brand-teal hover:bg-teal-50 font-medium">
-            ✨ Discover
-          </Link>
-          <Link href="/my/rsvps" className="text-brand-teal hover:underline">My RSVPs</Link>
-          <Link href="/profile" className="text-brand-teal hover:underline">Profile</Link>
+    <main className="min-h-screen">
+      {/* Upcoming Activities only */}
+      <div className="mx-auto max-w-7xl px-4 py-10">
+        <div className="mb-8 flex flex-wrap justify-between items-center gap-4">
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">Upcoming Activities</h2>
+            <p className="text-gray-600">Created events and nearby results</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link 
+              href="/filter?from=home" 
+              className="inline-flex items-center gap-2 rounded-lg border border-purple-500 px-4 py-2 text-purple-500 hover:bg-purple-50 font-medium transition-colors"
+            >
+              ⚙️ Filters
+            </Link>
+          </div>
         </div>
-      </div>
-      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-        {rows.map((s) => (
-          <ActivityCard key={s.id} s={s} />
-        ))}
+
+        {rows.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-6xl mb-4">🎯</div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No events yet</h3>
+            <p className="text-gray-600 mb-6">Be the first to create an event in your area!</p>
+            <Link 
+              href="/create" 
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-6 py-3 text-white font-semibold hover:bg-emerald-600 transition-colors"
+            >
+              <span>✨</span>
+              Create First Event
+            </Link>
+          </div>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+            {rows.map((s) => (
+              <ActivityCard key={s.id} s={s} />
+            ))}
+          </div>
+        )}
+        {/* Nearby discovered via API */}
+        <div className="mt-12">
+          <NearbyDiscoverList />
+        </div>
       </div>
     </main>
   );

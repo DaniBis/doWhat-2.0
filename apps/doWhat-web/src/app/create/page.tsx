@@ -31,29 +31,41 @@ export default function CreateEventPage() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<'loading' | 'success' | 'error' | 'denied'>('loading');
 
   useEffect(() => {
     (async () => {
       const a = await supabase.from('activities').select('id,name').order('name');
       if (!a.error) setActivities((a.data ?? []) as Option[]);
-      
       const v = await supabase.from('venues').select('id,name').order('name');
       if (!v.error) setVenues((v.data ?? []) as Option[]);
 
-      // Try to get user's location
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setLat(String(position.coords.latitude.toFixed(6)));
-            setLng(String(position.coords.longitude.toFixed(6)));
-          },
-          () => {
-            // Silently fail - user can enter manually
-          }
-        );
-      }
+      requestLocation();
     })();
   }, []);
+
+  function requestLocation() {
+    if (!navigator.geolocation) {
+      setLocationStatus('error');
+      return;
+    }
+    setLocationStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLat(String(position.coords.latitude.toFixed(6)));
+        setLng(String(position.coords.longitude.toFixed(6)));
+        setLocationStatus('success');
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationStatus('denied');
+        } else {
+          setLocationStatus('error');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
 
   async function ensureActivity(): Promise<string> {
     if (activityId) return activityId;
@@ -89,6 +101,12 @@ export default function CreateEventPage() {
       const uid = auth?.user?.id; 
       if (!uid) throw new Error('Please sign in.');
       
+      // Require coordinates for local creation
+      const la = parseFloat(lat); const ln = parseFloat(lng);
+      if (Number.isNaN(la) || Number.isNaN(ln)) {
+        throw new Error('Location is required to create an event. Please allow location access or enter coordinates.');
+      }
+
       const act = await ensureActivity();
       const ven = await ensureVenue();
       
@@ -102,7 +120,7 @@ export default function CreateEventPage() {
         starts_at: new Date(startsAt).toISOString(),
         ends_at: new Date(endsAt).toISOString(),
         created_by: uid,
-      };
+        };
       
       if (description.trim()) {
         payload.description = description.trim();
@@ -228,9 +246,34 @@ export default function CreateEventPage() {
 
         {/* Location */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Location (Optional)
+      <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Location (required)
           </label>
+          
+          {locationStatus !== 'success' && (
+            <div className="mb-3 rounded-lg border p-3 text-sm"
+                 style={{
+                   borderColor: locationStatus === 'denied' ? '#f59e0b' : locationStatus === 'error' ? '#ef4444' : '#93c5fd',
+                   background: locationStatus === 'denied' ? '#fffbeb' : locationStatus === 'error' ? '#fef2f2' : '#eff6ff',
+                   color: '#374151'
+                 }}>
+              <div className="mb-2 font-medium">We need your location to create an event.</div>
+              {locationStatus === 'loading' && <div>📍 Getting your location…</div>}
+              {locationStatus === 'denied' && (
+                <div>
+                  ⚠️ Location is blocked for this site. Click the lock icon → Site settings → Allow Location, then come back and Retry.
+                </div>
+              )}
+              {locationStatus === 'error' && (
+                <div>❌ Could not get a GPS fix. Move outdoors, check device location settings, then Retry.</div>
+              )}
+              <div className="mt-2 flex gap-2">
+                <button type="button" className="rounded border px-3 py-1" onClick={requestLocation}>Retry</button>
+                <a className="rounded border px-3 py-1" href="/map" target="_blank" rel="noreferrer">Open map</a>
+              </div>
+            </div>
+          )}
+          
           <div className="grid grid-cols-2 gap-3">
             <input
               type="number"
@@ -238,6 +281,7 @@ export default function CreateEventPage() {
               placeholder="Latitude"
               value={lat}
               onChange={(e) => setLat(e.target.value)}
+              disabled
               className="rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             />
             <input
@@ -246,9 +290,12 @@ export default function CreateEventPage() {
               placeholder="Longitude"
               value={lng}
               onChange={(e) => setLng(e.target.value)}
+              disabled
               className="rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             />
           </div>
+          
+          <p className="mt-2 text-sm text-gray-600">Coordinates are required; enable location access to proceed.</p>
         </div>
 
         {/* Price */}
@@ -313,7 +360,7 @@ export default function CreateEventPage() {
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={saving}
+          disabled={saving || locationStatus !== 'success' || !lat || !lng}
           className="w-full rounded-lg bg-brand-teal px-4 py-3 text-white font-semibold hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-brand-teal focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? 'Creating Event...' : 'Create Event'}

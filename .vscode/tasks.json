@@ -4,13 +4,13 @@
     {
       "label": "web:dev",
       "type": "shell",
-      "command": "pnpm --filter dowhat-web dev",
+      "command": "pnpm --filter doWhat-web dev",
       "problemMatcher": []
     },
     {
       "label": "mobile:dev",
       "type": "shell",
-  "command": "pnpm --filter doWhat-mobile exec expo start -c",
+      "command": "pnpm --filter doWhat-mobile exec expo start -c",
       "problemMatcher": []
     },
     {
@@ -28,7 +28,7 @@
     {
       "label": "health",
       "type": "shell",
-      "command": "curl -s http://localhost:3000/api/health || true",
+      "command": "curl -s http://localhost:3002/api/health || true",
       "problemMatcher": []
     }
   ]

@@ -3,8 +3,8 @@
 -- Returns session fields expected by the app.
 
 create or replace function public.sessions_nearby(
-  lat double precision,
-  lng double precision,
+  p_lat double precision,
+  p_lng double precision,
   p_km numeric,
   activities uuid[] default null,
   day date default null
@@ -22,7 +22,8 @@ returns table (
   venue_lng double precision,
   distance_km numeric
 ) language sql stable as $$
-  with base as (
+  with params as (select p_lat as lat, p_lng as lng, p_km as km),
+  base as (
     select s.id as session_id,
            s.starts_at,
            s.ends_at,
@@ -36,8 +37,9 @@ returns table (
            -- Haversine (approx) in km
            (6371 * acos(
               least(1, greatest(-1,
-                cos(radians(lat)) * cos(radians(v.lat)) * cos(radians(v.lng) - radians(lng)) +
-                sin(radians(lat)) * sin(radians(v.lat))
+                cos(radians((select lat from params))) * cos(radians(v.lat)) *
+                cos(radians(v.lng) - radians((select lng from params))) +
+                sin(radians((select lat from params))) * sin(radians(v.lat))
               ))
            )) as distance_km
     from sessions s
@@ -47,10 +49,9 @@ returns table (
       and (activities is null or s.activity_id = any(activities))
       and (day is null or date(s.starts_at) = day)
   )
-  select * from base where distance_km <= p_km;
+  select * from base where distance_km <= (select km from params);
 $$;
 
 -- Optional helpful indexes
 -- create index if not exists venues_lat_lng_idx on public.venues using gist (lat, lng);
 -- create index if not exists sessions_starts_at_idx on public.sessions(starts_at);
-
