@@ -18,8 +18,8 @@ config.resolver.nodeModulesPaths = [
 ];
 
 // pnpm + monorepo resolution stability
-// Prefer resolving from the explicit nodeModulesPaths above
-config.resolver.disableHierarchicalLookup = true;
+// Allow Metro to traverse upwards so transitive deps from the workspace root resolve correctly
+config.resolver.disableHierarchicalLookup = false;
 // Enable symlinks and package exports support (recommended for pnpm + RN >=0.73)
 config.resolver.unstable_enableSymlinks = true;
 config.resolver.unstable_enablePackageExports = true;
