@@ -348,7 +348,7 @@ function HomeScreen() {
     );
   }
 
-  // New design: show header + activities grid (even if empty)
+  // New design: header + discover grid + (optional) upcoming sessions
   {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
@@ -640,60 +640,35 @@ function HomeScreen() {
             </View>
           )}
         </ScrollView>
+        {/* Upcoming sessions */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 }}>
+          <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 12 }}>
+            Upcoming Sessions
+          </Text>
+          {rows.length === 0 ? (
+            <View style={{ alignItems: 'center', padding: 16 }}>
+              <Text style={{ color: '#6B7280' }}>No sessions yet. Be the first to create one!</Text>
+            </View>
+          ) : (
+            rows.slice(0, 6).map((s) => (
+              <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
+                <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
+                <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
+                <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
+                <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
+                <Link href={`/sessions/${s.id}`} asChild>
+                  <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
+                    <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>
+                  </Pressable>
+                </Link>
+              </View>
+            ))
+          )}
+        </View>
       </SafeAreaView>
     );
   }
-
-  if (!rows.length) {
-    return <Text style={{ padding: 16 }}>No sessions yet.</Text>;
-  }
-
-  return (
-    <FlatList
-      contentContainerStyle={{ padding: 12, gap: 12 }}
-      data={rows}
-      keyExtractor={(s) => String(s.id)}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      renderItem={({ item: s }) => (
-        <View style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
-          <Text style={{ fontSize: 18, fontWeight: "600" }}>
-            {s.activities?.name ?? "Running"}
-          </Text>
-          <Text style={{ marginTop: 4 }}>{s.venues?.name ?? "Venue"}</Text>
-          <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
-          <Text style={{ marginTop: 4 }}>
-            {formatDateRange(s.starts_at, s.ends_at)}
-          </Text>
-          <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
-          <Link href={`/sessions/${s.id}`} asChild>
-            <Pressable style={{ marginTop: 12, padding: 10, backgroundColor: "#16a34a", borderRadius: 8 }}>
-              <Text style={{ color: "white", textAlign: "center" }}>View details</Text>
-            </Pressable>
-          </Link>
-        </View>
-      )}
-      ListHeaderComponent={
-        <>
-          <AuthButtons />
-          <Link href="/(tabs)/profile" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
-              <Text style={{ textAlign: 'center' }}>Profile</Text>
-            </Pressable>
-          </Link>
-          <Link href="/my-rsvps" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
-              <Text style={{ textAlign: 'center' }}>My RSVPs</Text>
-            </Pressable>
-          </Link>
-          <Link href="/(tabs)/nearby" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12 }}>
-              <Text style={{ textAlign: 'center' }}>Find nearby activities</Text>
-            </Pressable>
-          </Link>
-        </>
-      }
-    />
-  );
 }
 
 export default HomeScreen;
