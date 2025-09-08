@@ -368,7 +368,7 @@ function HomeScreen() {
             marginBottom: 16,
           }}>
             <TouchableOpacity
-              onPress={() => router.push('/profile')}
+              onPress={() => router.push('/(tabs)/profile')}
               style={{
                 width: 42,
                 height: 42,
@@ -401,7 +401,7 @@ function HomeScreen() {
             </View>
             
             <TouchableOpacity
-              onPress={() => router.push('/map')}
+              onPress={() => router.push('/(tabs)/map')}
               style={{
                 width: 42,
                 height: 42,
