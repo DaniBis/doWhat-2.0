@@ -1,0 +1,16 @@
+
+> doWhat-mobile@0.1.0 start:web /Users/dan/dowhat/apps/doWhat-mobile
+> expo start --web -c "--port" "8082"
+
+env: load .env.local
+env: export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY
+Starting project at /Users/dan/dowhat/apps/doWhat-mobile
+Using src/app as the root directory for Expo Router.
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8082
+Logs for your project will appear below.
+Web apps/doWhat-mobile/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web Bundling failed 1297ms apps/doWhat-mobile/index.ts (12 modules)
+Unable to resolve "@expo/metro-runtime" from "node_modules/.pnpm/expo-router@5.1.5_ymtwy6jvfcfdeczthrqldcsizm/node_modules/expo-router/entry-classic.js"
+› Detected a change in metro.config.js. Restart the server to see the new results.

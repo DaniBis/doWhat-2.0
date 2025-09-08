@@ -1,0 +1,113 @@
+
+> dowhat-web@0.1.0 dev /Users/dan/dowhat/apps/doWhat-web
+> next dev -p 3002
+
+  ▲ Next.js 14.2.3
+  - Local:        http://localhost:3002
+  - Environments: .env.local
+  - Experiments (use with caution):
+    · typedRoutes
+
+ ✓ Starting...
+ ✓ Ready in 2.5s
+(node:13287) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ○ Compiling / ...
+ ✓ Compiled / in 3.2s (809 modules)
+ GET / 200 in 5336ms
+ ○ Compiling /map ...
+ ✓ Compiled /map in 987ms (910 modules)
+ GET /map 200 in 1087ms
+ ✓ Compiled /filter in 272ms (887 modules)
+ GET /filter 200 in 414ms
+ ✓ Compiled /api/nearby in 412ms (538 modules)
+ GET /api/nearby 400 in 617ms
+ GET /api/nearby?lat=&lng= 400 in 35ms
+ ✓ Compiled /profile in 492ms (750 modules)
+ GET /profile 200 in 687ms
+ ✓ Compiled /favicon.ico in 443ms (401 modules)
+ GET /favicon.ico 200 in 510ms
+ ✓ Compiled / in 114ms (493 modules)
+ ✓ Compiled /map in 151ms (540 modules)
+ GET /map 200 in 316ms
+ ✓ Compiled /api/nearby in 183ms (565 modules)
+ GET /api/nearby?lat=21.043192&lng=105.843089&radius=2500 200 in 1287ms
+ GET /api/nearby?lat=21.043192&lng=105.843089&radius=2500 200 in 332ms
+ GET / 200 in 1234ms
+ ✓ Compiled /create in 268ms (950 modules)
+ GET /create 200 in 421ms
+ GET / 200 in 551ms
+ ✓ Compiled /filter in 139ms (573 modules)
+ ○ Compiling /search ...
+ ✓ Compiled /search in 509ms (962 modules)
+ ✓ Compiled in 1569ms (917 modules)
+ ✓ Compiled in 757ms (917 modules)
+ ⨯ ./src/app/page.tsx:8:42
+Module not found: Can't resolve '@/components/home/NearbyDiscoverList'
+[0m [90m  6 |[39m type [33mSearchParams[39m [33m=[39m { [k[33m:[39m string][33m:[39m string [33m|[39m string[] [33m|[39m undefined }[33m;[39m[0m
+[0m [90m  7 |[39m[0m
+[0m[31m[1m>[22m[39m[90m  8 |[39m [36mconst[39m [33mNearbyDiscoverList[39m [33m=[39m dynamic(() [33m=>[39m [36mimport[39m([32m"@/components/home/NearbyDiscoverList"[39m)[33m,[39m { ssr[33m:[39m [36mfalse[39m })[33m;[39m[0m
+[0m [90m    |[39m                                          [31m[1m^[22m[39m[0m
+[0m [90m  9 |[39m[0m
+[0m [90m 10 |[39m [36mexport[39m [36mdefault[39m [36masync[39m [36mfunction[39m [33mHomePage[39m({ searchParams }[33m:[39m { searchParams[33m?[39m[33m:[39m [33mSearchParams[39m }) {[0m
+[0m [90m 11 |[39m   [36mconst[39m supabase [33m=[39m createClient()[33m;[39m[0m
+
+https://nextjs.org/docs/messages/module-not-found
+ ○ Compiling /_error ...
+ ⨯ ./src/app/page.tsx:8:42
+Module not found: Can't resolve '@/components/home/NearbyDiscoverList'
+[0m [90m  6 |[39m type [33mSearchParams[39m [33m=[39m { [k[33m:[39m string][33m:[39m string [33m|[39m string[] [33m|[39m undefined }[33m;[39m[0m
+[0m [90m  7 |[39m[0m
+[0m[31m[1m>[22m[39m[90m  8 |[39m [36mconst[39m [33mNearbyDiscoverList[39m [33m=[39m dynamic(() [33m=>[39m [36mimport[39m([32m"@/components/home/NearbyDiscoverList"[39m)[33m,[39m { ssr[33m:[39m [36mfalse[39m })[33m;[39m[0m
+[0m [90m    |[39m                                          [31m[1m^[22m[39m[0m
+[0m [90m  9 |[39m[0m
+[0m [90m 10 |[39m [36mexport[39m [36mdefault[39m [36masync[39m [36mfunction[39m [33mHomePage[39m({ searchParams }[33m:[39m { searchParams[33m?[39m[33m:[39m [33mSearchParams[39m }) {[0m
+[0m [90m 11 |[39m   [36mconst[39m supabase [33m=[39m createClient()[33m;[39m[0m
+
+https://nextjs.org/docs/messages/module-not-found
+ GET / 500 in 25ms
+ ✓ Compiled /_not-found in 1656ms (1132 modules)
+ ⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /_next/static/webpack/38b09974e6634f07.webpack.hot-update.json 404 in 1977ms
+ GET / 200 in 1018ms
+ ✓ Compiled /favicon.ico in 493ms (592 modules)
+ GET /favicon.ico 200 in 573ms
+ GET /map 200 in 90ms
+ GET /create 200 in 55ms
+ GET /map 200 in 789ms
+ ○ Compiling /api/nearby ...
+ ✓ Compiled /api/nearby in 759ms (588 modules)
+ GET /api/nearby?lat=21.043324&lng=105.843075&radius=2500 200 in 1692ms
+ GET /api/nearby?lat=21.043324&lng=105.843075&radius=2500 200 in 403ms
+ GET /api/nearby?lat=21.04332664425915&lng=105.84302016117634&radius=2000 200 in 442ms
+ GET /api/nearby?lat=21.04332664425915&lng=105.84302016117634&radius=2000 200 in 319ms
+ GET / 200 in 453ms
+ ✓ Compiled /favicon.ico in 157ms (615 modules)
+ GET /favicon.ico 200 in 239ms
+ GET /api/nearby?lat=21.043339353632884&lng=105.842955675162&radius=2000 200 in 470ms
+ GET /api/nearby?lat=21.043339353632884&lng=105.842955675162&radius=2000 200 in 384ms
+ GET / 200 in 408ms
+ GET /favicon.ico 200 in 19ms
+ GET /api/nearby?lat=21.043348850318296&lng=105.84290748877893&radius=2000 200 in 300ms
+ GET /api/nearby?lat=21.043348850318296&lng=105.84290748877893&radius=2000 200 in 332ms
+ GET /map 200 in 38ms
+ GET /api/nearby?lat=21.043349&lng=105.842906&radius=2500 200 in 352ms
+ GET /api/nearby?lat=21.043349&lng=105.842906&radius=2500 200 in 316ms
+ GET / 200 in 412ms
+ GET /api/nearby?lat=21.043349245728763&lng=105.84290548249847&radius=2000 200 in 295ms
+ GET /api/nearby?lat=21.043349245728763&lng=105.84290548249847&radius=2000 200 in 346ms
+ ○ Compiling /activities/[id] ...
+ ✓ Compiled /activities/[id] in 603ms (1184 modules)
+(node:14655) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ GET /activities/fd760927-cc3f-491b-8129-748aaa9cafe5 200 in 1940ms
+ GET / 200 in 345ms
+ GET /api/nearby?lat=21.043349075506875&lng=105.84290634393851&radius=2000 200 in 288ms
+ GET /api/nearby?lat=21.043349075506875&lng=105.84290634393851&radius=2000 200 in 298ms
+ GET /profile 200 in 57ms
+ GET /api/nearby?lat=21.04334906196915&lng=105.84290641245542&radius=2000 200 in 309ms
+ GET /api/nearby?lat=21.04334906196915&lng=105.84290641245542&radius=2000 200 in 271ms
+ GET /create 200 in 50ms
+ GET / 200 in 855ms
+ GET /api/nearby?lat=21.04334906650404&lng=105.8429063895039&radius=2000 200 in 768ms
+ GET /api/nearby?lat=21.04334906650404&lng=105.8429063895039&radius=2000 200 in 364ms

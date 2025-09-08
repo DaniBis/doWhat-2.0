@@ -31,11 +31,7 @@ export default function TabsLayout() {
         options={{
           title: 'Discover',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'compass' : 'compass-outline'} 
-              color={color} 
-              size={24} 
-            />
+            <Ionicons name={focused ? 'compass' : 'compass-outline'} color={color} size={24} />
           ),
         }}
       />
@@ -44,11 +40,7 @@ export default function TabsLayout() {
         options={{
           title: 'Nearby',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'location' : 'location-outline'} 
-              color={color} 
-              size={24} 
-            />
+            <Ionicons name={focused ? 'location' : 'location-outline'} color={color} size={24} />
           ),
         }}
       />
@@ -57,11 +49,7 @@ export default function TabsLayout() {
         options={{
           title: 'Map',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'map' : 'map-outline'} 
-              color={color} 
-              size={24} 
-            />
+            <Ionicons name={focused ? 'map' : 'map-outline'} color={color} size={24} />
           ),
         }}
       />
@@ -70,20 +58,12 @@ export default function TabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'person-circle' : 'person-circle-outline'} 
-              color={color} 
-              size={24} 
-            />
+            <Ionicons name={focused ? 'person-circle' : 'person-circle-outline'} color={color} size={24} />
           ),
         }}
       />
-      <Tabs.Screen
-        name="location"
-        options={{
-          href: null, // Hide this tab as it's redundant with nearby
-        }}
-      />
+      <Tabs.Screen name="location" options={{ href: null }} />
     </Tabs>
   );
 }
+
