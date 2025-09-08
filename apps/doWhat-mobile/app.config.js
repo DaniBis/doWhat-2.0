@@ -9,6 +9,16 @@ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 const config = {
   ...appJson.expo,
+  ios: {
+    ...appJson.expo?.ios,
+    infoPlist: {
+      ...(appJson.expo?.ios?.infoPlist || {}),
+      UIBackgroundModes: [
+        ...(appJson.expo?.ios?.infoPlist?.UIBackgroundModes || []),
+        'location',
+      ],
+    },
+  },
   extra: {
     ...appJson.expo.extra,
     supabaseUrl,
