@@ -9,18 +9,13 @@ import { View, Text, TextInput, Pressable, FlatList, Platform } from 'react-nati
 import RsvpBadges from '../components/RsvpBadges';
 import { supabase } from '../lib/supabase';
 
-type SessionRow = {
-  session_id: string;
-  starts_at: string;
-  ends_at: string;
-  price_cents: number | null;
-  activity_id: string;
-  activity_name: string;
-  venue_id: string;
-  venue_name: string;
-  venue_lat: number | null;
-  venue_lng: number | null;
-  distance_km: number;
+type ActivityNearby = {
+  id: string;
+  name: string;
+  venue?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  distance_m?: number | null;
 };
 
 type Activity = { id: string; name: string };
@@ -54,7 +49,7 @@ export default function Nearby() {
   const [allActivities, setAllActivities] = useState<Activity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const [rows, setRows] = useState<SessionRow[] | null>(null);
+  const [rows, setRows] = useState<ActivityNearby[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
@@ -119,30 +114,22 @@ export default function Nearby() {
       return;
     }
 
-    const dayStr = day ? new Date(day).toISOString().slice(0, 10) : null;
-
     setLoading(true);
-    const { data, error } = await supabase
-      .rpc('sessions_nearby', {
-        lat: latNum,
-        lng: lngNum,
-        p_km: kmNum,
-        activities: chosenActivities,
-        day: dayStr,
-      });
-
-    if (error) {
-      setErr(error.message);
-      setLoading(false);
-      return;
+    try {
+      const base = process.env.EXPO_PUBLIC_WEB_URL || 'http://localhost:3002';
+      const url = new URL('/api/nearby', base);
+      url.searchParams.set('lat', String(latNum));
+      url.searchParams.set('lng', String(lngNum));
+      url.searchParams.set('radius', String(kmNum * 1000));
+      if (chosenActivities) url.searchParams.set('types', chosenActivities.join(','));
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed');
+      const arr = (json.activities ?? []) as any[];
+      setRows(arr.map((a: any) => ({ id: a.id, name: a.name, venue: a.venue, lat: a.lat, lng: a.lng, distance_m: a.distance_m })));
+    } catch (e: any) {
+      setErr(e?.message || 'Search failed');
     }
-
-    const rows = (data ?? []) as SessionRow[];
-    const sorted = rows.sort(
-      (a: SessionRow, b: SessionRow) =>
-        a.distance_km - b.distance_km || +new Date(a.starts_at) - +new Date(b.starts_at)
-    );
-    setRows(sorted);
     setLoading(false);
 
     // cache for convenience
@@ -275,22 +262,21 @@ export default function Nearby() {
       <FlatList
         style={{ marginTop: 12 }}
         data={rows ?? []}
-        keyExtractor={(r) => r.session_id}
+        keyExtractor={(r) => r.id}
         renderItem={({ item: r }) => (
           <View style={{ borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 8 }}>
-            <Text style={{ fontWeight: '600' }}>{r.activity_name}</Text>
-            <Text>{r.venue_name}</Text>
-            <Text>{formatDateRange(r.starts_at, r.ends_at)}</Text>
-            <Text>{r.distance_km.toFixed(1)} km away</Text>
-            {!!r.price_cents && <Text>{formatPrice(r.price_cents)}</Text>}
-            <RsvpBadges activityId={r.activity_id} />
-            {r.venue_lat != null && r.venue_lng != null && (
+            <Text style={{ fontWeight: '600' }}>{r.name}</Text>
+            {!!r.venue && <Text>{r.venue}</Text>}
+            {r.distance_m != null && (
+              <Text>{(r.distance_m/1000).toFixed(1)} km away</Text>
+            )}
+            {r.lat != null && r.lng != null && (
               <Pressable
                 style={{ marginTop: 6 }}
-                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${r.venue_lat},${r.venue_lng}`)}
+                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${r.lat},${r.lng}`)}
               >
                 <Text style={{ color: '#0d9488' }}>
-                  Open in Maps: {r.venue_lat}, {r.venue_lng}
+                  Open in Maps: {r.lat}, {r.lng}
                 </Text>
               </Pressable>
             )}

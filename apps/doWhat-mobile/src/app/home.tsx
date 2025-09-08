@@ -48,22 +48,26 @@ function HomeScreen() {
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
 
   async function fetchNearbyActivities(latNow: number | null, lngNow: number | null) {
-    const { data: near } = await supabase.rpc('sessions_nearby', {
-      lat: latNow ?? null,
-      lng: lngNow ?? null,
-      p_km: 25,
-      activities: null,
-      day: null,
-    });
-    const arr = (near ?? []) as any[];
-    if (arr.length) {
-      const map: Record<string, NearbyActivity> = {};
-      for (const r of arr) {
-        if (!map[r.activity_id]) map[r.activity_id] = { id: r.activity_id, name: r.activity_name, count: 0 };
-        map[r.activity_id].count += 1;
-      }
-      setActivities(Object.values(map).sort((a,b)=> b.count - a.count));
-    } else {
+    try {
+      if (latNow == null || lngNow == null) { setActivities([]); return; }
+      const base = process.env.EXPO_PUBLIC_WEB_URL || 'http://localhost:3002';
+      const url = new URL('/api/nearby', base);
+      url.searchParams.set('lat', String(latNow));
+      url.searchParams.set('lng', String(lngNow));
+      url.searchParams.set('radius', '2500');
+      const res = await fetch(url.toString());
+      const json = await res.json();
+      const list = (json?.activities || []) as Array<{ id: string; name: string }>;
+      // Group by activity id to get a lightweight "count"
+      const grouped = Object.values(
+        list.reduce((acc: Record<string, NearbyActivity>, it: any) => {
+          const key = it.id || it.name;
+          if (!acc[key]) acc[key] = { id: it.id || key, name: it.name, count: 0 };
+          acc[key].count += 1; return acc;
+        }, {})
+      ).sort((a: any, b: any) => b.count - a.count);
+      setActivities(grouped);
+    } catch {
       setActivities([]);
     }
   }
@@ -344,8 +348,8 @@ function HomeScreen() {
     );
   }
 
-  // Show activities grid if we have a nearby list
-  if (activities && activities.length) {
+  // New design: show header + activities grid (even if empty)
+  {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
         <StatusBar barStyle="light-content" backgroundColor="#2C3E50" />
