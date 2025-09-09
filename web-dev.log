@@ -129,3 +129,24 @@ https://nextjs.org/docs/messages/module-not-found
  ✓ Compiled in 1282ms (581 modules)
  ✓ Compiled in 1998ms (1126 modules)
  ✓ Compiled in 962ms (1140 modules)
+ ○ Compiling /api/nearby ...
+ ✓ Compiled /api/nearby in 1023ms (587 modules)
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2761ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 3978ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=25000 200 in 615ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 809ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 882ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 939ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 975ms
+ ✓ Compiled in 1542ms (1140 modules)
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ ○ Compiling /api/nearby ...
+ ✓ Compiled /api/nearby in 777ms (587 modules)
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2301ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2447ms

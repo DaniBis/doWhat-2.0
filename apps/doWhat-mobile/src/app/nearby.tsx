@@ -4,7 +4,8 @@ import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import { Link } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, Platform, Dimensions } from 'react-native';
+import { theme } from '@dowhat/shared/src/theme';
 
 import RsvpBadges from '../components/RsvpBadges';
 import { supabase } from '../lib/supabase';
@@ -50,6 +51,7 @@ export default function Nearby() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [rows, setRows] = useState<ActivityNearby[] | null>(null);
+  const screen = Dimensions.get('window');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
@@ -261,30 +263,42 @@ export default function Nearby() {
 
       <FlatList
         style={{ marginTop: 12 }}
-        data={rows ?? []}
+        data={(rows ?? []).slice()}
         keyExtractor={(r) => r.id}
-        renderItem={({ item: r }) => (
-          <View style={{ borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 8 }}>
-            <Text style={{ fontWeight: '600' }}>{r.name}</Text>
-            {!!r.venue && <Text>{r.venue}</Text>}
-            {r.distance_m != null && (
-              <Text>{(r.distance_m/1000).toFixed(1)} km away</Text>
-            )}
-            {r.lat != null && r.lng != null && (
-              <Pressable
-                style={{ marginTop: 6 }}
-                onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${r.lat},${r.lng}`)}
-              >
-                <Text style={{ color: '#0d9488' }}>
-                  Open in Maps: {r.lat}, {r.lng}
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        )}
+        numColumns={2}
+        columnWrapperStyle={{ gap: 12, paddingHorizontal: 2 }}
+        renderItem={({ item: r }) => {
+          const size = (screen.width - 48) / 2; // gutters
+          return (
+            <Pressable
+              onPress={() => r.lat && r.lng && Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${r.lat},${r.lng}`)}
+              style={{
+                width: size,
+                backgroundColor: theme.colors.surface,
+                borderRadius: theme.radius.lg,
+                padding: 14,
+                marginBottom: 12,
+                ...theme.shadow.card,
+              }}
+            >
+              <View style={{
+                width: 84, height: 84, borderRadius: 42,
+                backgroundColor: theme.colors.brandYellow,
+                alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+              }}>
+                <Text style={{ fontSize: 36 }}>📍</Text>
+              </View>
+              <Text numberOfLines={2} style={{ fontWeight: '700', color: theme.colors.brandInk }}>{r.name}</Text>
+              {!!r.venue && <Text numberOfLines={1} style={{ color: theme.colors.ink60, marginTop: 2 }}>{r.venue}</Text>}
+              {r.distance_m != null && (
+                <Text style={{ color: theme.colors.ink60, marginTop: 2 }}>{(r.distance_m/1000).toFixed(1)} km away</Text>
+              )}
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           !loading ? (
-            <Text style={{ textAlign: 'center', marginTop: 12 }}>No results yet.</Text>
+            <Text style={{ textAlign: 'center', marginTop: 12, color: theme.colors.ink60 }}>No results yet. Adjust filters and try again.</Text>
           ) : null
         }
       />

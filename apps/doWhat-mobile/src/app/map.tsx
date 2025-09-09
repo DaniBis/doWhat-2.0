@@ -2,6 +2,7 @@ import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Platform, ScrollView } from 'react-native';
+import { theme } from '@dowhat/shared/src/theme';
 // Lazy import expo-maps to avoid crashing if the native module
 // is not present (e.g., running in Expo Go or before rebuilding).
 type MapsModule = typeof import('expo-maps');
@@ -111,7 +112,7 @@ export default function MapTab() {
       const map: Record<string, Marker> = {};
 
       // Fetch nearby activities from the web API (uses PostGIS and server-side filters)
-      const baseUrl = process.env.EXPO_PUBLIC_SITE_URL || 'http://localhost:3002';
+      const baseUrl = process.env.EXPO_PUBLIC_WEB_URL || process.env.EXPO_PUBLIC_SITE_URL || 'http://localhost:3002';
       const url = new URL('/api/nearby', baseUrl);
       if (la != null && ln != null) {
         url.searchParams.set('lat', String(la));
@@ -195,6 +196,12 @@ export default function MapTab() {
     })();
   }, []);
 
+  // Reload markers when filters change
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [km, selectedActIds.length]);
+
   const cameraPosition = useMemo(() => ({
     coordinates: lat != null && lng != null ? { latitude: lat, longitude: lng } : { latitude: 51.5074, longitude: -0.1278 },
     zoom: 11,
@@ -271,6 +278,32 @@ export default function MapTab() {
         </Pressable>
         <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Map</Text>
         <View style={{ width: 32 }} />
+      </View>
+      {/* Chip filter row */}
+      <View style={{ position: 'absolute', top: 52, left: 8, right: 8, zIndex: 20 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 4, gap: 8 }}>
+          {[5, 10, 25].map((n) => (
+            <Pressable key={n} onPress={() => setKm(n)} style={{
+              paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+              backgroundColor: km === n ? theme.colors.brandTeal : 'white',
+              borderWidth: 1, borderColor: km === n ? theme.colors.brandTeal : '#e5e7eb'
+            }}>
+              <Text style={{ color: km === n ? 'white' : '#111827', fontWeight: '600' }}>{n} km</Text>
+            </Pressable>
+          ))}
+          {allActivities.slice(0, 6).map((a) => {
+            const active = selectedActIds.includes(a.id);
+            return (
+              <Pressable key={a.id} onPress={() => setSelectedActIds((prev) => active ? prev.filter((x) => x !== a.id) : [...prev, a.id])} style={{
+                paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+                backgroundColor: active ? theme.colors.brandYellow : 'white',
+                borderWidth: 1, borderColor: active ? theme.colors.brandYellow : '#e5e7eb'
+              }}>
+                <Text style={{ color: '#111827' }}>{a.name}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
       <MapView
         ref={cameraRef as any}
