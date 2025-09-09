@@ -150,3 +150,5 @@ digest: "1630748016"
  ✓ Compiled /api/nearby in 777ms (587 modules)
  GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2301ms
  GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2447ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1171ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1207ms

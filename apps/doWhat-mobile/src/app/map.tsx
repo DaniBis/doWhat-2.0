@@ -272,7 +272,7 @@ export default function MapTab() {
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       {/* Top bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50', zIndex: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: theme.colors.brandTeal, zIndex: 10 }}>
         <Pressable onPress={() => router.back()}>
           <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
         </Pressable>
@@ -456,12 +456,12 @@ export default function MapTab() {
                       </View>
                     </View>
                   ) : (
-                    <View key={s.id} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: '#f59e42', backgroundColor: 'rgba(245,158,66,0.04)' }}>
-                      <Text style={{ fontWeight: '600', color: '#2C3E50' }}>{s.activities?.name ?? 'Activity'}</Text>
+                    <View key={s.id} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: theme.colors.brandTeal, backgroundColor: 'rgba(22,179,163,0.06)' }}>
+                      <Text style={{ fontWeight: '600', color: theme.colors.brandInk }}>{s.activities?.name ?? 'Activity'}</Text>
                       <Text style={{ marginTop: 2 }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
                       {!!s.price_cents && <Text style={{ marginTop: 2 }}>{formatPrice(s.price_cents)}</Text>}
                       <Link href={`/sessions/${s.id}`} asChild>
-                        <Pressable style={{ marginTop: 6, backgroundColor: '#0d9488', paddingVertical: 8, borderRadius: 8 }}>
+                        <Pressable style={{ marginTop: 6, backgroundColor: theme.colors.brandTeal, paddingVertical: 8, borderRadius: 8 }}>
                           <Text style={{ color: 'white', textAlign: 'center' }}>View details</Text>
                         </Pressable>
                       </Link>
