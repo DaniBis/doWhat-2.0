@@ -152,3 +152,162 @@ digest: "1630748016"
  GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2447ms
  GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1171ms
  GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1207ms
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+ ⨯ unhandledRejection: tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+ ⨯ unhandledRejection: tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+ ⨯ unhandledRejection: tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+ GET / 500 in 1720ms
+ ⨯ unhandledRejection: tI [Error]: Cookies can only be modified in a Server Action or Route Handler. Read more: https://nextjs.org/docs/app/api-reference/functions/cookies#cookiessetname-value-options
+    at Proxy.callable (/Users/dan/dowhat/node_modules/.pnpm/next@14.2.3_@babel+core@7.28.3_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/compiled/next-server/app-page.runtime.dev.js:36:12959)
+    at Object.set (webpack-internal:///(rsc)/./src/lib/supabase/server.ts:17:29)
+    at setAll (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:58:43)
+    at applyServerStorage (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/cookies.js:337:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Object.eval [as callback] (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+ssr@0.7.0_@supabase+supabase-js@2.56.1/node_modules/@supabase/ssr/dist/module/createServerClient.js:54:13)
+    at async eval (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1780:21)
+    at async Promise.all (index 1)
+    at async SupabaseAuthClient._notifyAllSubscribers (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1786:13)
+    at async SupabaseAuthClient._callRefreshToken (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1747:13)
+    at async SupabaseAuthClient.__loadSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1059:40)
+    at async SupabaseAuthClient._useSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:990:28)
+    at async SupabaseAuthClient._emitInitialSession (webpack-internal:///(rsc)/../../node_modules/.pnpm/@supabase+auth-js@2.71.1/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js:1444:16)
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 2.1s (589 modules)
+ GET /favicon.ico 200 in 2241ms
+ ○ Compiling /api/nearby ...
+ ✓ Compiled /api/nearby in 1017ms (614 modules)
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2909ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2900ms
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ GET / 500 in 1231ms
+ GET /favicon.ico 200 in 32ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2554ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2550ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1032ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 3155ms
+ ✓ Compiled in 941ms (581 modules)
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ ⨯ Error: Event handlers cannot be passed to Client Component props.
+  <img src=... alt="doWhat" className=... onError={function onError}>
+                                                  ^^^^^^^^^^^^^^^^^^
+If you need interactivity, consider converting part of this to a Client Component.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>)
+digest: "1630748016"
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 500 in 1132ms
+ GET /favicon.ico 200 in 85ms
+ ✓ Compiled in 1961ms (1156 modules)

@@ -6,6 +6,7 @@ import { Link } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, FlatList, Platform, Dimensions } from 'react-native';
 import { theme } from '@dowhat/shared/src/theme';
+import ActivityIcon from '../components/ActivityIcon';
 
 import RsvpBadges from '../components/RsvpBadges';
 import { supabase } from '../lib/supabase';
@@ -281,12 +282,8 @@ export default function Nearby() {
                 ...theme.shadow.card,
               }}
             >
-              <View style={{
-                width: 84, height: 84, borderRadius: 42,
-                backgroundColor: theme.colors.brandYellow,
-                alignItems: 'center', justifyContent: 'center', marginBottom: 12,
-              }}>
-                <Text style={{ fontSize: 36 }}>📍</Text>
+              <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: theme.colors.brandYellow, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                <ActivityIcon name={r.name} size={36} color="#111827" />
               </View>
               <Text numberOfLines={2} style={{ fontWeight: '700', color: theme.colors.brandInk }}>{r.name}</Text>
               {!!r.venue && <Text numberOfLines={1} style={{ color: theme.colors.ink60, marginTop: 2 }}>{r.venue}</Text>}

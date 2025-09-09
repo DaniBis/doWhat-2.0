@@ -8,6 +8,7 @@ import { useEffect, useState, useCallback } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
 import { LinearGradient } from 'expo-linear-gradient';
 import Brand from '../components/Brand';
+import ActivityIcon from '../components/ActivityIcon';
 import { theme } from '@dowhat/shared/src/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AuthButtons from "../components/AuthButtons";
@@ -586,7 +587,7 @@ function HomeScreen() {
                           marginBottom: 16,
                           ...theme.shadow.card,
                         }}>
-                          <Text style={{ fontSize: 36 }}>{visual.icon}</Text>
+                          <ActivityIcon name={activity.name} size={32} color="#111827" />
                         </View>
                         
                         {/* Activity Info */}
