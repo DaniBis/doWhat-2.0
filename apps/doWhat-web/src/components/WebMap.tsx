@@ -96,8 +96,8 @@ export default function WebMap({ center }: Props) {
           const customIcon = LDivIcon({
             html: `
               <div style="
-                background: white;
-                border: 3px solid #2563eb;
+                background: #FDB515;
+                border: 3px solid #16B3A3;
                 border-radius: 50%;
                 width: 40px;
                 height: 40px;

@@ -111,3 +111,21 @@ https://nextjs.org/docs/messages/module-not-found
  GET / 200 in 855ms
  GET /api/nearby?lat=21.04334906650404&lng=105.8429063895039&radius=2000 200 in 768ms
  GET /api/nearby?lat=21.04334906650404&lng=105.8429063895039&radius=2000 200 in 364ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=25000 200 in 1198ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 2169ms
+ GET /api/nearby?lat=37.785834&lng=-122.406417&radius=2500 200 in 1540ms
+ ✓ Compiled in 7.3s (1139 modules)
+ GET / 200 in 2538ms
+ ○ Compiling /api/nearby ...
+ ✓ Compiled /api/nearby in 762ms (588 modules)
+ ✓ Compiled (613 modules)
+ GET /favicon.ico 200 in 1311ms
+ GET /api/nearby?lat=21.043107330632836&lng=105.84308176717494&radius=2000 200 in 1989ms
+ GET /api/nearby?lat=21.043107330632836&lng=105.84308176717494&radius=2000 200 in 795ms
+ ✓ Compiled in 1325ms (581 modules)
+ ○ Compiling /api/cleanup ...
+ ✓ Compiled /api/cleanup in 1419ms (584 modules)
+ GET /api/cleanup?scope=upcoming 200 in 3130ms
+ ✓ Compiled in 1282ms (581 modules)
+ ✓ Compiled in 1998ms (1126 modules)
+ ✓ Compiled in 962ms (1140 modules)

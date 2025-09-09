@@ -4,6 +4,7 @@ import "./globals.css";
 import dynamic from "next/dynamic";
 const AuthButtons = dynamic(() => import("@/components/AuthButtons"), { ssr: false });
 const GeoRequirementBanner = dynamic(() => import("@/components/GeoRequirement"), { ssr: false });
+import BrandLogo from "@/components/BrandLogo";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -15,14 +16,13 @@ export default async function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-dvh bg-brand-bg text-gray-900">
-        <header className="border-b bg-white/70 backdrop-blur">
+        <header className="border-b bg-[#16B3A3] text-white">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 text-sm">
-            <a href="/" className="font-semibold text-brand-teal">doWhat</a>
+            <BrandLogo />
             <nav className="flex items-center gap-4">
-              <a href="/map" className="text-brand-teal">Map</a>
-              <a href="/my/rsvps" className="text-brand-teal">My RSVPs</a>
-              <a href="/profile" className="text-brand-teal">Profile</a>
-              <a href="/create" className="text-brand-teal">Create</a>
+              <a href="/map" className="hover:underline">Map</a>
+              <a href="/profile" className="hover:underline">Profile</a>
+              <a href="/create" className="hover:underline">Create</a>
             </nav>
             <AuthButtons />
           </div>

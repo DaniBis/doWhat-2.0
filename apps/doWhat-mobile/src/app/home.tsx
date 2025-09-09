@@ -7,6 +7,8 @@ import { Link, useFocusEffect, router } from "expo-router";
 import { useEffect, useState, useCallback } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
 import { LinearGradient } from 'expo-linear-gradient';
+import Brand from '../components/Brand';
+import { theme } from '@dowhat/shared/src/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AuthButtons from "../components/AuthButtons";
 import RsvpBadges from "../components/RsvpBadges";
@@ -356,7 +358,7 @@ function HomeScreen() {
         
         {/* Modern Header */}
         <LinearGradient
-          colors={['#2C3E50', '#3498DB']}
+          colors={[theme.colors.brandTeal, theme.colors.brandTealDark]}
           style={{
             paddingHorizontal: 20,
             paddingTop: 12,
@@ -385,24 +387,7 @@ function HomeScreen() {
               <Ionicons name="person" size={20} color="#FFFFFF" />
             </TouchableOpacity>
             
-            <View style={{ alignItems: 'center' }}>
-              <Text style={{
-                color: '#FFFFFF',
-                fontSize: 24,
-                fontWeight: '800',
-                letterSpacing: 0.5,
-              }}>
-                doWhat
-              </Text>
-              <Text style={{
-                color: 'rgba(255,255,255,0.8)',
-                fontSize: 12,
-                fontWeight: '500',
-                marginTop: 2,
-              }}>
-                Discover • Connect • Explore
-              </Text>
-            </View>
+            <Brand />
             
             <TouchableOpacity
               onPress={() => router.push('/(tabs)/map')}
@@ -592,15 +577,14 @@ function HomeScreen() {
                       }}>
                         {/* Activity Icon Container */}
                         <View style={{
-                          width: 80,
-                          height: 80,
-                          borderRadius: 40,
-                          backgroundColor: visual.bgColor,
+                          width: 84,
+                          height: 84,
+                          borderRadius: 42,
+                          backgroundColor: theme.colors.brandYellow,
                           alignItems: 'center',
                           justifyContent: 'center',
                           marginBottom: 16,
-                          borderWidth: 2,
-                          borderColor: visual.color + '20',
+                          ...theme.shadow.card,
                         }}>
                           <Text style={{ fontSize: 36 }}>{visual.icon}</Text>
                         </View>

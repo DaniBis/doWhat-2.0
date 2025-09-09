@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs } from 'expo-router';
+import { theme } from '@dowhat/shared/src/theme';
 
 export default function TabsLayout() {
   return (
@@ -10,8 +11,8 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: 'white',
-          borderTopWidth: 1,
-          borderTopColor: '#E5E7EB',
+          borderTopWidth: 3,
+          borderTopColor: theme.colors.brandTeal,
           paddingTop: 8,
           paddingBottom: 8,
           height: 88,
@@ -66,4 +67,3 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
-

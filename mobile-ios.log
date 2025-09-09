@@ -12,48 +12,47 @@ warning: Bundler cache is empty, rebuilding (this may take a minute)
 Waiting on http://localhost:8081
 Logs for your project will appear below.
 iOS apps/doWhat-mobile/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
-iOS apps/doWhat-mobile/index.ts ▓▓░░░░░░░░░░░░░░ 16.2% (130/323)
-iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓░░░░░░░░░ 44.0% (442/669)
+iOS apps/doWhat-mobile/index.ts ▓▓░░░░░░░░░░░░░░ 16.0% (116/312)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓░░░░░░░░░░ 41.8% (321/529)
  WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
 Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.5_@babel+core@7.28.3_@types+react@19.1.12_react@19.0.0__react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
-iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓░░░░░░ 67.7% (720/935)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓░░░░░░░░ 54.7% (549/742)
  WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
 Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
-iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓░░░░ 78.7% (1031/1162)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓░░░░░░ 68.1% ( 853/1064)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 92.2% (1160/1210)
  WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
 Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.3_@react-navigation+native@7.1.17_react-native@0.79.5_@babel+c_f5mwpaa6kdjlnev2emqvgiax2m/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
-iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (1386/1386)
-iOS Bundled 17941ms apps/doWhat-mobile/index.ts (1386 modules)
- WARN  [Layout children]: No route named "(tabs)" exists in nested children: ["about", "add-event", "app-status", "auth-callback", "auth", "filter", "home", "index", "location", "map", "my-rsvps", "nearby", "onboarding", "people-filter", "profile-new", "profile", "saved", "settings", "_sitemap", "+not-found", "%28tabs%29", "activities/[id]", "activities/[id]/participants", "activity/[id]", "sessions/[id]"]
- WARN  [Layout children]: Too many screens defined. Route "nearby" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "map" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "profile" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "location" is extraneous.
+iOS Bundled 19809ms apps/doWhat-mobile/index.ts (1386 modules)
  WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
 → Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [Layout children]: Too many screens defined. Route "map" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "profile" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "location" is extraneous.
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [Layout children]: Too many screens defined. Route "profile" is extraneous.
- WARN  [Layout children]: Too many screens defined. Route "location" is extraneous.
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [Layout children]: No route named "profile" exists in nested children: ["index", "location", "map", "nearby"]
+iOS node_modules/.pnpm/expo-maps@0.11.0_expo@53.0.22_@babel+core@7.28.3_@expo+metro-runtime@3.2.3_react-native@0.79._ezxddsd7x6o52ofahv4xl6brkm/node_modules/expo-maps/src/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+iOS Bundled 897ms node_modules/.pnpm/expo-maps@0.11.0_expo@53.0.22_@babel+core@7.28.3_@expo+metro-runtime@3.2.3_react-native@0.79._ezxddsd7x6o52ofahv4xl6brkm/node_modules/expo-maps/src/index.ts (674 modules)
  WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
 → Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
  WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
 → Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
- WARN  [bg-location] failed to start Calling the 'startLocationUpdatesAsync' function has failed
-→ Caused by: Background location has not been configured, make sure to add 'location' to 'UIBackgroundModes' in the Info.plist file
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.5_@babel+core@7.28.3_@types+react@19.1.12_react@19.0.0__react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.3_@react-navigation+native@7.1.17_react-native@0.79.5_@babel+c_f5mwpaa6kdjlnev2emqvgiax2m/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.5_@babel+core@7.28.3_@types+react@19.1.12_react@19.0.0__react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.3_@react-navigation+native@7.1.17_react-native@0.79.5_@babel+c_f5mwpaa6kdjlnev2emqvgiax2m/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.5_@babel+core@7.28.3_@types+react@19.1.12_react@19.0.0__react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.3_@react-navigation+native@7.1.17_react-native@0.79.5_@babel+c_f5mwpaa6kdjlnev2emqvgiax2m/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.5_@babel+core@7.28.3_@types+react@19.1.12_react@19.0.0__react@19.0.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.3_@react-navigation+native@7.1.17_react-native@0.79.5_@babel+c_f5mwpaa6kdjlnev2emqvgiax2m/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@19.0.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
