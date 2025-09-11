@@ -1,4 +1,5 @@
 import * as Linking from 'expo-linking';
+import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
@@ -7,6 +8,8 @@ import { supabase } from '../lib/supabase';
 
 function useSupabaseOAuthListener() {
   useEffect(() => {
+  // Completes auth session on iOS after returning from SFSafariViewController
+  try { WebBrowser.maybeCompleteAuthSession(); } catch {}
     async function handleURL(url: string) {
       try {
         const { queryParams } = Linking.parse(url);
@@ -44,16 +47,17 @@ export default function AuthButtons() {
   }, []);
 
   async function signIn() {
-    // Deep link target handled by app; Supabase must allow this in Redirect URLs.
-    const redirectTo = 'dowhat://auth-callback';
+    // Compute both native deep link and Expo proxy URL; prefer proxy in Expo Go
+    const nativeRedirect = Linking.createURL('/auth-callback');
+    const proxyRedirect = AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' });
+    const useProxy = nativeRedirect.startsWith('exp://');
+    const redirectTo = useProxy ? proxyRedirect : nativeRedirect;
     if (__DEV__) console.log('[auth] redirectTo', redirectTo);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo,
-        skipBrowserRedirect: true,
-      },
-    });
+      // Cast to any to allow skipBrowserRedirect in RN without type friction across versions
+      options: { redirectTo, skipBrowserRedirect: true } as any,
+    } as any);
     if (__DEV__) console.log('[auth] signInWithOAuth error?', error?.message);
     if (__DEV__) console.log('[auth] supabase auth url', data?.url);
     if (error) {
@@ -63,7 +67,7 @@ export default function AuthButtons() {
     if (data?.url) {
       // Open auth and wait for redirect back to our redirectTo
       if (__DEV__) console.log('[auth] opening browser to', data.url);
-      const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+  const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (__DEV__) console.log('[auth] auth result', res);
       if (res.type === 'success' && res.url) {
         // Parse both fragment (#) and query (?) params

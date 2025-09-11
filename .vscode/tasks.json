@@ -35,6 +35,21 @@
 			"label": "quick:health",
 			"type": "shell",
 			"command": "curl -s http://localhost:3002/api/health || true"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "lint",
+			"type": "shell",
+			"command": "pnpm -w run lint"
 		}
 	]
 }
