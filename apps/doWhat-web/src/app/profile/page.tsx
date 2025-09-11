@@ -52,6 +52,7 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<'profile' | 'traits' | 'badges' | 'activities'>('profile');
   const [userTraits, setUserTraits] = useState<UserTrait[]>([]);
   const [userBadges, setUserBadges] = useState<any[]>([]);
+  const [traits, setTraits] = useState<any[]>([]);
   const [showTraitSelector, setShowTraitSelector] = useState(false);
   const [stats, setStats] = useState<{
     eventsCreated: number;
@@ -91,6 +92,16 @@ export default function ProfilePage() {
       if (res.ok) {
         const json = await res.json();
         setUserBadges(json.badges || []);
+      }
+
+      // Load traits (owner-only)
+      const tr = await fetch(`/api/traits/${uid}`, { cache: 'no-store' });
+      if (tr.ok) {
+        const json = await tr.json();
+        const list = (json.traits || []) as any[];
+        // sort by score * confidence and take top 6
+        const sorted = [...list].sort((a,b) => (b.score_float*b.confidence_float) - (a.score_float*a.confidence_float)).slice(0,6);
+        setTraits(sorted);
       }
 
       // Get user stats
@@ -330,6 +341,23 @@ export default function ProfilePage() {
         <h3 className="text-lg font-semibold mb-4">Achievement Badges</h3>
         <BadgesGrid items={userBadges} />
       </div>
+      {traits.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Top Traits</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {traits.map((t) => (
+              <div key={t.trait_id} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 bg-gray-50">
+                <div className="text-2xl">🧠</div>
+                <div>
+                  <div className="font-semibold text-gray-900">{t.name}</div>
+                  <div className="text-xs text-gray-600">{t.category} · Score {Math.round(t.score_float)} · Conf {Math.round(t.confidence_float*100)}%</div>
+                  {t.description && <div className="text-sm text-gray-600 mt-1">{t.description}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 
