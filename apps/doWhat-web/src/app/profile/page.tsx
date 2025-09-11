@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import BadgesGrid from "@/components/BadgesGrid";
 
 import { supabase } from "@/lib/supabase/browser";
 
@@ -50,7 +51,7 @@ export default function ProfilePage() {
   const [err, setErr] = useState<string>("");
   const [activeTab, setActiveTab] = useState<'profile' | 'traits' | 'badges' | 'activities'>('profile');
   const [userTraits, setUserTraits] = useState<UserTrait[]>([]);
-  const [userBadges, setUserBadges] = useState<UserBadge[]>([]);
+  const [userBadges, setUserBadges] = useState<any[]>([]);
   const [showTraitSelector, setShowTraitSelector] = useState(false);
   const [stats, setStats] = useState<{
     eventsCreated: number;
@@ -79,13 +80,18 @@ export default function ProfilePage() {
         setLocation((data?.location as string) || "");
       }
 
-      // Load demo traits and badges
+      // Load demo traits
       setUserTraits([
         availableTraits[0], // Early Bird
         availableTraits[3], // Adventure Seeker
         availableTraits[6], // Art Lover
       ]);
-      setUserBadges(availableBadges);
+      // Load real badges via API
+      const res = await fetch(`/api/users/${uid}/badges`, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        setUserBadges(json.badges || []);
+      }
 
       // Get user stats
       const [eventsCreated, eventsAttended, totalRsvps] = await Promise.all([
@@ -322,30 +328,7 @@ export default function ProfilePage() {
     <div className="space-y-6">
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
         <h3 className="text-lg font-semibold mb-4">Achievement Badges</h3>
-        
-        {userBadges.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">🏆</div>
-            <p>No badges earned yet. Participate in activities to earn badges!</p>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {userBadges.map((badge) => (
-              <div
-                key={badge.badge_name}
-                className="flex items-start gap-4 p-4 rounded-lg border border-gray-200 bg-gradient-to-r from-gray-50 to-white"
-              >
-                <span className="text-3xl">{badge.icon}</span>
-                <div className="flex-1">
-                  <h4 className="font-semibold text-gray-900">{badge.badge_name}</h4>
-                  <p className="text-sm text-gray-600">
-                    Earned {new Date(badge.earned_at).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <BadgesGrid items={userBadges} />
       </div>
     </div>
   );

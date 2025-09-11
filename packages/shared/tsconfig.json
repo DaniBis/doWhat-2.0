@@ -12,5 +12,12 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src", "./src/format.ts", "./src/index.ts", "./src/lib/supabase.ts", "./src/types.ts"],
+  "include": [
+    "src",
+    "./src/format.ts",
+    "./src/index.ts",
+    "./src/lib/supabase.ts",
+    "./src/types.ts",
+    "./src/types.badges.ts"
+  ],
 }

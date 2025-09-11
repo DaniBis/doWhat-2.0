@@ -86,9 +86,10 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 
 ## Database notes
 
-- `apps/doWhat-web/src/lib/supabase/migrations/002_schema.sql` – core tables example (users, activities, rsvps)
-- `apps/doWhat-web/src/lib/supabase/migrations/003_profiles.sql` – `profiles` table with `id -> auth.users(id)`
-- `apps/doWhat-web/src/lib/supabase/migrations/004_sessions_nearby.sql` – RPC used by web + mobile nearby search
+
+- To apply the new badges schema locally (if using psql):
+  - psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/007_badges.sql
+  - Or paste the statements in your Supabase SQL editor.
 
 Enable RLS if desired and add policies (examples commented inside the migration file).
 
