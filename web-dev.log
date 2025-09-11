@@ -324,3 +324,41 @@ https://nextjs.org/docs/messages/module-not-found
 Import trace for requested module:
 ./src/components/ActivityCard.tsx
 ./src/app/search/page.tsx
+ ○ Compiling /_error ...
+ ⨯ ./src/components/WebActivityIcon.tsx:1:1
+Module not found: Package path ./src/icons is not exported from package /Users/dan/dowhat/node_modules/.pnpm/node_modules/@dowhat/shared (see exports field in /Users/dan/dowhat/node_modules/.pnpm/node_modules/@dowhat/shared/package.json)
+[0m[31m[1m>[22m[39m[90m 1 |[39m [36mimport[39m { getActivityIconKey[33m,[39m type [33mIconKey[39m } [36mfrom[39m [32m'@dowhat/shared/src/icons'[39m[33m;[39m[0m
+[0m [90m   |[39m [31m[1m^[22m[39m[0m
+[0m [90m 2 |[39m [36mimport[39m {[0m
+[0m [90m 3 |[39m   [33mIoWalkOutline[39m[33m,[39m[0m
+[0m [90m 4 |[39m   [33mIoBicycleOutline[39m[33m,[39m[0m
+
+https://nextjs.org/docs/messages/module-not-found
+
+Import trace for requested module:
+./src/components/ActivityCard.tsx
+./src/app/search/page.tsx
+ GET / 500 in 2608ms
+ GET / 500 in 46ms
+ ⨯ ./src/components/WebActivityIcon.tsx:1:1
+Module not found: Package path ./src/icons is not exported from package /Users/dan/dowhat/node_modules/.pnpm/node_modules/@dowhat/shared (see exports field in /Users/dan/dowhat/node_modules/.pnpm/node_modules/@dowhat/shared/package.json)
+[0m[31m[1m>[22m[39m[90m 1 |[39m [36mimport[39m { getActivityIconKey[33m,[39m type [33mIconKey[39m } [36mfrom[39m [32m'@dowhat/shared/src/icons'[39m[33m;[39m[0m
+[0m [90m   |[39m [31m[1m^[22m[39m[0m
+[0m [90m 2 |[39m [36mimport[39m {[0m
+[0m [90m 3 |[39m   [33mIoWalkOutline[39m[33m,[39m[0m
+[0m [90m 4 |[39m   [33mIoBicycleOutline[39m[33m,[39m[0m
+
+https://nextjs.org/docs/messages/module-not-found
+
+Import trace for requested module:
+./src/components/ActivityCard.tsx
+./src/app/search/page.tsx
+ GET /favicon.ico 500 in 269ms
+ GET / 500 in 404ms
+ GET /favicon.ico 500 in 48ms
+
+Could not open WebActivityIcon.tsx in the editor.
+
+To set up the editor integration, add something like REACT_EDITOR=atom to the .env.local file in your project folder and restart the development server.
+
+[?25h

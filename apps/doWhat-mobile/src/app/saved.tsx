@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
-import { Stack } from 'expo-router';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Stack } = require('expo-router');
 import ActivityList from '../components/ActivityList';
 import { supabase } from '../lib/supabase';
 
@@ -32,7 +33,7 @@ export default function SavedScreen() {
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) { setActivities([]); return; }
       const { data, error } = await supabase
         .from('saved_activities')
         .select(`

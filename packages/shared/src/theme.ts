@@ -22,7 +22,7 @@ export const theme = {
       shadowRadius: 12,
       shadowOffset: { width: 0, height: 4 },
       elevation: 4,
-    } as any,
+    },
   },
 };
 

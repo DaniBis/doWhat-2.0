@@ -2,8 +2,8 @@ import { Inter } from "next/font/google";
 import React from "react";
 import "./globals.css";
 import dynamic from "next/dynamic";
-const AuthButtons = dynamic(() => import("@/components/AuthButtons"), { ssr: false });
-const GeoRequirementBanner = dynamic(() => import("@/components/GeoRequirement"), { ssr: false });
+const AuthButtons = dynamic(() => import("@/components/AuthButtons"), { ssr: false }) as unknown as React.FC;
+const GeoRequirementBanner = dynamic(() => import("@/components/GeoRequirement"), { ssr: false }) as unknown as React.FC;
 import BrandLogo from "@/components/BrandLogo";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });

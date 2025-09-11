@@ -8,8 +8,20 @@ const pnpmDir = path.join(workspaceRoot, 'node_modules', '.pnpm');
 
 const config = getDefaultConfig(projectRoot);
 
+// Ensure Metro can resolve expo-router (and other symlinked deps) with pnpm
+// by explicitly mapping the package path. This avoids occasional resolution
+// failures like "Unable to resolve module expo-router/entry".
+let expoRouterPath;
+try {
+  expoRouterPath = path.dirname(
+    require.resolve('expo-router/package.json', { paths: [projectRoot, workspaceRoot] })
+  );
+} catch (e) {
+  expoRouterPath = null;
+}
+
 // Watch the whole monorepo and pnpm virtual store
-config.watchFolders = [workspaceRoot, pnpmDir];
+config.watchFolders = [workspaceRoot, pnpmDir].concat(expoRouterPath ? [expoRouterPath] : []);
 
 // Ensure RN resolves node_modules from repo root too
 config.resolver.nodeModulesPaths = [
@@ -17,10 +29,14 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules')
 ];
 
+// Map critical packages explicitly to avoid duplicate installs and symlink gotchas
+config.resolver.extraNodeModules = {
+  ...(config.resolver.extraNodeModules || {}),
+  ...(expoRouterPath ? { 'expo-router': expoRouterPath } : {}),
+};
+
 // pnpm + monorepo resolution stability
-// Allow Metro to traverse upwards so transitive deps from the workspace root resolve correctly
 config.resolver.disableHierarchicalLookup = false;
-// Enable symlinks and package exports support (recommended for pnpm + RN >=0.73)
 config.resolver.unstable_enableSymlinks = true;
 config.resolver.unstable_enablePackageExports = true;
 

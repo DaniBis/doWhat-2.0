@@ -10,12 +10,22 @@
     "jsx": "react-jsx",
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
     "noEmit": true
   },
   "include": [],
   "references": [
-    { "path": "apps/doWhat-web" },
-    { "path": "apps/doWhat-mobile" },
-    { "path": "packages/shared" }
-  ]
+    {
+      "path": "apps/doWhat-web"
+    },
+    {
+      "path": "apps/doWhat-mobile"
+    },
+    {
+      "path": "packages/shared"
+    }
+  ],
+  "extends": "expo/tsconfig.base"
 }

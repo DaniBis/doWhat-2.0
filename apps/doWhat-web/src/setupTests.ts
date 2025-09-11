@@ -97,7 +97,7 @@ process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost:54321';
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-key';
 
 // Mock IntersectionObserver
-(global as any).IntersectionObserver = class IntersectionObserver {
+(global as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class IntersectionObserver {
   constructor() {}
   observe() {
     return null;
@@ -111,7 +111,7 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-key';
 };
 
 // Mock ResizeObserver
-(global as any).ResizeObserver = class ResizeObserver {
+(global as unknown as { ResizeObserver: unknown }).ResizeObserver = class ResizeObserver {
   constructor() {}
   observe() {
     return null;

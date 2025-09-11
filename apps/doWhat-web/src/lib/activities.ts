@@ -77,7 +77,7 @@ export async function upsertActivity(input: UpsertActivityInput) {
   }
 
   // Merge metadata into existing
-  const merged: Partial<ActivityRow> = { id: existing.id } as any;
+  const merged: Partial<ActivityRow> = { id: existing.id };
   const prefer = <T>(oldVal: T | null | undefined, newVal: T | null | undefined) =>
     newVal != null && (Array.isArray(newVal) ? newVal.length > 0 : true) ? newVal : oldVal ?? null;
 

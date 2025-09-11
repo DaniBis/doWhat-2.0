@@ -3,13 +3,16 @@ import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib
 import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
 import * as Location from 'expo-location';
-import { Link, useFocusEffect, router } from "expo-router";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const ExpoRouter = require("expo-router");
+const { Link, useFocusEffect, router } = ExpoRouter;
 import { useEffect, useState, useCallback } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
-import { LinearGradient } from 'expo-linear-gradient';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
 import ActivityIcon from '../components/ActivityIcon';
-import { theme } from '@dowhat/shared/src/theme';
+import { theme } from '@dowhat/shared';
 import { Ionicons } from '@expo/vector-icons';
 import AuthButtons from "../components/AuthButtons";
 import RsvpBadges from "../components/RsvpBadges";
@@ -156,7 +159,7 @@ function HomeScreen() {
         if (perm.status !== 'granted') return;
         sub = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.Balanced, distanceInterval: 100 },
-          (loc) => {
+          (loc: Location.LocationObject) => {
             const la = Number(loc.coords.latitude.toFixed(6));
             const ln = Number(loc.coords.longitude.toFixed(6));
             setLat(String(la));
@@ -200,13 +203,16 @@ function HomeScreen() {
     setRefreshing(false);
   }
 
+  console.log('HomeScreen State:', { error, loading, session, activitiesLength: activities?.length });
+
   if (error) {
     return <Text style={{ padding: 16, color: "red" }}>Error: {error}</Text>;
   }
 
   if (loading) {
     return (
-      <View style={{ padding: 12, gap: 12 }}>
+      <View style={{ padding: 12, gap: 12, backgroundColor: '#f0f0f0' }}>
+        <Text style={{ padding: 16, fontSize: 16, textAlign: 'center' }}>🔄 Loading doWhat...</Text>
         {[0,1,2].map((i) => (
           <View key={i} style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
             <View style={{ height: 16, width: 120, backgroundColor: '#e5e7eb', borderRadius: 4 }} />
@@ -547,7 +553,7 @@ function HomeScreen() {
                 }}>
                   {searchQuery 
                     ? `${filteredActivities.length} activities found`
-                    : `${activities.length} activities in your area`
+                    : `${activities?.length ?? 0} activities in your area`
                   }
                 </Text>
               </View>
@@ -559,7 +565,7 @@ function HomeScreen() {
                 justifyContent: 'space-between',
                 gap: 16,
               }}>
-                {(searchQuery ? filteredActivities : activities).map((activity, index) => {
+                {(searchQuery ? filteredActivities : (activities ?? [])).map((activity) => {
                   const visual = activityVisuals[activity.name] || defaultVisual;
                   return (
                     <Link key={activity.id} href={`/activities/${activity.id}`} asChild>
@@ -638,9 +644,9 @@ function HomeScreen() {
             rows.slice(0, 6).map((s) => (
               <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
-                <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
-                <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
-                <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
+                <Text style={{ color: '#6B7280', marginTop: 2 }}>{(s as any).venues?.name ?? 'Venue'}</Text>
+                <Text style={{ marginTop: 4 }}>{formatPrice((s as any).price_cents)}</Text>
+                <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange((s as any).starts_at, (s as any).ends_at)}</Text>
                 <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
                 <Link href={`/sessions/${s.id}`} asChild>
                   <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>

@@ -1,9 +1,11 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "./tsconfig.paths.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "module": "ESNext",
-    "moduleResolution": "node",
+  "module": "ESNext",
+  "moduleResolution": "Bundler",
+  "customConditions": ["react-native"],
+  "types": ["react", "react-native", "expo"],
     "target": "ES2020",
     "skipLibCheck": true,
     "baseUrl": ".",
@@ -12,5 +14,13 @@
       "@dowhat/shared": ["../../packages/shared/dist/index.d.ts"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": [
+    "node_modules",
+    "app_backup/**",
+    "src/__tests__/**",
+  "src/setupTests.ts",
+    "android/**",
+    "ios/**"
+  ]
 }

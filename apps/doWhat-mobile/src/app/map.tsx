@@ -6,13 +6,12 @@ import { theme } from '@dowhat/shared/src/theme';
 // Lazy import expo-maps to avoid crashing if the native module
 // is not present (e.g., running in Expo Go or before rebuilding).
 type MapsModule = typeof import('expo-maps');
-import { router } from 'expo-router';
+import { router, Link } from 'expo-router';
 
 import { getLastKnownBackgroundLocation } from '../lib/bg-location';
 import { supabase } from '../lib/supabase';
 
 import { formatDateRange, formatPrice } from '@dowhat/shared';
-import { Link } from 'expo-router';
 
 type Row = {
   session_id: string;
@@ -31,13 +30,6 @@ type Marker = {
   latitude: number;
   longitude: number;
   activity_id: string;
-};
-
-type Cluster = {
-  id: string;
-  latitude: number;
-  longitude: number;
-  venues: Marker[];
 };
 
 export default function MapTab() {
@@ -73,7 +65,7 @@ export default function MapTab() {
   const [pendingAdd, setPendingAdd] = useState<{ lat: number; lng: number } | null>(null);
   const [pendingAddr, setPendingAddr] = useState<string | null>(null);
 
-  const MapView = Platform.OS === 'ios' ? maps?.AppleMaps.View : maps?.GoogleMaps.View;
+  const MapView = Platform.OS === 'ios' ? (maps as any)?.AppleMaps?.View : (maps as any)?.GoogleMaps?.View;
 
   async function locate() {
     try {
@@ -141,12 +133,10 @@ export default function MapTab() {
 
       const base = Object.values(map);
 
-      // Recompute base after adding activities
-      const base2 = Object.values(map);
       // Simple grid-based clustering (~300m cells)
       const cell = 0.003; // degrees
       const buckets: Record<string, Marker[]> = {};
-      for (const m of base2) {
+      for (const m of base) {
         const key = `${Math.round(m.latitude / cell)}:${Math.round(m.longitude / cell)}`;
         (buckets[key] ||= []).push(m);
       }
@@ -176,8 +166,8 @@ export default function MapTab() {
     // Load native maps module dynamically; avoid importing if native lib is absent
     (async () => {
       try {
-        const NativeModulesProxy = (require('expo-modules-core') as any)?.NativeModulesProxy;
-        const hasNative = Boolean(NativeModulesProxy?.ExpoMaps);
+  const { NativeModulesProxy } = await import('expo-modules-core');
+  const hasNative = Boolean((NativeModulesProxy as any)?.ExpoMaps);
         if (!hasNative) {
           setErr('Map module not available. Rebuild the app (npx expo run:ios / run:android) to use maps.');
           return;
@@ -216,7 +206,7 @@ export default function MapTab() {
         if (perm.status !== 'granted') return;
         sub = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.Balanced, distanceInterval: 50 },
-          (pos) => {
+          (pos: Location.LocationObject) => {
             const la = Number(pos.coords.latitude.toFixed(6));
             const ln = Number(pos.coords.longitude.toFixed(6));
             setLat(la); setLng(ln);
@@ -242,7 +232,7 @@ export default function MapTab() {
         : []),
       ...(pendingAdd ? [{ id: 'add', center: { latitude: pendingAdd.lat, longitude: pendingAdd.lng }, radius: 10, color: 'rgba(245, 158, 11, 0.20)', lineColor: '#f59e0b', lineWidth: 2 }] : []),
     ]
-  ), [lat, lng]);
+  ), [lat, lng, pendingAdd]);
 
   if (!MapView) {
     return (
@@ -285,10 +275,10 @@ export default function MapTab() {
           {[5, 10, 25].map((n) => (
             <Pressable key={n} onPress={() => setKm(n)} style={{
               paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-              backgroundColor: km === n ? theme.colors.brandTeal : 'white',
-              borderWidth: 1, borderColor: km === n ? theme.colors.brandTeal : '#e5e7eb'
+              backgroundColor: n === km ? theme.colors.brandTeal : 'white',
+              borderWidth: 1, borderColor: n === km ? theme.colors.brandTeal : '#e5e7eb'
             }}>
-              <Text style={{ color: km === n ? 'white' : '#111827', fontWeight: '600' }}>{n} km</Text>
+              <Text style={{ color: n === km ? 'white' : '#111827', fontWeight: '600' }}>{n} km</Text>
             </Pressable>
           ))}
           {allActivities.slice(0, 6).map((a) => {
@@ -473,7 +463,6 @@ export default function MapTab() {
           </View>
         </View>
       )}
-
       {/* Filter overlay (rounded, colorful accent) */}
       {filtersOpen && (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>

@@ -1,4 +1,6 @@
-import { getActivityIconKey, type IconKey } from '@dowhat/shared/src/icons';
+"use client";
+
+import { getActivityIconKey, type IconKey } from '@dowhat/shared';
 import {
   IoWalkOutline,
   IoBicycleOutline,

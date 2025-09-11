@@ -1,7 +1,10 @@
-import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Link } = require('expo-router');
+import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, Image, ScrollView } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+// Type-only shim for expo-linear-gradient to avoid missing types error
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { LinearGradient } = require('expo-linear-gradient');
 import { theme } from '@dowhat/shared/src/theme';
 
 import { registerForPushNotifications, sendLocalTestNotification } from '../lib/notifications';

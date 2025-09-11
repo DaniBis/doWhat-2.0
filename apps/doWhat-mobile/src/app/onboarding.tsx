@@ -4,13 +4,9 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
-  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-
-const { width: screenWidth } = Dimensions.get('window');
 
 type OnboardingStep = {
   icon: keyof typeof Ionicons.glyphMap;
