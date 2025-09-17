@@ -1,8 +1,8 @@
 const nextJest = require('next/jest')
 
 const createJestConfig = nextJest({
-  // Provide the path to your Next.js app to load next.config.js and .env files
-  dir: './',
+  // Use absolute path so running from monorepo root resolves correctly
+  dir: __dirname,
 })
 
 // Add any custom config to be passed to Jest

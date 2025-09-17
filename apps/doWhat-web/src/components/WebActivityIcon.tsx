@@ -20,8 +20,9 @@ import {
   IoStarOutline,
   IoTrophyOutline,
 } from 'react-icons/io5';
+import type { IconType } from 'react-icons';
 
-const map: Record<IconKey, any> = {
+const map: Record<IconKey, IconType> = {
   walk: IoWalkOutline,
   bicycle: IoBicycleOutline,
   water: IoWaterOutline,

@@ -6,14 +6,23 @@ import { useEffect, useState } from "react";
 import ActivityCard from "@/components/ActivityCard";
 import { supabase } from "@/lib/supabase/browser";
 
-type Event = {
+// Supabase relationship selects can return either an object or array depending on FK cardinality
+interface ActivityRef { id: string; name: string }
+interface VenueRef { name: string; lat?: number; lng?: number }
+interface BaseSession {
   id: string;
   price_cents: number;
   starts_at: string;
   ends_at: string;
-  activities?: { id: string; name: string }[] | { id: string; name: string } | null;
-  venues?: { name: string; lat?: number; lng?: number }[] | { name: string; lat?: number; lng?: number } | null;
-};
+  activities: ActivityRef[] | ActivityRef | null;
+  venues: VenueRef[] | VenueRef | null;
+}
+interface PopularSession extends BaseSession { rsvps?: { id: string }[] | null }
+interface PopularSortable extends PopularSession { rsvp_count: number }
+type Event = BaseSession;
+
+interface SessionActivityRef { activity_id: string | null }
+interface RsvpSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
 
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Event[]>([]);
@@ -50,14 +59,19 @@ export default function RecommendationsPage() {
             .from("rsvps")
             .select("sessions(activity_id)")
             .eq("user_id", uid);
-          
-          userActivityTypes = userRsvps
-            ?.map((r: any) => r.sessions?.activity_id)
-            .filter(Boolean) || [];
+          const typed = (userRsvps || []) as unknown as RsvpSessionRef[];
+          userActivityTypes = typed
+            .map(r => {
+              const s = r.sessions;
+              if (!s) return null;
+              if (Array.isArray(s)) return s[0]?.activity_id || null;
+              return s.activity_id;
+            })
+            .filter((v): v is string => Boolean(v));
         }
 
         // Get upcoming events
-        const { data: upcomingEvents } = await supabase
+  const { data: upcomingEvents } = await supabase
           .from("sessions")
           .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
           .gte("starts_at", new Date().toISOString())
@@ -79,20 +93,17 @@ export default function RecommendationsPage() {
           .limit(20);
 
         if (popularData) {
-          const sortedByRsvps = popularData
-            .map((event: any) => ({
-              ...event,
-              rsvp_count: event.rsvps?.length || 0
-            }))
+          const typedPopular = popularData as PopularSession[];
+          const sortedByRsvps: Event[] = typedPopular
+            .map<PopularSortable>(ev => ({ ...ev, rsvp_count: ev.rsvps?.length ?? 0 }))
             .sort((a, b) => b.rsvp_count - a.rsvp_count)
             .slice(0, 6)
-            .map(({ rsvps, ...event }) => event);
-          
+            .map(({ rsvps: _r, rsvp_count: _c, ...rest }) => rest);
           setPopularEvents(sortedByRsvps);
         }
 
         // Recommendations based on user preferences
-        let recommendedEvents = upcomingEvents;
+  let recommendedEvents = upcomingEvents as Event[];
         if (userActivityTypes.length > 0) {
           recommendedEvents = upcomingEvents.filter(event => {
             const activities = event.activities;
@@ -127,35 +138,44 @@ export default function RecommendationsPage() {
             .order("starts_at", { ascending: true });
 
           if (nearbyData) {
-            // Calculate distance and filter nearby events
-            const nearbyFiltered = nearbyData
-              .filter((event: any) => {
-                if (!event.venues?.lat || !event.venues?.lng) return false;
+            const typedNearby = nearbyData as Event[];
+            const extractVenue = (v: Event["venues"]): VenueRef | null => {
+              if (!v) return null;
+              return Array.isArray(v) ? (v[0] || null) : v;
+            };
+            const nearbyFiltered = typedNearby
+              .map(ev => ({ ev, venue: extractVenue(ev.venues) }))
+              .filter(item => item.venue?.lat != null && item.venue?.lng != null)
+              .map(item => ({ ...item.ev, venue: item.venue as VenueRef }))
+              .filter(ev => {
+                const venue = extractVenue(ev.venues);
+                if (!venue?.lat || !venue.lng) return false;
                 const distance = calculateDistance(
                   userLocation.lat,
                   userLocation.lng,
-                  event.venues.lat,
-                  event.venues.lng
+                  venue.lat,
+                  venue.lng
                 );
                 return distance <= 25; // Within 25km
               })
-              .sort((a: any, b: any) => {
+              .sort((a, b) => {
+                const venueA = extractVenue(a.venues)!;
+                const venueB = extractVenue(b.venues)!;
                 const distA = calculateDistance(
                   userLocation.lat,
                   userLocation.lng,
-                  a.venues.lat,
-                  a.venues.lng
+                  venueA.lat!,
+                  venueA.lng!
                 );
                 const distB = calculateDistance(
                   userLocation.lat,
                   userLocation.lng,
-                  b.venues.lat,
-                  b.venues.lng
+                  venueB.lat!,
+                  venueB.lng!
                 );
                 return distA - distB;
               })
               .slice(0, 6);
-            
             setNearbyEvents(nearbyFiltered);
           }
         }

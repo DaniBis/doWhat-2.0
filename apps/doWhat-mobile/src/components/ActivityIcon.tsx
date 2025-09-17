@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { getActivityIconKey, type IconKey } from '@dowhat/shared/src/icons';
+import { getActivityIconKey, type IconKey } from '@dowhat/shared';
 
 const ioMap: Record<IconKey, keyof typeof Ionicons.glyphMap> = {
   walk: 'walk-outline',

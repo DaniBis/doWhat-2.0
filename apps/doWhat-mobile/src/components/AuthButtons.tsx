@@ -1,5 +1,15 @@
 import * as Linking from 'expo-linking';
-import * as AuthSession from 'expo-auth-session';
+// Attempt to import expo-auth-session (depends on ExpoCrypto). If native module missing, degrade gracefully.
+let AuthSession: any;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  AuthSession = require('expo-auth-session');
+} catch (e) {
+  AuthSession = {
+    makeRedirectUri: () => 'dowhat://auth-callback',
+  };
+  console.warn('[auth] expo-auth-session not fully available; falling back to basic redirect');
+}
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
@@ -48,16 +58,14 @@ export default function AuthButtons() {
 
   async function signIn() {
     // Compute both native deep link and Expo proxy URL; prefer proxy in Expo Go
-    const nativeRedirect = Linking.createURL('/auth-callback');
-    const proxyRedirect = AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' });
-    const useProxy = nativeRedirect.startsWith('exp://');
-    const redirectTo = useProxy ? proxyRedirect : nativeRedirect;
+  const redirectTo = AuthSession.makeRedirectUri?
+    AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' } as any):
+    'dowhat://auth-callback';
     if (__DEV__) console.log('[auth] redirectTo', redirectTo);
-    const { data, error } = await supabase.auth.signInWithOAuth({
+  const { data, error } = await (supabase.auth.signInWithOAuth as any)({
       provider: 'google',
-      // Cast to any to allow skipBrowserRedirect in RN without type friction across versions
-      options: { redirectTo, skipBrowserRedirect: true } as any,
-    } as any);
+      options: { redirectTo },
+    });
     if (__DEV__) console.log('[auth] signInWithOAuth error?', error?.message);
     if (__DEV__) console.log('[auth] supabase auth url', data?.url);
     if (error) {
@@ -67,11 +75,11 @@ export default function AuthButtons() {
     if (data?.url) {
       // Open auth and wait for redirect back to our redirectTo
       if (__DEV__) console.log('[auth] opening browser to', data.url);
-  const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+  const res = WebBrowser.openAuthSessionAsync ? await WebBrowser.openAuthSessionAsync(data.url, redirectTo) : { type: 'opened' };
       if (__DEV__) console.log('[auth] auth result', res);
-      if (res.type === 'success' && res.url) {
+      if (res.type === 'success' && (res as any).url) {
         // Parse both fragment (#) and query (?) params
-        const url = res.url;
+        const url = (res as any).url as string;
         const fragment = url.split('#')[1] || '';
         const query = url.split('?')[1] || '';
         const params = new URLSearchParams(fragment || query);

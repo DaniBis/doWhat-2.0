@@ -1,4 +1,5 @@
 import '@testing-library/jest-native/extend-expect';
+import { jest } from '@jest/globals';
 
 // Mock expo modules
 jest.mock('expo-constants', () => ({
@@ -44,11 +45,11 @@ jest.mock('react-native', () => ({
   },
   Platform: {
     OS: 'ios',
-    select: jest.fn((obj) => obj.ios)
+  select: jest.fn((obj: any) => obj.ios)
   },
   StyleSheet: {
-    create: jest.fn((styles) => styles),
-    flatten: jest.fn((style) => style)
+  create: jest.fn((styles: any) => styles),
+  flatten: jest.fn((style: any) => style)
   },
   View: 'View',
   Text: 'Text',

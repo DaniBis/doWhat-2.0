@@ -2,9 +2,7 @@ module.exports = function (api) {
   api.cache(true);
   return {
     presets: ['babel-preset-expo'],
-    plugins: [
-      // Optional: If you're using Reanimated
-      'react-native-reanimated/plugin',
-    ],
+    // Reanimated needs its Babel plugin or Hermes will crash at runtime.
+    plugins: ['react-native-reanimated/plugin'],
   };
 };

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { supabase } from "@/lib/supabase/browser";
 
@@ -20,11 +21,14 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [goingCount, setGoingCount] = useState<number | null>(null);
   const [interestedCount, setInterestedCount] = useState<number | null>(null);
-  const [attendees, setAttendees] = useState<{ initial: string }[]>([]);
+  interface RsvpRow { user_id: string }
+  interface ProfileRow { id: string; full_name: string | null; avatar_url: string | null }
+  interface Attendee { initial: string; avatar_url: string | null }
+  const [attendees, setAttendees] = useState<Attendee[]>([]);
 
   useEffect(() => {
-    let mounted = true;
-    let channel: any;
+  let mounted = true;
+  let channel: RealtimeChannel | null = null;
     (async () => {
       setErr(null);
       setMsg(null);
@@ -49,7 +53,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
 
       async function refreshCountsAndPeople() {
         try {
-          const [{ count: going }, { count: interested }, goingRows] = await Promise.all([
+          const [goingResp, interestedResp, goingRows] = await Promise.all([
             sb
               .from("rsvps")
               .select("status", { count: "exact", head: true })
@@ -66,26 +70,28 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
               .eq("activity_id", activityId)
               .eq("status", "going"),
           ]);
-          if (mounted) {
-            setGoingCount(going ?? 0);
-            setInterestedCount(interested ?? 0);
-            const ids = (goingRows.data ?? []).map((r: any) => r.user_id).filter(Boolean);
-            if (ids.length) {
-              const { data: profiles } = await sb
-                .from("profiles")
-                .select("full_name, avatar_url, id")
-                .in("id", ids);
-              const items = (profiles ?? []).map((p: any) => {
-                const name = p.full_name || "?";
-                const init = String(name).trim().slice(0, 1).toUpperCase();
-                return { initial: init, avatar_url: p.avatar_url as string | null } as any;
-              });
-              setAttendees(items);
-            } else {
-              setAttendees([]);
-            }
+          if (!mounted) return;
+          setGoingCount(goingResp.count ?? 0);
+            setInterestedCount(interestedResp.count ?? 0);
+          const ids = (goingRows.data ?? []).map((r: RsvpRow) => r.user_id).filter(Boolean);
+          if (ids.length) {
+            const { data: profiles } = await sb
+              .from("profiles")
+              .select("full_name, avatar_url, id")
+              .in("id", ids);
+            if (!mounted) return;
+            const items: Attendee[] = (profiles ?? []).map((p: ProfileRow) => {
+              const name = p.full_name || "?";
+              const init = name.trim().slice(0, 1).toUpperCase();
+              return { initial: init, avatar_url: p.avatar_url };
+            });
+            setAttendees(items);
+          } else {
+            setAttendees([]);
           }
-        } catch {}
+        } catch {
+          // silent – counts not critical
+        }
       }
 
       await refreshCountsAndPeople();
@@ -102,7 +108,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
     return () => {
       mounted = false;
       try {
-        if (channel) sb.removeChannel(channel as any);
+        if (channel) sb.removeChannel(channel);
       } catch {}
     };
   }, [activityId, sb]);
@@ -152,8 +158,8 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
         setGoingCount(going ?? 0);
         setInterestedCount(interested ?? 0);
       } catch {}
-    } catch (e: any) {
-      setErr(e.message ?? "Something went wrong");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
@@ -206,7 +212,7 @@ export default function RsvpBox({ activityId, disabled = false }: Props) {
       </div>
       {attendees.length > 0 && (
         <div className="mt-2 flex gap-2">
-          {attendees.slice(0, 8).map((p: any, i) => (
+          {attendees.slice(0, 8).map((p, i) => (
             p.avatar_url ? (
               <img key={i} src={p.avatar_url} alt={p.initial} className="h-6 w-6 rounded-full object-cover" />
             ) : (

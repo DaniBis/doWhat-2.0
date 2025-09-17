@@ -1,5 +1,5 @@
 import { View, Image, Text } from 'react-native';
-import { theme } from '@dowhat/shared/src/theme';
+import { theme } from '@dowhat/shared';
 
 export default function Brand({ size = 36 }: { size?: number }) {
   const site = process.env.EXPO_PUBLIC_WEB_URL;

@@ -1,4 +1,4 @@
-package com.dowhat.app
+package com.dowhat
 
 import android.app.Application
 import android.content.res.Configuration

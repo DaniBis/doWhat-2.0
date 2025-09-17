@@ -24,6 +24,14 @@ export default async function RootLayout({
               <a href="/profile" className="hover:underline">Profile</a>
               <a href="/create" className="hover:underline">Create</a>
             </nav>
+            {/* Fallback link shows immediately (SSR) and is hidden once AuthButtons hydrates */}
+            <a
+              id="auth-fallback-link"
+              href="/auth"
+              className="rounded-lg border border-white/60 px-3 py-2 text-sm hover:bg-white/10"
+            >
+              Sign in
+            </a>
             <AuthButtons />
           </div>
         </header>

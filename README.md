@@ -86,12 +86,54 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 
 ## Database notes
 
+Migrations live in `apps/doWhat-web/src/lib/supabase/migrations/` and are ordered:
 
-- To apply the new badges schema locally (if using psql):
-  - psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/007_badges.sql
-  - Or paste the statements in your Supabase SQL editor.
+1. `007_badges.sql`
+2. `008_traits.sql`
+3. `009_policies.sql` (RLS enable + baseline policies)
 
-Enable RLS if desired and add policies (examples commented inside the migration file).
+Apply (psql):
+
+```
+export SUPABASE_DB_URL=postgresql://user:pass@host:port/db
+pnpm db:migrate
+```
+
+Or individually:
+
+```
+psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/007_badges.sql
+psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/008_traits.sql
+psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/009_policies.sql
+```
+
+You can also paste each file into the Supabase SQL editor. The health endpoint `/api/health` now reports missing tables (`badges`, `traits_catalog`, etc.) so you can verify after running migrations.
+
+### Nightly trait recompute
+
+Batch endpoint: `POST /api/traits/recompute/all?limit=50&offset=0`
+
+Auth: supply header `x-cron-secret: $CRON_SECRET` or `?cron_secret=` query param matching `CRON_SECRET` env var set in your deployment.
+
+Pagination strategy: call with offset increments of `limit` until a response returns fewer than `limit` users.
+
+Example curl (local):
+```
+export CRON_SECRET=devsecret
+curl -X POST -H "x-cron-secret: $CRON_SECRET" "http://localhost:3002/api/traits/recompute/all?limit=50&offset=0"
+```
+
+Set `CRON_SECRET` in your environment (.env.local / hosting provider) and wire a scheduled job (e.g. GitHub Actions, Fly.io cron, Supabase Edge Function cron, or an external cron service) to invoke nightly.
+
+#### GitHub Actions example
+A workflow file at `.github/workflows/traits-recompute.yml` (already included) runs nightly at 03:30 UTC. You must add two repository secrets:
+
+- `CRON_SECRET` – must match the value deployed in your hosting env so the endpoint authorizes.
+- `TRAITS_RECOMPUTE_ENDPOINT` – full https URL to your deployed endpoint, e.g. `https://your.app/api/traits/recompute/all`.
+
+The action pages through users in batches (default limit 250) until a batch returns fewer than the limit.
+
+To adjust schedule or batch size, edit the workflow file.
 
 ## Deploy
 

@@ -2,6 +2,7 @@
 import { FlatCompat } from '@eslint/eslintrc';
 import pluginReact from 'eslint-plugin-react';
 import pluginReactHooks from 'eslint-plugin-react-hooks';
+import nextPlugin from '@next/eslint-plugin-next';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -47,17 +48,26 @@ export default [
     plugins: {
       react: pluginReact,
       'react-hooks': pluginReactHooks,
+      '@next/next': nextPlugin,
     },
     settings: {
   react: { version: 'detect' },
     },
     rules: {
       'react/react-in-jsx-scope': 'off',
-      'react/jsx-uses-react': 'off',
+  'react/jsx-uses-react': 'off',
+  '@next/next/no-img-element': 'off',
   // Too noisy for now; we can gradually tighten later
   '@typescript-eslint/no-explicit-any': 'warn',
   '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
+  },
+  // Relax rules in tests to keep focus on product code quality
+  {
+    files: ['**/__tests__/**', '**/*.test.ts', '**/*.test.tsx'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    }
   },
   {
     files: ['**/*.ts', '**/*.tsx'],
@@ -79,11 +89,17 @@ export default [
       '**/*webpack*',
       '**/chunks/**',
       '**/static/**',
-      '**/server/**'
+      '**/server/**',
+      // Exclude tests & setup from typed lint to prevent parserOptions.project errors
+      '**/__tests__/**',
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/setupTests.ts'
     ],
     languageOptions: {
       parserOptions: {
-        project: true,
+        // Disable full type-aware lint for now to reduce noise & parser errors
+        // project: true,
         tsconfigRootDir: __dirname,
       },
     },

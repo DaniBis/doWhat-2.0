@@ -1,4 +1,4 @@
-package com.dowhat.app
+package com.dowhat
 
 import android.os.Build
 import android.os.Bundle

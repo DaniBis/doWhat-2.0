@@ -1,9 +1,21 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
-import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
+import type { DivIcon, DivIconOptions } from 'leaflet';
 
 type Props = { center: { lat: number; lng: number } };
+
+interface NearbyActivity {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  venue?: string | null;
+  price_cents?: number | null;
+  rating?: number | null;
+  rating_count?: number | null;
+  starts_at?: string | null;
+}
 
 // Activity type icons
 const ACTIVITY_ICONS = {
@@ -37,29 +49,32 @@ const getActivityIcon = (activityName: string): string => {
 };
 
 export default function WebMap({ center }: Props) {
-  const [LMap, setLMap] = useState<any>(null);
-  const [LTile, setLTile] = useState<any>(null);
-  const [LMarker, setLMarker] = useState<any>(null);
-  const [LPopup, setLPopup] = useState<any>(null);
-  const [LDivIcon, setLDivIcon] = useState<any>(null);
-  const [items, setItems] = useState<any[]>([]);
+  // We load these lazily, so union with null while loading
+  // Narrow component prop surfaces to what we actually use
+  type MapContainerCmpType = React.ComponentType<{ center: [number, number]; zoom: number; style?: React.CSSProperties; children?: React.ReactNode }>;
+  type TileLayerCmpType = React.ComponentType<{ attribution?: string; url: string }>;
+  type MarkerCmpType = React.ComponentType<{ position: [number, number]; icon?: DivIcon; children?: React.ReactNode }>;
+  type PopupCmpType = React.ComponentType<{ children?: React.ReactNode }>;
+
+  const [LMap, setLMap] = useState<MapContainerCmpType | null>(null);
+  const [LTile, setLTile] = useState<TileLayerCmpType | null>(null);
+  const [LMarker, setLMarker] = useState<MarkerCmpType | null>(null);
+  const [LPopup, setLPopup] = useState<PopupCmpType | null>(null);
+  const [LDivIconFactory, setLDivIconFactory] = useState<((opts: DivIconOptions) => DivIcon) | null>(null);
+  const [items, setItems] = useState<NearbyActivity[]>([]);
 
   // Load react-leaflet and leaflet lazily
   useEffect(() => {
     (async () => {
-      const [reactLeaflet, leafletMod] = await Promise.all([
-        import('react-leaflet'),
-        import('leaflet')
-      ]);
-      const L: any = (leafletMod as any).default || leafletMod;
+  const reactLeaflet = await import('react-leaflet');
+  const leaflet = await import('leaflet');
 
-      setLMap(reactLeaflet.MapContainer);
-      setLTile(reactLeaflet.TileLayer);
-      setLMarker(reactLeaflet.Marker);
-      setLPopup(reactLeaflet.Popup);
-      // Wrap to handle environments where only class constructor is available
-      const createDivIcon = (opts: any) => (L.divIcon ? L.divIcon(opts) : new L.DivIcon(opts));
-      setLDivIcon(() => createDivIcon);
+  setLMap(() => reactLeaflet.MapContainer as unknown as MapContainerCmpType);
+  setLTile(() => reactLeaflet.TileLayer as unknown as TileLayerCmpType);
+  setLMarker(() => reactLeaflet.Marker as unknown as MarkerCmpType);
+  setLPopup(() => reactLeaflet.Popup as unknown as PopupCmpType);
+  const createDivIcon = (opts: DivIconOptions): DivIcon => (leaflet.divIcon ? leaflet.divIcon(opts) : new leaflet.DivIcon(opts));
+  setLDivIconFactory(() => createDivIcon);
     })();
   }, []);
 
@@ -75,25 +90,38 @@ export default function WebMap({ center }: Props) {
         if (v) url.searchParams.set(key, v);
       }
       const res = await fetch(url.toString());
-      const json = await res.json();
-      setItems(json.activities ?? []);
+      const json: unknown = await res.json();
+      const rawActivities = (json && typeof json === 'object' && 'activities' in json ? (json as { activities?: unknown }).activities : undefined);
+      const activities: NearbyActivity[] = Array.isArray(rawActivities)
+        ? rawActivities.filter((a: unknown): a is NearbyActivity => {
+            if (!a || typeof a !== 'object') return false;
+            const obj = a as Record<string, unknown>;
+            return typeof obj.id === 'string' && typeof obj.name === 'string' && typeof obj.lat === 'number' && typeof obj.lng === 'number';
+          })
+        : [];
+      setItems(activities);
     })();
   }, [center.lat, center.lng]);
 
-  const markers = useMemo(() => (items || []).filter((a: any) => a.lat != null && a.lng != null), [items]);
+  const markers = useMemo(() => (items || []).filter((a) => a.lat != null && a.lng != null), [items]);
 
-  if (!LMap || !LTile || !LDivIcon) return <div className="p-6">Loading map…</div>;
+  if (!LMap || !LTile || !LMarker || !LPopup || !LDivIconFactory) return <div className="p-6">Loading map…</div>;
+
+  const MapContainerCmp = LMap;
+  const TileLayerCmp = LTile;
+  const MarkerCmp = LMarker;
+  const PopupCmp = LPopup;
   
   return (
     <div style={{ height: 'calc(100dvh - 64px)' }}>
-      <LMap center={[center.lat, center.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
-        <LTile
+      <MapContainerCmp center={[center.lat, center.lng]} zoom={13} style={{ height: '100%', width: '100%' }}>
+        <TileLayerCmp
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {markers.map((a: any) => {
+        {markers.map((a) => {
           const icon = getActivityIcon(a.name);
-          const customIcon = LDivIcon({
+          const customIcon = LDivIconFactory!({
             html: `
               <div style="
                 background: #FDB515;
@@ -118,8 +146,8 @@ export default function WebMap({ center }: Props) {
           });
 
           return (
-            <LMarker key={a.id} position={[a.lat, a.lng] as any} icon={customIcon}>
-              <LPopup>
+            <MarkerCmp key={a.id} position={[a.lat, a.lng]} icon={customIcon}>
+              <PopupCmp>
                 <div style={{ minWidth: 220 }}>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>
                     {icon} {a.name}
@@ -150,11 +178,11 @@ export default function WebMap({ center }: Props) {
                     View details →
                   </a>
                 </div>
-              </LPopup>
-            </LMarker>
+              </PopupCmp>
+            </MarkerCmp>
           );
         })}
-      </LMap>
+      </MapContainerCmp>
     </div>
   );
 }

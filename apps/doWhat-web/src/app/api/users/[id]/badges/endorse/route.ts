@@ -1,18 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { createClient } from '@/lib/supabase/server';
+import { getUserFromRequest } from '@/lib/auth';
 import { BADGE_VERIFICATION_THRESHOLD_DEFAULT } from '@dowhat/shared';
 
+// Simple in-memory rate bucket (best-effort per-process)
+const bucket: Record<string, { count: number; ts: number }> = {};
+
+interface EndorseBody { badge_id: string; threshold?: number }
+type EndorseResponse =
+  | { ok: true; endorsements: number; verified: boolean }
+  | { error: string };
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const { user, supabase: authClient } = await getUserFromRequest(req);
   const supabase = db();
-  const auth = createClient();
-  const { data: u } = await auth.auth.getUser();
-  const endorserId = u?.user?.id;
+  const endorserId = user?.id;
   if (!endorserId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const key = endorserId;
+  const now = Date.now();
+  const windowMs = 60_000; // 1 min
+  const limit = 20;
+  const rec = bucket[key] || { count: 0, ts: now };
+  if (now - rec.ts > windowMs) { rec.count = 0; rec.ts = now; }
+  rec.count += 1;
+  bucket[key] = rec;
+  if (rec.count > limit) {
+    return NextResponse.json({ error: 'Rate limited' }, { status: 429 });
+  }
+
   const targetId = params.id;
-  const { badge_id, threshold } = await req.json();
-  const verifyThreshold = Number.isFinite(threshold) ? Math.max(1, threshold) : BADGE_VERIFICATION_THRESHOLD_DEFAULT;
+  if (targetId === endorserId) return NextResponse.json({ error: 'Cannot endorse yourself' }, { status: 400 });
+  const body: EndorseBody = await req.json();
+  const { badge_id, threshold } = body;
+  const verifyThreshold = (typeof threshold === 'number' && Number.isFinite(threshold))
+    ? Math.max(1, threshold)
+    : BADGE_VERIFICATION_THRESHOLD_DEFAULT;
 
   // Insert endorsement (unique constraint prevents duplicates)
   const { error: e1 } = await supabase.from('badge_endorsements').insert({
@@ -47,5 +70,5 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .eq('badge_id', badge_id);
   }
 
-  return NextResponse.json({ ok: true, endorsements, verified: endorsements >= verifyThreshold });
+  return NextResponse.json<EndorseResponse>({ ok: true, endorsements, verified: endorsements >= verifyThreshold });
 }

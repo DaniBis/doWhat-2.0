@@ -5,11 +5,26 @@ export const revalidate = 0;
 import { db } from '@/lib/db';
 import { parseNearbyQuery } from '@/lib/filters';
 
+interface NearbyQuery {
+  lat: number; lng: number; radiusMeters?: number; limit?: number;
+  activityTypes?: string[]; tags?: string[]; traits?: string[];
+}
+interface NearbyActivityRow { id: string; name: string; venue: string | null; lat: number | null; lng: number | null }
+interface RpcNearbyRow { id: string; name: string; venue: string | null; lat?: number; lng?: number; lat_out?: number; lng_out?: number; distance_m?: number }
+interface NearbySuccess {
+  center: { lat: number; lng: number };
+  radiusMeters: number;
+  count: number;
+  activities: Array<{ id: string; name: string; venue: string | null; lat: number | null; lng: number | null; distance_m?: number }>;
+  source: 'postgis' | 'bbox';
+}
+interface ErrorPayload { error: string }
+
 // GET /api/nearby?lat=..&lng=..&radius=2000&types=a,b&tags=x,y&traits=t1,t2&limit=50
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const q = parseNearbyQuery(searchParams);
+  const q = parseNearbyQuery(searchParams) as NearbyQuery;
     if (!q.lat || !q.lng) {
       return NextResponse.json({ error: 'lat and lng are required' }, { status: 400 });
     }
@@ -23,7 +38,7 @@ export async function GET(request: Request) {
     // Build base select with joins for sessions count
     let query = supabase
       .from('activities')
-      .select(`id, name, venue, lat, lng`)
+      .select('id,name,venue,lat,lng')
       .limit(q.limit || 50);
 
     // activity_types filter
@@ -33,7 +48,7 @@ export async function GET(request: Request) {
 
     // Try PostGIS RPC first; on failure, fall back to bbox on lat/lng
     try {
-      const rpcPayload: any = {
+      const rpcPayload: Record<string, unknown> = {
         lat: q.lat,
         lng: q.lng,
         radius_m: q.radiusMeters ?? 2000,
@@ -47,12 +62,12 @@ export async function GET(request: Request) {
           center: { lat: q.lat, lng: q.lng },
           radiusMeters: q.radiusMeters || 2000,
           count: rpcData.length,
-          activities: rpcData.map((r: any) => ({
+          activities: (rpcData as RpcNearbyRow[]).map(r => ({
             id: r.id,
             name: r.name,
             venue: r.venue,
-            lat: r.lat_out ?? r.lat,
-            lng: r.lng_out ?? r.lng,
+            lat: (r.lat_out ?? r.lat) ?? null,
+            lng: (r.lng_out ?? r.lng) ?? null,
             distance_m: r.distance_m,
           })),
           source: 'postgis',
@@ -79,7 +94,7 @@ export async function GET(request: Request) {
         .lte('lng', lng + deltaLng);
     }
 
-    const { data, error } = await query;
+  const { data, error } = await query.returns<NearbyActivityRow[]>();
     if (error) throw error;
 
     return NextResponse.json({
@@ -89,9 +104,10 @@ export async function GET(request: Request) {
       activities: data || [],
       source: 'bbox',
     });
-  } catch (e: any) {
+  } catch (e) {
+    // eslint-disable-next-line no-console
     console.error('Nearby error', e);
-    const msg = e?.message || e?.error?.message || JSON.stringify(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const msg = e instanceof Error ? e.message : typeof e === 'object' ? JSON.stringify(e) : String(e);
+    return NextResponse.json<ErrorPayload>({ error: msg }, { status: 500 });
   }
 }

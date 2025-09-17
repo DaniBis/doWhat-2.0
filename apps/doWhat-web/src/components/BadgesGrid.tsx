@@ -1,17 +1,18 @@
 "use client";
 
-import { Badge, BadgeStatus, BADGE_CATEGORIES, BadgeCategory } from "@dowhat/shared";
+import { Badge, BadgeStatus, BADGE_CATEGORIES, BadgeCategory, BADGE_VERIFICATION_THRESHOLD_DEFAULT } from "@dowhat/shared";
 
 type Item = {
-  id: string;
+  id?: string; // undefined for unearned
   badge_id: string;
   status: BadgeStatus;
-  source: string;
+  source?: string | null; // allow null from DB
   endorsements?: number;
   badges?: Partial<Badge> | null;
+  locked?: boolean; // derived for catalog display
 };
 
-export default function BadgesGrid({ items }: { items: Item[] }) {
+export default function BadgesGrid({ items, threshold = BADGE_VERIFICATION_THRESHOLD_DEFAULT }: { items: Item[]; threshold?: number }) {
   const groups = groupByCategory(items);
   const cats = Object.keys(groups) as BadgeCategory[];
 
@@ -33,7 +34,7 @@ export default function BadgesGrid({ items }: { items: Item[] }) {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {groups[cat].map((ub) => (
-              <BadgeCard key={ub.id} item={ub} />
+              <BadgeCard key={ub.id || ub.badge_id} item={ub} threshold={threshold} />
             ))}
           </div>
         </div>
@@ -51,21 +52,36 @@ function groupByCategory(items: Item[]) {
   }, {});
 }
 
-function BadgeCard({ item }: { item: Item }) {
+function BadgeCard({ item, threshold = BADGE_VERIFICATION_THRESHOLD_DEFAULT }: { item: Item; threshold?: number }) {
   const status = item.status;
   const isVerified = status === 'verified';
   const isExpired = status === 'expired';
-  const border = isExpired ? 'border-gray-200 opacity-60' : isVerified ? 'border-amber-400' : 'border-gray-300';
+  const locked = item.locked && !item.id;
+  const border = locked ? 'border-dashed border-gray-300 opacity-60' : isExpired ? 'border-gray-200 opacity-60' : isVerified ? 'border-amber-400' : 'border-gray-300';
   const glow = isVerified ? 'shadow-[0_0_0_2px_rgba(251,191,36,0.25)]' : '';
+  const opacity = locked ? 'grayscale' : '';
+  const endorsements = item.endorsements ?? 0;
+  const remaining = !isVerified ? Math.max(0, threshold - endorsements) : 0;
 
   return (
-    <div className={`flex items-start gap-3 rounded-lg border ${border} p-3 bg-gray-50 ${glow}`}>
-      <div className="text-2xl">🏅</div>
+    <div className={`flex items-start gap-3 rounded-lg border ${border} p-3 bg-gray-50 ${glow} ${opacity}`}>
+      <div className="text-2xl">{locked ? '🔒' : '🏅'}</div>
       <div className="flex-1">
         <div className="font-semibold text-gray-900">{item.badges?.name || 'Badge'}</div>
-        <div className="text-xs text-gray-600">{labelForStatus(status)}{item.endorsements ? ` · ${item.endorsements} endorsements` : ''}</div>
+        <div className="text-xs text-gray-600">
+          {locked ? 'Locked' : labelForStatus(status)}
+          {item.endorsements !== undefined && !locked && status !== 'verified' && (
+            <> · {endorsements}/{threshold} endorsements{remaining > 0 && ` (${remaining} more needed)`}</>
+          )}
+          {item.endorsements !== undefined && status === 'verified' && ' · verified'}
+        </div>
         {item.badges?.description && (
           <div className="text-sm text-gray-600 mt-1">{item.badges.description}</div>
+        )}
+        {!locked && !isVerified && endorsements > 0 && (
+          <div className="mt-2 h-1.5 w-full rounded bg-gray-200 overflow-hidden">
+            <div className="h-full bg-amber-400 transition-all" style={{ width: `${Math.min(100, (endorsements/threshold)*100)}%` }} />
+          </div>
         )}
       </div>
     </div>

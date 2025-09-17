@@ -65,6 +65,8 @@ export async function ingestAssessment(userId: string, inputs: Record<string, nu
 }
 
 // Map behavior metrics into deltas for specific traits
+interface TraitEventInsert { user_id: string; trait_id: string; source_type: string; delta: number; weight: number; metadata?: Record<string, unknown>; }
+
 export async function ingestBehaviorSignals(userId: string, metrics: {
   punctuality_rate?: number; // 0..1
   showup_rate?: number; // 0..1
@@ -72,9 +74,9 @@ export async function ingestBehaviorSignals(userId: string, metrics: {
   cancellation_rate?: number; // 0..1
 }) {
   const supabase = db();
-  const toInsert: any[] = [];
+  const toInsert: TraitEventInsert[] = [];
 
-  async function add(name: string, delta: number, meta: any = {}) {
+  async function add(name: string, delta: number, meta: Record<string, unknown> = {}) {
     const { data: trait } = await supabase.from('traits_catalog').select('id').eq('name', name).maybeSingle();
     if (!trait) return;
     toInsert.push({ user_id: userId, trait_id: trait.id, source_type: 'behavior', delta, weight: 1, metadata: meta });
@@ -140,7 +142,8 @@ export async function recomputeUserTraits(userId: string) {
   if (!events || !events.length) return;
 
   const now = Date.now();
-  const byTrait = new Map<string, { wsum: number; w: number; sources: any[] }>();
+  interface Agg { wsum: number; w: number; sources: Array<Record<string, unknown>> }
+  const byTrait = new Map<string, Agg>();
   for (const ev of events) {
     const ageDays = (now - new Date(ev.occurred_at).getTime()) / (1000*60*60*24);
     const decay = Math.exp(-ageDays / 90); // ~e^-t/90 days half-life ~62d
@@ -157,7 +160,7 @@ export async function recomputeUserTraits(userId: string) {
     .from('v_trait_peer_agreement_counts')
     .select('*')
     .eq('user_id', userId);
-  for (const p of (peers || [])) {
+  for (const p of (peers || []) as Array<{ trait_id: string; agreements?: number }>) {
     const cur = byTrait.get(p.trait_id) || { wsum: 0, w: 0, sources: [] };
     cur.wsum += (p.agreements || 0) * 2; // small boost per agreement
     cur.w += (p.agreements || 0) * 0.5;
@@ -193,16 +196,25 @@ export async function getUserTraits(userId: string): Promise<TraitScore[]> {
     .eq('user_id', userId)
     .order('score_float', { ascending: false });
   if (error) throw error;
-  return (data || []).map((row: any) => ({
-    trait_id: row.traits_catalog?.id,
-    name: row.traits_catalog?.name,
-    category: row.traits_catalog?.category,
-    description: row.traits_catalog?.description,
-    score_float: row.score_float,
-    confidence_float: row.confidence_float,
-    last_updated_at: row.last_updated_at,
-    agreements: row.v_trait_peer_agreement_counts?.agreements ?? 0,
-  }));
+  type RawRow = {
+    score_float: number; confidence_float: number; last_updated_at: string;
+    traits_catalog: { id: string; name: string; category: string; description?: string | null } | null;
+    v_trait_peer_agreement_counts: { agreements?: number } | null;
+  };
+  const rows = (data as unknown as RawRow[] | null) || [];
+  const mapped: TraitScore[] = rows
+    .filter(r => r.traits_catalog) // ensure catalog presence
+    .map(r => ({
+      trait_id: r.traits_catalog!.id,
+      name: r.traits_catalog!.name,
+      category: r.traits_catalog!.category,
+      description: r.traits_catalog!.description,
+      score_float: r.score_float,
+      confidence_float: r.confidence_float,
+      last_updated_at: r.last_updated_at,
+      agreements: r.v_trait_peer_agreement_counts?.agreements ?? 0,
+    }));
+  return mapped;
 }
 
 function startOfWeekUTC(d: Date) {

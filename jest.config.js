@@ -1,7 +1,8 @@
+// Root Jest config aggregating subprojects. Use explicit per-project configs.
 module.exports = {
   projects: [
-    '<rootDir>/apps/doWhat-mobile',
-    '<rootDir>/apps/doWhat-web',
+    '<rootDir>/apps/doWhat-mobile/jest.config.js',
+    '<rootDir>/apps/doWhat-web/jest.config.js',
     '<rootDir>/packages/shared/jest.config.cjs'
   ],
   collectCoverage: true,

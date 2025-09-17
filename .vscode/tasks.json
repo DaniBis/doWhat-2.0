@@ -50,6 +50,26 @@
 			"label": "lint",
 			"type": "shell",
 			"command": "pnpm -w run lint"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
 		}
 	]
 }

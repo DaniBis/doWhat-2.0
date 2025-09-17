@@ -1,473 +1,241 @@
 "use client";
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase/browser';
+import { ProfileHeader } from '@/components/profile/ProfileHeader';
+import { KPIGrid } from '@/components/profile/KPIGrid';
+import { TraitsPreview } from '@/components/profile/TraitsPreview';
+import { BadgesPreview } from '@/components/profile/BadgesPreview';
+import { AttendanceBars } from '@/components/profile/AttendanceBars';
+import { BioCard } from '@/components/profile/BioCard';
+import { ReviewsTab } from '@/components/profile/ReviewsTab';
+import type { KPI, Trait, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import BadgesGrid from "@/components/BadgesGrid";
-
-import { supabase } from "@/lib/supabase/browser";
-
-type UserTrait = {
-  trait_name: string;
-  icon: string;
-  color: string;
-};
-
-type UserBadge = {
-  badge_name: string;
-  icon: string;
-  color: string;
-  earned_at: string;
-};
-
-const availableTraits = [
-  { trait_name: 'Early Bird', icon: '🌅', color: '#F59E0B' },
-  { trait_name: 'Night Owl', icon: '🦉', color: '#7C3AED' },
-  { trait_name: 'Social Butterfly', icon: '🦋', color: '#EC4899' },
-  { trait_name: 'Adventure Seeker', icon: '🏔️', color: '#059669' },
-  { trait_name: 'Fitness Enthusiast', icon: '💪', color: '#DC2626' },
-  { trait_name: 'Foodie', icon: '🍕', color: '#EA580C' },
-  { trait_name: 'Art Lover', icon: '🎨', color: '#9333EA' },
-  { trait_name: 'Music Fan', icon: '🎵', color: '#0EA5E9' },
-  { trait_name: 'Tech Geek', icon: '💻', color: '#059669' },
-];
-
-const availableBadges = [
-  { badge_name: 'Community Builder', icon: '🏗️', color: '#10B981', earned_at: '2024-01-15' },
-  { badge_name: 'Event Organizer', icon: '📅', color: '#3B82F6', earned_at: '2024-02-20' },
-  { badge_name: 'Social Connector', icon: '🤝', color: '#8B5CF6', earned_at: '2024-03-10' },
-  { badge_name: 'Early Adopter', icon: '🚀', color: '#F59E0B', earned_at: '2024-01-01' },
-];
+type TabKey = 'overview' | 'traits' | 'badges' | 'activities' | 'reviews';
 
 export default function ProfilePage() {
-  const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
-  const [fullName, setFullName] = useState<string>("");
-  const [avatarUrl, setAvatarUrl] = useState<string>("");
-  const [bio, setBio] = useState<string>("");
-  const [location, setLocation] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<string>("");
-  const [err, setErr] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<'profile' | 'traits' | 'badges' | 'activities'>('profile');
-  const [userTraits, setUserTraits] = useState<UserTrait[]>([]);
-  const [userBadges, setUserBadges] = useState<any[]>([]);
-  const [traits, setTraits] = useState<any[]>([]);
-  const [showTraitSelector, setShowTraitSelector] = useState(false);
-  const [stats, setStats] = useState<{
-    eventsCreated: number;
-    eventsAttended: number;
-    totalRsvps: number;
-  }>({ eventsCreated: 0, eventsAttended: 0, totalRsvps: 0 });
+  const [userId, setUserId] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ProfileUser | null>(null);
+  const [kpis, setKpis] = useState<KPI[]>([]);
+  const [reliability, setReliability] = useState<Reliability | null>(null);
+  const [attendance, setAttendance] = useState<AttendanceMetrics | undefined>();
+  const [traits, setTraits] = useState<Trait[]>([]);
+  const [badges, setBadges] = useState<Badge[]>([]);
+  const [bioSaving, setBioSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoDenied, setGeoDenied] = useState(false);
 
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id ?? null;
-      const em = auth?.user?.email ?? null;
-      setEmail(em);
-      if (!uid) return;
-
-      // Get profile data
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("full_name, avatar_url, bio, location")
-        .eq("id", uid)
-        .maybeSingle();
-      if (!error && data) {
-        setFullName((data?.full_name as string) || "");
-        setAvatarUrl((data?.avatar_url as string) || "");
-        setBio((data?.bio as string) || "");
-        setLocation((data?.location as string) || "");
+      const uid = auth.user?.id || null;
+      setUserId(uid);
+      if (!uid) { setLoading(false); return; }
+      try {
+        const [profileRes, kpiRes, relRes, traitsRes, badgesRes] = await Promise.all([
+          fetch(`/api/profile/${uid}`),
+          fetch(`/api/profile/${uid}/kpis`),
+          fetch(`/api/profile/${uid}/reliability`),
+          fetch(`/api/profile/${uid}/traits?top=6`),
+          fetch(`/api/profile/${uid}/badges?limit=4`)
+        ]);
+        if (profileRes.ok) setProfile(await profileRes.json());
+        if (kpiRes.ok) setKpis(await kpiRes.json());
+        if (relRes.ok) { const r = await relRes.json(); setReliability(r.reliability); setAttendance(r.attendance); }
+        if (traitsRes.ok) setTraits(await traitsRes.json());
+        if (badgesRes.ok) setBadges(await badgesRes.json());
+      } catch(e:any) {
+        setError(e.message || 'Failed to load profile');
+      } finally {
+        setLoading(false);
       }
-
-      // Load demo traits
-      setUserTraits([
-        availableTraits[0], // Early Bird
-        availableTraits[3], // Adventure Seeker
-        availableTraits[6], // Art Lover
-      ]);
-      // Load real badges via API
-      const res = await fetch(`/api/users/${uid}/badges`, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        setUserBadges(json.badges || []);
-      }
-
-      // Load traits (owner-only)
-      const tr = await fetch(`/api/traits/${uid}`, { cache: 'no-store' });
-      if (tr.ok) {
-        const json = await tr.json();
-        const list = (json.traits || []) as any[];
-        // sort by score * confidence and take top 6
-        const sorted = [...list].sort((a,b) => (b.score_float*b.confidence_float) - (a.score_float*a.confidence_float)).slice(0,6);
-        setTraits(sorted);
-      }
-
-      // Get user stats
-      const [eventsCreated, eventsAttended, totalRsvps] = await Promise.all([
-        supabase.from("sessions").select("id", { count: "exact", head: true }).eq("created_by", uid),
-        supabase.from("rsvps").select("session_id", { count: "exact", head: true }).eq("user_id", uid).eq("status", "going"),
-        supabase.from("rsvps").select("id", { count: "exact", head: true }).eq("user_id", uid),
-      ]);
-
-      setStats({
-        eventsCreated: eventsCreated.count ?? 0,
-        eventsAttended: eventsAttended.count ?? 0,
-        totalRsvps: totalRsvps.count ?? 0,
-      });
     })();
   }, []);
 
-  const addTrait = (trait: UserTrait) => {
-    if (!userTraits.find(t => t.trait_name === trait.trait_name)) {
-      setUserTraits([...userTraits, trait]);
-    }
-    setShowTraitSelector(false);
-  };
+  // Attempt to capture geolocation & populate location if missing once profile is loaded.
+  useEffect(() => {
+    // Treat placeholder 'Unknown' as missing
+    if (!profile || (profile.location && profile.location !== 'Unknown') || geoBusy || geoDenied) return;
+    if (!('geolocation' in navigator)) return;
+    setGeoBusy(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        let label = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
+        try {
+          const resp = await fetch(`/api/geocode?lat=${latitude}&lng=${longitude}`);
+          if (resp.ok) { const g = await resp.json(); if (g.label) label = g.label; }
+        } catch { /* ignore geocode errors; keep coarse */ }
+        setProfile(p => p ? { ...p, location: label } : p);
+        if (userId) {
+          await supabase.from('profiles').upsert({ id: userId, location: label, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        }
+      } catch { /* ignore */ }
+      setGeoBusy(false);
+    }, () => { setGeoDenied(true); setGeoBusy(false); }, { enableHighAccuracy: false, timeout: 7000 });
+  }, [profile, userId, geoBusy, geoDenied]);
 
-  const removeTrait = (traitName: string) => {
-    setUserTraits(userTraits.filter(t => t.trait_name !== traitName));
-  };
-
-  async function save() {
+  async function saveBio(bio: string) {
+    if (!userId) return;
+    setBioSaving(true);
     try {
-      setErr("");
-      setMsg("");
-      setLoading(true);
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id;
-      if (!uid) throw new Error("Please sign in first.");
-      
-      const upsert = {
-        id: uid,
-        full_name: fullName.trim() || null,
-        avatar_url: avatarUrl.trim() || null,
-        bio: bio.trim() || null,
-        location: location.trim() || null,
-        updated_at: new Date().toISOString(),
-      };
-      
-      const { error } = await supabase.from("profiles").upsert(upsert, { onConflict: "id" });
-      if (error) throw error;
-      setMsg("Profile saved successfully!");
-    } catch (e: any) {
-      setErr(e.message ?? "Failed to save profile");
+      await supabase.from('profiles').upsert({ id: userId, bio, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      setProfile(p => p ? { ...p, bio } : p);
     } finally {
-      setLoading(false);
+      setBioSaving(false);
     }
   }
 
-  async function signOut() {
-    await supabase.auth.signOut();
-    router.push("/");
-  }
-
-  const renderProfileTab = () => (
-    <div className="space-y-6">
-      {err && (
-        <div className="rounded-lg bg-red-50 p-4 text-red-700 border border-red-200">
-          {err}
-        </div>
-      )}
-      {msg && (
-        <div className="rounded-lg bg-green-50 p-4 text-green-700 border border-green-200">
-          {msg}
-        </div>
-      )}
-
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Profile Information</h3>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-            <input 
-              value={email ?? ""} 
-              readOnly 
-              className="w-full cursor-not-allowed rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-500" 
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-            <input 
-              value={fullName} 
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Your full name"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" 
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
-            <textarea 
-              value={bio} 
-              onChange={(e) => setBio(e.target.value)}
-              placeholder="Tell others about yourself..."
-              rows={3}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" 
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
-            <input 
-              value={location} 
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="City, Country"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" 
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Avatar URL</label>
-            <input 
-              value={avatarUrl} 
-              onChange={(e) => setAvatarUrl(e.target.value)}
-              placeholder="https://example.com/your-photo.jpg"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" 
-            />
-            {avatarUrl && (
-              <div className="mt-2">
-                <img 
-                  src={avatarUrl} 
-                  alt="Avatar preview" 
-                  className="h-16 w-16 rounded-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-              </div>
-            )}
-          </div>
-          
-          <div className="flex gap-3">
-            <button 
-              onClick={save} 
-              disabled={loading}
-              className="rounded-lg bg-blue-500 px-6 py-2 text-white font-medium hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Saving..." : "Save Changes"}
-            </button>
-            
-            <Link 
-              href="/my/rsvps"
-              className="rounded-lg border border-gray-300 px-6 py-2 text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-            >
-              View My RSVPs
-            </Link>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderTraitsTab = () => (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">My Personality Traits</h3>
-          <button
-            onClick={() => setShowTraitSelector(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-          >
-            + Add Trait
-          </button>
-        </div>
-        
-        {userTraits.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-2">🏷️</div>
-            <p>No traits added yet. Add some to help others find you!</p>
-          </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {userTraits.map((trait) => (
-              <div
-                key={trait.trait_name}
-                className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{trait.icon}</span>
-                  <span className="font-medium text-gray-900">{trait.trait_name}</span>
-                </div>
-                <button
-                  onClick={() => removeTrait(trait.trait_name)}
-                  className="text-red-500 hover:text-red-700 transition-colors"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Trait Selector Modal */}
-      {showTraitSelector && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">Add Personality Trait</h3>
-            <div className="grid gap-2 max-h-60 overflow-y-auto">
-              {availableTraits
-                .filter(trait => !userTraits.find(ut => ut.trait_name === trait.trait_name))
-                .map((trait) => (
-                  <button
-                    key={trait.trait_name}
-                    onClick={() => addTrait(trait)}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 text-left"
-                  >
-                    <span className="text-2xl">{trait.icon}</span>
-                    <span className="font-medium">{trait.trait_name}</span>
-                  </button>
-                ))}
-            </div>
-            <button
-              onClick={() => setShowTraitSelector(false)}
-              className="mt-4 w-full py-2 px-4 border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderBadgesTab = () => (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Achievement Badges</h3>
-        <BadgesGrid items={userBadges} />
-      </div>
-      {traits.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-lg font-semibold mb-4">Top Traits</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {traits.map((t) => (
-              <div key={t.trait_id} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 bg-gray-50">
-                <div className="text-2xl">🧠</div>
-                <div>
-                  <div className="font-semibold text-gray-900">{t.name}</div>
-                  <div className="text-xs text-gray-600">{t.category} · Score {Math.round(t.score_float)} · Conf {Math.round(t.confidence_float*100)}%</div>
-                  {t.description && <div className="text-sm text-gray-600 mt-1">{t.description}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderActivitiesTab = () => (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">My Activities</h3>
-        <div className="text-center py-8 text-gray-500">
-          <div className="text-4xl mb-2">🎯</div>
-          <p>Activity history will appear here</p>
-          <Link 
-            href="/my/rsvps"
-            className="inline-block mt-4 text-blue-500 hover:underline"
-          >
-            View My RSVPs →
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading profile…</div>;
+  if (!userId) return <div className="min-h-screen flex items-center justify-center text-gray-500">Sign in to view profile.</div>;
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-blue-900 text-white">
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="flex items-center justify-between mb-6">
-            <Link href="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors">
-              ← Back
-            </Link>
-            {email && (
-              <button
-                onClick={signOut}
-                className="px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
-              >
-                Sign Out
-              </button>
-            )}
+      <ProfileHeader
+        userId={userId}
+        name={profile?.name || profile?.email || 'User'}
+        location={profile?.location}
+        avatarUrl={profile?.avatarUrl}
+        reliability={reliability || undefined}
+        editable
+        socials={profile?.socials}
+        onProfileUpdated={async (p) => {
+          if (!userId) return;
+          try {
+            await fetch(`/api/profile/${userId}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(p),
+            });
+            setProfile(prev => prev ? { ...prev, name: p.name ?? prev.name, avatarUrl: p.avatarUrl ?? prev.avatarUrl, socials: p.socials ?? prev.socials } : prev);
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('Profile update failed', e);
+          }
+        }}
+      />
+      <main className="max-w-5xl mx-auto px-6 -mt-8 relative z-10 pb-20">
+        {error && <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
+        <div className="mb-8"><KPIGrid kpis={kpis} /></div>
+        {profile?.socials && (profile.socials.instagram || profile.socials.whatsapp) && (
+          <div className="mb-6 flex flex-wrap gap-3 items-center text-sm">
+            {profile.socials.instagram && (() => {
+              const raw = profile.socials.instagram.trim();
+              // If user stored full URL already, use as-is; else build canonical URL
+              const isUrl = /^https?:\/\//i.test(raw);
+              const handle = raw
+                .replace(/@/g,'')
+                .replace(/^https?:\/\/([^/]*instagram\.com)\//i,'')
+                .replace(/^instagram\.com\//i,'')
+                .replace(/^www\.instagram\.com\//i,'')
+                .split(/[?#]/)[0]
+                .replace(/\/+$/,'');
+              const url = isUrl ? raw : `https://instagram.com/${handle}`;
+              return (
+                <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border border-gray-200 hover:border-pink-400 hover:text-pink-600 transition">
+                  <span className="font-medium">IG</span><span>@{handle}</span>
+                </a>
+              );
+            })()}
+            {profile.socials.whatsapp && profile.socials.whatsapp.trim() && (() => {
+              const raw = profile.socials.whatsapp.trim();
+              const digits = raw.startsWith('+') ? raw : `+${raw}`;
+              const linkNumber = digits.replace(/[^+\d]/g,'');
+              const waUrl = `https://wa.me/${linkNumber.replace(/^\+/,'')}`;
+              return (
+                <a href={waUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white border border-gray-200 hover:border-green-400 hover:text-green-600 transition">
+                  <span className="font-medium">WA</span><span>{linkNumber}</span>
+                </a>
+              );
+            })()}
           </div>
-
-          <div className="text-center">
-            <div className="w-20 h-20 bg-white/20 rounded-full mx-auto mb-4 flex items-center justify-center">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Profile" className="w-full h-full rounded-full object-cover" />
-              ) : (
-                <span className="text-2xl">👤</span>
-              )}
-            </div>
-            <h1 className="text-2xl font-bold mb-2">{fullName || email || 'My Profile'}</h1>
-            {location && <p className="text-white/80">📍 {location}</p>}
+        )}
+        <Tabs active={activeTab} onChange={setActiveTab} />
+        {activeTab === 'overview' && (
+          <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div className="md:col-span-2 lg:col-span-2"><TraitsPreview traits={traits.slice(0,6)} /></div>
+            <div className="md:col-span-2 lg:col-span-2"><BadgesPreview badges={badges.slice(0,4)} /></div>
+            <div className="md:col-span-2 lg:col-span-2"><AttendanceBars metrics={attendance} /></div>
+            <div className="md:col-span-2 lg:col-span-2"><BioCard bio={profile?.bio} editable onSave={saveBio} /></div>
           </div>
-        </div>
-      </div>
-
-      {!email && (
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
-            <h3 className="font-semibold mb-2">Not signed in</h3>
-            <p>Please sign in to view and edit your profile.</p>
-          </div>
-        </div>
-      )}
-
-      {email && (
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          {/* Profile Stats */}
-          <div className="mb-8 grid grid-cols-3 gap-4">
-            <div className="rounded-lg bg-gradient-to-r from-teal-50 to-teal-100 p-4 text-center">
-              <div className="text-2xl font-bold text-teal-700">{stats.eventsCreated}</div>
-              <div className="text-sm text-teal-600">Events Created</div>
+        )}
+        {activeTab === 'traits' && (
+          <div className="mt-8 space-y-4">{traits.map(t => (
+            <div key={t.id} className="rounded-lg bg-white p-4 border border-gray-200 flex items-center justify-between">
+              <div>
+                <div className="font-medium text-gray-800">{t.name}</div>
+                <div className="text-xs text-gray-600">{t.category}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold tabular-nums">{Math.round(t.score)}</span>
+                <span className="w-2 h-2 rounded-full" style={{ background: t.confidence>=0.75?'#059669': t.confidence>=0.5?'#d97706':'#9ca3af'}} />
+              </div>
             </div>
-            <div className="rounded-lg bg-gradient-to-r from-blue-50 to-blue-100 p-4 text-center">
-              <div className="text-2xl font-bold text-blue-700">{stats.eventsAttended}</div>
-              <div className="text-sm text-blue-600">Events Attended</div>
-            </div>
-            <div className="rounded-lg bg-gradient-to-r from-purple-50 to-purple-100 p-4 text-center">
-              <div className="text-2xl font-bold text-purple-700">{stats.totalRsvps}</div>
-              <div className="text-sm text-purple-600">Total RSVPs</div>
-            </div>
-          </div>
-
-          {/* Navigation Tabs */}
-          <div className="flex space-x-1 mb-6 bg-gray-200 p-1 rounded-lg">
-            {[
-              { key: 'profile', label: '👤 Profile', desc: 'Personal info' },
-              { key: 'traits', label: '🏷️ Traits', desc: 'Personality' },
-              { key: 'badges', label: '🏆 Badges', desc: 'Achievements' },
-              { key: 'activities', label: '🎯 Activities', desc: 'My events' },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key as any)}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === tab.key
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <div>{tab.label}</div>
-              </button>
+          )) || <div className="text-sm text-gray-500">No traits yet.</div>}</div>
+        )}
+        {activeTab === 'badges' && (
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+            {badges.map(b => (
+              <div key={b.id} className="rounded-lg bg-white border border-gray-200 p-4 flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-sm text-gray-800 truncate">{b.name}</div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${b.status==='verified'?'bg-emerald-100 text-emerald-700 border-emerald-200': b.status==='expired'?'bg-red-100 text-red-600 border-red-200':'bg-gray-100 text-gray-600 border-gray-200'}`}>{b.status}</span>
+                </div>
+                <div className="text-xs text-gray-600 flex items-center gap-2">
+                  {b.level && <span className="font-mono bg-gray-100 px-1 rounded border border-gray-200">L{b.level}</span>}
+                  {b.earnedAt && <span>{new Date(b.earnedAt).toLocaleDateString()}</span>}
+                </div>
+              </div>
             ))}
+            {badges.length === 0 && <div className="text-sm text-gray-500">No badges yet.</div>}
           </div>
+        )}
+        {activeTab === 'activities' && (
+          <ActivitiesPlaceholder userId={userId} />
+        )}
+        {activeTab === 'reviews' && <div className="mt-8"><ReviewsTab userId={userId} /></div>}
+      </main>
+    </div>
+  );
+}
 
-          {/* Tab Content */}
-          {activeTab === 'profile' && renderProfileTab()}
-          {activeTab === 'traits' && renderTraitsTab()}
-          {activeTab === 'badges' && renderBadgesTab()}
-          {activeTab === 'activities' && renderActivitiesTab()}
-        </div>
-      )}
+function Tabs({ active, onChange }: { active: TabKey; onChange: (t: TabKey) => void }) {
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'traits', label: 'Traits' },
+    { key: 'badges', label: 'Badges' },
+    { key: 'activities', label: 'Activities' },
+    { key: 'reviews', label: 'Reviews' },
+  ];
+  return (
+    <nav className="flex flex-wrap gap-2" aria-label="Profile sections">
+      {tabs.map(t => (
+        <button key={t.key} onClick={()=>onChange(t.key)} className={`px-4 py-2 rounded-full text-sm font-medium border transition ${active===t.key?'bg-white shadow border-gray-300':'bg-gray-100 hover:bg-gray-200 border-transparent'}`}>{t.label}</button>
+      ))}
+    </nav>
+  );
+}
+
+function ActivitiesPlaceholder({ userId }: { userId: string }) {
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(()=>{ (async()=>{ setLoading(true); try { const r = await fetch(`/api/profile/${userId}/activities?range=90d`); const j = await r.json(); setTimeline(j.timeline||[]);} catch { setTimeline([]);} finally { setLoading(false);} })(); },[userId]);
+  return (
+    <div className="mt-8 rounded-xl bg-white border border-gray-200 p-6 shadow-sm">
+      <h3 className="font-semibold text-gray-800 mb-4">Activities</h3>
+      {loading && <div className="text-sm text-gray-500">Loading…</div>}
+      {!loading && timeline.length===0 && <div className="text-sm text-gray-500">No recent activity.</div>}
+      <ul className="space-y-3">
+        {timeline.map(a => (
+          <li key={a.id} className="flex items-center gap-3 text-sm">
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            <span className="flex-1 truncate">{a.label}</span>
+            <span className="text-xs text-gray-500 tabular-nums">{new Date(a.ts).toLocaleDateString()}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

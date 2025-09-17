@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+interface SessionIdRow { id: string }
+
 // GET /api/cleanup?scope=old|upcoming
 export async function GET(req: Request) {
   try {
@@ -11,12 +13,11 @@ export async function GET(req: Request) {
     if (scope === 'upcoming') {
       // Delete future sessions and related RSVPs first to avoid FKs
       const nowIso = new Date().toISOString();
-      const { data: victimIds } = await supabase
+  const { data: victimIds } = await supabase
         .from('sessions')
         .select('id')
         .gte('starts_at', nowIso);
-
-      const ids = (victimIds ?? []).map((r: any) => r.id);
+  const ids = (victimIds ?? []).map(r => (r as SessionIdRow).id);
       if (ids.length) {
         await supabase.from('rsvps').delete().in('session_id', ids);
         await supabase.from('sessions').delete().in('id', ids);

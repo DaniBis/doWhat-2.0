@@ -111,18 +111,14 @@ export default function SearchPage() {
       
       if (error) throw error;
       
-      let filteredResults = data || [];
+  let filteredResults: Event[] = (data || []) as Event[];
 
       // Filter by distance if location is available
       if (userLocation && maxDistance < 1000) {
-        filteredResults = filteredResults.filter((event: any) => {
-          if (!event.venues?.lat || !event.venues?.lng) return true; // Include events without location
-          const distance = calculateDistance(
-            userLocation.lat,
-            userLocation.lng,
-            event.venues.lat,
-            event.venues.lng
-          );
+        filteredResults = filteredResults.filter((event) => {
+          const venue = Array.isArray(event.venues) ? event.venues[0] : event.venues;
+          if (!venue?.lat || !venue?.lng) return true; // Include events without location
+          const distance = calculateDistance(userLocation.lat, userLocation.lng, venue.lat, venue.lng);
           return distance <= maxDistance;
         });
       }
@@ -134,11 +130,13 @@ export default function SearchPage() {
           break;
         case 'distance':
           if (userLocation) {
-            filteredResults.sort((a: any, b: any) => {
-              if (!a.venues?.lat || !a.venues?.lng) return 1;
-              if (!b.venues?.lat || !b.venues?.lng) return -1;
-              const distA = calculateDistance(userLocation.lat, userLocation.lng, a.venues.lat, a.venues.lng);
-              const distB = calculateDistance(userLocation.lat, userLocation.lng, b.venues.lat, b.venues.lng);
+            filteredResults.sort((a, b) => {
+              const va = Array.isArray(a.venues) ? a.venues[0] : a.venues;
+              const vb = Array.isArray(b.venues) ? b.venues[0] : b.venues;
+              if (!va?.lat || !va?.lng) return 1;
+              if (!vb?.lat || !vb?.lng) return -1;
+              const distA = calculateDistance(userLocation.lat, userLocation.lng, va.lat, va.lng);
+              const distB = calculateDistance(userLocation.lat, userLocation.lng, vb.lat, vb.lng);
               return distA - distB;
             });
           }
@@ -312,7 +310,7 @@ export default function SearchPage() {
             </label>
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="date">Date</option>

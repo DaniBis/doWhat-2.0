@@ -9,6 +9,7 @@ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 const config = {
   ...appJson.expo,
+  plugins: appJson.expo?.plugins ?? [],
   ios: {
     ...appJson.expo?.ios,
     infoPlist: {

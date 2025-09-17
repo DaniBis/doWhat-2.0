@@ -33,7 +33,50 @@ config.resolver.nodeModulesPaths = [
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
   ...(expoRouterPath ? { 'expo-router': expoRouterPath } : {}),
+  ...(function(){
+    const mods = {};
+    for (const pkg of ['expo-image-picker','expo-image-manipulator','react-native-gesture-handler','react-native-reanimated']) {
+      try {
+        mods[pkg] = path.dirname(require.resolve(`${pkg}/package.json`, { paths: [projectRoot, workspaceRoot] }));
+      } catch {}
+    }
+    // Explicitly map expo & expo-modules-core so that monorepo + pnpm symlink layout
+    // never confuses Metro (current red screen: Unable to resolve module 'expo')
+    for (const corePkg of ['expo','expo-modules-core']) {
+      try {
+        mods[corePkg] = path.dirname(require.resolve(`${corePkg}/package.json`, { paths: [projectRoot, workspaceRoot] }));
+      } catch (e) {
+        console.warn(`[metro.config] Failed to resolve ${corePkg}`, e.message);
+      }
+    }
+  // Force react-native single instance resolution from workspace root to avoid pnpm nested lookups
+  try { mods['react-native'] = path.dirname(require.resolve('react-native/package.json', { paths: [workspaceRoot, projectRoot] })); } catch {}
+  try { mods['react'] = path.dirname(require.resolve('react/package.json', { paths: [workspaceRoot, projectRoot] })); } catch {}
+    return mods;
+  })()
 };
+
+console.log('[metro.config] extraNodeModules:', Object.keys(config.resolver.extraNodeModules));
+
+if (!config.resolver.extraNodeModules['react-native']) {
+  console.warn('[metro.config] react-native mapping missing; attempting dynamic resolution');
+  try {
+    const rnPath = path.dirname(require.resolve('react-native/package.json', { paths: [workspaceRoot, projectRoot] }));
+    config.resolver.extraNodeModules['react-native'] = rnPath;
+  } catch (e) {
+    console.warn('[metro.config] Failed to resolve react-native path dynamically', e);
+  }
+}
+
+if (!config.resolver.extraNodeModules['expo']) {
+  console.warn('[metro.config] expo mapping missing; attempting dynamic resolution');
+  try {
+    const expoPath = path.dirname(require.resolve('expo/package.json', { paths: [workspaceRoot, projectRoot] }));
+    config.resolver.extraNodeModules['expo'] = expoPath;
+  } catch (e) {
+    console.warn('[metro.config] Failed to resolve expo path dynamically', e);
+  }
+}
 
 // pnpm + monorepo resolution stability
 config.resolver.disableHierarchicalLookup = false;

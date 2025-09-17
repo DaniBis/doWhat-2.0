@@ -1,0 +1,12 @@
+// --- Legacy placeholder (should be deleted) ---
+// Real route file: /app/profile/index.tsx
+// If you see an error mentioning expo-image-picker from this file, Metro is using a stale cached transform.
+// Force-clear caches:
+// 1. Stop Expo / Metro
+// 2. rm -rf node_modules/.cache/metro .expo
+// 3. Restart: pnpm --filter doWhat-mobile exec expo start -c
+// 4. Ensure this file is physically removed after restart.
+if (__DEV__) {
+	console.warn('[legacy profile.tsx] This file should be deleted. Using profile/index.tsx instead.');
+}
+export {}; // remains an inert module.

@@ -16,12 +16,15 @@ export default function AuthButtons() {
   useEffect(() => {
     let mounted = true;
     
-    const getUser = async () => {
+  const getUser = async () => {
       try {
         const { data } = await supabase.auth.getUser();
         if (mounted) {
           setUser(data.user);
           setLoading(false);
+      // Hide SSR fallback link if present
+      const link = document.getElementById('auth-fallback-link');
+      if (link) link.style.display = 'none';
         }
       } catch (error) {
         console.error('Error getting user:', error);
@@ -36,7 +39,9 @@ export default function AuthButtons() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (mounted) {
-        setUser(session?.user ?? null);
+  setUser(session?.user ?? null);
+  const link = document.getElementById('auth-fallback-link');
+  if (link) link.style.display = session?.user ? 'none' : '';
         setLoading(false);
         
         if (event === 'SIGNED_IN') {

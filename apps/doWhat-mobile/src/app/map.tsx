@@ -2,7 +2,7 @@ import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Platform, ScrollView } from 'react-native';
-import { theme } from '@dowhat/shared/src/theme';
+import { theme } from '@dowhat/shared';
 // Lazy import expo-maps to avoid crashing if the native module
 // is not present (e.g., running in Expo Go or before rebuilding).
 type MapsModule = typeof import('expo-maps');
