@@ -86,8 +86,6 @@ PODS:
     - glog
     - RCT-Folly (= 2022.05.16.00)
     - React-Core
-  - ExpoAsset (11.1.7):
-    - ExpoModulesCore
   - ExpoBlur (12.9.2):
     - ExpoModulesCore
   - ExpoCrypto (12.8.1):
@@ -1225,7 +1223,6 @@ DEPENDENCIES:
   - expo-dev-launcher (from `../../../node_modules/expo-dev-launcher`)
   - expo-dev-menu (from `../../../node_modules/expo-dev-menu`)
   - expo-dev-menu-interface (from `../../../node_modules/expo-dev-menu-interface/ios`)
-  - "ExpoAsset (from `../../../../node_modules/.pnpm/expo-asset@11.1.7_expo@53.0.20_@babel+core@7.28.3_graphql@15.8.0_react-native@0.81.0_@babel+c_ac5pd2hzoxogfwlg3wdkliaf54/node_modules/expo-asset/ios`)"
   - ExpoBlur (from `../../../node_modules/expo-blur/ios`)
   - ExpoCrypto (from `../../../node_modules/expo-crypto/ios`)
   - ExpoDevice (from `../../../node_modules/expo-device/ios`)
@@ -1336,8 +1333,6 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/expo-dev-menu"
   expo-dev-menu-interface:
     :path: "../../../node_modules/expo-dev-menu-interface/ios"
-  ExpoAsset:
-    :path: "../../../../node_modules/.pnpm/expo-asset@11.1.7_expo@53.0.20_@babel+core@7.28.3_graphql@15.8.0_react-native@0.81.0_@babel+c_ac5pd2hzoxogfwlg3wdkliaf54/node_modules/expo-asset/ios"
   ExpoBlur:
     :path: "../../../node_modules/expo-blur/ios"
   ExpoCrypto:
@@ -1490,7 +1485,6 @@ SPEC CHECKSUMS:
   expo-dev-launcher: 4b9190f0879290b57ed89cc5c24592d4ce981f85
   expo-dev-menu: efe7323e7f918e437a02f20063eb2b55c13dfe99
   expo-dev-menu-interface: 44e69ddff62bbc6c5418c200e657635720b5a480
-  ExpoAsset: ef06e880126c375f580d4923fdd1cdf4ee6ee7d6
   ExpoBlur: 3a9548a738624968836926f4aa1e18fa22155640
   ExpoCrypto: 9be8806e896380cb18e5d3d2c13a89ce2f36946a
   ExpoDevice: fc21b9193d704f3759c1ede1b383fcdb0370b46a
@@ -1564,6 +1558,6 @@ SPEC CHECKSUMS:
   UMAppLoader: 79d3ee6aa2447a1fe2e8b0d07acf2de106e55b58
   Yoga: 805bf71192903b20fc14babe48080582fee65a80
 
-PODFILE CHECKSUM: 23dcf82158da4b390d5fe7b0353d6b850b4f4d71
+PODFILE CHECKSUM: d80b9256bfe94bc76b4a01d5f6532b0c57589cee
 
 COCOAPODS: 1.16.2

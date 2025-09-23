@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-device/ios/UIDevice.swift b/node_modules/expo-device/ios/UIDevice.swift
+index 7b7b7b7..8c8c8c8 100644
+--- a/node_modules/expo-device/ios/UIDevice.swift
++++ b/node_modules/expo-device/ios/UIDevice.swift
+@@
+	// Credit: https://github.com/developerinsider/isJailBroken/blob/master/IsJailBroken/Extension/UIDevice%2BJailBroken.swift
+-  var isSimulator: Bool {
+-    return TARGET_OS_SIMULATOR != 0
+-  }
++  var isSimulator: Bool {
++    #if targetEnvironment(simulator)
++      return true
++    #else
++      return false
++    #endif
++  }
+*** Begin Patch
+*** Update File: /Users/dan/dowhat/patches/expo-device+5.9.4.patch
+@@
+*** End Patch

@@ -8,10 +8,17 @@
     "start:ios": "bash ./scripts/start-ios.sh",
     "start:android": "expo start --dev-client --android -c",
     "start:web": "expo start --web -c",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "prebuild:ios": "expo prebuild --clean --platform ios",
+    "prebuild:android": "expo prebuild --clean --platform android",
+    "pods": "cd ios && LANG=en_US.UTF-8 pod install && cd ..",
+    "run:ios:sim": "pnpm run ios -- --device 'iPhone 16 Pro'",
+    "run:android:emu": "pnpm run android -- --variant debug",
+    "run:android:emu:arm64": "pnpm run android -- --variant debug -PreactNativeArchitectures=arm64-v8a",
+    "run:android:emu:x86_64": "pnpm run android -- --variant debug -PreactNativeArchitectures=x86_64"
   },
   "dependencies": {
     "@babel/runtime": "^7.25.7",
@@ -21,7 +28,7 @@
     "@react-native-async-storage/async-storage": "~2.2.0",
     "@rneui/base": "4.0.0-rc.8",
     "@supabase/supabase-js": "^2.56.0",
-    "expo": "~50.0.15",
+    "expo": "~50.0.17",
     "expo-auth-session": "~5.4.0",
     "expo-blur": "~12.9.2",
     "expo-constants": "~15.4.5",
