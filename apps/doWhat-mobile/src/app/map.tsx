@@ -65,7 +65,8 @@ export default function MapTab() {
   const [pendingAdd, setPendingAdd] = useState<{ lat: number; lng: number } | null>(null);
   const [pendingAddr, setPendingAddr] = useState<string | null>(null);
 
-  const MapView = Platform.OS === 'ios' ? (maps as any)?.AppleMaps?.View : (maps as any)?.GoogleMaps?.View;
+  // Prefer platform-specific views if available, otherwise fall back to the default MapView export
+  const MapView = (maps as any)?.MapView || (Platform.OS === 'ios' ? (maps as any)?.AppleMaps?.View : (maps as any)?.GoogleMaps?.View);
 
   async function locate() {
     try {

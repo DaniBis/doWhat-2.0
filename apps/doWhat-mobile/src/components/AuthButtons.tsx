@@ -12,7 +12,7 @@ try {
 }
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, TextInput } from 'react-native';
 
 import { supabase } from '../lib/supabase';
 
@@ -40,6 +40,12 @@ export default function AuthButtons() {
   useSupabaseOAuthListener();
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [emailMode, setEmailMode] = useState(false);
+  const [isSignup, setIsSignup] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -100,6 +106,25 @@ export default function AuthButtons() {
     await supabase.auth.signOut();
   }
 
+  async function signInWithEmail() {
+    setErr(null);
+    setBusy(true);
+    try {
+      if (!email || !password) throw new Error('Email and password are required');
+      if (isSignup) {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (e: any) {
+      setErr(e?.message ?? 'Authentication failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <View style={{ padding: 12, gap: 8 }}>
       {userEmail ? (
@@ -110,9 +135,52 @@ export default function AuthButtons() {
           </Pressable>
         </>
       ) : (
-        <Pressable onPress={signIn} style={{ padding: 8, borderWidth: 1, borderRadius: 8 }}>
-          <Text>Sign in with Google</Text>
-        </Pressable>
+        <View style={{ gap: 10 }}>
+          {!emailMode && (
+            <>
+              <Pressable onPress={signIn} style={{ padding: 12, borderWidth: 1, borderRadius: 10 }}>
+                <Text>Continue with Google</Text>
+              </Pressable>
+              <Pressable onPress={() => setEmailMode(true)} style={{ padding: 12, borderWidth: 1, borderRadius: 10 }}>
+                <Text>Continue with Email</Text>
+              </Pressable>
+            </>
+          )}
+          {emailMode && (
+            <View style={{ gap: 8 }}>
+              <Text style={{ fontWeight: '600' }}>{isSignup ? 'Create account' : 'Sign in with email'}</Text>
+              <TextInput
+                placeholder="you@example.com"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+                style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10 }}
+              />
+              <TextInput
+                placeholder="Password"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+                style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10 }}
+              />
+              {err && <Text style={{ color: '#b91c1c' }}>{err}</Text>}
+              <Pressable onPress={signInWithEmail} disabled={busy} style={{ padding: 12, borderRadius: 10, backgroundColor: busy ? '#9ca3af' : '#10b981' }}>
+                <Text style={{ color: 'white', textAlign: 'center', fontWeight: '600' }}>
+                  {isSignup ? 'Create account' : 'Sign in'}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => setIsSignup(!isSignup)}>
+                <Text style={{ color: '#0d9488', textAlign: 'center' }}>
+                  {isSignup ? 'Have an account? Sign in' : "Don't have an account? Create one"}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => setEmailMode(false)}>
+                <Text style={{ color: '#6b7280', textAlign: 'center' }}>Back</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
       )}
     </View>
   );

@@ -1,22 +1,6 @@
-import { View, Text, StyleSheet } from 'react-native';
+import React from 'react';
+import { Redirect } from 'expo-router';
 
-export default function MinimalScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.text}>doWhat Mobile ✅</Text>
-    </View>
-  );
+export default function RootIndex() {
+  return <Redirect href="/(tabs)/home" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-  },
-  text: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-});

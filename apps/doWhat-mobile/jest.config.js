@@ -1,13 +1,12 @@
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'jsdom',
+  preset: 'react-native',
+  testEnvironment: 'node',
   displayName: 'doWhat-mobile',
   rootDir: '.',
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   transform: {
-    '^.+\\.(ts|tsx)$': 'ts-jest',
-    '^.+\\.(js|jsx)$': 'babel-jest',
+    '^.+\\.(js|jsx|ts|tsx)$': 'babel-jest',
   },
   transformIgnorePatterns: [
     'node_modules/(?!(expo|@expo|react-native|@react-native|react-navigation|@react-navigation)/)'

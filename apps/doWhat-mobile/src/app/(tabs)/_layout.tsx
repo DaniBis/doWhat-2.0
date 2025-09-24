@@ -20,6 +20,8 @@ export default function TabsLayout() {
         },
       }}
     >
+  {/* Hide the redirect-only index route from the tab bar */}
+  <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen
         name="home"
         options={{
@@ -32,6 +34,13 @@ export default function TabsLayout() {
         options={{
           title: 'Map',
           tabBarIcon: () => <Text>🗺️</Text>,
+        }}
+      />
+      <Tabs.Screen
+        name="saved"
+        options={{
+          title: 'Saved',
+          tabBarIcon: () => <Text>⭐</Text>,
         }}
       />
       <Tabs.Screen

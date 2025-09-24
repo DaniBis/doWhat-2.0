@@ -5,7 +5,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Link } = require('expo-router');
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
@@ -20,6 +20,7 @@ type ProfileRow = {
   avatar_url: string | null;
   instagram?: string | null;
   whatsapp?: string | null;
+  bio?: string | null;
   updated_at?: string | null;
 };
 
@@ -30,6 +31,7 @@ export default function ProfileSimple() {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [instagram, setInstagram] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
+  const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export default function ProfileSimple() {
   // Draft state excludes avatar now (avatar picked directly, saves immediately)
   const [draftInstagram, setDraftInstagram] = useState('');
   const [draftWhatsapp, setDraftWhatsapp] = useState('');
+  const [draftBio, setDraftBio] = useState('');
   const DRAFT_KEY = 'profile_edit_draft_v1_simple';
   const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
@@ -49,6 +52,7 @@ export default function ProfileSimple() {
   // Feature flags discovered at runtime (schema / native capabilities)
   const [supportsInstagram, setSupportsInstagram] = useState(true);
   const [supportsWhatsapp, setSupportsWhatsapp] = useState(true);
+  const [supportsBio, setSupportsBio] = useState(true);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
     if (!catalogBadges.length) return ownedBadges as any;
@@ -87,7 +91,8 @@ export default function ProfileSimple() {
     // Build dynamic column list based on current support flags
     const cols = ['full_name', 'avatar_url']
       .concat(supportsInstagram ? ['instagram'] : [])
-      .concat(supportsWhatsapp ? ['whatsapp'] : []);
+      .concat(supportsWhatsapp ? ['whatsapp'] : [])
+      .concat(supportsBio ? ['bio'] : []);
     const { data, error } = await supabase
       .from('profiles')
       .select(cols.join(', '))
@@ -100,10 +105,12 @@ export default function ProfileSimple() {
       let retried = false;
       if (msg.includes('instagram')) { setSupportsInstagram(false); retried = true; }
       if (msg.includes('whatsapp')) { setSupportsWhatsapp(false); retried = true; }
+      if (msg.includes('bio')) { setSupportsBio(false); retried = true; }
       if (retried) {
         const retryCols = ['full_name', 'avatar_url']
           .concat(supportsInstagram && !msg.includes('instagram') ? ['instagram'] : [])
-          .concat(supportsWhatsapp && !msg.includes('whatsapp') ? ['whatsapp'] : []);
+          .concat(supportsWhatsapp && !msg.includes('whatsapp') ? ['whatsapp'] : [])
+          .concat(supportsBio && !msg.includes('bio') ? ['bio'] : []);
         const retry = await supabase
           .from('profiles')
           .select(retryCols.join(', '))
@@ -120,7 +127,8 @@ export default function ProfileSimple() {
     setAvatarUrl(rawAvatar ? `${rawAvatar}?v=${Date.now()}` : '');
     if (supportsInstagram) setInstagram((row?.instagram as string) || '');
     if (supportsWhatsapp) setWhatsapp((row?.whatsapp as string) || '');
-  }, [supportsInstagram, supportsWhatsapp]);
+    if (supportsBio) setBio((row?.bio as string) || '');
+  }, [supportsInstagram, supportsWhatsapp, supportsBio]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -144,6 +152,7 @@ export default function ProfileSimple() {
           setAvatarUrl('');
           setInstagram('');
           setWhatsapp('');
+          setBio('');
         }
       });
       unsub = () => listener.subscription.unsubscribe();
@@ -155,15 +164,16 @@ export default function ProfileSimple() {
     setDraftFullName(fullName);
     setDraftInstagram(instagram);
     setDraftWhatsapp(whatsapp);
+    setDraftBio(bio);
     setMsg(null); setErr(null);
     (async () => {
-      try { const raw = await AsyncStorage.getItem(DRAFT_KEY); if (raw) { const d = JSON.parse(raw); setDraftFullName(d.fullName||''); setDraftInstagram(d.instagram||''); setDraftWhatsapp(d.whatsapp||''); } } catch {/* ignore */}
+      try { const raw = await AsyncStorage.getItem(DRAFT_KEY); if (raw) { const d = JSON.parse(raw); setDraftFullName(d.fullName||''); setDraftInstagram(d.instagram||''); setDraftWhatsapp(d.whatsapp||''); setDraftBio(d.bio||''); } } catch {/* ignore */}
       setEditOpen(true);
     })();
   }
 
   function applyDraftsToState() {
-    setFullName(draftFullName); setInstagram(draftInstagram); setWhatsapp(draftWhatsapp);
+    setFullName(draftFullName); setInstagram(draftInstagram); setWhatsapp(draftWhatsapp); setBio(draftBio);
   }
 
   async function saveEdits() {
@@ -177,12 +187,14 @@ export default function ProfileSimple() {
       const upsert: Record<string, any> = { id: uid, full_name: draftFullName.trim()||null, avatar_url: avatarUrl || null, updated_at: new Date().toISOString() };
       if (supportsInstagram) upsert.instagram = cleanInstagram(draftInstagram)||null;
       if (supportsWhatsapp) upsert.whatsapp = cleanWhatsApp(draftWhatsapp)||null;
+      if (supportsBio) upsert.bio = (draftBio||'').toString().slice(0, 500) || null;
       const { error } = await supabase.from('profiles').upsert(upsert, { onConflict: 'id' });
       if (error) {
         const msg = error.message || '';
         let retried = false;
         if (msg.includes('instagram')) { setSupportsInstagram(false); delete upsert.instagram; retried = true; }
         if (msg.includes('whatsapp')) { setSupportsWhatsapp(false); delete upsert.whatsapp; retried = true; }
+        if (msg.includes('bio')) { setSupportsBio(false); delete upsert.bio; retried = true; }
         if (retried) {
           const retry = await supabase.from('profiles').upsert(upsert, { onConflict: 'id' });
           if (retry.error) throw retry.error;
@@ -194,7 +206,7 @@ export default function ProfileSimple() {
   // Refetch from server to ensure we show canonical persisted values (especially if triggers modify data)
   if (uid) await fetchProfile(uid);
   setMsg('Saved');
-      try { await AsyncStorage.removeItem(DRAFT_KEY); } catch {}
+  try { await AsyncStorage.removeItem(DRAFT_KEY); } catch {}
       setDraftSavedAt(null); setEditOpen(false);
     } catch(e:any) { setErr(e.message||'Failed to save'); } finally { setLoading(false); }
   }
@@ -204,14 +216,14 @@ export default function ProfileSimple() {
     if (!editOpen) return;
     if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
     draftSaveTimer.current = setTimeout(async () => {
-      try { await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify({ fullName: draftFullName, instagram: draftInstagram, whatsapp: draftWhatsapp })); setDraftSavedAt(Date.now()); } catch {}
+      try { await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify({ fullName: draftFullName, instagram: draftInstagram, whatsapp: draftWhatsapp, bio: draftBio })); setDraftSavedAt(Date.now()); } catch {}
     }, 400);
     return () => { if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current); };
-  }, [draftFullName, draftInstagram, draftWhatsapp, editOpen]);
+  }, [draftFullName, draftInstagram, draftWhatsapp, draftBio, editOpen]);
 
   function clearDraft() {
-    setDraftFullName(fullName); setDraftInstagram(instagram); setDraftWhatsapp(whatsapp);
-    AsyncStorage.removeItem(DRAFT_KEY).catch(()=>{}); setDraftSavedAt(null);
+  setDraftFullName(fullName); setDraftInstagram(instagram); setDraftWhatsapp(whatsapp); setDraftBio(bio);
+  AsyncStorage.removeItem(DRAFT_KEY).catch(()=>{}); setDraftSavedAt(null);
   }
 
   async function ensureImagePicker() {
@@ -321,6 +333,55 @@ export default function ProfileSimple() {
         {err && <Text style={{ marginTop:8, color:'#b91c1c' }}>{err}</Text>}
       </View>
 
+      {/* About / Bio card */}
+      <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+        <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6' }}>
+          <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>About</Text>
+        </View>
+        <View style={{ padding:14 }}>
+          <Text style={{ color:'#374151', lineHeight:20, minHeight:40, opacity: bio?1:0.55 }}>
+            {bio || 'No bio yet. Tap Edit Profile to add one.'}
+          </Text>
+        </View>
+      </View>
+
+      {(!!instagram || !!whatsapp) && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Socials</Text>
+          </View>
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, padding:12 }}>
+            {!!instagram && (
+              <Pressable
+                onPress={() => {
+                  const handle = instagram.replace(/^@+/, '');
+                  const appUrl = `instagram://user?username=${handle}`;
+                  const webUrl = `https://instagram.com/${handle}`;
+                  Linking.openURL(appUrl).catch(()=>Linking.openURL(webUrl));
+                }}
+                style={{ flexDirection:'row', alignItems:'center', gap:6, paddingVertical:8, paddingHorizontal:12, borderRadius:999, backgroundColor:'#f1f5f9', borderWidth:1, borderColor:'#e2e8f0' }}
+              >
+                <Text style={{ fontSize:16 }}>📷</Text>
+                <Text style={{ color:'#111827', fontWeight:'600' }}>@{instagram.replace(/^@+/, '')}</Text>
+              </Pressable>
+            )}
+            {!!whatsapp && (
+              <Pressable
+                onPress={() => {
+                  const phone = whatsapp;
+                  const waUrl = `https://wa.me/${phone.replace(/[^\d+]/g,'')}`;
+                  Linking.openURL(waUrl).catch(()=>{});
+                }}
+                style={{ flexDirection:'row', alignItems:'center', gap:6, paddingVertical:8, paddingHorizontal:12, borderRadius:999, backgroundColor:'#f1f5f9', borderWidth:1, borderColor:'#e2e8f0' }}
+              >
+                <Text style={{ fontSize:16 }}>💬</Text>
+                <Text style={{ color:'#111827', fontWeight:'600' }}>{whatsapp}</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
+
       <Modal visible={editOpen} animationType="slide" transparent onRequestClose={()=>setEditOpen(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', padding:20 }}>
           <View style={{ backgroundColor: theme.colors.surface, borderRadius:20, padding:20, maxHeight:'85%' }}>
@@ -332,6 +393,15 @@ export default function ProfileSimple() {
             <ScrollView style={{ maxHeight:'70%' }} keyboardShouldPersistTaps="handled">
               <Text style={{ marginBottom:6, color: theme.colors.ink60 }}>Full Name</Text>
               <TextInput value={draftFullName} onChangeText={setDraftFullName} style={{ borderWidth:1, borderRadius:10, padding:10, borderColor:'#e5e7eb' }} />
+              <Text style={{ marginTop:10, marginBottom:6, color: theme.colors.ink60 }}>Bio</Text>
+              <TextInput
+                value={draftBio}
+                onChangeText={setDraftBio}
+                placeholder="Write something about yourself"
+                multiline
+                numberOfLines={4}
+                style={{ borderWidth:1, borderRadius:10, padding:10, borderColor:'#e5e7eb', minHeight:96, textAlignVertical:'top' }}
+              />
               {supportsInstagram && (
                         <>
                           <Text style={{ marginTop:10, marginBottom:6, color: theme.colors.ink60 }}>Instagram (optional)</Text>
@@ -344,8 +414,8 @@ export default function ProfileSimple() {
                           <TextInput value={draftWhatsapp} onChangeText={setDraftWhatsapp} placeholder="+1234567890" keyboardType="phone-pad" style={{ borderWidth:1, borderRadius:10, padding:10, borderColor:'#e5e7eb' }} />
                         </>
                       )}
-                      {(!supportsInstagram || !supportsWhatsapp) && (
-                        <Text style={{ marginTop:10, fontSize:11, color:'#b45309' }}>Some social fields are hidden (not in server schema).</Text>
+                      {(!supportsInstagram || !supportsWhatsapp || !supportsBio) && (
+                        <Text style={{ marginTop:10, fontSize:11, color:'#b45309' }}>Some fields are hidden (not in server schema).</Text>
                       )}
               <Text style={{ marginTop:12, fontSize:11, color: theme.colors.ink60 }}>Tap your avatar above to change photo.</Text>
             </ScrollView>

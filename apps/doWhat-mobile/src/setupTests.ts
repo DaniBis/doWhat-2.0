@@ -1,3 +1,7 @@
+// Ensure React Native globals exist before importing libraries that rely on them
+// __DEV__ is accessed during react-native initialization in some packages
+(global as any).__DEV__ = true;
+
 import '@testing-library/jest-native/extend-expect';
 import { jest } from '@jest/globals';
 
@@ -13,15 +17,19 @@ jest.mock('expo-constants', () => ({
   }
 }));
 
-jest.mock('expo-router', () => ({
-  useRouter: () => ({
+jest.mock('expo-router', () => {
+  const router = {
     push: jest.fn(),
     replace: jest.fn(),
-    back: jest.fn()
-  }),
-  useLocalSearchParams: () => ({}),
-  Link: ({ children }: { children: React.ReactNode }) => children
-}));
+    back: jest.fn(),
+  };
+  return {
+    router,
+    useRouter: () => router,
+    useLocalSearchParams: () => ({}),
+    Link: ({ children }: { children: React.ReactNode }) => children,
+  };
+});
 
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
@@ -33,31 +41,9 @@ jest.mock('expo-location', () => ({
   }))
 }));
 
+// Light-touch mocks only when directly imported in unit tests; avoid overriding react-native.
 jest.mock('expo-maps', () => ({
-  Map: 'Map',
-  Marker: 'Marker'
-}));
-
-// Mock React Native modules
-jest.mock('react-native', () => ({
-  Alert: {
-    alert: jest.fn()
-  },
-  Platform: {
-    OS: 'ios',
-  select: jest.fn((obj: any) => obj.ios)
-  },
-  StyleSheet: {
-  create: jest.fn((styles: any) => styles),
-  flatten: jest.fn((style: any) => style)
-  },
-  View: 'View',
-  Text: 'Text',
-  TouchableOpacity: 'TouchableOpacity',
-  ScrollView: 'ScrollView',
-  Dimensions: {
-    get: jest.fn(() => ({ width: 375, height: 667 }))
-  }
+  MapView: 'MapView'
 }));
 
 // Mock AsyncStorage
@@ -68,5 +54,4 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   clear: jest.fn(() => Promise.resolve())
 }));
 
-// Setup global test environment
-(global as any).__DEV__ = true;
+// No-op: __DEV__ is set at the top to avoid early import issues

@@ -63,15 +63,23 @@ function HomeScreen() {
       url.searchParams.set('radius', '2500');
       const res = await fetch(url.toString());
       const json = await res.json();
-      const list = (json?.activities || []) as Array<{ id: string; name: string }>;
+      const list = (json?.activities || []) as Array<{ id?: string | null; name: string }>;
       // Group by activity id to get a lightweight "count"
-      const grouped = Object.values(
-        list.reduce((acc: Record<string, NearbyActivity>, it: any) => {
-          const key = it.id || it.name;
-          if (!acc[key]) acc[key] = { id: it.id || key, name: it.name, count: 0 };
-          acc[key].count += 1; return acc;
-        }, {})
-      ).sort((a: any, b: any) => b.count - a.count);
+      const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
+        const key = item.id ?? item.name;
+        const existing = acc[key];
+        if (existing) {
+          existing.count += 1;
+        } else {
+          acc[key] = {
+            id: item.id ?? key,
+            name: item.name,
+            count: 1,
+          };
+        }
+        return acc;
+      }, {});
+      const grouped = Object.values(groupedMap).sort((a, b) => b.count - a.count);
       setActivities(grouped);
     } catch {
       setActivities([]);
@@ -456,33 +464,6 @@ function HomeScreen() {
               Find People
             </Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => router.push('/filter')}
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#FFFFFF',
-              borderRadius: 12,
-              padding: 12,
-              shadowColor: '#000',
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 2,
-            }}
-          >
-            <Ionicons name="options" size={16} color="#3B82F6" />
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '600',
-              color: '#3B82F6',
-              marginLeft: 8,
-            }}>
-              Filters
-            </Text>
-          </TouchableOpacity>
           
           <TouchableOpacity
             onPress={() => router.push('/add-event')}
@@ -512,10 +493,10 @@ function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Activities Grid */}
+        {/* Activities Grid + Upcoming Sessions in one scroll */}
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 20 }}
+          contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
         >
           {filteredActivities.length === 0 && searchQuery ? (
@@ -630,33 +611,33 @@ function HomeScreen() {
               </View>
             </View>
           )}
-        </ScrollView>
-        {/* Upcoming sessions */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 }}>
-          <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 12 }}>
-            Upcoming Sessions
-          </Text>
-          {rows.length === 0 ? (
-            <View style={{ alignItems: 'center', padding: 16 }}>
-              <Text style={{ color: '#6B7280' }}>No sessions yet. Be the first to create one!</Text>
-            </View>
-          ) : (
-            rows.slice(0, 6).map((s) => (
-              <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
-                <Text style={{ color: '#6B7280', marginTop: 2 }}>{(s as any).venues?.name ?? 'Venue'}</Text>
-                <Text style={{ marginTop: 4 }}>{formatPrice((s as any).price_cents)}</Text>
-                <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange((s as any).starts_at, (s as any).ends_at)}</Text>
-                <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
-                <Link href={`/sessions/${s.id}`} asChild>
-                  <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
-                    <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>
-                  </Pressable>
-                </Link>
+          {/* Upcoming sessions */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 12 }}>
+              Upcoming Sessions
+            </Text>
+            {rows.length === 0 ? (
+              <View style={{ alignItems: 'center', padding: 16 }}>
+                <Text style={{ color: '#6B7280' }}>No sessions yet. Be the first to create one!</Text>
               </View>
-            ))
-          )}
-        </View>
+            ) : (
+              rows.slice(0, 6).map((s) => (
+                <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
+                  <Text style={{ color: '#6B7280', marginTop: 2 }}>{(s as any).venues?.name ?? 'Venue'}</Text>
+                  <Text style={{ marginTop: 4 }}>{formatPrice((s as any).price_cents)}</Text>
+                  <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange((s as any).starts_at, (s as any).ends_at)}</Text>
+                  <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
+                  <Link href={`/sessions/${s.id}`} asChild>
+                    <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
+                      <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>
+                    </Pressable>
+                  </Link>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }

@@ -18,11 +18,9 @@ jest.mock('../lib/supabase', () => ({
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: require('react-native').View }));
 // Stub expo-router Link to a passthrough
 jest.mock('expo-router', () => ({ Link: ({ children }: any) => children }));
-// Patch react-native to shim RefreshControl for test renderer
-jest.mock('react-native', () => {
-  const RN: any = jest.requireActual('react-native');
-  return { ...RN, RefreshControl: RN.View, ScrollView: RN.View };
-});
+// NOTE: Avoid patching 'react-native' at module level to prevent resolver issues
+// in Jest when the suite is skipped. If/when re-enabling this suite, consider
+// moving any RN shims into the test body or setup file.
 
 // Import the component after mocks are in place
 // eslint-disable-next-line @typescript-eslint/no-var-requires
