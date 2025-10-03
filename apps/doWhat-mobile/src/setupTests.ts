@@ -1,6 +1,6 @@
 // Ensure React Native globals exist before importing libraries that rely on them
 // __DEV__ is accessed during react-native initialization in some packages
-(global as any).__DEV__ = true;
+(global as typeof global & { __DEV__?: boolean }).__DEV__ = true;
 
 import '@testing-library/jest-native/extend-expect';
 import { jest } from '@jest/globals';

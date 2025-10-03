@@ -6,8 +6,9 @@ import { supabase } from '../lib/supabase';
 type SavedActivity = {
 	id: string;
 	name: string;
-	cover_url?: string | null;
-	sessions_count?: number;
+	cover_url: string | null;
+	sessions_count: number | null;
+	updated_at?: string | null;
 };
 
 export default function Saved() {
@@ -16,23 +17,84 @@ export default function Saved() {
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
+		let cancelled = false;
 		(async () => {
 			try {
 				setLoading(true); setError(null);
 				const { data: userResp } = await supabase.auth.getUser();
 				const uid = userResp?.user?.id;
-				if (!uid) { setItems([]); setLoading(false); return; }
-				const { data, error } = await supabase
-					.from('saved_activities_view')
-					.select('id,name,cover_url,sessions_count')
-					.eq('user_id', uid)
-					.order('updated_at', { ascending: false });
-				if (error) throw error;
-				setItems((data ?? []) as any);
-			} catch (e: any) {
-				setError(e.message ?? 'Failed to load saved items');
-			} finally { setLoading(false); }
+				if (!uid) {
+					if (!cancelled) {
+						setItems([]);
+						setLoading(false);
+					}
+					return;
+				}
+				const sources: Array<{ table: string; includeUpdatedAt: boolean }> = [
+					{ table: 'saved_activities_view', includeUpdatedAt: true },
+					{ table: 'saved_activities', includeUpdatedAt: true },
+				];
+				let loaded = false;
+				let lastError: string | null = null;
+				for (const source of sources) {
+					let query = supabase
+						.from(source.table)
+						.select(source.includeUpdatedAt ? 'id,name,cover_url,sessions_count,updated_at' : 'id,name,cover_url,sessions_count')
+						.eq('user_id', uid);
+					if (source.includeUpdatedAt) {
+						try {
+							query = query.order('updated_at', { ascending: false });
+						} catch {}
+					}
+					const { data, error } = await query.returns<SavedActivity[]>();
+					if (!error) {
+						if (!cancelled) {
+							setItems(data ?? []);
+							setError(null);
+						}
+						loaded = true;
+						break;
+					}
+					lastError = error.message ?? 'Failed to load saved items';
+					if (/could not find the table/i.test(lastError) || /schema cache/i.test(lastError)) {
+						if (!cancelled) {
+							setItems([]);
+							setError(null);
+						}
+						loaded = true;
+						break;
+					}
+					if (/updated_at/i.test(lastError)) {
+						const retry = await supabase
+							.from(source.table)
+							.select('id,name,cover_url,sessions_count')
+							.eq('user_id', uid)
+							.returns<SavedActivity[]>();
+						if (!retry.error) {
+							if (!cancelled) {
+								setItems(retry.data ?? []);
+								setError(null);
+							}
+							loaded = true;
+							break;
+						}
+						lastError = retry.error.message ?? lastError;
+					}
+				}
+				if (!loaded && !cancelled) {
+					setItems([]);
+					setError(lastError ?? 'Failed to load saved items');
+				}
+			} catch (caught) {
+				const message = caught instanceof Error ? caught.message : 'Failed to load saved items';
+				if (!cancelled) setError(message);
+			} finally {
+				if (!cancelled) setLoading(false);
+			}
 		})();
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	if (loading) {
@@ -65,8 +127,8 @@ export default function Saved() {
 				</View>
 			) : (
 				<View style={{ gap: 12 }}>
-					{items.map((a) => (
-						<Link key={a.id} href={`/activities/${a.id}`} asChild>
+					{items.map((activity) => (
+						<Link key={activity.id} href={`/activities/${activity.id}`} asChild>
 							<Pressable style={{
 								backgroundColor: 'white',
 								borderRadius: 12,
@@ -77,9 +139,9 @@ export default function Saved() {
 								shadowOpacity: 0.05,
 								shadowRadius: 6,
 							}}>
-								<Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 4 }}>{a.name}</Text>
-								{!!a.sessions_count && (
-									<Text style={{ color: '#6b7280' }}>{a.sessions_count} upcoming session{a.sessions_count === 1 ? '' : 's'}</Text>
+								<Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 4 }}>{activity.name}</Text>
+								{activity.sessions_count != null && activity.sessions_count > 0 && (
+									<Text style={{ color: '#6b7280' }}>{activity.sessions_count} upcoming session{activity.sessions_count === 1 ? '' : 's'}</Text>
 								)}
 							</Pressable>
 						</Link>
@@ -89,4 +151,3 @@ export default function Saved() {
 		</ScrollView>
 	);
 }
-

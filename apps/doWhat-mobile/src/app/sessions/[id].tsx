@@ -4,14 +4,30 @@ import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from "react";
 import { View, Text, Pressable, Image as RNImage, SafeAreaView, StatusBar, TouchableOpacity, ScrollView } from "react-native";
 import { Ionicons } from '@expo/vector-icons';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { supabase } from "../../lib/supabase";
 
 type Status = "going" | "interested" | "declined";
 
+type SessionDetailRow = {
+	id: string;
+	activity_id: string | null;
+	starts_at: string;
+	ends_at: string;
+	price_cents: number | null;
+	activities: { id?: string | null; name?: string | null } | null;
+	venues: { name?: string | null; lat?: number | null; lng?: number | null } | null;
+};
+
+type RsvpStatusRow = { status: Status };
+type RsvpUserRow = { user_id: string | null };
+type ProfilePreviewRow = { id: string; full_name: string | null; avatar_url: string | null };
+type AttendeePreview = { id: string; initial: string; avatarUrl: string | null };
+
 export default function SessionDetails() {
 	const { id } = useLocalSearchParams<{ id: string }>();
-	const [row, setRow] = useState<any>(null);
+	const [row, setRow] = useState<SessionDetailRow | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [status, setStatus] = useState<Status | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -19,85 +35,105 @@ export default function SessionDetails() {
 	const [msg, setMsg] = useState<string | null>(null);
 	const [goingCount, setGoingCount] = useState<number | null>(null);
 	const [interestedCount, setInterestedCount] = useState<number | null>(null);
-	const [attendees, setAttendees] = useState<{ initial: string }[]>([]);
+	const [attendees, setAttendees] = useState<AttendeePreview[]>([]);
 
 	useEffect(() => {
 		let mounted = true;
-		let channel: any;
+		let channel: RealtimeChannel | null = null;
 		(async () => {
-			const { data, error } = await supabase
+			const { data, error: sessionError } = await supabase
 				.from("sessions")
-				.select(
-					"id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name,lat,lng)"
-				)
+				.select("id, activity_id, starts_at, ends_at, price_cents, activities(id,name), venues(name,lat,lng)")
 				.eq("id", id)
-				.single();
+				.maybeSingle<SessionDetailRow>();
 
-			if (error) setError(error.message);
-			else setRow(data);
+			if (sessionError) {
+				if (mounted) setError(sessionError.message);
+				return;
+			}
+			const sessionRow = data ?? null;
+			if (mounted) setRow(sessionRow);
 
 			const { data: auth } = await supabase.auth.getUser();
 			const uid = auth?.user?.id ?? null;
 			if (mounted) setUserId(uid);
 
+			const activityId = sessionRow?.activity_id
+				?? sessionRow?.activities?.id
+				?? sessionRow?.id
+				?? null;
+			if (!activityId) {
+				if (mounted) setError('Missing activity identifier');
+				return;
+			}
+
 			// fetch current RSVP if signed in
-			const activityId = (data as any)?.activity_id ?? (data as any)?.id;
-			if (uid && activityId) {
-				const { data: rsvp, error: rerr } = await supabase
+			if (uid) {
+				const { data: rsvp, error: rsvpError } = await supabase
 					.from("rsvps")
 					.select("status")
 					.eq("activity_id", activityId)
 					.eq("user_id", uid)
-					.maybeSingle();
-				if (!rerr && rsvp) setStatus(rsvp.status as Status);
+					.maybeSingle<RsvpStatusRow>();
+				if (!rsvpError) setStatus(rsvp?.status ?? null);
 			}
 
-			async function refreshCountsAndPeople() {
+			async function refreshCountsAndPeople(activity: string) {
 				try {
-					const [{ count: going }, { count: interested }, goingRows] = await Promise.all([
+					const [goingResponse, interestedResponse, goingRowsResponse] = await Promise.all([
 						supabase
 							.from("rsvps")
 							.select("status", { count: "exact", head: true })
-							.eq("activity_id", activityId)
+							.eq("activity_id", activity)
 							.eq("status", "going"),
 						supabase
 							.from("rsvps")
 							.select("status", { count: "exact", head: true })
-							.eq("activity_id", activityId)
+							.eq("activity_id", activity)
 							.eq("status", "interested"),
 						supabase
 							.from("rsvps")
 							.select("user_id")
-							.eq("activity_id", activityId)
+							.eq("activity_id", activity)
 							.eq("status", "going"),
 					]);
-					if (mounted) {
-						setGoingCount(going ?? 0);
-						setInterestedCount(interested ?? 0);
-						const ids = (goingRows.data ?? []).map((r: any) => r.user_id).filter(Boolean);
-						if (ids.length) {
-							const { data: profiles } = await supabase
-								.from('profiles')
-								.select('full_name, avatar_url, id')
-								.in('id', ids);
-							const items = (profiles ?? []).map((p: any) => {
-								const name = p.full_name || '?';
-								const init = String(name).trim().slice(0, 1).toUpperCase();
-								return { initial: init, avatar_url: p.avatar_url as string | null } as any;
-							});
+					if (!mounted) return;
+					if (!goingResponse.error) setGoingCount(goingResponse.count ?? 0);
+					if (!interestedResponse.error) setInterestedCount(interestedResponse.count ?? 0);
+					if (goingRowsResponse.error) {
+						setAttendees([]);
+						return;
+					}
+					const ids = (goingRowsResponse.data ?? [])
+						.map((item: RsvpUserRow) => item.user_id)
+						.filter((value): value is string => typeof value === 'string' && value.length > 0);
+					if (ids.length) {
+						const profileResponse = await supabase
+							.from('profiles')
+							.select('full_name, avatar_url, id')
+							.in('id', ids);
+						if (!profileResponse.error) {
+							const items = ((profileResponse.data ?? []) as ProfilePreviewRow[])
+								.map((profile) => {
+									if (!profile.id) return null;
+									const name = profile.full_name?.trim() || '?';
+									const initial = name.slice(0, 1).toUpperCase() || '?';
+									return { id: profile.id, initial, avatarUrl: profile.avatar_url ?? null };
+								})
+								.filter((item): item is AttendeePreview => Boolean(item));
 							setAttendees(items);
-						} else {
-							setAttendees([]);
 						}
+					} else {
+						setAttendees([]);
 					}
 				} catch {}
 			}
 
-			await refreshCountsAndPeople();
+			await refreshCountsAndPeople(activityId);
 
 			channel = supabase
 				.channel(`rsvps:activity:${activityId}`)
-				.on('postgres_changes', { event: '*', schema: 'public', table: 'rsvps', filter: `activity_id=eq.${activityId}` }, () => refreshCountsAndPeople())
+				.on('postgres_changes', { event: '*', schema: 'public', table: 'rsvps', filter: `activity_id=eq.${activityId}` }, () => refreshCountsAndPeople(activityId))
 				.subscribe();
 
 			// initial preview handled in refreshCountsAndPeople
@@ -166,8 +202,8 @@ export default function SessionDetails() {
 					? "Marked interested."
 					: "Marked declined."
 			);
-		} catch (e: any) {
-			setError(e.message ?? "Something went wrong");
+		} catch (error) {
+			setError(error instanceof Error ? error.message : "Something went wrong");
 		} finally {
 			setLoading(false);
 		}
@@ -284,9 +320,9 @@ export default function SessionDetails() {
 					<Text style={{ marginTop: 6 }}>{row.venues?.name ?? "Venue"}</Text>
 					<Text style={{ marginTop: 6 }}>{formatPrice(row.price_cents)}</Text>
 					<Text style={{ marginTop: 6 }}>{formatDateRange(row.starts_at, row.ends_at)}</Text>
-					{row?.venues?.lat != null && row?.venues?.lng != null && (
+					{row?.venues?.lat != null && row.venues?.lng != null && (
 						<Pressable style={{ marginTop: 8 }} onPress={() => {
-							const lat = (row as any).venues.lat; const lng = (row as any).venues.lng;
+							const { lat, lng } = row.venues ?? {};
 							const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 							WebBrowser.openBrowserAsync(url);
 						}}>
@@ -331,12 +367,12 @@ export default function SessionDetails() {
 						</Text>
 						{attendees.length > 0 && (
 							<View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
-								{attendees.slice(0, 8).map((p: any, i) => (
-									p.avatar_url ? (
-										<RNImage key={i} source={{ uri: p.avatar_url }} style={{ width: 24, height: 24, borderRadius: 12 }} />
+								{attendees.slice(0, 8).map((person) => (
+									person.avatarUrl ? (
+										<RNImage key={person.id} source={{ uri: person.avatarUrl }} style={{ width: 24, height: 24, borderRadius: 12 }} />
 									) : (
-										<View key={i} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(13,148,136,0.1)', alignItems: 'center', justifyContent: 'center' }}>
-											<Text style={{ fontSize: 12, fontWeight: '700', color: '#0d9488' }}>{p.initial}</Text>
+										<View key={person.id} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(13,148,136,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+											<Text style={{ fontSize: 12, fontWeight: '700', color: '#0d9488' }}>{person.initial}</Text>
 										</View>
 									)
 								))}
@@ -351,4 +387,3 @@ export default function SessionDetails() {
 		</SafeAreaView>
 	);
 }
-

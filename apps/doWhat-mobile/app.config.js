@@ -6,6 +6,12 @@ import appJson from './app.json';
 // Read environment variables
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const webBaseUrl =
+  process.env.EXPO_PUBLIC_WEB_URL ||
+  process.env.EXPO_PUBLIC_WEB_BASE_URL ||
+  process.env.EXPO_PUBLIC_SITE_URL ||
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  process.env.NEXT_PUBLIC_WEB_URL;
 // Ensure Android manifest has a concrete Google Maps API key to avoid placeholder errors during build
 const googleMapsApiKey =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
@@ -14,7 +20,15 @@ const googleMapsApiKey =
 
 const config = {
   ...appJson.expo,
-  plugins: appJson.expo?.plugins ?? [],
+  plugins: [
+    ...(appJson.expo?.plugins ?? []),
+    [
+      'expo-maps',
+      {
+        googleMapsApiKey,
+      },
+    ],
+  ],
   ios: {
     ...appJson.expo?.ios,
     infoPlist: {
@@ -23,6 +37,10 @@ const config = {
         ...(appJson.expo?.ios?.infoPlist?.UIBackgroundModes || []),
         'location',
       ],
+      NSAppTransportSecurity: {
+        NSAllowsArbitraryLoads: true,
+        NSAllowsLocalNetworking: true,
+      },
     },
   },
   android: {
@@ -38,6 +56,7 @@ const config = {
     ...appJson.expo.extra,
     supabaseUrl,
     supabaseAnonKey,
+    webBaseUrl,
     eas: {
       projectId: "your-eas-project-id", // Replace with your EAS project ID if needed
     },

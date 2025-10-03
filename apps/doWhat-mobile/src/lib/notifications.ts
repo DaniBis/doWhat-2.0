@@ -5,6 +5,13 @@ import { Platform } from 'react-native';
 
 import { supabase } from './supabase';
 
+const getProjectId = (): string | undefined => {
+  const expoConfigProjectId = (Constants as { expoConfig?: { extra?: { eas?: { projectId?: string } } } }).expoConfig?.extra?.eas?.projectId;
+  if (expoConfigProjectId) return expoConfigProjectId;
+  const easConfigProjectId = (Constants as { easConfig?: { projectId?: string } }).easConfig?.projectId;
+  return easConfigProjectId;
+};
+
 export async function registerForPushNotifications() {
   let token: string | null = null;
   try {
@@ -18,8 +25,8 @@ export async function registerForPushNotifications() {
     if (finalStatus !== 'granted') return null;
 
     // EAS projectId helps ensure the token resolves correctly
-    const projectId = (Constants as any).expoConfig?.extra?.eas?.projectId || (Constants as any).easConfig?.projectId;
-    const res = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : {} as any);
+    const projectId = getProjectId();
+    const res = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
     token = res.data;
 
     if (Platform.OS === 'android') {
@@ -35,8 +42,12 @@ export async function registerForPushNotifications() {
       if (uid && token) {
         await supabase.from('profiles').update({ expo_push_token: token, updated_at: new Date().toISOString() }).eq('id', uid);
       }
-    } catch {}
-  } catch {}
+    } catch (error) {
+      if (__DEV__) console.warn('[notifications] skipped saving token', error);
+    }
+  } catch (error) {
+    if (__DEV__) console.warn('[notifications] registration failed', error);
+  }
   return token;
 }
 
@@ -47,8 +58,8 @@ export async function sendLocalTestNotification() {
       trigger: null,
     });
     return true;
-  } catch {
+  } catch (error) {
+    if (__DEV__) console.warn('[notifications] local test failed', error);
     return false;
   }
 }
-

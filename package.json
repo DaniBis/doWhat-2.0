@@ -7,6 +7,7 @@
     "build": "pnpm -r --filter ./packages/shared build && pnpm -r --filter \"./apps/*\" build",
     "dev:web": "pnpm --filter dowhat-web dev",
     "dev:mobile": "pnpm --filter doWhat-mobile start",
+  "dev:mobile:env": "bash scripts/start-mobile.sh",
     "clean": "pnpm -r --filter \"./**\" run clean || true",
     "clean:mobile:deep": "rm -rf apps/doWhat-mobile/.expo apps/doWhat-mobile/node_modules/.cache && find . -name '*.tsbuildinfo' -delete",
     "reinstall": "rm -rf node_modules pnpm-lock.yaml && pnpm install",

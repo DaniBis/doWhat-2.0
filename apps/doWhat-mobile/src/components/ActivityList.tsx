@@ -1,4 +1,5 @@
 import React from 'react';
+import type { ComponentProps } from 'react';
 import { 
   View, 
   Text, 
@@ -8,7 +9,7 @@ import {
   TouchableOpacity 
 } from 'react-native';
 import { router } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import EmptyState from './EmptyState';
 
 type Activity = {
@@ -28,11 +29,13 @@ type Activity = {
   price: number; // in cents
 };
 
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
 type ActivityListProps = {
   activities: Activity[];
   showDistance?: boolean;
   emptyMessage?: string;
-  emptyIcon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  emptyIcon?: IoniconName;
   emptyActionText?: string;
   emptyActionRoute?: string;
 };
@@ -41,14 +44,14 @@ const ActivityList: React.FC<ActivityListProps> = ({
   activities, 
   showDistance = false,
   emptyMessage = "No activities found",
-  emptyIcon = "calendar-blank",
+  emptyIcon = "calendar-outline",
   emptyActionText,
   emptyActionRoute,
 }) => {
   if (activities.length === 0) {
     return (
       <EmptyState
-        icon={emptyIcon as any}
+        icon={emptyIcon}
         title="No Activities"
         subtitle={emptyMessage}
         actionText={emptyActionText}

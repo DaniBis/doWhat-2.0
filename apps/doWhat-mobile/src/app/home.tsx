@@ -7,7 +7,7 @@ import * as Location from 'expo-location';
 const ExpoRouter = require("expo-router");
 const { Link, useFocusEffect, router } = ExpoRouter;
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, Pressable, FlatList, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
@@ -18,6 +18,7 @@ import AuthButtons from "../components/AuthButtons";
 import RsvpBadges from "../components/RsvpBadges";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
+import type { Session } from '@supabase/supabase-js';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -41,19 +42,31 @@ const defaultVisual = { icon: '🎯', color: '#FF6B35', bgColor: '#FFF4F1' };
 
 type NearbyActivity = { id: string; name: string; count: number };
 
+type ProfileLocationRow = {
+  last_lat: number | null;
+  last_lng: number | null;
+};
+
+type NearbyApiActivity = {
+  id?: string | null;
+  name?: string | null;
+};
+
+type NearbyApiResponse = {
+  activities?: NearbyApiActivity[];
+};
+
 function HomeScreen() {
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [session, setSession] = useState<any>(null);
-  const [lat, setLat] = useState<string>("");
-  const [lng, setLng] = useState<string>("");
+  const [session, setSession] = useState<Session | null>(null);
   const [activities, setActivities] = useState<NearbyActivity[] | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
 
-  async function fetchNearbyActivities(latNow: number | null, lngNow: number | null) {
+  const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
     try {
       if (latNow == null || lngNow == null) { setActivities([]); return; }
       const base = process.env.EXPO_PUBLIC_WEB_URL || 'http://localhost:3002';
@@ -62,10 +75,11 @@ function HomeScreen() {
       url.searchParams.set('lng', String(lngNow));
       url.searchParams.set('radius', '2500');
       const res = await fetch(url.toString());
-      const json = await res.json();
-      const list = (json?.activities || []) as Array<{ id?: string | null; name: string }>;
+      const json = await res.json() as NearbyApiResponse;
+      const list = Array.isArray(json?.activities) ? json.activities : [];
       // Group by activity id to get a lightweight "count"
       const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
+        if (!item?.name) { return acc; }
         const key = item.id ?? item.name;
         const existing = acc[key];
         if (existing) {
@@ -84,9 +98,9 @@ function HomeScreen() {
     } catch {
       setActivities([]);
     }
-  }
+  }, []);
 
-  async function load() {
+  const load = useCallback(async () => {
     setError(null);
     try {
       const { data: auth } = await supabase.auth.getSession();
@@ -102,8 +116,6 @@ function HomeScreen() {
         if (last?.coords) {
           latNow = Number(last.coords.latitude.toFixed(6));
           lngNow = Number(last.coords.longitude.toFixed(6));
-          setLat(String(latNow));
-          setLng(String(lngNow));
         }
       } catch {}
       if (latNow == null || lngNow == null) {
@@ -112,8 +124,6 @@ function HomeScreen() {
           if (cached) {
             latNow = cached.lat;
             lngNow = cached.lng;
-            setLat(String(latNow));
-            setLng(String(lngNow));
           }
         } catch {}
       }
@@ -122,9 +132,17 @@ function HomeScreen() {
           const { data: auth } = await supabase.auth.getUser();
           const uid = auth?.user?.id ?? null;
           if (uid) {
-            const { data } = await supabase.from('profiles').select('last_lat,last_lng').eq('id', uid).maybeSingle();
-            const la = (data as any)?.last_lat; const ln = (data as any)?.last_lng;
-            if (la != null && ln != null) { latNow = la; lngNow = ln; setLat(String(la)); setLng(String(ln)); }
+            const { data } = await supabase
+              .from('profiles')
+              .select('last_lat,last_lng')
+              .eq('id', uid)
+              .maybeSingle<ProfileLocationRow>();
+            const la = data?.last_lat ?? null;
+            const ln = data?.last_lng ?? null;
+            if (la != null && ln != null) {
+              latNow = la;
+              lngNow = ln;
+            }
           }
         } catch {}
       }
@@ -146,17 +164,17 @@ function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [fetchNearbyActivities]);
 
   useEffect(() => {
     ensureBackgroundLocation().catch(() => {});
     load();
-  }, []);
+  }, [load]);
 
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [])
+    }, [load])
   );
 
   useEffect(() => {
@@ -170,14 +188,13 @@ function HomeScreen() {
           (loc: Location.LocationObject) => {
             const la = Number(loc.coords.latitude.toFixed(6));
             const ln = Number(loc.coords.longitude.toFixed(6));
-            setLat(String(la));
-            setLng(String(ln));
+            fetchNearbyActivities(la, ln);
           }
         );
       } catch {}
     })();
     return () => { sub?.remove(); };
-  }, []);
+  }, [fetchNearbyActivities]);
 
   // Simulate search suggestions (replace with real API)
   const searchSuggestions = activities ? activities
@@ -205,13 +222,11 @@ function HomeScreen() {
     router.push('/filter');
   };
 
-  async function onRefresh() {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
-  }
-
-  console.log('HomeScreen State:', { error, loading, session, activitiesLength: activities?.length });
+  }, [load]);
 
   if (error) {
     return <Text style={{ padding: 16, color: "red" }}>Error: {error}</Text>;
@@ -422,7 +437,7 @@ function HomeScreen() {
           {/* Search Bar */}
           <View style={{ marginTop: 8 }}>
             <SearchBar
-              onSearch={(query) => setSearchQuery(query)}
+              onSearch={handleSearch}
               onFilter={handleFilter}
               suggestedSearches={searchSuggestions}
               placeholder="Search for activities..."
@@ -498,6 +513,9 @@ function HomeScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
+          refreshControl={(
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          )}
         >
           {filteredActivities.length === 0 && searchQuery ? (
             <View style={{
@@ -512,7 +530,7 @@ function HomeScreen() {
                 title="No results found"
                 subtitle={`No activities found for "${searchQuery}"`}
                 actionText="Clear Search"
-                onAction={() => setSearchQuery('')}
+                onAction={() => handleSearch('')}
               />
             </View>
           ) : (
@@ -624,10 +642,10 @@ function HomeScreen() {
               rows.slice(0, 6).map((s) => (
                 <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
-                  <Text style={{ color: '#6B7280', marginTop: 2 }}>{(s as any).venues?.name ?? 'Venue'}</Text>
-                  <Text style={{ marginTop: 4 }}>{formatPrice((s as any).price_cents)}</Text>
-                  <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange((s as any).starts_at, (s as any).ends_at)}</Text>
-                  <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
+                  <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
+                  <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
+                  <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
+                  <RsvpBadges activityId={s.activities?.id ?? null} />
                   <Link href={`/sessions/${s.id}`} asChild>
                     <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
                       <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>

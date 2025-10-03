@@ -11,6 +11,13 @@ export default function Layout() {
   return (
     <Stack>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="sessions/[id]"
+        options={{
+          title: 'Session',
+          headerBackTitle: 'Back',
+        }}
+      />
     </Stack>
   );
 }

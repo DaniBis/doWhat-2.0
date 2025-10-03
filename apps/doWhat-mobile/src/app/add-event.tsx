@@ -7,6 +7,36 @@ import { supabase } from '../lib/supabase';
 
 type Option = { id: string; name: string };
 
+type VenueInsert = { name: string; lat?: number; lng?: number };
+
+type SessionInsert = {
+	activity_id: string;
+	venue_id: string;
+	price_cents: number;
+	starts_at: string;
+	ends_at: string;
+	created_by: string;
+	description?: string;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null;
+
+const toOption = (value: unknown): Option | null => {
+	if (!isRecord(value)) return null;
+	const id = typeof value.id === 'string' ? value.id : null;
+	if (!id) return null;
+	const name = typeof value.name === 'string' && value.name ? value.name : id;
+	return { id, name };
+};
+
+const extractId = (value: unknown): string => {
+	if (isRecord(value) && typeof value.id === 'string' && value.id) {
+		return value.id;
+	}
+	throw new Error('Response missing identifier');
+};
+
 export default function AddEvent() {
 	const router = useRouter();
 	const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
@@ -31,10 +61,20 @@ export default function AddEvent() {
 
 	useEffect(() => {
 		(async () => {
-			const a = await supabase.from('activities').select('id,name').order('name');
-			if (!a.error) setActivities((a.data ?? []) as Option[]);
-			const v = await supabase.from('venues').select('id,name').order('name');
-			if (!v.error) setVenues((v.data ?? []) as Option[]);
+			const activitiesRes = await supabase.from('activities').select('id, name').order('name');
+			if (!activitiesRes.error) {
+				const options = Array.isArray(activitiesRes.data)
+					? activitiesRes.data.map(toOption).filter((opt): opt is Option => Boolean(opt))
+					: [];
+				setActivities(options);
+			}
+			const venuesRes = await supabase.from('venues').select('id, name').order('name');
+			if (!venuesRes.error) {
+				const options = Array.isArray(venuesRes.data)
+					? venuesRes.data.map(toOption).filter((opt): opt is Option => Boolean(opt))
+					: [];
+				setVenues(options);
+			}
       
 			try {
 				const perm = await Location.getForegroundPermissionsAsync();
@@ -82,9 +122,13 @@ export default function AddEvent() {
 		if (activityId) return activityId;
 		const name = activityName.trim();
 		if (!name) throw new Error('Enter an activity name or choose one.');
-		const { data, error } = await supabase.from('activities').insert({ name }).select('id').single();
+		const { data, error } = await supabase
+			.from('activities')
+			.insert({ name })
+			.select('id')
+			.single();
 		if (error) throw error;
-		return (data as any).id as string;
+		return extractId(data);
 	}
   
 	async function ensureVenue(): Promise<string> {
@@ -92,12 +136,16 @@ export default function AddEvent() {
 		const name = venueName.trim();
 		if (!name) throw new Error('Enter a venue name or choose one.');
 		const la = parseFloat(lat); const ln = parseFloat(lng);
-		const payload: any = { name };
+		const payload: VenueInsert = { name };
 		if (!Number.isNaN(la)) payload.lat = la;
 		if (!Number.isNaN(ln)) payload.lng = ln;
-		const { data, error } = await supabase.from('venues').insert(payload).select('id').single();
+		const { data, error } = await supabase
+			.from('venues')
+			.insert(payload)
+			.select('id')
+			.single();
 		if (error) throw error;
-		return (data as any).id as string;
+		return extractId(data);
 	}
 
 	async function submit() {
@@ -110,7 +158,7 @@ export default function AddEvent() {
 			if (!startsAt || !endsAt) throw new Error('Start and end times are required.');
       
 			const cents = Math.round((Number(price) || 0) * 100);
-			const payload: any = {
+			const payload: SessionInsert = {
 				activity_id: act,
 				venue_id: ven,
 				price_cents: cents,
@@ -122,16 +170,21 @@ export default function AddEvent() {
 			if (description.trim()) {
 				payload.description = description.trim();
 			}
-      
-			const { data, error } = await supabase.from('sessions').insert(payload).select('id').single();
+  
+			const { data, error } = await supabase
+				.from('sessions')
+				.insert(payload)
+				.select('id')
+				.single();
 			if (error) throw error;
-      
+			const sessionId = extractId(data);
+  
 			setMsg('Event created successfully!');
 			Alert.alert('Success', 'Event created successfully!', [
-				{ text: 'OK', onPress: () => router.replace(`/sessions/${(data as any).id}`) }
+				{ text: 'OK', onPress: () => router.replace(`/sessions/${sessionId}`) }
 			]);
-		} catch (e: any) {
-			setErr(e.message ?? 'Failed to create event');
+		} catch (error) {
+			setErr(error instanceof Error ? error.message : 'Failed to create event');
 		} finally { setSaving(false); }
 	}
 
@@ -399,4 +452,3 @@ export default function AddEvent() {
 		</ScrollView>
 	);
 }
-

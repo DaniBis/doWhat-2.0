@@ -1,38 +1,61 @@
 import * as Linking from 'expo-linking';
-// Attempt to import expo-auth-session (depends on ExpoCrypto). If native module missing, degrade gracefully.
-let AuthSession: any;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  AuthSession = require('expo-auth-session');
-} catch (e) {
-  AuthSession = {
-    makeRedirectUri: () => 'dowhat://auth-callback',
-  };
-  console.warn('[auth] expo-auth-session not fully available; falling back to basic redirect');
-}
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
 
 import { supabase } from '../lib/supabase';
 
+type AuthSessionLike = {
+  makeRedirectUri: (options?: { useProxy?: boolean; path?: string }) => string;
+};
+
+const fallbackAuthSession: AuthSessionLike = {
+  makeRedirectUri: ({ path } = {}) => (path ? `dowhat://${path}` : 'dowhat://auth-callback'),
+};
+
+let AuthSession: AuthSessionLike = fallbackAuthSession;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const loaded = require('expo-auth-session');
+  if (loaded && typeof loaded.makeRedirectUri === 'function') {
+    AuthSession = loaded;
+  }
+} catch {
+  console.warn('[auth] expo-auth-session not fully available; falling back to basic redirect');
+}
+
+type LinkingEvent = { url: string };
+
+const extractQueryParam = (url: string, key: string): string | undefined => {
+  const parsed = Linking.parse(url);
+  const value = parsed.queryParams?.[key];
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (Array.isArray(value)) {
+    const first = value.find((entry) => typeof entry === 'string' && entry.length > 0);
+    return first;
+  }
+  return undefined;
+};
+
 function useSupabaseOAuthListener() {
   useEffect(() => {
-  // Completes auth session on iOS after returning from SFSafariViewController
-  try { WebBrowser.maybeCompleteAuthSession(); } catch {}
-    async function handleURL(url: string) {
+    // Completes auth session on iOS after returning from SFSafariViewController
+    try { WebBrowser.maybeCompleteAuthSession?.(); } catch {}
+
+    const handleURL = async (url: string) => {
       try {
-        const { queryParams } = Linking.parse(url);
-        const code = (queryParams?.code as string) || undefined;
+        const code = extractQueryParam(url, 'code');
         if (code) {
           await supabase.auth.exchangeCodeForSession(code);
         }
-      } catch {}
-    }
+      } catch (error) {
+        if (__DEV__) console.warn('[auth] listener error', error);
+      }
+    };
 
-    const sub = Linking.addEventListener('url', ({ url }) => handleURL(url));
-    Linking.getInitialURL().then((url) => { if (url) handleURL(url); });
-    return () => sub.remove();
+    const subscription = Linking.addEventListener('url', ({ url }: LinkingEvent) => handleURL(url));
+    Linking.getInitialURL().then((initialUrl) => { if (initialUrl) handleURL(initialUrl); });
+    return () => subscription.remove();
   }, []);
 }
 
@@ -64,11 +87,9 @@ export default function AuthButtons() {
 
   async function signIn() {
     // Compute both native deep link and Expo proxy URL; prefer proxy in Expo Go
-  const redirectTo = AuthSession.makeRedirectUri?
-    AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' } as any):
-    'dowhat://auth-callback';
+    const redirectTo = AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' });
     if (__DEV__) console.log('[auth] redirectTo', redirectTo);
-  const { data, error } = await (supabase.auth.signInWithOAuth as any)({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo },
     });
@@ -81,11 +102,13 @@ export default function AuthButtons() {
     if (data?.url) {
       // Open auth and wait for redirect back to our redirectTo
       if (__DEV__) console.log('[auth] opening browser to', data.url);
-  const res = WebBrowser.openAuthSessionAsync ? await WebBrowser.openAuthSessionAsync(data.url, redirectTo) : { type: 'opened' };
-      if (__DEV__) console.log('[auth] auth result', res);
-      if (res.type === 'success' && (res as any).url) {
+      const result = WebBrowser.openAuthSessionAsync
+        ? await WebBrowser.openAuthSessionAsync(data.url, redirectTo)
+        : null;
+      if (__DEV__) console.log('[auth] auth result', result);
+      if (result?.type === 'success' && result.url) {
         // Parse both fragment (#) and query (?) params
-        const url = (res as any).url as string;
+        const url = result.url;
         const fragment = url.split('#')[1] || '';
         const query = url.split('?')[1] || '';
         const params = new URLSearchParams(fragment || query);
@@ -118,8 +141,8 @@ export default function AuthButtons() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
-    } catch (e: any) {
-      setErr(e?.message ?? 'Authentication failed');
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : 'Authentication failed');
     } finally {
       setBusy(false);
     }

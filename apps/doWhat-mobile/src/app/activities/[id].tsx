@@ -32,6 +32,40 @@ type Row = {
 	distance_km: number;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null;
+
+const toRow = (value: unknown): Row | null => {
+	if (!isRecord(value)) return null;
+	const sessionId = typeof value.session_id === 'string' ? value.session_id : null;
+	const activityId = typeof value.activity_id === 'string' ? value.activity_id : null;
+	const activityName = typeof value.activity_name === 'string' ? value.activity_name : '';
+	const venueId = typeof value.venue_id === 'string' ? value.venue_id : null;
+	const venueName = typeof value.venue_name === 'string' ? value.venue_name : '';
+	const startsAt = typeof value.starts_at === 'string' ? value.starts_at : null;
+	const endsAt = typeof value.ends_at === 'string' ? value.ends_at : null;
+	const priceCents = typeof value.price_cents === 'number' ? value.price_cents : null;
+	const venueLat = typeof value.venue_lat === 'number' ? value.venue_lat : null;
+	const venueLng = typeof value.venue_lng === 'number' ? value.venue_lng : null;
+	const distanceKm = typeof value.distance_km === 'number' ? value.distance_km : null;
+	if (!sessionId || !activityId || !venueId || !startsAt || !endsAt || distanceKm == null) {
+		return null;
+	}
+	return {
+		session_id: sessionId,
+		starts_at: startsAt,
+		ends_at: endsAt,
+		price_cents: priceCents,
+		activity_id: activityId,
+		activity_name: activityName || activityId,
+		venue_id: venueId,
+		venue_name: venueName || venueId,
+		venue_lat: venueLat,
+		venue_lng: venueLng,
+		distance_km: distanceKm,
+	};
+};
+
 export default function ActivityPage() {
 	const { id } = useLocalSearchParams<{ id: string }>();
 	const [rows, setRows] = useState<Row[] | null>(null);
@@ -49,7 +83,10 @@ export default function ActivityPage() {
 				day: null,
 			});
 			if (error) { setErr(error.message); return; }
-			setRows((data ?? []) as Row[]);
+			const parsed = Array.isArray(data)
+				? data.map(toRow).filter((row): row is Row => Boolean(row))
+				: [];
+			setRows(parsed);
 		})();
 	}, [id]);
 
@@ -101,7 +138,7 @@ export default function ActivityPage() {
 						)}
 						{item.items.map((s) => (
 							<View key={s.session_id} style={{ marginTop: 10, backgroundColor: '#f9fafb', borderRadius: 10, padding: 10 }}>
-								<Text style={{ fontWeight: '600' }}>{formatDateRange(s.starts_at as any, s.ends_at as any)}</Text>
+								<Text style={{ fontWeight: '600' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
 								{!!s.price_cents && <Text style={{ color: '#64748b' }}>{formatPrice(s.price_cents)}</Text>}
 								<Link href={`/sessions/${s.session_id}`} asChild>
 									<Pressable style={{ marginTop: 8, backgroundColor: '#16a34a', borderRadius: 8, padding: 10 }}>
@@ -126,4 +163,3 @@ export default function ActivityPage() {
 		</SafeAreaView>
 	);
 }
-

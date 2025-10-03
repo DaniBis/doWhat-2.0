@@ -1,17 +1,21 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { router } from 'expo-router';
+
+type IconRenderer = React.ComponentType<{ name: string; size: number; color: string }>;
+
 // Try to load Ionicons at runtime. In Jest tests, prefer a simple fallback to avoid native deps.
 const IS_TEST = typeof process !== 'undefined' && !!process.env?.JEST_WORKER_ID;
-let Ionicons: any = null;
+let Ionicons: IconRenderer | null = null;
 if (!IS_TEST) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    Ionicons = require('@expo/vector-icons').Ionicons;
+    const vectorIcons = require('@expo/vector-icons') as { Ionicons?: IconRenderer };
+    Ionicons = typeof vectorIcons.Ionicons === 'function' ? vectorIcons.Ionicons : null;
   } catch {
     Ionicons = null;
   }
 }
-import { router } from 'expo-router';
 
 type EmptyStateProps = {
   icon: string;
@@ -34,15 +38,15 @@ const EmptyState: React.FC<EmptyStateProps> = ({
     if (onAction) {
       onAction();
     } else if (actionRoute) {
-      router.push(actionRoute as any);
+      router.push(actionRoute);
     }
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.iconContainer}>
-        {Ionicons && (typeof Ionicons === 'function' || typeof Ionicons?.render === 'function') ? (
-          <Ionicons name={icon as any} size={64} color="#D1D5DB" />
+        {Ionicons ? (
+          <Ionicons name={icon} size={64} color="#D1D5DB" />
         ) : (
           <Text style={{ fontSize: 48, color: '#D1D5DB' }}>📭</Text>
         )}
@@ -53,7 +57,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
       
       {actionText && (
         <TouchableOpacity style={styles.actionButton} onPress={handleAction}>
-          <Text style={styles.actionText} onPress={handleAction}>{actionText}</Text>
+          <Text style={styles.actionText}>{actionText}</Text>
         </TouchableOpacity>
       )}
     </View>

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Modal,
   Dimensions,
-  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';

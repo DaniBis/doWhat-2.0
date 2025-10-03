@@ -1,7 +1,10 @@
+import type { ComponentProps } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { getActivityIconKey, type IconKey } from '@dowhat/shared';
 
-const ioMap: Record<IconKey, keyof typeof Ionicons.glyphMap> = {
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+const ioMap: Record<IconKey, IoniconName> = {
   walk: 'walk-outline',
   bicycle: 'bicycle-outline',
   water: 'water-outline',
@@ -23,7 +26,6 @@ const ioMap: Record<IconKey, keyof typeof Ionicons.glyphMap> = {
 
 export default function ActivityIcon({ name, size = 28, color = '#111827' }: { name?: string | null; size?: number; color?: string }) {
   const key = getActivityIconKey(name);
-  const iconName = ioMap[key] || 'location-outline';
-  return <Ionicons name={iconName as any} size={size} color={color} />;
+  const iconName: IoniconName = ioMap[key] ?? 'location-outline';
+  return <Ionicons name={iconName} size={size} color={color} />;
 }
-

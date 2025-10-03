@@ -3,13 +3,18 @@ import { View, Text, SafeAreaView, TouchableOpacity, StatusBar, ScrollView, Swit
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 
+type PriceOptionKey = "all" | "free" | "low" | "medium" | "high";
+type TimeOptionKey = "anytime" | "today" | "tomorrow" | "weekend" | "week";
+type ActivityCategoryKey = "sports" | "fitness" | "social" | "creative" | "outdoor" | "food";
+type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
+
 export default function FilterScreen() {
-  const [priceFilter, setPriceFilter] = useState("all");
-  const [distanceFilter, setDistanceFilter] = useState(10);
-  const [timeFilter, setTimeFilter] = useState("anytime");
+  const [priceFilter, setPriceFilter] = useState<PriceOptionKey>("all");
+  const [distanceFilter, setDistanceFilter] = useState<number>(10);
+  const [timeFilter, setTimeFilter] = useState<TimeOptionKey>("anytime");
   const [showFreeOnly, setShowFreeOnly] = useState(false);
   
-  const priceOptions = [
+  const priceOptions: Array<{ key: PriceOptionKey; label: string }> = [
     { key: "all", label: "All Prices" },
     { key: "free", label: "Free" },
     { key: "low", label: "€1 - €20" },
@@ -17,9 +22,9 @@ export default function FilterScreen() {
     { key: "high", label: "€50+" }
   ];
 
-  const distanceOptions = [1, 5, 10, 25, 50];
+  const distanceOptions: number[] = [1, 5, 10, 25, 50];
   
-  const timeOptions = [
+  const timeOptions: Array<{ key: TimeOptionKey; label: string }> = [
     { key: "anytime", label: "Anytime" },
     { key: "today", label: "Today" },
     { key: "tomorrow", label: "Tomorrow" },
@@ -27,7 +32,7 @@ export default function FilterScreen() {
     { key: "week", label: "This Week" }
   ];
 
-  const activityCategories = [
+  const activityCategories: Array<{ key: ActivityCategoryKey; label: string; icon: IoniconName }> = [
     { key: "sports", label: "Sports", icon: "basketball" },
     { key: "fitness", label: "Fitness", icon: "fitness" },
     { key: "social", label: "Social", icon: "people" },
@@ -36,9 +41,9 @@ export default function FilterScreen() {
     { key: "food", label: "Food & Drink", icon: "restaurant" }
   ];
 
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<ActivityCategoryKey[]>([]);
 
-  const toggleCategory = (categoryKey: string) => {
+  const toggleCategory = (categoryKey: ActivityCategoryKey) => {
     setSelectedCategories(prev => 
       prev.includes(categoryKey) 
         ? prev.filter(c => c !== categoryKey)
@@ -265,7 +270,7 @@ export default function FilterScreen() {
                   }}
                 >
                   <Ionicons 
-                    name={category.icon as any} 
+                    name={category.icon} 
                     size={16} 
                     color={selectedCategories.includes(category.key) ? "#FFFFFF" : "#6B7280"} 
                     style={{ marginRight: 6 }}
