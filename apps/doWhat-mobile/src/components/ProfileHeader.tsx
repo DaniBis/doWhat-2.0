@@ -55,11 +55,6 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({
           <Ionicons name="calendar-outline" size={22} color="#2C7BF6" />
           <Text style={styles.activeTabText}>My Activities</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.tab}>
-          <Ionicons name="bookmark-outline" size={22} color="#6B7280" />
-          <Text style={styles.tabText}>Saved</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );

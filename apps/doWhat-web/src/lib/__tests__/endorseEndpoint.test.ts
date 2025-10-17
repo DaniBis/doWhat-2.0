@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { POST as endorseHandler } from '@/app/api/users/[id]/badges/endorse/route';
 
 // Mock minimal next/server exports before importing route (already imported but route only uses NextResponse)

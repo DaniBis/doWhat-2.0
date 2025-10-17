@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { recomputeUserTraits } from '@/lib/traits';
 
 // Mock db() to supply controlled trait_events and peer agreements responses

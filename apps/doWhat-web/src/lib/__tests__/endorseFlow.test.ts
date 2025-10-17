@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { BADGE_VERIFICATION_THRESHOLD_DEFAULT as DEFAULT_FROM_TYPES } from '@dowhat/shared';
 import { POST as endorseHandler } from '@/app/api/users/[id]/badges/endorse/route';
 

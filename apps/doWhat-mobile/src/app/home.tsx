@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { createWebUrl } from "../lib/web";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
 import type { ActivityRow } from "@dowhat/shared";
 import { formatPrice, formatDateRange } from "@dowhat/shared";
@@ -6,15 +7,15 @@ import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
 const { Link, useFocusEffect, router } = ExpoRouter;
-import { useEffect, useState, useCallback } from "react";
-import { View, Text, Pressable, RefreshControl, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, Dimensions } from "react-native";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
 import ActivityIcon from '../components/ActivityIcon';
 import { theme } from '@dowhat/shared';
 import { Ionicons } from '@expo/vector-icons';
-import AuthButtons from "../components/AuthButtons";
 import RsvpBadges from "../components/RsvpBadges";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
@@ -57,6 +58,8 @@ type NearbyApiResponse = {
 };
 
 function HomeScreen() {
+  const insets = useSafeAreaInsets();
+  const isAndroid = Platform.OS === 'android';
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -65,19 +68,95 @@ function HomeScreen() {
   const [activities, setActivities] = useState<NearbyActivity[] | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
+  const nearbyApiFailureLogged = useRef(false);
+  const nearbyFallbackFailureLogged = useRef(false);
+
+    const FALLBACK_RADIUS_METERS = 2500;
+
+    const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371000;
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    const fetchNearbyFromSupabase = useCallback(async (latNow: number, lngNow: number) => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(
+          `id, activity_id,
+           activities!inner(id, name),
+           venues!inner(id, name, venue_lat:lat, venue_lng:lng)`
+        )
+        .not('venues.lat', 'is', null)
+        .not('venues.lng', 'is', null)
+        .gte('starts_at', new Date().toISOString())
+        .limit(200);
+
+      if (error) throw error;
+      const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+      const grouped = rows.reduce<Record<string, NearbyActivity>>((acc, row) => {
+        const venues = Array.isArray(row.venues)
+          ? (row.venues[0] as Record<string, unknown> | undefined)
+          : (row.venues as Record<string, unknown> | undefined);
+        const activities = Array.isArray(row.activities)
+          ? (row.activities[0] as Record<string, unknown> | undefined)
+          : (row.activities as Record<string, unknown> | undefined);
+
+  const latValue = (venues?.venue_lat ?? venues?.lat) as unknown;
+  const lngValue = (venues?.venue_lng ?? venues?.lng) as unknown;
+        const lat =
+          typeof latValue === 'number'
+            ? latValue
+            : latValue != null && latValue !== ''
+              ? Number(latValue)
+              : NaN;
+        const lng =
+          typeof lngValue === 'number'
+            ? lngValue
+            : lngValue != null && lngValue !== ''
+              ? Number(lngValue)
+              : NaN;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return acc;
+        const distance = haversineMeters(latNow, lngNow, lat, lng);
+        if (!Number.isFinite(distance) || distance > FALLBACK_RADIUS_METERS) return acc;
+        const idRaw =
+          (row.activity_id as string | null | undefined) ??
+          (activities?.id as string | null | undefined) ??
+          (activities?.name as string | null | undefined) ??
+          (row.id as string | null | undefined);
+        if (!idRaw) return acc;
+        const key = String(idRaw);
+        const name = typeof activities?.name === 'string' && activities.name.trim()
+          ? activities.name
+          : key;
+        const existing = acc[key];
+        if (existing) {
+          existing.count += 1;
+        } else {
+          acc[key] = { id: key, name, count: 1 };
+        }
+        return acc;
+      }, {});
+      return Object.values(grouped).sort((a, b) => b.count - a.count);
+    }, []);
 
   const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
+    if (latNow == null || lngNow == null) { setActivities([]); return; }
     try {
-      if (latNow == null || lngNow == null) { setActivities([]); return; }
-      const base = process.env.EXPO_PUBLIC_WEB_URL || 'http://localhost:3002';
-      const url = new URL('/api/nearby', base);
+  const url = createWebUrl('/api/nearby');
       url.searchParams.set('lat', String(latNow));
       url.searchParams.set('lng', String(lngNow));
       url.searchParams.set('radius', '2500');
       const res = await fetch(url.toString());
       const json = await res.json() as NearbyApiResponse;
       const list = Array.isArray(json?.activities) ? json.activities : [];
-      // Group by activity id to get a lightweight "count"
       const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
         if (!item?.name) { return acc; }
         const key = item.id ?? item.name;
@@ -95,10 +174,23 @@ function HomeScreen() {
       }, {});
       const grouped = Object.values(groupedMap).sort((a, b) => b.count - a.count);
       setActivities(grouped);
-    } catch {
-      setActivities([]);
+    } catch (apiError) {
+      if (__DEV__ && !nearbyApiFailureLogged.current) {
+        nearbyApiFailureLogged.current = true;
+        console.info('[Home] Nearby API failed, falling back to Supabase', apiError);
+      }
+      try {
+        const fallback = await fetchNearbyFromSupabase(latNow, lngNow);
+        setActivities(fallback);
+      } catch (fallbackErr) {
+        if (__DEV__ && !nearbyFallbackFailureLogged.current) {
+          nearbyFallbackFailureLogged.current = true;
+          console.info('[Home] Nearby Supabase fallback failed', fallbackErr);
+        }
+        setActivities([]);
+      }
     }
-  }, []);
+  }, [fetchNearbyFromSupabase]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -222,6 +314,66 @@ function HomeScreen() {
     router.push('/filter');
   };
 
+  const activityPresence = useMemo(() => {
+    const idSet = new Set<string>();
+    const nameSet = new Set<string>();
+    (activities ?? []).forEach((activity) => {
+      if (activity?.id) idSet.add(String(activity.id));
+      if (activity?.name) nameSet.add(activity.name.trim().toLowerCase());
+    });
+    return { idSet, nameSet };
+  }, [activities]);
+
+  const activityEventCounts = useMemo(() => {
+    const idMap = new Map<string, number>();
+    const nameMap = new Map<string, number>();
+    rows.forEach((session) => {
+      const activityId = session.activities?.id != null ? String(session.activities.id) : null;
+      if (activityId) {
+        idMap.set(activityId, (idMap.get(activityId) ?? 0) + 1);
+      }
+      const activityName = typeof session.activities?.name === 'string' ? session.activities.name.trim().toLowerCase() : '';
+      if (activityName) {
+        nameMap.set(activityName, (nameMap.get(activityName) ?? 0) + 1);
+      }
+    });
+    return { idMap, nameMap };
+  }, [rows]);
+
+  const getActivitySessionCount = useCallback(
+    (activity: NearbyActivity): number => {
+      const idKey = activity?.id ? String(activity.id) : null;
+      if (idKey && activityEventCounts.idMap.has(idKey)) {
+        return activityEventCounts.idMap.get(idKey) ?? 0;
+      }
+      const normalizedName = activity?.name?.trim().toLowerCase() ?? '';
+      if (normalizedName && activityEventCounts.nameMap.has(normalizedName)) {
+        return activityEventCounts.nameMap.get(normalizedName) ?? 0;
+      }
+      return 0;
+    },
+    [activityEventCounts]
+  );
+
+  const standaloneSessions = useMemo(() => {
+    if (rows.length === 0) return rows;
+    const hasActivityFilters = activityPresence.idSet.size > 0 || activityPresence.nameSet.size > 0;
+    if (!hasActivityFilters) return rows;
+    return rows.filter((session) => {
+      const activityId = session.activities?.id != null ? String(session.activities.id) : null;
+      if (activityId && activityPresence.idSet.has(activityId)) {
+        return false;
+      }
+      const activityName = typeof session.activities?.name === 'string' ? session.activities.name.trim().toLowerCase() : '';
+      if (activityName && activityPresence.nameSet.has(activityName)) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, activityPresence]);
+
+  const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await load();
@@ -248,134 +400,14 @@ function HomeScreen() {
     );
   }
 
-  // Gate: sign-in required before showing activities/sessions
+  // Fail-safe: AuthGate should prevent this, but keep a lightweight fallback.
   if (!session) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' }}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        
-        {/* Hero Section */}
-        <LinearGradient
-          colors={['#667eea', '#764ba2']}
-          style={{
-            flex: 1,
-            paddingHorizontal: 24,
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}
-        >
-          {/* Welcome Hero */}
-          <View style={{ alignItems: 'center', marginBottom: 48 }}>
-            <View style={{
-              width: 120,
-              height: 120,
-              borderRadius: 60,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 24,
-            }}>
-              <Text style={{ fontSize: 48 }}>🎯</Text>
-            </View>
-            
-            <Text style={{
-              fontSize: 32,
-              fontWeight: '800',
-              color: '#FFFFFF',
-              textAlign: 'center',
-              marginBottom: 12,
-              letterSpacing: -0.5,
-            }}>
-              doWhat
-            </Text>
-            
-            <Text style={{
-              fontSize: 18,
-              color: 'rgba(255,255,255,0.9)',
-              textAlign: 'center',
-              lineHeight: 26,
-              maxWidth: 280,
-            }}>
-              Discover amazing activities and connect with like-minded people in your area
-            </Text>
-          </View>
-
-          {/* Feature Highlights */}
-          <View style={{ width: '100%', marginBottom: 40 }}>
-            {[
-              { icon: '📍', title: 'Find Local Activities', desc: 'Discover events happening around you' },
-              { icon: '👥', title: 'Meet People', desc: 'Connect with others who share your interests' },
-              { icon: '🎨', title: 'Create Events', desc: 'Organize your own activities and invite others' },
-            ].map((feature, index) => (
-              <View key={index} style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                borderRadius: 16,
-                padding: 16,
-                marginBottom: 12,
-              }}>
-                <View style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 24,
-                  backgroundColor: 'rgba(255,255,255,0.2)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 16,
-                }}>
-                  <Text style={{ fontSize: 20 }}>{feature.icon}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#FFFFFF',
-                    marginBottom: 2,
-                  }}>
-                    {feature.title}
-                  </Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: 'rgba(255,255,255,0.8)',
-                    lineHeight: 18,
-                  }}>
-                    {feature.desc}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          {/* Auth Section */}
-          <View style={{
-            width: '100%',
-            backgroundColor: 'rgba(255,255,255,0.95)',
-            borderRadius: 20,
-            padding: 24,
-            alignItems: 'center',
-          }}>
-            <Text style={{
-              fontSize: 20,
-              fontWeight: '700',
-              color: '#1F2937',
-              marginBottom: 8,
-              textAlign: 'center',
-            }}>
-              Get Started
-            </Text>
-            <Text style={{
-              fontSize: 14,
-              color: '#6B7280',
-              textAlign: 'center',
-              marginBottom: 20,
-              lineHeight: 20,
-            }}>
-              Sign in to discover activities and start connecting with your community
-            </Text>
-            <AuthButtons />
-          </View>
-        </LinearGradient>
+        <Text style={{ color: '#111827', fontSize: 16, padding: 24, textAlign: 'center' }}>
+          Please sign in to view nearby activities.
+        </Text>
       </SafeAreaView>
     );
   }
@@ -383,7 +415,7 @@ function HomeScreen() {
   // New design: header + discover grid + (optional) upcoming sessions
   {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="light-content" backgroundColor="#2C3E50" />
         
         {/* Modern Header */}
@@ -391,124 +423,72 @@ function HomeScreen() {
           colors={[theme.colors.brandTeal, theme.colors.brandTealDark]}
           style={{
             paddingHorizontal: 20,
-            paddingTop: 12,
-            paddingBottom: 20,
-            borderBottomLeftRadius: 24,
-            borderBottomRightRadius: 24,
+            paddingTop: insets.top + (isAndroid ? 6 : 12),
+            paddingBottom: isAndroid ? 56 : 76,
+            borderBottomLeftRadius: 28,
+            borderBottomRightRadius: 28,
           }}
         >
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 16,
-          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <TouchableOpacity
               onPress={() => router.push('/(tabs)/profile')}
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: 21,
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
             >
-              <Ionicons name="person" size={20} color="#FFFFFF" />
+              <Ionicons name="person" size={18} color="#FFFFFF" />
             </TouchableOpacity>
-            
             <Brand />
-            
             <TouchableOpacity
               onPress={() => router.push('/(tabs)/map')}
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: 21,
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
             >
-              <Ionicons name="map" size={20} color="#FFFFFF" />
+              <Ionicons name="map" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
+          <View style={{ marginTop: isAndroid ? 12 : 18 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, letterSpacing: 0.2 }}>Find your next activity</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginTop: 4 }}>Explore nearby experiences</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 20 }}>
+              Browse curated activities, see who is going, and create your own events.
+            </Text>
+          </View>
+        </LinearGradient>
 
-          {/* Search Bar */}
-          <View style={{ marginTop: 8 }}>
+        <View style={{ paddingHorizontal: 20, marginTop: isAndroid ? -34 : -44 }}>
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: 20,
+            padding: 16,
+            shadowColor: '#000',
+            shadowOpacity: 0.08,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 6 },
+            elevation: 4,
+          }}>
             <SearchBar
               onSearch={handleSearch}
               onFilter={handleFilter}
               suggestedSearches={searchSuggestions}
               placeholder="Search for activities..."
             />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={() => router.push('/people-filter')}
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(100,116,255,0.08)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
+              >
+                <Ionicons name="people" size={16} color="#6366F1" />
+                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#3730A3' }}>Find People</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/add-event')}
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
+              >
+                <Ionicons name="add" size={16} color="#FFFFFF" />
+                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#FFFFFF' }}>Create Event</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </LinearGradient>
-
-        {/* Quick Actions */}
-        <View style={{
-          flexDirection: 'row',
-          paddingHorizontal: 20,
-          paddingTop: 20,
-          paddingBottom: 12,
-          gap: 8,
-        }}>
-          <TouchableOpacity
-            onPress={() => router.push('/people-filter')}
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#FFFFFF',
-              borderRadius: 12,
-              padding: 12,
-              shadowColor: '#000',
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 2,
-            }}
-          >
-            <Ionicons name="people" size={16} color="#8B5CF6" />
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '600',
-              color: '#8B5CF6',
-              marginLeft: 8,
-            }}>
-              Find People
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            onPress={() => router.push('/add-event')}
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#10B981',
-              borderRadius: 12,
-              padding: 12,
-              shadowColor: '#10B981',
-              shadowOpacity: 0.2,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 2,
-            }}
-          >
-            <Ionicons name="add" size={16} color="#FFFFFF" />
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '600',
-              color: '#FFFFFF',
-              marginLeft: 8,
-            }}>
-              Create Event
-            </Text>
-          </TouchableOpacity>
         </View>
 
-        {/* Activities Grid + Upcoming Sessions in one scroll */}
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -565,9 +545,15 @@ function HomeScreen() {
                 gap: 16,
               }}>
                 {(searchQuery ? filteredActivities : (activities ?? [])).map((activity) => {
+                  const sessionCount = getActivitySessionCount(activity);
+                  const derivedCount = Math.max(sessionCount, activity.count ?? 0);
                   const visual = activityVisuals[activity.name] || defaultVisual;
                   return (
-                    <Link key={activity.id} href={`/activities/${activity.id}`} asChild>
+                    <Link
+                      key={activity.id}
+                      href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
+                      asChild
+                    >
                       <Pressable style={{
                         width: (screenWidth - 56) / 2, // Account for padding and gap
                         backgroundColor: '#FFFFFF',
@@ -619,7 +605,7 @@ function HomeScreen() {
                             fontWeight: '600',
                             color: visual.color,
                           }}>
-                            {activity.count} event{activity.count !== 1 ? 's' : ''}
+                            Activity: {derivedCount}
                           </Text>
                         </View>
                       </Pressable>
@@ -634,12 +620,12 @@ function HomeScreen() {
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 12 }}>
               Upcoming Sessions
             </Text>
-            {rows.length === 0 ? (
+            {standaloneSessions.length === 0 ? (
               <View style={{ alignItems: 'center', padding: 16 }}>
                 <Text style={{ color: '#6B7280' }}>No sessions yet. Be the first to create one!</Text>
               </View>
             ) : (
-              rows.slice(0, 6).map((s) => (
+              upcomingStandaloneSessions.map((s) => (
                 <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
                   <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>

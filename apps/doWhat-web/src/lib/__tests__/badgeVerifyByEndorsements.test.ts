@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { verifyByEndorsements } from '@/lib/badges';
 
 // We'll mock the supabase client methods we use inside verifyByEndorsements.

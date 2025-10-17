@@ -9,10 +9,14 @@ import { supabase } from "@/lib/supabase/browser";
 
 type Event = {
   id: string;
+  created_by?: string | null;
   price_cents: number;
   starts_at: string;
   ends_at: string;
-  activities?: { id: string; name: string }[] | { id: string; name: string } | null;
+  activities?:
+    | { id: string; name: string; description?: string | null; activity_types?: string[] | null }
+    | { id: string; name: string; description?: string | null; activity_types?: string[] | null }[]
+    | null;
   venues?: { name: string; lat?: number; lng?: number }[] | { name: string; lat?: number; lng?: number } | null;
   description?: string;
 };
@@ -29,6 +33,7 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
   
   // Filters
   const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([]);
@@ -62,6 +67,9 @@ export default function SearchPage() {
   // Load activities and venues for filters
   useEffect(() => {
     (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      setUserId(auth?.user?.id ?? null);
+
       const [activitiesRes, venuesRes] = await Promise.all([
         supabase.from('activities').select('id, name').order('name'),
         supabase.from('venues').select('id, name').order('name'),
@@ -79,8 +87,8 @@ export default function SearchPage() {
       let queryBuilder = supabase
         .from('sessions')
         .select(`
-          id, price_cents, starts_at, ends_at, description,
-          activities(id, name),
+          id, created_by, price_cents, starts_at, ends_at, description,
+          activities(id, name, description, activity_types),
           venues(id, name, lat, lng)
         `)
         .gte('starts_at', new Date(dateRange.start).toISOString())
@@ -355,13 +363,85 @@ export default function SearchPage() {
         </div>
       ) : results.length > 0 ? (
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          {results.map((event) => (
-            <ActivityCard key={event.id} s={{
-              ...event,
-              activities: event.activities || undefined,
-              venues: event.venues || undefined
-            }} />
-          ))}
+          {(() => {
+                const grouped = new Map<
+                  string,
+                  {
+                    activity: {
+                      id?: string;
+                      name?: string | null;
+                      description?: string | null;
+                      activity_types?: string[] | null;
+                    };
+                    sessions: Array<{
+                      id?: string;
+                      created_by?: string | null;
+                      price_cents?: number | null;
+                      starts_at?: string | null;
+                      ends_at?: string | null;
+                      venues?: { name?: string | null } | { name?: string | null }[] | null;
+                    }>;
+                  }
+                >();
+
+                for (const event of results) {
+                  const activityRel = Array.isArray(event.activities)
+                    ? event.activities[0]
+                    : event.activities;
+                  if (!activityRel) continue;
+                  const key = activityRel.id ?? activityRel.name ?? event.id;
+                  if (!grouped.has(key)) {
+                    grouped.set(key, {
+                      activity: {
+                        id: activityRel.id,
+                        name: activityRel.name,
+                        description: activityRel.description ?? null,
+                        activity_types: activityRel.activity_types ?? null,
+                      },
+                      sessions: [],
+                    });
+                  }
+                  grouped.get(key)!.sessions.push({
+                    id: event.id,
+                    created_by: event.created_by ?? null,
+                    price_cents: event.price_cents ?? null,
+                    starts_at: event.starts_at,
+                    ends_at: event.ends_at,
+                    venues: event.venues ?? null,
+                  });
+                }
+
+                const cards = Array.from(grouped.values()).sort((a, b) => {
+                  const earliest = (sessions: typeof a.sessions) =>
+                    sessions.reduce((min, session) => {
+                      if (!session.starts_at) return min;
+                      const time = new Date(session.starts_at).getTime();
+                      return min == null || time < min ? time : min;
+                    }, null as number | null);
+                  const aStart = earliest(a.sessions);
+                  const bStart = earliest(b.sessions);
+                  if (aStart == null && bStart == null) return 0;
+                  if (aStart == null) return 1;
+                  if (bStart == null) return -1;
+                  return aStart - bStart;
+                });
+
+                return cards.map((group) => {
+                  const key =
+                    group.activity.id ??
+                    group.activity.name ??
+                    group.sessions[0]?.id ??
+                    `${group.sessions[0]?.starts_at ?? "group"}`;
+                  return (
+                    <ActivityCard
+                      key={key}
+                      activity={group.activity}
+                      sessions={group.sessions}
+                      currentUserId={userId}
+                    />
+                  );
+                });
+              })()}
         </div>
       ) : (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center">

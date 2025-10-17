@@ -9,6 +9,7 @@ import { AttendanceBars } from '@/components/profile/AttendanceBars';
 import { BioCard } from '@/components/profile/BioCard';
 import { ReviewsTab } from '@/components/profile/ReviewsTab';
 import type { KPI, Trait, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
+import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 type TabKey = 'overview' | 'traits' | 'badges' | 'activities' | 'reviews';
 
@@ -46,8 +47,8 @@ export default function ProfilePage() {
         if (relRes.ok) { const r = await relRes.json(); setReliability(r.reliability); setAttendance(r.attendance); }
         if (traitsRes.ok) setTraits(await traitsRes.json());
         if (badgesRes.ok) setBadges(await badgesRes.json());
-      } catch(e:any) {
-        setError(e.message || 'Failed to load profile');
+      } catch(error) {
+        setError(getErrorMessage(error));
       } finally {
         setLoading(false);
       }
@@ -70,7 +71,11 @@ export default function ProfilePage() {
         } catch { /* ignore geocode errors; keep coarse */ }
         setProfile(p => p ? { ...p, location: label } : p);
         if (userId) {
-          await supabase.from('profiles').upsert({ id: userId, location: label, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+          await fetch(`/api/profile/${userId}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location: label })
+          });
         }
       } catch { /* ignore */ }
       setGeoBusy(false);
@@ -81,8 +86,18 @@ export default function ProfilePage() {
     if (!userId) return;
     setBioSaving(true);
     try {
-      await supabase.from('profiles').upsert({ id: userId, bio, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      const resp = await fetch(`/api/profile/${userId}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bio })
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        throw new Error(detail?.error || 'Failed to update bio');
+      }
       setProfile(p => p ? { ...p, bio } : p);
+    } catch (error) {
+      setError(getErrorMessage(error));
     } finally {
       setBioSaving(false);
     }
@@ -98,21 +113,37 @@ export default function ProfilePage() {
         name={profile?.name || profile?.email || 'User'}
         location={profile?.location}
         avatarUrl={profile?.avatarUrl}
+        bio={profile?.bio}
         reliability={reliability || undefined}
         editable
         socials={profile?.socials}
         onProfileUpdated={async (p) => {
           if (!userId) return;
           try {
-            await fetch(`/api/profile/${userId}/update`, {
+            const resp = await fetch(`/api/profile/${userId}/update`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(p),
             });
-            setProfile(prev => prev ? { ...prev, name: p.name ?? prev.name, avatarUrl: p.avatarUrl ?? prev.avatarUrl, socials: p.socials ?? prev.socials } : prev);
+            if (!resp.ok) {
+              const detail = await resp.json().catch(() => null);
+              throw new Error(detail?.error || 'Failed to update profile');
+            }
+            setProfile(prev => prev ? {
+              ...prev,
+              name: p.name ?? prev.name,
+              avatarUrl: p.avatarUrl ?? prev.avatarUrl,
+              socials: p.socials ? {
+                instagram: p.socials.instagram === null ? undefined : (p.socials.instagram ?? prev.socials?.instagram),
+                whatsapp: p.socials.whatsapp === null ? undefined : (p.socials.whatsapp ?? prev.socials?.whatsapp),
+              } : prev.socials,
+              bio: p.bio !== undefined ? p.bio : prev.bio,
+              location: p.location !== undefined ? (p.location ?? undefined) : prev.location,
+            } : prev);
           } catch (e) {
             // eslint-disable-next-line no-console
             console.error('Profile update failed', e);
+            throw e;
           }
         }}
       />
@@ -218,10 +249,31 @@ function Tabs({ active, onChange }: { active: TabKey; onChange: (t: TabKey) => v
   );
 }
 
+type ActivityTimelineEntry = {
+  id: string;
+  label: string;
+  ts: string;
+};
+
 function ActivitiesPlaceholder({ userId }: { userId: string }) {
-  const [timeline, setTimeline] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<ActivityTimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  useEffect(()=>{ (async()=>{ setLoading(true); try { const r = await fetch(`/api/profile/${userId}/activities?range=90d`); const j = await r.json(); setTimeline(j.timeline||[]);} catch { setTimeline([]);} finally { setLoading(false);} })(); },[userId]);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/profile/${userId}/activities?range=90d`);
+        if (!response.ok) throw new Error('Failed to load activities');
+        const json = await response.json();
+        setTimeline(Array.isArray(json.timeline) ? json.timeline : []);
+      } catch (error) {
+        console.error('Failed to load profile activities', error);
+        setTimeline([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [userId]);
   return (
     <div className="mt-8 rounded-xl bg-white border border-gray-200 p-6 shadow-sm">
       <h3 className="font-semibold text-gray-800 mb-4">Activities</h3>
@@ -239,4 +291,3 @@ function ActivitiesPlaceholder({ userId }: { userId: string }) {
     </div>
   );
 }
-

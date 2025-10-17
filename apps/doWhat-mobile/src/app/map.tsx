@@ -1,729 +1,1573 @@
-import * as Linking from 'expo-linking';
 import * as Location from 'expo-location';
-import type { ReactNode, Ref } from 'react';
+import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, Platform, ScrollView } from 'react-native';
-import { theme } from '@dowhat/shared';
-// Lazy import expo-maps to avoid crashing if the native module
-// is not present (e.g., running in Expo Go or before rebuilding).
-type MapsModule = typeof import('expo-maps');
-import { router, Link } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-import { getLastKnownBackgroundLocation } from '../lib/bg-location';
-import { supabase } from '../lib/supabase';
+import {
+  DEFAULT_RADIUS_METERS,
+  MAPBOX_CLUSTER_COLORS,
+  MAPBOX_CLUSTER_RADII,
+  MAPBOX_CLUSTER_THRESHOLDS,
+  MAPBOX_CLUSTER_COUNT_FONT,
+  MAPBOX_CLUSTER_COUNT_TEXT_COLOR,
+  MAPBOX_CLUSTER_COUNT_TEXT_SIZE,
+  MAPBOX_POINT_COLOR,
+  MAPBOX_POINT_RADIUS,
+  MAPBOX_POINT_STROKE_COLOR,
+  MAPBOX_POINT_STROKE_WIDTH,
+  MAPBOX_STYLE_URL,
+  activitiesToFeatureCollection,
+  createNearbyActivitiesFetcher,
+  trackAnalyticsEvent,
+  type MapActivity,
+  type MapActivitiesQuery,
+  type MapActivitiesResponse,
+  type MapCoordinates,
+  useNearbyActivities,
+} from '@dowhat/shared';
+
 import { createWebUrl } from '../lib/web';
+import { supabase } from '../lib/supabase';
+import { createMapboxFallbackHtml } from '../lib/mapboxHtml';
+import { WebView } from 'react-native-webview';
+import type { WebViewMessageEvent } from 'react-native-webview';
 
-import { formatDateRange, formatPrice } from '@dowhat/shared';
-
-type Marker = {
-  id: string;
-  title: string;
-  latitude: number;
-  longitude: number;
-  activity_id: string;
-};
-
-type Coordinates = {
-  latitude: number;
-  longitude: number;
-};
-
-type MapInteractionEvent = {
-  coordinates?: Coordinates;
-  id?: string;
-  nativeEvent?: {
-    coordinate?: Coordinates;
-    position?: Coordinates;
-    id?: string;
-  };
-};
-
-type MarkerClickEvent = MapInteractionEvent & { id?: string };
-
-type MapCameraHandle = {
-  setCameraPosition?: (options: { coordinates: Coordinates; zoom?: number; duration?: number }) => void;
-};
-
-type MapCircle = {
-  id: string;
-  center: Coordinates;
-  radius: number;
-  color?: string;
-  lineColor?: string;
-  lineWidth?: number;
-};
-
-type MapMarker = {
-  id: string;
-  title: string;
-  coordinates: Coordinates;
-  overlay?: () => ReactNode;
-};
-
-type MapComponentProps = {
-  style?: object;
-  cameraPosition?: {
-    coordinates: Coordinates;
-    zoom?: number;
-  };
-  markers?: MapMarker[];
-  circles?: MapCircle[];
-  properties?: { isMyLocationEnabled?: boolean };
-  uiSettings?: { myLocationButtonEnabled?: boolean };
-  onMapClick?: (event: MapInteractionEvent) => void;
-  onMapLongClick?: (event: MapInteractionEvent) => void;
-  onMarkerClick?: (event: MarkerClickEvent) => void;
-};
-
-type MapComponent = (props: MapComponentProps & { ref?: Ref<MapCameraHandle> }) => JSX.Element;
-
-type MapsModuleLike = {
-  MapView?: MapComponent;
-  AppleMaps?: { View: MapComponent };
-  GoogleMaps?: { View: MapComponent };
-};
-
-type ActivityOption = { id: string; name: string | null };
-
-type SessionRow = {
-  id: string | number;
-  starts_at: string | null;
-  ends_at: string | null;
-  price_cents: number | null;
-  activities: { name?: string | null } | null;
-};
-
-type SheetVenueRow = {
-  __venue: {
-    id: string;
-    title: string;
-    latitude: number;
-    longitude: number;
-  };
-};
-
-type SheetRow = SessionRow | SheetVenueRow;
-
-const isVenueRow = (row: SheetRow): row is SheetVenueRow => '__venue' in row;
-
-const extractCoordinates = (event: MapInteractionEvent): Coordinates | null => {
-  const direct = event.coordinates;
-  if (direct && Number.isFinite(direct.latitude) && Number.isFinite(direct.longitude)) {
-    return direct;
+const resolveMapboxToken = (): string => {
+  const fromEnv = (
+    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
+    process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+    process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
+    process.env.MAPBOX_ACCESS_TOKEN ||
+    ''
+  ).trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const extras = (Constants.expoConfig ?? (Constants.manifest as any) ?? {}).extra ?? {};
+    const candidate =
+      extras?.mapboxAccessToken ||
+      extras?.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+  extras?.EXPO_PUBLIC_MAPBOX_TOKEN ||
+      extras?.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+      extras?.NEXT_PUBLIC_MAPBOX_TOKEN ||
+      extras?.MAPBOX_ACCESS_TOKEN ||
+      '';
+    return typeof candidate === 'string' ? candidate.trim() : '';
+  } catch {
+    return '';
   }
-  const fallback = event.nativeEvent?.coordinate ?? event.nativeEvent?.position;
-  if (fallback && Number.isFinite(fallback.latitude) && Number.isFinite(fallback.longitude)) {
-    return fallback;
-  }
-  return null;
 };
 
-const getMarkerId = (event: MarkerClickEvent): string | null => {
-  return event.id ?? event.nativeEvent?.id ?? null;
+const MAPBOX_TOKEN = resolveMapboxToken();
+
+if (__DEV__) {
+  console.info('[Map] MAPBOX_TOKEN resolved', MAPBOX_TOKEN ? `${MAPBOX_TOKEN.slice(0, 6)}…` : '(empty)');
+}
+
+const mapboxWarningState = { logged: false };
+const mapFetcherLogState = { primaryFailureLogged: false, supabaseFailureLogged: false };
+
+type MapboxModuleShape = {
+  MapView?: any;
+  Camera?: any;
+  ShapeSource?: any;
+  CircleLayer?: any;
+  SymbolLayer?: any;
+  UserLocation?: any;
+  setAccessToken?: (token: string) => void;
+  setTelemetryEnabled?: (enabled: boolean) => void;
 };
 
-export default function MapTab() {
-  // Custom marker overlay for Figma-style bold, colorful, rounded markers
-  function renderMarkerOverlay(marker: Marker) {
-    // Use a different color for clusters
-    const isCluster = marker.id.startsWith('cluster:');
-    const bgColor = isCluster ? '#6366f1' : '#f59e42';
-    const borderColor = '#fff';
-    const shadowColor = isCluster ? '#6366f1' : '#f59e42';
-    return (
-      <View style={{ backgroundColor: bgColor, borderRadius: 999, padding: isCluster ? 10 : 12, minWidth: isCluster ? 40 : 44, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor, shadowColor, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } }}>
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: isCluster ? 18 : 22 }}>{isCluster ? marker.title.split(' ')[0] : '📍'}</Text>
-      </View>
-    );
+const Mapbox: MapboxModuleShape | null = (() => {
+  try {
+    const required = require('@rnmapbox/maps') as
+      | MapboxModuleShape
+      | { default: MapboxModuleShape };
+    const resolved: MapboxModuleShape =
+      (required as { default?: MapboxModuleShape }).default ?? (required as MapboxModuleShape);
+
+    if (MAPBOX_TOKEN) {
+      resolved.setAccessToken?.(MAPBOX_TOKEN);
+    }
+    resolved.setTelemetryEnabled?.(false);
+    return resolved;
+  } catch (error) {
+    if (__DEV__ && !mapboxWarningState.logged) {
+      mapboxWarningState.logged = true;
+      console.warn('[Map] Mapbox native module unavailable – showing fallback UI.', error);
+    }
+    return null;
   }
-  const [maps, setMaps] = useState<MapsModule | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [lat, setLat] = useState<number | null>(null);
-  const [lng, setLng] = useState<number | null>(null);
-  const [markers, setMarkers] = useState<Marker[]>([]);
-  const [clusterIndex, setClusterIndex] = useState<Record<string, Marker[]>>({});
-  const cameraRef = useRef<MapCameraHandle | null>(null);
-  const coordsRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
-  const lastFetchRef = useRef<string | null>(null);
-  const [km, setKm] = useState<number>(25);
-  const [allActivities, setAllActivities] = useState<ActivityOption[]>([]);
-  const [selectedActIds, setSelectedActIds] = useState<string[]>([]);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [sheet, setSheet] = useState<{ venueId: string; title: string; lat: number; lng: number } | null>(null);
-  const [sheetLoading, setSheetLoading] = useState(false);
-  const [sheetRows, setSheetRows] = useState<SheetRow[] | null>(null);
-  const [followMe, setFollowMe] = useState(false);
-  const [pendingAdd, setPendingAdd] = useState<{ lat: number; lng: number } | null>(null);
-  const [pendingAddr, setPendingAddr] = useState<string | null>(null);
+})();
 
-  // Prefer platform-specific views if available, otherwise fall back to the default MapView export
-  const mapModule = maps as MapsModuleLike | null;
-  const MapView = mapModule?.MapView ?? (Platform.OS === 'ios' ? mapModule?.AppleMaps?.View : mapModule?.GoogleMaps?.View);
+const FALLBACK_CENTER: MapCoordinates = { lat: 37.7749, lng: -122.4194 }; // San Francisco default
 
-  const updateCoords = useCallback((la: number, ln: number) => {
-    coordsRef.current = { lat: la, lng: ln };
-    setLat((prev) => (prev === la ? prev : la));
-    setLng((prev) => (prev === ln ? prev : ln));
-  }, []);
+const clusterCircleLayerStyle = {
+  circleColor: [
+    'step',
+    ['get', 'point_count'],
+    MAPBOX_CLUSTER_COLORS[0],
+    MAPBOX_CLUSTER_THRESHOLDS[0],
+    MAPBOX_CLUSTER_COLORS[1],
+    MAPBOX_CLUSTER_THRESHOLDS[1],
+    MAPBOX_CLUSTER_COLORS[2],
+  ],
+  circleRadius: [
+    'step',
+    ['get', 'point_count'],
+    MAPBOX_CLUSTER_RADII[0],
+    MAPBOX_CLUSTER_THRESHOLDS[0],
+    MAPBOX_CLUSTER_RADII[1],
+    MAPBOX_CLUSTER_THRESHOLDS[1],
+    MAPBOX_CLUSTER_RADII[2],
+  ],
+  circleStrokeWidth: MAPBOX_POINT_STROKE_WIDTH,
+  circleStrokeColor: MAPBOX_POINT_STROKE_COLOR,
+};
 
-  const load = useCallback(async (options?: { coordinates?: Coordinates; force?: boolean }) => {
-    setErr(null);
-    let requestUrl: string | null = null;
-    try {
-      const normalize = (value: number) => Number(value.toFixed(6));
+const clusterCountStyle = {
+  textField: '{point_count_abbreviated}',
+  textSize: MAPBOX_CLUSTER_COUNT_TEXT_SIZE,
+  textColor: MAPBOX_CLUSTER_COUNT_TEXT_COLOR,
+  textFont: MAPBOX_CLUSTER_COUNT_FONT,
+};
 
-      let la: number | null = options?.coordinates?.latitude ?? (coordsRef.current.lat ?? null);
-      let ln: number | null = options?.coordinates?.longitude ?? (coordsRef.current.lng ?? null);
+const pointLayerStyle = {
+  circleColor: MAPBOX_POINT_COLOR,
+  circleRadius: MAPBOX_POINT_RADIUS,
+  circleStrokeWidth: MAPBOX_POINT_STROKE_WIDTH,
+  circleStrokeColor: MAPBOX_POINT_STROKE_COLOR,
+};
 
-      if (la == null || ln == null) {
-        try {
-          const cached = await getLastKnownBackgroundLocation();
-          if (cached) {
-            la = normalize(cached.lat);
-            ln = normalize(cached.lng);
-          }
-        } catch {}
+const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+type SupabaseActivityRow = {
+  id: string;
+  name: string | null;
+  venue: string | null;
+  lat: number | null;
+  lng: number | null;
+  activity_types?: string[] | null;
+  tags?: string[] | null;
+  traits?: string[] | null;
+  participant_preferences?: { preferred_traits: string[] | null }[] | null;
+};
+
+const normaliseStringList = (values?: (string | null)[] | null) =>
+  (values ?? [])
+    .map((value) => (typeof value === 'string' ? value.trim().toLowerCase() : ''))
+    .filter(Boolean);
+
+const participantPreferenceFallbackLogged = { value: false };
+
+const isMissingParticipantPreferenceRelationship = (error: { message?: string | null; details?: string | null; hint?: string | null }): boolean => {
+  const haystack = `${error?.message ?? ''} ${error?.details ?? ''} ${error?.hint ?? ''}`.toLowerCase();
+  return haystack.includes('activity_participant_preferences') && haystack.includes('relationship');
+};
+
+const fetchNearbyFromSupabaseFallback = async (
+  query: MapActivitiesQuery,
+): Promise<MapActivitiesResponse> => {
+  const radiusMeters = Math.max(query.radiusMeters ?? DEFAULT_RADIUS_METERS, 100);
+  const limit = Math.max(query.limit ?? 50, 1);
+  const requestLimit = Math.max(200, limit * 4);
+
+  const baseSelect = `
+      id,
+      name,
+      venue,
+      lat,
+      lng,
+      activity_types,
+      tags,
+      traits
+    `;
+
+  const selectWithPreferences = `${baseSelect}, participant_preferences:activity_participant_preferences(preferred_traits)`;
+
+  let supabaseRows: SupabaseActivityRow[] | null = null;
+
+  const result = await supabase
+    .from('activities')
+    .select(selectWithPreferences)
+    .limit(requestLimit)
+    .returns<SupabaseActivityRow[]>();
+
+  if (result.error) {
+    if (isMissingParticipantPreferenceRelationship(result.error)) {
+      if (__DEV__ && !participantPreferenceFallbackLogged.value) {
+        participantPreferenceFallbackLogged.value = true;
+        console.info('[Map] activity_participant_preferences relationship missing; continuing without preference traits.');
       }
+      const fallback = await supabase
+        .from('activities')
+        .select(baseSelect)
+        .limit(requestLimit)
+        .returns<SupabaseActivityRow[]>();
+      if (fallback.error) {
+        throw fallback.error;
+      }
+      supabaseRows = (fallback.data ?? []).map((row) => ({ ...row, participant_preferences: null }));
+    } else {
+      throw result.error;
+    }
+  } else {
+    supabaseRows = result.data ?? [];
+  }
 
-      if (la == null || ln == null) {
-        let perm = await Location.getForegroundPermissionsAsync();
-        if (perm.status !== 'granted') {
-          perm = await Location.requestForegroundPermissionsAsync();
-        }
-        if (perm.status !== 'granted') {
-          setMarkers([]);
-          setClusterIndex({});
-          setErr('Location permission is required to show nearby activities.');
+  const filters = query.filters ?? {};
+  const desiredTypes = filters.activityTypes?.map((value) => value.trim().toLowerCase()).filter(Boolean) ?? [];
+  const desiredTags = filters.tags?.map((value) => value.trim().toLowerCase()).filter(Boolean) ?? [];
+  const desiredTraits = filters.traits?.map((value) => value.trim().toLowerCase()).filter(Boolean) ?? [];
+
+  const withDistance = (supabaseRows ?? [])
+    .map((row) => {
+      if (typeof row.lat !== 'number' || typeof row.lng !== 'number') return null;
+      const activityTypes = normaliseStringList(row.activity_types);
+      const tagValues = normaliseStringList(row.tags);
+      const traitValues = new Set<string>([
+        ...normaliseStringList(row.traits),
+        ...((row.participant_preferences ?? [])
+          .flatMap((pref) => normaliseStringList(pref?.preferred_traits ?? null)) ?? []),
+      ]);
+
+      if (desiredTypes.length && !desiredTypes.some((type) => activityTypes.includes(type))) return null;
+      if (desiredTags.length && !desiredTags.some((tag) => tagValues.includes(tag))) return null;
+      if (desiredTraits.length && !desiredTraits.some((trait) => traitValues.has(trait))) return null;
+
+      const distance = haversineMeters(query.center.lat, query.center.lng, row.lat, row.lng);
+      const uniqueTraits = Array.from(traitValues);
+
+      return {
+        row,
+        distance,
+        traits: uniqueTraits,
+      };
+    })
+    .filter((entry): entry is { row: SupabaseActivityRow; distance: number; traits: string[] } => Boolean(entry));
+
+  withDistance.sort((a, b) => a.distance - b.distance);
+
+  const withinRadius = withDistance.filter((entry) => entry.distance <= radiusMeters);
+  const chosen = (withinRadius.length ? withinRadius : withDistance).slice(0, limit);
+
+  const activities: MapActivity[] = chosen.map(({ row, distance, traits }) => ({
+    id: row.id,
+    name: row.name ?? 'Untitled activity',
+    venue: row.venue ?? null,
+    lat: row.lat as number,
+    lng: row.lng as number,
+    distance_m: distance,
+    activity_types: row.activity_types ?? null,
+    tags: row.tags ?? null,
+    traits,
+  }));
+
+  return {
+    center: query.center,
+    radiusMeters,
+    count: activities.length,
+    activities,
+    source: 'supabase-fallback',
+  };
+};
+
+type ViewMode = 'map' | 'list';
+
+type FilterModalProps = {
+  visible: boolean;
+  onClose: (reason: 'close' | 'apply') => void;
+  availableTypes: string[];
+  availableTraits: string[];
+  selectedTypes: string[];
+  selectedTraits: string[];
+  onToggleType: (value: string) => void;
+  onToggleTrait: (value: string) => void;
+  onClear: () => void;
+};
+
+type MapAvailability =
+  | { mode: 'native'; reason: null }
+  | { mode: 'web'; reason: 'expoGo' | 'fallback' | null }
+  | { mode: 'disabled'; reason: 'missingToken' };
+
+const FilterModal = ({
+  visible,
+  onClose,
+  availableTypes,
+  availableTraits,
+  selectedTypes,
+  selectedTraits,
+  onToggleType,
+  onToggleTrait,
+  onClear,
+}: FilterModalProps) => (
+  <Modal visible={visible} animationType="slide" transparent>
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Filters</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={() => onClose('close')} style={styles.modalClose}>
+            <Text style={styles.modalCloseText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+        <FlatList
+          data={availableTypes}
+          keyExtractor={(item) => `type-${item}`}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => onToggleType(item)}
+              style={selectedTypes.includes(item) ? styles.filterChipActive : styles.filterChip}
+            >
+              <Text style={selectedTypes.includes(item) ? styles.filterChipTextActive : styles.filterChipText}>{item}</Text>
+            </TouchableOpacity>
+          )}
+          ListHeaderComponent={<Text style={styles.modalSectionLabel}>Activity types</Text>}
+          ListEmptyComponent={<Text style={styles.modalEmptyLabel}>Types appear once activities load nearby.</Text>}
+          ListFooterComponent={
+            <View style={styles.modalSectionFooter}>
+              <Text style={styles.modalSectionLabel}>People traits</Text>
+              <View style={styles.modalChipGrid}>
+                {availableTraits.length === 0 ? (
+                  <Text style={styles.modalEmptyLabel}>Traits appear when activities specify preferences.</Text>
+                ) : (
+                  availableTraits.map((trait) => (
+                    <TouchableOpacity
+                      key={trait}
+                      accessibilityRole="button"
+                      onPress={() => onToggleTrait(trait)}
+                      style={selectedTraits.includes(trait) ? styles.filterChipActive : styles.filterChip}
+                    >
+                      <Text style={selectedTraits.includes(trait) ? styles.filterChipTextActive : styles.filterChipText}>{trait}</Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            </View>
+          }
+          contentContainerStyle={styles.modalListContent}
+        />
+        <View style={styles.modalFooter}>
+          <TouchableOpacity accessibilityRole="button" onPress={onClear}>
+            <Text style={styles.modalClearText}>Clear all</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" onPress={() => onClose('apply')} style={styles.modalApplyButton}>
+            <Text style={styles.modalApplyText}>Apply filters</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </Modal>
+);
+
+const formatKilometres = (meters?: number | null) => {
+  if (!meters || meters <= 0) return '<0.5 km';
+  const km = meters / 1000;
+  return `${Math.round(km * 10) / 10} km`;
+};
+
+export default function MapScreen() {
+  const executionEnvironment = Constants?.executionEnvironment ?? null;
+  const isStoreClient = executionEnvironment === 'storeClient';
+
+  const mapAvailability = useMemo<MapAvailability>(() => {
+    if (!MAPBOX_TOKEN) {
+      return { mode: 'disabled', reason: 'missingToken' };
+    }
+    if (Mapbox && Mapbox.MapView && !isStoreClient) {
+      return { mode: 'native', reason: null };
+    }
+    return { mode: 'web', reason: isStoreClient ? 'expoGo' : 'fallback' };
+  }, [isStoreClient]);
+
+  const mapMode = mapAvailability.mode;
+
+  const mapUnavailableMessage = useMemo(() => {
+    if (mapAvailability.mode === 'disabled') {
+      const reason = mapAvailability.reason;
+      if (reason === 'missingToken') {
+        return 'Add EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN to your .env or app.config to enable the interactive map.';
+      }
+      if (reason === 'expoGo') {
+        return 'Install the custom development build to view the interactive map in Expo Go.';
+      }
+      return 'Interactive maps are unavailable in this build.';
+    }
+    return null;
+  }, [mapAvailability]);
+  const [center, setCenter] = useState<MapCoordinates | null>(null);
+  const [radiusMeters, setRadiusMeters] = useState<number>(DEFAULT_RADIUS_METERS);
+  const [viewMode, setViewMode] = useState<ViewMode>('map');
+  const [selectedActivityTypes, setSelectedActivityTypes] = useState<string[]>([]);
+  const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<MapActivity | null>(null);
+  const [locationMessage, setLocationMessage] = useState<string | null>(null);
+  const [hasLocationPermission, setHasLocationPermission] = useState(false);
+  const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+  const mapRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
+  const sourceRef = useRef<any>(null);
+  const webViewRef = useRef<any>(null);
+  const [webReady, setWebReady] = useState(false);
+  const lastWebPayloadRef = useRef<string | null>(null);
+  const pendingRecentreRef = useRef<{ center: MapCoordinates; zoom?: number } | null>(null);
+  const profileCenterAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          if (!cancelled) {
+            setHasLocationPermission(false);
+            setLocationMessage('Location permission denied. Showing popular activities nearby.');
+            setCenter((prev) => prev ?? FALLBACK_CENTER);
+          }
           return;
         }
-
-        let pos: Location.LocationObject | null = null;
-        try {
-          pos = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
-        } catch {}
-        if (!pos) {
-          try {
-            pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          } catch {}
+        setHasLocationPermission(true);
+        let position = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
+        if (!position) {
+          position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         }
-        if (pos?.coords) {
-          la = normalize(pos.coords.latitude);
-          ln = normalize(pos.coords.longitude);
+        if (position?.coords && !cancelled) {
+          setCenter({
+            lat: Number(position.coords.latitude.toFixed(6)),
+            lng: Number(position.coords.longitude.toFixed(6)),
+          });
+        } else if (!cancelled) {
+          setCenter((prev) => prev ?? FALLBACK_CENTER);
         }
-      }
-
-      if (la == null || ln == null) {
-        setMarkers([]);
-        setClusterIndex({});
-        setErr('Unable to determine your location right now.');
-        return;
-      }
-
-      updateCoords(la, ln);
-
-      const typesKey = selectedActIds.join('|');
-      const fetchKey = `${la.toFixed(6)}:${ln.toFixed(6)}:${km}:${typesKey}`;
-      if (!options?.force && lastFetchRef.current === fetchKey) {
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-
-      const map: Record<string, Marker> = {};
-
-      const url = createWebUrl('/api/nearby');
-      url.searchParams.set('lat', String(la));
-      url.searchParams.set('lng', String(ln));
-      url.searchParams.set('radius', String(Math.round(km * 1000)));
-      if (selectedActIds.length) url.searchParams.set('types', selectedActIds.join(','));
-
-      requestUrl = url.toString();
-      const res = await fetch(requestUrl, { credentials: 'include' });
-      let payload: any = null;
-      try {
-        payload = await res.json();
-      } catch {}
-      if (!res.ok) {
-        const message = (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string')
-          ? payload.error
-          : `Failed to load nearby activities (${res.status})`;
-        throw new Error(message);
-      }
-
-      const acts = Array.isArray(payload?.activities) ? payload.activities : [];
-      for (const a of acts) {
-        const latA = Number(a.lat);
-        const lngA = Number(a.lng);
-        if (!Number.isFinite(latA) || !Number.isFinite(lngA)) continue;
-        const id = String(a.id);
-        if (!map[id]) {
-          map[id] = {
-            id,
-            title: a.name ?? 'Activity',
-            latitude: latA,
-            longitude: lngA,
-            activity_id: id,
-          };
+      } catch (error) {
+        if (!cancelled) {
+          setLocationMessage('Unable to determine your location right now.');
+          setCenter((prev) => prev ?? FALLBACK_CENTER);
         }
-      }
-
-      const base = Object.values(map);
-
-      const cell = 0.003; // degrees
-      const buckets: Record<string, Marker[]> = {};
-      for (const m of base) {
-        const key = `${Math.round(m.latitude / cell)}:${Math.round(m.longitude / cell)}`;
-        (buckets[key] ||= []).push(m);
-      }
-      const render: Marker[] = [];
-      const clusterIdx: Record<string, Marker[]> = {};
-      for (const [key, list] of Object.entries(buckets)) {
-        if (list.length <= 2) {
-          render.push(...list);
-        } else {
-          const latAvg = list.reduce((s, v) => s + v.latitude, 0) / list.length;
-          const lngAvg = list.reduce((s, v) => s + v.longitude, 0) / list.length;
-          const id = `cluster:${key}`;
-          clusterIdx[id] = list;
-          render.push({ id, title: `${list.length} places`, latitude: latAvg, longitude: lngAvg, activity_id: list[0].activity_id });
-        }
-      }
-      setClusterIndex(clusterIdx);
-      setMarkers(render);
-      lastFetchRef.current = fetchKey;
-    } catch (e) {
-      if (__DEV__) console.warn('[MapTab] load failed', e);
-      if (e instanceof Error) {
-        const message = e.message || 'Failed to load map';
-        const isNetworkFailure = message.includes('Network request failed');
-        const suffix = requestUrl ? ` (${requestUrl})` : '';
-        const hint = isNetworkFailure
-          ? ' – check that the web server is running and reachable from your device'
-          : '';
-        setErr(`${message}${hint}${suffix}`);
-      } else {
-        setErr('Failed to load map');
-      }
-      setMarkers([]);
-      setClusterIndex({});
-    } finally {
-      setLoading(false);
-    }
-  }, [km, selectedActIds, updateCoords]);
-
-  const locate = useCallback(async () => {
-    try {
-      setErr(null);
-      let perm = await Location.getForegroundPermissionsAsync();
-      if (perm.status !== 'granted') {
-        perm = await Location.requestForegroundPermissionsAsync();
-      }
-      if (perm.status !== 'granted') {
-        setErr('Location permission is required to locate you.');
-        return;
-      }
-
-      let pos: Location.LocationObject | null = null;
-      try {
-        pos = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
-      } catch {}
-      if (!pos) {
-        pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      }
-      if (!pos?.coords) {
-        throw new Error('Unable to determine your position right now.');
-      }
-
-      const la = Number(pos.coords.latitude.toFixed(6));
-      const ln = Number(pos.coords.longitude.toFixed(6));
-      updateCoords(la, ln);
-      cameraRef.current?.setCameraPosition?.({
-        coordinates: { latitude: la, longitude: ln },
-        zoom: 12,
-        ...(Platform.OS === 'android' ? { duration: 600 } : {}),
-      });
-      await load({ coordinates: { latitude: la, longitude: ln }, force: true });
-    } catch (e) {
-      if (e instanceof Error) {
-        setErr(e.message);
-      } else {
-        setErr('Failed to get location');
-      }
-    }
-  }, [load, updateCoords]);
-
-  useEffect(() => {
-    // Load native maps module dynamically; avoid importing if native lib is absent
-    (async () => {
-      try {
-        try {
-          const { NativeModulesProxy } = await import('expo-modules-core');
-          const modules = NativeModulesProxy as Record<string, unknown>;
-          const hasNative = Boolean(modules?.ExpoMaps || modules?.ExpoMapsModule || modules?.ExpoMapView);
-          if (!hasNative) {
-            // Fall through to dynamic import attempt which will likely fail but gives a clearer error
-            console.warn('[MapTab] Expo Maps native module not detected, attempting dynamic import anyway');
-          }
-        } catch (nativeErr) {
-          console.warn('[MapTab] Failed to inspect native modules for expo-maps', nativeErr);
-        }
-        const m = await import('expo-maps');
-        setMaps(m);
-      } catch (importErr) {
-        console.warn('[MapTab] expo-maps import failed', importErr);
-        setErr('Map module not available. Rebuild the app (npx expo run:ios / run:android) to use maps.');
       }
     })();
-    // fetch activities for filters
-    (async () => {
-      const { data } = await supabase
-        .from('activities')
-        .select('id,name')
-        .order('name');
-      setAllActivities((data ?? []) as ActivityOption[]);
-    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
-
-  const cameraPosition = useMemo(() => ({
-    coordinates: lat != null && lng != null ? { latitude: lat, longitude: lng } : { latitude: 51.5074, longitude: -0.1278 },
-    zoom: 11,
-  }), [lat, lng]);
-
-  // Keep a live foreground position to update the blue dot while the map is open
-  useEffect(() => {
-    let sub: Location.LocationSubscription | null = null;
+    if (profileCenterAttemptedRef.current) return;
+    if (center && (center.lat !== FALLBACK_CENTER.lat || center.lng !== FALLBACK_CENTER.lng)) return;
+    profileCenterAttemptedRef.current = true;
     (async () => {
       try {
-        const perm = await Location.getForegroundPermissionsAsync();
-        if (perm.status !== 'granted') return;
-        sub = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, distanceInterval: 50 },
-          (pos: Location.LocationObject) => {
-            const la = Number(pos.coords.latitude.toFixed(6));
-            const ln = Number(pos.coords.longitude.toFixed(6));
-            updateCoords(la, ln);
-            if (followMe) {
-              cameraRef.current?.setCameraPosition?.({
-                coordinates: { latitude: la, longitude: ln },
-                zoom: 13,
-                ...(Platform.OS === 'android' ? { duration: 500 } : {}),
-              });
-              if (coordsRef.current.lat !== null && coordsRef.current.lng !== null) {
-                load({ coordinates: { latitude: la, longitude: ln } });
-              }
-            }
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id ?? null;
+        if (!uid) return;
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('last_lat,last_lng,location')
+          .eq('id', uid)
+          .maybeSingle<{ last_lat: number | null; last_lng: number | null; location?: string | null }>();
+        if (error) return;
+        if (data?.last_lat != null && data?.last_lng != null) {
+          setCenter({ lat: Number(data.last_lat), lng: Number(data.last_lng) });
+          if (data.location) {
+            setLocationMessage(`Showing results near ${data.location}`);
           }
-        );
-      } catch {}
+        }
+      } catch (profileError) {
+        if (__DEV__) {
+          console.info('[Map] profile location lookup failed', profileError);
+        }
+      }
     })();
-    return () => { sub?.remove(); };
-  }, [followMe, load, updateCoords]);
+  }, [center]);
 
-  // Circle to represent "My location" (cross‑platform)
-  const myCircles = useMemo(() => (
-    [
-      ...(lat != null && lng != null
-        ? [{ id: 'me', center: { latitude: lat, longitude: lng }, radius: 12, color: 'rgba(37,99,235,0.25)', lineColor: '#2563eb', lineWidth: 2 }]
-        : []),
-      ...(pendingAdd ? [{ id: 'add', center: { latitude: pendingAdd.lat, longitude: pendingAdd.lng }, radius: 10, color: 'rgba(245, 158, 11, 0.20)', lineColor: '#f59e0b', lineWidth: 2 }] : []),
-    ]
-  ), [lat, lng, pendingAdd]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (mounted) setIsAuthenticated(Boolean(data.session?.user));
+      } catch {
+        if (mounted) setIsAuthenticated(false);
+      }
+    })();
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (mounted) setIsAuthenticated(Boolean(session?.user));
+    });
+    return () => {
+      listener.subscription.unsubscribe();
+      mounted = false;
+    };
+  }, []);
 
-  if (!MapView) {
+  const fetcher = useMemo(() => {
+    const baseFetcher = createNearbyActivitiesFetcher({
+      buildUrl: () => createWebUrl('/api/nearby').toString(),
+      includeCredentials: true,
+    });
+    return async (args: MapActivitiesQuery & { signal?: AbortSignal }) => {
+      const { signal: _signal, ...query } = args;
+      try {
+        const primary = await baseFetcher(args);
+        if (primary.activities?.length) {
+          return primary;
+        }
+        const fallback = await fetchNearbyFromSupabaseFallback(query);
+        return fallback;
+      } catch (error) {
+        if (__DEV__ && !mapFetcherLogState.primaryFailureLogged) {
+          mapFetcherLogState.primaryFailureLogged = true;
+          console.info('[Map] Nearby API fetch failed, using Supabase fallback', error);
+        }
+        const fallback = await fetchNearbyFromSupabaseFallback(query).catch((fallbackError) => {
+          if (__DEV__ && !mapFetcherLogState.supabaseFailureLogged) {
+            mapFetcherLogState.supabaseFailureLogged = true;
+            console.info('[Map] Supabase fallback also failed', fallbackError);
+          }
+          throw fallbackError;
+        });
+        return fallback;
+      }
+    };
+  }, []);
+
+  const track = useCallback(
+    (event: string, payload?: Record<string, unknown>) => {
+      trackAnalyticsEvent(event, { platform: 'mobile', ...payload });
+    },
+    [],
+  );
+
+  const query = center
+    ? {
+        center,
+        radiusMeters,
+        limit: 150,
+        filters: {
+          activityTypes: selectedActivityTypes,
+          traits: selectedTraits,
+        },
+      }
+    : null;
+
+  const nearby = useNearbyActivities(query, {
+    fetcher,
+    enabled: Boolean(center),
+  });
+
+  const activities = nearby.data?.activities ?? [];
+  const featureCollection = useMemo(() => activitiesToFeatureCollection(activities), [activities]);
+
+  const selectedPointFilter = useMemo(
+    () =>
+      selectedActivity
+        ? (['all', ['!has', 'point_count'], ['==', ['get', 'id'], selectedActivity.id]] as const)
+        : (['all', ['==', ['get', 'id'], '__none__']] as const),
+    [selectedActivity],
+  );
+
+  const availableActivityTypes = useMemo(() => {
+    const set = new Set<string>();
+    activities.forEach((activity) => {
+      activity.activity_types?.forEach((type) => {
+        if (typeof type === 'string' && type.trim()) set.add(type.trim());
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [activities]);
+
+  const availableTraits = useMemo(() => {
+    const set = new Set<string>();
+    activities.forEach((activity) => {
+      activity.traits?.forEach((trait) => {
+        if (typeof trait === 'string' && trait.trim()) set.add(trait.trim());
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [activities]);
+
+  const toggleType = (value: string) => {
+    setSelectedActivityTypes((prev) => {
+      const active = prev.includes(value);
+      const next = active ? prev.filter((v) => v !== value) : [...prev, value];
+      track('map_filter_activity', { value, active: !active });
+      return next;
+    });
+  };
+
+  const toggleTrait = (value: string) => {
+    setSelectedTraits((prev) => {
+      const active = prev.includes(value);
+      const next = active ? prev.filter((v) => v !== value) : [...prev, value];
+      track('map_filter_trait', { value, active: !active });
+      return next;
+    });
+  };
+
+  const clearFilters = () => {
+    track('map_filters_reset', {
+      activityTypes: selectedActivityTypes.length,
+      traits: selectedTraits.length,
+      platform: 'mobile',
+    });
+    setSelectedActivityTypes([]);
+    setSelectedTraits([]);
+  };
+
+  const requireAuth = useCallback(
+    (activityId: string) => {
+      track('map_activity_details_requested', {
+        activityId,
+        authenticated: isAuthenticated === true,
+      });
+      if (isAuthenticated) {
+        router.push(`/activities/${activityId}`);
+      } else {
+        Alert.alert('Sign in required', 'Please sign in to view activity details.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign in', onPress: () => router.push('/profile') },
+        ]);
+      }
+    },
+    [isAuthenticated, router, track],
+  );
+
+  const changeViewMode = useCallback(
+    (mode: ViewMode) => {
+      setViewMode(mode);
+      track('map_toggle_view', { view: mode });
+    },
+    [track],
+  );
+
+  const handleRegionDidChange = useCallback(async () => {
+    if (!cameraRef.current) return;
+    const camera = await cameraRef.current.getCamera();
+    if (!camera?.centerCoordinate) return;
+    const [lng, lat] = camera.centerCoordinate;
+    const centerChanged =
+      !center ||
+      Math.abs(center.lat - lat) > 0.0005 ||
+      Math.abs(center.lng - lng) > 0.0005;
+    setCenter((prev) => {
+      if (!prev) return { lat, lng };
+      const deltaLat = Math.abs(prev.lat - lat);
+      const deltaLng = Math.abs(prev.lng - lng);
+      return deltaLat > 0.0005 || deltaLng > 0.0005 ? { lat, lng } : prev;
+    });
+    let normalizedRadius = radiusMeters;
+    let radiusChanged = false;
+    if (mapRef.current?.getVisibleBounds) {
+      const bounds = await mapRef.current.getVisibleBounds();
+      if (Array.isArray(bounds) && bounds.length === 2) {
+        const [[swLng, swLat], [neLng, neLat]] = bounds as [[number, number], [number, number]];
+        const diagonal = haversineMeters(swLat, swLng, neLat, neLng);
+        if (Number.isFinite(diagonal)) {
+          normalizedRadius = Math.max(300, Math.min(30_000, diagonal / 2));
+          radiusChanged = Math.abs(normalizedRadius - radiusMeters) > 250;
+          setRadiusMeters((prev) => (radiusChanged ? normalizedRadius : prev));
+        }
+      }
+    }
+    if (centerChanged || radiusChanged) {
+      track('map_region_change', {
+        lat: Number(lat.toFixed(5)),
+        lng: Number(lng.toFixed(5)),
+        radiusMeters: normalizedRadius,
+        source: 'drag',
+      });
+    }
+  }, [center, radiusMeters, track]);
+
+  const handleShapePress = useCallback(
+    async (event: any) => {
+      const feature = event?.features?.[0];
+      if (!feature || !sourceRef.current) return;
+      const coordinates = feature.geometry?.coordinates as [number, number] | undefined;
+      if (feature.properties?.cluster) {
+        try {
+          const zoom = await sourceRef.current.getClusterExpansionZoom(feature.properties.cluster_id);
+          if (zoom != null && coordinates && cameraRef.current) {
+            cameraRef.current.setCamera({
+              centerCoordinate: coordinates,
+              zoomLevel: zoom + 0.5,
+              animationDuration: 400,
+            });
+          }
+        } catch (error) {
+          console.warn('Cluster expansion failed', error);
+        }
+        return;
+      }
+      const id = feature.properties?.id as string | undefined;
+      if (!id) return;
+      const match = activities.find((activity) => activity.id === id);
+      if (match) {
+        setSelectedActivity(match);
+        track('map_activity_focus', { activityId: match.id, source: 'map' });
+      }
+    },
+    [activities, track],
+  );
+
+  const focusActivity = useCallback(
+    (activity: MapActivity) => {
+      if (!activity.lat || !activity.lng) return;
+      track('map_activity_focus', { activityId: activity.id, source: 'list' });
+      if (mapMode === 'native' && cameraRef.current?.setCamera) {
+        cameraRef.current.setCamera({
+          centerCoordinate: [activity.lng, activity.lat],
+          zoomLevel: 14,
+          animationDuration: 400,
+        });
+      } else if (mapMode === 'web') {
+        pendingRecentreRef.current = { center: { lat: activity.lat, lng: activity.lng }, zoom: 14 };
+      }
+      setCenter({ lat: activity.lat, lng: activity.lng });
+      setSelectedActivity(activity);
+      changeViewMode('map');
+    },
+    [changeViewMode, mapMode, track],
+  );
+
+  const sortedActivities = useMemo(
+    () =>
+      [...activities].sort(
+        (a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY),
+      ),
+    [activities],
+  );
+
+  const activeFiltersCount = selectedActivityTypes.length + selectedTraits.length;
+
+  useEffect(() => {
+    if (!nearby.data) return;
+    track('map_view', {
+      activityCount: nearby.data.activities.length,
+      radiusMeters: nearby.data.radiusMeters,
+      filtersApplied: activeFiltersCount,
+      source: nearby.data.source ?? 'unknown',
+    });
+  }, [nearby.data, activeFiltersCount, track]);
+
+  useEffect(() => {
+    if (mapMode !== 'web') {
+      setWebReady(false);
+      lastWebPayloadRef.current = null;
+      pendingRecentreRef.current = null;
+    }
+  }, [mapMode]);
+
+  useEffect(() => {
+    if (mapMode === 'disabled' && viewMode !== 'list') {
+      setViewMode('list');
+    }
+  }, [mapMode, viewMode]);
+
+  useEffect(() => {
+    if (mapMode === 'web' && viewMode !== 'map') {
+      setWebReady(false);
+      pendingRecentreRef.current = null;
+    }
+  }, [mapMode, viewMode]);
+
+  useEffect(() => {
+    if (mapMode === 'web' && center && !webReady) {
+      pendingRecentreRef.current = { center, zoom: 12 };
+    }
+  }, [mapMode, center, webReady]);
+
+  const handleWebMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      const dataString = event.nativeEvent?.data;
+      if (!dataString) return;
+      let payload: any;
+      try {
+        payload = JSON.parse(dataString);
+      } catch (error) {
+        if (__DEV__) console.warn('[map:web] invalid message', error);
+        return;
+      }
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.type === 'ready') {
+        setWebReady(true);
+        lastWebPayloadRef.current = null;
+        return;
+      }
+      if (payload.type === 'move') {
+        const nextCenter = payload.center as MapCoordinates | undefined;
+        const nextRadius = typeof payload.radiusMeters === 'number' ? payload.radiusMeters : undefined;
+        if (nextCenter) {
+          setCenter((prev) => {
+            if (!prev) return nextCenter;
+            const deltaLat = Math.abs(prev.lat - nextCenter.lat);
+            const deltaLng = Math.abs(prev.lng - nextCenter.lng);
+            return deltaLat > 0.0005 || deltaLng > 0.0005 ? nextCenter : prev;
+          });
+        }
+        if (typeof nextRadius === 'number' && Number.isFinite(nextRadius)) {
+          setRadiusMeters((prev) => (Math.abs(prev - nextRadius) > 250 ? nextRadius : prev));
+        }
+        return;
+      }
+      if (payload.type === 'select' && payload.activityId) {
+        const match = activities.find((activity) => activity.id === payload.activityId);
+        if (match) {
+          setSelectedActivity(match);
+          track('map_activity_focus', { activityId: match.id, source: 'map' });
+        }
+      }
+    },
+    [activities, track],
+  );
+
+  useEffect(() => {
+    if (mapMode !== 'web' || !webReady || !center || !webViewRef.current) return;
+    const payload = {
+      type: 'update' as const,
+      featureCollection,
+      selectedActivityId: selectedActivity?.id ?? null,
+      recenter: Boolean(pendingRecentreRef.current),
+      center: pendingRecentreRef.current?.center,
+      zoom: pendingRecentreRef.current?.zoom,
+      animate: Boolean(pendingRecentreRef.current),
+    };
+    pendingRecentreRef.current = null;
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastWebPayloadRef.current) return;
+    webViewRef.current.postMessage(serialized);
+    lastWebPayloadRef.current = serialized;
+  }, [mapMode, webReady, center, featureCollection, selectedActivity?.id]);
+
+  const renderMap = () => {
+    if (mapMode === 'native' && Mapbox && Mapbox.MapView) {
+      const MapboxGL = Mapbox as MapboxModuleShape;
+      if (!center) {
+        return (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator color="#10b981" />
+            <Text style={styles.loaderLabel}>Locating…</Text>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.mapContainer}>
+          <MapboxGL.MapView
+            ref={mapRef}
+            styleURL={MAPBOX_STYLE_URL}
+            style={styles.mapView}
+            onRegionDidChange={handleRegionDidChange}
+            onPress={() => setSelectedActivity(null)}
+          >
+            <MapboxGL.Camera ref={cameraRef} centerCoordinate={[center.lng, center.lat]} zoomLevel={12} />
+            {hasLocationPermission && <MapboxGL.UserLocation visible />}
+            <MapboxGL.ShapeSource
+              id="activities"
+              ref={sourceRef}
+              shape={featureCollection as any}
+              cluster
+              clusterRadius={48}
+              clusterMaxZoom={16}
+              onPress={handleShapePress}
+            >
+              <MapboxGL.CircleLayer id="activity-clusters" belowLayerID="cluster-count" style={clusterCircleLayerStyle} />
+              <MapboxGL.SymbolLayer id="cluster-count" style={clusterCountStyle} />
+              <MapboxGL.CircleLayer
+                id="activity-points"
+                belowLayerID="cluster-count"
+                filter={['!has', 'point_count']}
+                style={pointLayerStyle}
+              />
+              <MapboxGL.CircleLayer
+                id="selected-point"
+                aboveLayerID="activity-points"
+                filter={selectedPointFilter as unknown as any[]}
+                style={{
+                  circleColor: '#ffffff',
+                  circleRadius: MAPBOX_POINT_RADIUS + 6,
+                  circleStrokeColor: MAPBOX_POINT_COLOR,
+                  circleStrokeWidth: 4,
+                }}
+              />
+            </MapboxGL.ShapeSource>
+          </MapboxGL.MapView>
+          {nearby.isLoading && (
+            <View style={styles.loadingBadge}>
+              <ActivityIndicator size="small" color="#059669" />
+              <Text style={styles.loadingBadgeText}>Loading activities…</Text>
+            </View>
+          )}
+          {locationMessage && (
+            <View style={styles.locationBanner}>
+              <Text style={styles.locationBannerText}>{locationMessage}</Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    if (mapMode === 'web') {
+      if (!center) {
+        return (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator color="#10b981" />
+            <Text style={styles.loaderLabel}>Locating…</Text>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.mapContainer}>
+          <WebView
+            ref={webViewRef}
+            originWhitelist={['*']}
+            source={{ html: createMapboxFallbackHtml(MAPBOX_TOKEN, MAPBOX_STYLE_URL) }}
+            onMessage={handleWebMessage}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState
+            renderLoading={() => (
+              <View style={styles.loaderContainer}>
+                <ActivityIndicator color="#10b981" />
+                <Text style={styles.loaderLabel}>Loading map…</Text>
+              </View>
+            )}
+            style={styles.mapView}
+          />
+          {nearby.isLoading && (
+            <View style={styles.loadingBadge}>
+              <ActivityIndicator size="small" color="#059669" />
+              <Text style={styles.loadingBadgeText}>Loading activities…</Text>
+            </View>
+          )}
+          {locationMessage && (
+            <View style={styles.locationBanner}>
+              <Text style={styles.locationBannerText}>{locationMessage}</Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+
     return (
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
-        {/* Top bar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: '#2C3E50' }}>
-          <Pressable onPress={() => router.back()}>
-            <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
-          </Pressable>
-          <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Map</Text>
-          <View style={{ width: 32 }} />
-        </View>
-        <View style={{ flex: 1, padding: 16 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Map unavailable</Text>
-          <Text style={{ color: '#4b5563' }}>
-            Please rebuild the native app to enable maps. In the project root: cd apps/doWhat-mobile && npx expo run:ios (or run:android). Then restart the app.
-          </Text>
-          <Pressable onPress={() => load({ force: true })} style={{ marginTop: 12, borderWidth: 1, borderRadius: 8, padding: 10 }}>
-            <Text>Retry</Text>
-          </Pressable>
-          {err && <Text style={{ marginTop: 8, color: '#b91c1c' }}>{err}</Text>}
-        </View>
+      <View style={styles.mapFallback}>
+        <Text style={styles.mapFallbackTitle}>Map unavailable</Text>
+        <Text style={styles.mapFallbackText}>{mapUnavailableMessage ?? 'Interactive maps are unavailable in this build.'}</Text>
       </View>
     );
-  }
+  };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      {/* Top bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, backgroundColor: theme.colors.brandTeal, zIndex: 10 }}>
-        <Pressable onPress={() => router.back()}>
-          <Text style={{ color: '#fff', fontSize: 22 }}>←</Text>
-        </Pressable>
-        <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>Map</Text>
-        <View style={{ width: 32 }} />
-      </View>
-      {/* Chip filter row */}
-      <View style={{ position: 'absolute', top: 52, left: 8, right: 8, zIndex: 20 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 4, gap: 8 }}>
-          {[5, 10, 25].map((n) => (
-            <Pressable key={n} onPress={() => setKm(n)} style={{
-              paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-              backgroundColor: n === km ? theme.colors.brandTeal : 'white',
-              borderWidth: 1, borderColor: n === km ? theme.colors.brandTeal : '#e5e7eb'
-            }}>
-              <Text style={{ color: n === km ? 'white' : '#111827', fontWeight: '600' }}>{n} km</Text>
-            </Pressable>
-          ))}
-          {allActivities.slice(0, 6).map((a) => {
-            const active = selectedActIds.includes(a.id);
-            return (
-              <Pressable key={a.id} onPress={() => setSelectedActIds((prev) => active ? prev.filter((x) => x !== a.id) : [...prev, a.id])} style={{
-                paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-                backgroundColor: active ? theme.colors.brandYellow : 'white',
-                borderWidth: 1, borderColor: active ? theme.colors.brandYellow : '#e5e7eb'
-              }}>
-                <Text style={{ color: '#111827' }}>{a.name}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-      <MapView
-        ref={cameraRef}
-        style={{ flex: 1 }}
-        cameraPosition={cameraPosition}
-        markers={markers.map<MapMarker>((m) => ({
-          id: m.id,
-          title: m.title,
-          coordinates: { latitude: m.latitude, longitude: m.longitude },
-          overlay: () => renderMarkerOverlay(m),
-        }))}
-        circles={myCircles}
-        properties={{ isMyLocationEnabled: true }}
-        uiSettings={{ myLocationButtonEnabled: false }}
-        onMapClick={(ev) => {
-          if (Platform.OS === 'ios') {
-            const coords = extractCoordinates(ev);
-            if (!coords) return;
-            const { latitude, longitude } = coords;
-            setPendingAdd({ lat: latitude, lng: longitude });
-            (async () => {
-              try {
-                const arr = await Location.reverseGeocodeAsync({ latitude, longitude });
-                const best = arr?.[0];
-                const parts = [best?.name, best?.street, best?.city].filter((value): value is string => Boolean(value));
-                setPendingAddr(parts.join(', '));
-              } catch {
-                setPendingAddr(null);
-              }
-            })();
-          }
-        }}
-        onMapLongClick={(ev) => {
-          if (Platform.OS === 'android') {
-            const coords = extractCoordinates(ev);
-            if (!coords) return;
-            const { latitude, longitude } = coords;
-            setPendingAdd({ lat: latitude, lng: longitude });
-            (async () => {
-              try {
-                const arr = await Location.reverseGeocodeAsync({ latitude, longitude });
-                const best = arr?.[0];
-                const parts = [best?.name, best?.street, best?.city].filter((value): value is string => Boolean(value));
-                setPendingAddr(parts.join(', '));
-              } catch {
-                setPendingAddr(null);
-              }
-            })();
-          }
-        }}
-        onMarkerClick={(ev) => {
-          const id = getMarkerId(ev);
-          if (!id) return;
-          const match = markers.find((m) => m.id === id);
-          if (!match) return;
-          if (id.startsWith('cluster:')) {
-            // Open a sheet listing venues in this cluster
-            const venues = clusterIndex[id] || [];
-            setSheet({ venueId: '', title: `${venues.length} places nearby`, lat: match.latitude, lng: match.longitude });
-            setSheetRows(venues.map<SheetRow>((v) => ({
-              __venue: {
-                id: v.id,
-                title: v.title,
-                latitude: v.latitude,
-                longitude: v.longitude,
-              },
-            })));
-            setSheetLoading(false);
-            return;
-          }
-          // Single venue sheet
-          setSheet({ venueId: match.id, title: match.title, lat: match.latitude, lng: match.longitude });
-          (async () => {
-            setSheetLoading(true);
-            setSheetRows(null);
-            const { data, error } = await supabase
-              .from('sessions')
-              .select('id, starts_at, ends_at, price_cents, activities(name)')
-              .eq('venue_id', match.id)
-              .order('starts_at', { ascending: true })
-              .limit(10);
-            if (!error) setSheetRows((data ?? []) as SheetRow[]);
-            setSheetLoading(false);
-          })();
-        }}
-      />
-      {/* Controls */}
-      <View style={{ position: 'absolute', top: 12, right: 12, gap: 8 }}>
-        <Pressable onPress={locate} style={{ backgroundColor: 'white', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text>Locate me</Text>
-        </Pressable>
-        <Pressable onPress={() => { if (lat!=null && lng!=null) Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`); }} style={{ backgroundColor: 'white', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text>Open in Maps</Text>
-        </Pressable>
-        <Pressable onPress={() => { setFollowMe((v) => !v); if (!followMe) locate(); }} style={{ backgroundColor: 'white', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text>{followMe ? 'Following you' : 'Follow me'}</Text>
-        </Pressable>
-        <View style={{ backgroundColor: 'white', borderWidth: 1, borderRadius: 8, padding: 6, alignItems: 'center' }}>
-          <Text style={{ fontSize: 12, color: '#4b5563' }}>Radius (km)</Text>
-          <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
-            {[5,10,25,50].map((n) => (
-              <Pressable key={n} onPress={() => { setKm(n); }} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 9999, borderWidth: 1, borderColor: n===km ? '#0d9488' : '#d1d5db', backgroundColor: n===km ? 'rgba(13,148,136,0.08)' : 'white' }}>
-                <Text style={{ color: n===km ? '#0d9488' : '#374151' }}>{n}</Text>
-              </Pressable>
-            ))}
+  const renderList = () => (
+    <FlatList
+      data={sortedActivities}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={styles.listContent}
+      ListEmptyComponent={
+        nearby.isLoading ? (
+          <View style={styles.listEmptyState}>
+            <ActivityIndicator color="#10b981" />
+            <Text style={styles.listEmptyText}>Loading nearby activities…</Text>
           </View>
-          <Pressable onPress={() => setFiltersOpen(true)} style={{ marginTop: 6, borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
-            <Text>Filters</Text>
-          </Pressable>
-        </View>
-      </View>
-      {loading && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 8, alignItems: 'center' }}>
-          <ActivityIndicator />
-        </View>
-      )}
-      {err && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 8, backgroundColor: 'rgba(185,28,28,0.1)' }}>
-          <Text style={{ color: '#991b1b', textAlign: 'center' }}>{err}</Text>
-        </View>
-      )}
-
-      {/* Bottom sheet with venue details (rounded, colorful accent) */}
-      {sheet && (
-        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setSheet(null)} />
-          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 2, borderColor: '#f59e42', shadowColor: '#f59e42', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', marginBottom: 4, color: '#2C3E50' }}>{sheet.title}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-              <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${sheet.lat},${sheet.lng}`)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
-                <Text style={{ color: '#6366f1' }}>Open in Maps</Text>
-              </Pressable>
-              <Pressable onPress={() => setSheet(null)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#f59e42' }}>
-                <Text style={{ color: '#f59e42' }}>Close</Text>
-              </Pressable>
+        ) : (
+          <View style={styles.listEmptyState}>
+            <Text style={styles.listEmptyText}>No activities match those filters yet.</Text>
+          </View>
+        )
+      }
+      renderItem={({ item }) => (
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => focusActivity(item)}
+          style={styles.listCard}
+        >
+          <View style={styles.listCardHeader}>
+            <View>
+              <Text style={styles.listCardTitle}>{item.name}</Text>
+              {item.venue && <Text style={styles.listCardVenue}>📍 {item.venue}</Text>}
             </View>
-            {sheetLoading && <ActivityIndicator style={{ marginTop: 8 }} />}
-            {!sheetLoading && (
-              <ScrollView style={{ maxHeight: 260, marginTop: 8 }}>
-                {(!sheetRows || !sheetRows.length) && (
-                  <Text style={{ color: '#6b7280' }}>No upcoming sessions.</Text>
-                )}
-                {sheetRows?.map((s) => (
-                  isVenueRow(s) ? (
-                    <View key={s.__venue.id} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.04)' }}>
-                      <Text style={{ fontWeight: '600', color: '#2C3E50' }}>{s.__venue.title}</Text>
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                        <Pressable onPress={() => {
-                          setSheet({ venueId: s.__venue.id, title: s.__venue.title, lat: s.__venue.latitude, lng: s.__venue.longitude });
-                          (async () => {
-                            setSheetLoading(true); setSheetRows(null);
-                            const { data, error } = await supabase
-                              .from('sessions')
-                              .select('id, starts_at, ends_at, price_cents, activities(name)')
-                              .eq('venue_id', s.__venue.id)
-                              .order('starts_at', { ascending: true })
-                              .limit(10);
-                            if (!error) setSheetRows((data ?? []) as SheetRow[]);
-                            setSheetLoading(false);
-                          })();
-                        }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
-                          <Text style={{ color: '#6366f1' }}>View sessions</Text>
-                        </Pressable>
-                        <Pressable onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${s.__venue.latitude},${s.__venue.longitude}`)} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
-                          <Text style={{ color: '#6366f1' }}>Open in Maps</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ) : (
-                    <View key={String(s.id)} style={{ borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 10, borderColor: theme.colors.brandTeal, backgroundColor: 'rgba(22,179,163,0.06)' }}>
-                      <Text style={{ fontWeight: '600', color: theme.colors.brandInk }}>{s.activities?.name ?? 'Activity'}</Text>
-                      <Text style={{ marginTop: 2 }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
-                      {!!s.price_cents && <Text style={{ marginTop: 2 }}>{formatPrice(s.price_cents)}</Text>}
-                      <Link href={`/sessions/${s.id}`} asChild>
-                        <Pressable style={{ marginTop: 6, backgroundColor: theme.colors.brandTeal, paddingVertical: 8, borderRadius: 8 }}>
-                          <Text style={{ color: 'white', textAlign: 'center' }}>View details</Text>
-                        </Pressable>
-                      </Link>
-                    </View>
-                  )
-                ))}
-              </ScrollView>
+            {item.distance_m != null && (
+              <Text style={styles.listCardDistance}>~{formatKilometres(item.distance_m)}</Text>
             )}
           </View>
+          {item.activity_types && item.activity_types.length > 0 && (
+            <View style={styles.listCardChips}>
+              {item.activity_types.slice(0, 3).map((type) => (
+                <View key={type} style={styles.listChip}>
+                  <Text style={styles.listChipText}>{type}</Text>
+                </View>
+              ))}
+              {item.activity_types.length > 3 && (
+                <View style={styles.listChipMuted}>
+                  <Text style={styles.listChipMutedText}>+{item.activity_types.length - 3}</Text>
+                </View>
+              )}
+            </View>
+          )}
+          <View style={styles.listCardFooter}>
+            <Pressable onPress={() => requireAuth(item.id)} hitSlop={8}>
+              <Text style={styles.listDetailsLink}>View details →</Text>
+            </Pressable>
+            <Pressable onPress={() => focusActivity(item)} hitSlop={8}>
+              <Text style={styles.listShowOnMap}>Show on map</Text>
+            </Pressable>
+          </View>
+        </TouchableOpacity>
+      )}
+    />
+  );
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.header}>
+        <View style={styles.toggleGroup}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => changeViewMode('map')}
+            disabled={mapMode === 'disabled'}
+            style={
+              mapMode === 'disabled'
+                ? styles.toggleDisabled
+                : viewMode === 'map'
+                ? styles.toggleActive
+                : styles.toggle
+            }
+          >
+            <Text
+              style={
+                mapMode === 'disabled'
+                  ? styles.toggleTextDisabled
+                  : viewMode === 'map'
+                  ? styles.toggleTextActive
+                  : styles.toggleText
+              }
+            >
+              Map
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => changeViewMode('list')}
+            style={viewMode === 'list' ? styles.toggleActive : styles.toggle}
+          >
+            <Text style={viewMode === 'list' ? styles.toggleTextActive : styles.toggleText}>List</Text>
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={styles.filterButton}
+          onPress={() => {
+            setFiltersVisible(true);
+            track('map_filters_opened');
+          }}
+        >
+          <Text style={styles.filterButtonText}>Filters</Text>
+          {activeFiltersCount > 0 && (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeFiltersCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+      {mapMode === 'disabled' && mapUnavailableMessage && (
+        <View style={styles.mapBanner}>
+          <Text style={styles.mapBannerText}>{mapUnavailableMessage}</Text>
         </View>
       )}
-      {/* Filter overlay (rounded, colorful accent) */}
-      {filtersOpen && (
-        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setFiltersOpen(false)} />
-          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 2, borderColor: '#6366f1', shadowColor: '#6366f1', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#2C3E50' }}>Filter activities</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-              {allActivities.map((a) => {
-                const sel = selectedActIds.includes(a.id);
-                return (
-                  <Pressable key={a.id} onPress={() => setSelectedActIds((prev) => prev.includes(a.id) ? prev.filter((x) => x !== a.id) : [...prev, a.id])} style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9999, borderWidth: 2, borderColor: sel ? '#6366f1' : '#d1d5db', backgroundColor: sel ? 'rgba(99,102,241,0.08)' : 'white' }}>
-                    <Text style={{ color: sel ? '#6366f1' : '#374151', fontWeight: sel ? '700' : '400' }}>{a.name}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <Pressable onPress={() => { setFiltersOpen(false); load({ force: true }); }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#6366f1' }}>
-                <Text style={{ color: '#6366f1' }}>Apply</Text>
-              </Pressable>
-              <Pressable onPress={() => { setSelectedActIds([]); setFiltersOpen(false); }} style={{ borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderColor: '#f59e42' }}>
-                <Text style={{ color: '#f59e42' }}>Clear</Text>
-              </Pressable>
-            </View>
+      <View style={styles.content}>{viewMode === 'map' ? renderMap() : renderList()}</View>
+
+      {viewMode === 'map' && selectedActivity && (
+        <View style={styles.selectedCard}>
+          <View style={styles.selectedCardHeader}>
+            <Text style={styles.selectedCardTitle}>{selectedActivity.name}</Text>
+            <TouchableOpacity accessibilityRole="button" onPress={() => setSelectedActivity(null)}>
+              <Text style={styles.selectedClose}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {selectedActivity.venue && <Text style={styles.selectedVenue}>📍 {selectedActivity.venue}</Text>}
+          {selectedActivity.distance_m != null && (
+            <Text style={styles.selectedDistance}>~{formatKilometres(selectedActivity.distance_m)} away</Text>
+          )}
+          <View style={styles.selectedActions}>
+            <Pressable
+              style={styles.selectedPrimaryAction}
+              onPress={() => requireAuth(selectedActivity.id)}
+            >
+              <Text style={styles.selectedPrimaryActionText}>View details</Text>
+            </Pressable>
+            <Pressable onPress={() => focusActivity(selectedActivity)}>
+              <Text style={styles.selectedSecondaryAction}>Center map</Text>
+            </Pressable>
           </View>
         </View>
       )}
-      {/* Add event helper when a point is selected */}
-      {pendingAdd && (
-        <View style={{ position: 'absolute', left: 12, right: 12, bottom: 12, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, padding: 10 }}>
-          <Text style={{ fontWeight: '600' }}>Create event here?</Text>
-          <Text style={{ color: '#6b7280', marginTop: 2 }}>{pendingAdd.lat.toFixed(5)}, {pendingAdd.lng.toFixed(5)}</Text>
-          {pendingAddr && <Text style={{ color: '#374151', marginTop: 2 }}>{pendingAddr}</Text>}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-            <Pressable onPress={() => { setPendingAdd(null); setPendingAddr(null); }} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-              <Text>Cancel</Text>
-            </Pressable>
-            <Pressable onPress={() => { router.push(`/add-event?lat=${pendingAdd.lat}&lng=${pendingAdd.lng}`); setPendingAdd(null); setPendingAddr(null); }} style={{ backgroundColor: '#0d9488', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}>
-              <Text style={{ color: 'white' }}>Add event</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-    </View>
+
+      <FilterModal
+        visible={filtersVisible}
+        onClose={(reason) => {
+          setFiltersVisible(false);
+          track('map_filters_closed', { via: reason });
+        }}
+        availableTypes={availableActivityTypes}
+        availableTraits={availableTraits}
+        selectedTypes={selectedActivityTypes}
+        selectedTraits={selectedTraits}
+        onToggleType={toggleType}
+        onToggleTrait={toggleTrait}
+        onClear={clearFilters}
+      />
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'white',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+    zIndex: 10,
+  },
+  mapBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fef3c7',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#facc15',
+  },
+  mapBannerText: {
+    fontSize: 13,
+    color: '#92400e',
+    textAlign: 'center',
+  },
+  toggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#e2e8f0',
+    borderRadius: 999,
+    padding: 4,
+  },
+  toggle: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  toggleDisabled: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    opacity: 0.4,
+  },
+  toggleActive: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#10b981',
+  },
+  toggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  toggleTextDisabled: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  toggleTextActive: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#10b981',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: '#ecfdf5',
+  },
+  filterButtonText: {
+    color: '#047857',
+    fontWeight: '600',
+  },
+  filterBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#047857',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    marginLeft: 8,
+  },
+  filterBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  content: {
+    flex: 1,
+  },
+  mapContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  mapView: {
+    flex: 1,
+  },
+  mapFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  mapFallbackTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#b91c1c',
+  },
+  mapFallbackText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#ef4444',
+    textAlign: 'center',
+  },
+  loaderContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loaderLabel: {
+    fontSize: 14,
+    color: '#475569',
+    marginTop: 8,
+  },
+  loadingBadge: {
+    position: 'absolute',
+    top: 16,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#cbd5f5',
+  },
+  loadingBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginLeft: 8,
+  },
+  locationBanner: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(30,41,59,0.85)',
+    borderRadius: 12,
+    padding: 12,
+  },
+  locationBannerText: {
+    color: 'white',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  listContent: {
+    padding: 16,
+  },
+  listEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  listEmptyText: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 12,
+  },
+  listCard: {
+    backgroundColor: 'white',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  listCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  listCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  listCardVenue: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#475569',
+  },
+  listCardDistance: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  listCardChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  listChip: {
+    backgroundColor: '#d1fae5',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  listChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#047857',
+  },
+  listChipMuted: {
+    backgroundColor: '#ecfeff',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  listChipMutedText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0891b2',
+  },
+  listCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  listDetailsLink: {
+    color: '#047857',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  listShowOnMap: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  selectedCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 24,
+    backgroundColor: 'white',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  selectedCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  selectedCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  selectedClose: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  selectedVenue: {
+    fontSize: 13,
+    color: '#475569',
+    marginTop: 4,
+  },
+  selectedDistance: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  selectedActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  selectedPrimaryAction: {
+    backgroundColor: '#047857',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  selectedPrimaryActionText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  selectedSecondaryAction: {
+    color: '#2563eb',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    maxHeight: '80%',
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  modalClose: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  modalCloseText: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  modalListContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  modalSectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  modalChipGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  modalEmptyLabel: {
+    fontSize: 13,
+    color: '#94a3b8',
+  },
+  filterChip: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 8,
+    marginRight: 8,
+  },
+  filterChipActive: {
+    backgroundColor: '#d1fae5',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 8,
+    marginRight: 8,
+  },
+  filterChipText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#047857',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalSectionFooter: {
+    marginTop: 24,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e2e8f0',
+  },
+  modalClearText: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  modalApplyButton: {
+    backgroundColor: '#047857',
+    borderRadius: 999,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  modalApplyText: {
+    color: 'white',
+    fontWeight: '700',
+  },
+});

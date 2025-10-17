@@ -37,7 +37,7 @@ export type ProfileUser = {
   location?: string;
   avatarUrl?: string;
   bio?: string;
-  socials?: { instagram?: string; whatsapp?: string };
+  socials?: { instagram?: string | null; whatsapp?: string | null };
 };
 
 // Activity timeline placeholder type (not specified but needed for activities endpoint)

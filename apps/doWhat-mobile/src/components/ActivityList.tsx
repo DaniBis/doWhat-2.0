@@ -68,7 +68,7 @@ const ActivityList: React.FC<ActivityListProps> = ({
       renderItem={({ item }) => (
         <TouchableOpacity 
           style={styles.card} 
-          onPress={() => router.push(`/activities/${item.id}`)}
+          onPress={() => router.push({ pathname: '/activities/[id]', params: { id: item.id, name: item.title } })}
         >
           <Image
             source={item.imageUrl ? { uri: item.imageUrl } : require('../../assets/icon.png')}

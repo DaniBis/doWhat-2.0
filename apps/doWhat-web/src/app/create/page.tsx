@@ -1,14 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { createClient } from '@supabase/supabase-js';
-
-// Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import LocationPickerMap from "@/components/create/LocationPickerMap";
+import { supabase } from "@/lib/supabase/browser";
+import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Option = { id: string; name: string };
 
@@ -31,22 +28,108 @@ export default function CreateEventPage() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [locationStatus, setLocationStatus] = useState<'loading' | 'success' | 'error' | 'denied'>('loading');
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual'>('idle');
+
+  const { defaultStart, defaultEnd } = useMemo(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const defaultStartValue = tomorrow.toISOString().slice(0, 16);
+    const tomorrowEnd = new Date(tomorrow);
+    tomorrowEnd.setHours(tomorrowEnd.getHours() + 2);
+    const defaultEndValue = tomorrowEnd.toISOString().slice(0, 16);
+    return { defaultStart: defaultStartValue, defaultEnd: defaultEndValue };
+  }, []);
+
+  const coordsValid = useMemo(() => {
+    if (!lat.trim() || !lng.trim()) return false;
+    const la = parseFloat(lat);
+    const ln = parseFloat(lng);
+    return !Number.isNaN(la) && !Number.isNaN(ln);
+  }, [lat, lng]);
+
+  const showLocationNotice = locationStatus === 'loading' || locationStatus === 'error' || locationStatus === 'denied';
+  const disableSubmit = saving || !coordsValid;
+
+  function handleManualLatChange(value: string) {
+    setLat(value);
+    setLocationStatus('manual');
+  }
+
+  function handleManualLngChange(value: string) {
+    setLng(value);
+    setLocationStatus('manual');
+  }
+
+  function handleMapSelect(nextLat: number, nextLng: number) {
+    setLat(nextLat.toFixed(6));
+    setLng(nextLng.toFixed(6));
+    setLocationStatus('success');
+  }
 
   useEffect(() => {
-    (async () => {
-      const a = await supabase.from('activities').select('id,name').order('name');
-      if (!a.error) setActivities((a.data ?? []) as Option[]);
-      const v = await supabase.from('venues').select('id,name').order('name');
-      if (!v.error) setVenues((v.data ?? []) as Option[]);
+    setStartsAt((prev) => (prev ? prev : defaultStart));
+    setEndsAt((prev) => (prev ? prev : defaultEnd));
+  }, [defaultStart, defaultEnd]);
 
-      requestLocation();
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      type ActivityRow = { id: string; name: string | null };
+      type VenueRow = { id: string; name: string | null };
+
+      try {
+        const [activityResp, venueResp] = await Promise.all([
+          supabase
+            .from('activities')
+            .select('id,name')
+            .order('name')
+            .returns<ActivityRow[]>(),
+          supabase
+            .from('venues')
+            .select('id,name')
+            .order('name')
+            .returns<VenueRow[]>(),
+        ]);
+
+        if (!active) return;
+
+        if (!activityResp.error && activityResp.data) {
+          setActivities(
+            activityResp.data.map((row) => ({ id: row.id, name: row.name ?? 'Untitled activity' }))
+          );
+        }
+
+        if (!venueResp.error && venueResp.data) {
+          setVenues(
+            venueResp.data.map((row) => ({ id: row.id, name: row.name ?? 'Untitled venue' }))
+          );
+        }
+
+        if (activityResp.error) {
+          console.warn('Failed to load activities', activityResp.error);
+        }
+        if (venueResp.error) {
+          console.warn('Failed to load venues', venueResp.error);
+        }
+      } catch (error) {
+        if (active) {
+          console.error('Failed to load form data', error);
+          setErr((prev) => prev ?? `Failed to load initial data: ${getErrorMessage(error)}`);
+        }
+      }
     })();
+
+    requestLocation();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   function requestLocation() {
     if (!navigator.geolocation) {
       setLocationStatus('error');
+      console.warn('Navigator geolocation not available in this browser.');
       return;
     }
     setLocationStatus('loading');
@@ -59,35 +142,14 @@ export default function CreateEventPage() {
       (error) => {
         if (error.code === error.PERMISSION_DENIED) {
           setLocationStatus('denied');
+          console.warn('Geolocation permission denied', error);
         } else {
           setLocationStatus('error');
+          console.warn('Geolocation failed', error);
         }
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-  }
-
-  async function ensureActivity(): Promise<string> {
-    if (activityId) return activityId;
-    const name = activityName.trim();
-    if (!name) throw new Error('Enter an activity name or choose one.');
-    const { data, error } = await supabase.from('activities').insert({ name }).select('id').single();
-    if (error) throw error;
-    return (data as any).id as string;
-  }
-
-  async function ensureVenue(): Promise<string> {
-    if (venueId) return venueId;
-    const name = venueName.trim();
-    if (!name) throw new Error('Enter a venue name or choose one.');
-    const la = parseFloat(lat); 
-    const ln = parseFloat(lng);
-    const payload: any = { name };
-    if (!Number.isNaN(la)) payload.lat = la;
-    if (!Number.isNaN(ln)) payload.lng = ln;
-    const { data, error } = await supabase.from('venues').insert(payload).select('id').single();
-    if (error) throw error;
-    return (data as any).id as string;
   }
 
   async function submit(e: React.FormEvent) {
@@ -96,57 +158,50 @@ export default function CreateEventPage() {
       setErr(null); 
       setMsg(null); 
       setSaving(true);
-      
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id; 
-      if (!uid) throw new Error('Please sign in.');
-      
+
       // Require coordinates for local creation
-      const la = parseFloat(lat); const ln = parseFloat(lng);
+      const la = parseFloat(lat);
+      const ln = parseFloat(lng);
       if (Number.isNaN(la) || Number.isNaN(ln)) {
         throw new Error('Location is required to create an event. Please allow location access or enter coordinates.');
       }
 
-      const act = await ensureActivity();
-      const ven = await ensureVenue();
-      
-      if (!startsAt || !endsAt) throw new Error('Start and end times are required.');
-      
-      const cents = Math.round((Number(price) || 0) * 100);
-      const payload: any = {
-        activity_id: act,
-        venue_id: ven,
-        price_cents: cents,
-        starts_at: new Date(startsAt).toISOString(),
-        ends_at: new Date(endsAt).toISOString(),
-        created_by: uid,
-        };
-      
-      if (description.trim()) {
-        payload.description = description.trim();
+      const payload = {
+        activityId: activityId || null,
+        activityName: activityName.trim() || null,
+        venueId: venueId || null,
+        venueName: venueName.trim() || null,
+        lat: la,
+        lng: ln,
+        price: Number(price) || 0,
+        startsAt: startsAt || defaultStart,
+        endsAt: endsAt || defaultEnd,
+        description: description.trim() || null,
+      };
+
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !result?.id) {
+        throw new Error(result?.error || 'Failed to create event.');
       }
-      
-      const { data, error } = await supabase.from('sessions').insert(payload).select('id').single();
-      if (error) throw error;
-      
+
       setMsg('Event created successfully!');
       setTimeout(() => {
-        router.push(`/sessions/${(data as any).id}`);
+        router.push(`/sessions/${result.id}`);
       }, 1000);
-    } catch (e: any) {
-      setErr(e.message ?? 'Failed to create event');
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
     } finally { 
       setSaving(false); 
     }
   }
-
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const defaultStart = tomorrow.toISOString().slice(0, 16);
-  
-  const tomorrowEnd = new Date(tomorrow);
-  tomorrowEnd.setHours(tomorrowEnd.getHours() + 2);
-  const defaultEnd = tomorrowEnd.toISOString().slice(0, 16);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -244,19 +299,44 @@ export default function CreateEventPage() {
           </div>
         </div>
 
+        {/* Map Picker */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Pin the location</label>
+          <p className="mb-3 text-xs text-gray-600">
+            Click on the map to set coordinates or allow location access above. You can fine-tune the numbers manually below.
+          </p>
+          <LocationPickerMap
+            lat={coordsValid ? parseFloat(lat) : null}
+            lng={coordsValid ? parseFloat(lng) : null}
+            onChange={({ lat: nextLat, lng: nextLng }) => {
+              handleMapSelect(nextLat, nextLng);
+            }}
+          />
+        </div>
+
         {/* Location */}
         <div>
-      <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Location (required)
-          </label>
-          
-          {locationStatus !== 'success' && (
-            <div className="mb-3 rounded-lg border p-3 text-sm"
-                 style={{
-                   borderColor: locationStatus === 'denied' ? '#f59e0b' : locationStatus === 'error' ? '#ef4444' : '#93c5fd',
-                   background: locationStatus === 'denied' ? '#fffbeb' : locationStatus === 'error' ? '#fef2f2' : '#eff6ff',
-                   color: '#374151'
-                 }}>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Location (required)</label>
+
+          {showLocationNotice && (
+            <div
+              className="mb-3 rounded-lg border p-3 text-sm"
+              style={{
+                borderColor:
+                  locationStatus === 'denied'
+                    ? '#f59e0b'
+                    : locationStatus === 'error'
+                    ? '#ef4444'
+                    : '#93c5fd',
+                background:
+                  locationStatus === 'denied'
+                    ? '#fffbeb'
+                    : locationStatus === 'error'
+                    ? '#fef2f2'
+                    : '#eff6ff',
+                color: '#374151',
+              }}
+            >
               <div className="mb-2 font-medium">We need your location to create an event.</div>
               {locationStatus === 'loading' && <div>📍 Getting your location…</div>}
               {locationStatus === 'denied' && (
@@ -265,37 +345,44 @@ export default function CreateEventPage() {
                 </div>
               )}
               {locationStatus === 'error' && (
-                <div>❌ Could not get a GPS fix. Move outdoors, check device location settings, then Retry.</div>
+                <div>❌ Could not get a GPS fix. Move outdoors, check device location settings, then Retry or pick the spot manually below.</div>
               )}
-              <div className="mt-2 flex gap-2">
-                <button type="button" className="rounded border px-3 py-1" onClick={requestLocation}>Retry</button>
-                <a className="rounded border px-3 py-1" href="/map" target="_blank" rel="noreferrer">Open map</a>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" className="rounded border px-3 py-1" onClick={requestLocation}>
+                  Use my current location
+                </button>
+                <a className="rounded border px-3 py-1" href="/map" target="_blank" rel="noreferrer">
+                  Open map in new tab
+                </a>
               </div>
             </div>
           )}
-          
+
           <div className="grid grid-cols-2 gap-3">
             <input
               type="number"
               step="any"
+              inputMode="decimal"
               placeholder="Latitude"
               value={lat}
-              onChange={(e) => setLat(e.target.value)}
-              disabled
+              onChange={(e) => handleManualLatChange(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             />
             <input
               type="number"
               step="any"
+              inputMode="decimal"
               placeholder="Longitude"
               value={lng}
-              onChange={(e) => setLng(e.target.value)}
-              disabled
+              onChange={(e) => handleManualLngChange(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             />
           </div>
-          
-          <p className="mt-2 text-sm text-gray-600">Coordinates are required; enable location access to proceed.</p>
+
+          <p className="mt-2 text-sm text-gray-600">
+            Coordinates are required; you can type them directly or click the map above to populate both fields.
+            The button below will enable once both numbers are set to valid decimal values.
+          </p>
         </div>
 
         {/* Price */}
@@ -360,7 +447,7 @@ export default function CreateEventPage() {
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={saving || locationStatus !== 'success' || !lat || !lng}
+          disabled={disableSubmit}
           className="w-full rounded-lg bg-brand-teal px-4 py-3 text-white font-semibold hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-brand-teal focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? 'Creating Event...' : 'Create Event'}

@@ -12,7 +12,7 @@ type EndorseResponse =
   | { error: string };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { user, supabase: authClient } = await getUserFromRequest(req);
+  const { user } = await getUserFromRequest(req);
   const supabase = db();
   const endorserId = user?.id;
   if (!endorserId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

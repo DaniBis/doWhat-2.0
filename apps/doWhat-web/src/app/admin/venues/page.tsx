@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabase/browser";
+import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Venue = { id: string; name: string; lat: number | null; lng: number | null };
 
@@ -30,9 +31,13 @@ export default function AdminVenues() {
       setIsAdmin(em ? allow.includes(em.toLowerCase()) : false);
 
       setLoading(true);
-      const { data, error } = await supabase.from("venues").select("id,name,lat,lng").order("name");
+      const { data, error } = await supabase
+        .from("venues")
+        .select("id,name,lat,lng")
+        .order("name")
+        .returns<Venue[]>();
       if (error) setErr(error.message);
-      else setRows((data ?? []) as Venue[]);
+      else setRows(data ?? []);
       setLoading(false);
     })();
   }, []);
@@ -43,21 +48,34 @@ export default function AdminVenues() {
       setMsg(null);
       const n = name.trim();
       if (!n) return;
-      const payload: any = { name: n };
+      const payload: { name: string; lat?: number; lng?: number } = { name: n };
       const la = parseFloat(lat); const ln = parseFloat(lng);
       if (!Number.isNaN(la)) payload.lat = la;
       if (!Number.isNaN(ln)) payload.lng = ln;
-      const { data, error } = await supabase.from("venues").insert(payload).select("id,name,lat,lng").single();
+      const { data, error } = await supabase
+        .from("venues")
+        .insert(payload)
+        .select("id,name,lat,lng")
+        .single<Venue>();
       if (error) throw error;
-      setRows((prev) => [...prev, data as Venue].sort((a, b) => a.name.localeCompare(b.name)));
+      setRows((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
       setName(""); setLat(""); setLng("");
       setMsg('Added.');
-    } catch (e: any) { setErr(e.message ?? "Failed to add"); }
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to add");
+    }
   }
 
   async function del(id: string) {
-    try { setErr(null); setMsg(null); await supabase.from("venues").delete().eq("id", id); setRows((prev) => prev.filter((r) => r.id !== id)); setMsg('Deleted.'); }
-    catch (e: any) { setErr(e.message ?? "Failed to delete"); }
+    try {
+      setErr(null);
+      setMsg(null);
+      await supabase.from("venues").delete().eq("id", id);
+      setRows((prev) => prev.filter((r) => r.id !== id));
+      setMsg('Deleted.');
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to delete");
+    }
   }
 
   if (isAdmin === false) {

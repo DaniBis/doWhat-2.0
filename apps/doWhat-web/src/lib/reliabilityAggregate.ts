@@ -1,10 +1,40 @@
-import { computeReliabilityIndex } from '@/lib/reliability';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-interface EPRow { attendance: string | null; punctuality: string | null; role: string; events: { starts_at: string; status: string } | null }
+import { computeReliabilityIndex } from '@/lib/reliability';
+import type { ReliabilityMetricsWindow } from '@dowhat/shared';
+
+interface EPRow {
+  attendance: string | null;
+  punctuality: string | null;
+  role: string;
+  events: { starts_at: string; status: string } | null;
+}
 interface ReviewRow { stars: number; reviewer_id: string; created_at: string }
 interface ReputationRow { user_id: string; rep: number }
 
-export async function aggregateMetricsForUser(supabaseAdmin: any, userId: string) {
+type ReliabilityCounter = Required<
+  Pick<ReliabilityMetricsWindow, 'attended' | 'no_shows' | 'late_cancels' | 'excused' | 'on_time' | 'late' | 'reviews'>
+> & {
+  weighted_review?: number;
+  last_event_at?: string;
+};
+
+type SupabaseAdminClient = SupabaseClient<any, "public", any>;
+
+function createCounter(): ReliabilityCounter {
+  return {
+    attended: 0,
+    no_shows: 0,
+    late_cancels: 0,
+    excused: 0,
+    on_time: 0,
+    late: 0,
+    reviews: 0,
+  };
+}
+
+export async function aggregateMetricsForUser(supabaseAdmin: SupabaseAdminClient, userId: string) {
   const now = Date.now();
   const d30 = now - 30*86400000;
   const d90 = now - 90*86400000;
@@ -13,18 +43,19 @@ export async function aggregateMetricsForUser(supabaseAdmin: any, userId: string
   const { data: participants, error: epErr } = await supabaseAdmin
     .from('event_participants')
     .select('attendance,punctuality,role,events(starts_at,status)')
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .returns<EPRow[]>();
   if (epErr) throw new Error('participants: ' + epErr.message);
 
-  const w30: any = { attended:0,no_shows:0,late_cancels:0,excused:0,on_time:0,late:0,reviews:0 };
-  const w90: any = { attended:0,no_shows:0,late_cancels:0,excused:0,on_time:0,late:0,reviews:0 };
-  const lifetime: any = { attended:0,no_shows:0,late_cancels:0,excused:0,on_time:0,late:0,reviews:0 };
+  const w30 = createCounter();
+  const w90 = createCounter();
+  const lifetime = createCounter();
 
   let lastEventAt: number | null = null;
   let safeHostEvents = 0;
   const seenHostEventIds = new Set<string>();
 
-  (participants as EPRow[] | null)?.forEach(p => {
+  (participants ?? []).forEach(p => {
     const starts = p.events?.starts_at ? Date.parse(p.events.starts_at) : null;
     if (starts) {
       if (!lastEventAt || starts > lastEventAt) lastEventAt = starts;
@@ -56,11 +87,12 @@ export async function aggregateMetricsForUser(supabaseAdmin: any, userId: string
     .from('reviews')
     .select('stars,reviewer_id,created_at')
     .eq('reviewee_id', userId)
-    .gte('created_at', new Date(d90).toISOString());
+    .gte('created_at', new Date(d90).toISOString())
+    .returns<ReviewRow[]>();
   if (revErr) throw new Error('reviews: ' + revErr.message);
   const distinctReviewerIds = new Set<string>();
   const reviewerIds = new Set<string>();
-  (reviews as ReviewRow[] | null)?.forEach(r => { reviewerIds.add(r.reviewer_id); });
+  (reviews ?? []).forEach(r => { reviewerIds.add(r.reviewer_id); });
   let weightedSum30 = 0, weightTotal30 = 0, weightedSum90 = 0, weightTotal90 = 0;
 
   // Fetch reputations in a single query
@@ -70,12 +102,13 @@ export async function aggregateMetricsForUser(supabaseAdmin: any, userId: string
     const { data: reps, error: repErr } = await supabaseAdmin
       .from('user_reputation')
       .select('user_id,rep')
-      .in('user_id', repIds);
+      .in('user_id', repIds)
+      .returns<ReputationRow[]>();
     if (repErr) throw new Error('reputation: ' + repErr.message);
-    reputations = reps as ReputationRow[];
+    reputations = reps ?? [];
   }
   const repMap = new Map(reputations.map(r => [r.user_id, Number(r.rep)]));
-  (reviews as ReviewRow[] | null)?.forEach(r => {
+  (reviews ?? []).forEach(r => {
     const ts = Date.parse(r.created_at);
     const rep = repMap.get(r.reviewer_id) ?? 0.5;
     if (ts >= d90) {
@@ -114,15 +147,20 @@ export async function aggregateMetricsForUser(supabaseAdmin: any, userId: string
   return result;
 }
 
-export async function listActiveUserIds(supabaseAdmin: any, days = 90, limit = 100, offset = 0): Promise<string[]> {
+export async function listActiveUserIds(
+  supabaseAdmin: SupabaseAdminClient,
+  days = 90,
+  limit = 100,
+  offset = 0
+): Promise<string[]> {
   const since = new Date(Date.now() - days*86400000).toISOString();
   const { data, error } = await supabaseAdmin
     .from('event_participants')
     .select('user_id, updated_at')
     .gte('updated_at', since)
-    .range(offset, offset + limit - 1);
+    .range(offset, offset + limit - 1)
+    .returns<Array<{ user_id: string }>>();
   if (error) throw new Error(error.message);
-  const ids = new Set<string>();
-  (data || []).forEach((r: any) => ids.add(r.user_id));
+  const ids = new Set((data ?? []).map((row) => row.user_id));
   return Array.from(ids);
 }

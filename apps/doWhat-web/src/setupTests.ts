@@ -35,36 +35,45 @@ jest.mock('next/headers', () => ({
   })
 }));
 
-// Mock Leaflet
-jest.mock('leaflet', () => ({
-  map: jest.fn(() => ({
-    setView: jest.fn(),
-    addLayer: jest.fn(),
-    removeLayer: jest.fn(),
+// Mock Mapbox & react-map-gl to avoid WebGL usage in tests
+jest.mock('mapbox-gl', () => ({
+  Map: jest.fn(() => ({
+    addControl: jest.fn(),
+    remove: jest.fn(),
     on: jest.fn(),
-    off: jest.fn()
+    off: jest.fn(),
+    getCenter: jest.fn(() => ({ lat: 0, lng: 0 })),
+    getBounds: jest.fn(() => ({
+      getNorthEast: () => ({ lat: 0, lng: 0 }),
+      getSouthWest: () => ({ lat: 0, lng: 0 })
+    })),
+    getZoom: jest.fn(() => 12),
+    getSource: jest.fn(() => ({
+      getClusterExpansionZoom: jest.fn((_, cb) => cb(null, 14))
+    }))
   })),
-  tileLayer: jest.fn(() => ({
-    addTo: jest.fn()
-  })),
-  marker: jest.fn(() => ({
-    addTo: jest.fn(),
-    bindPopup: jest.fn(),
-    openPopup: jest.fn()
-  })),
-  icon: jest.fn()
+  NavigationControl: jest.fn(),
+  supported: jest.fn(() => true),
+  accessToken: ''
 }));
 
-jest.mock('react-leaflet', () => ({
-  MapContainer: jest.fn(({ children }) => children),
-  TileLayer: jest.fn(() => null),
-  Marker: jest.fn(({ children }) => children),
-  Popup: jest.fn(({ children }) => children),
-  useMap: jest.fn(() => ({
-    setView: jest.fn(),
-    fitBounds: jest.fn()
-  }))
-}));
+jest.mock('react-map-gl', () => {
+  const React = require('react');
+  const Mock = ({ children }: { children?: React.ReactNode }) =>
+    React.createElement('div', { 'data-testid': 'mapbox-mock' }, children);
+  const passthrough = ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children);
+  return {
+    __esModule: true,
+    default: Mock,
+    Map: Mock,
+    Marker: passthrough,
+    NavigationControl: () => React.createElement('div', { 'data-testid': 'navigation-control' }),
+    Popup: passthrough,
+    Source: passthrough,
+    Layer: () => null,
+  };
+});
 
 // Mock Supabase
 jest.mock('@supabase/supabase-js', () => ({

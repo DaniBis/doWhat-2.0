@@ -25,7 +25,8 @@ describe('SignInButton', () => {
   });
 
   it('calls signInWithOAuth when clicked', async () => {
-    mockSignInWithOAuth.mockResolvedValue({ data: {}, error: null } as any);
+    type SignInResponse = Awaited<ReturnType<typeof supabase.auth.signInWithOAuth>>;
+    mockSignInWithOAuth.mockResolvedValue({ data: {}, error: null } as unknown as SignInResponse);
     
     const { getByText } = render(<SignInButton />);
     const button = getByText('Sign in with Google');

@@ -3,7 +3,7 @@ module.exports = {
   projects: [
     '<rootDir>/apps/doWhat-mobile/jest.config.js',
     '<rootDir>/apps/doWhat-web/jest.config.js',
-    '<rootDir>/packages/shared/jest.config.cjs'
+    '<rootDir>/packages/shared/jest.config.js'
   ],
   collectCoverage: true,
   coverageDirectory: '<rootDir>/coverage',

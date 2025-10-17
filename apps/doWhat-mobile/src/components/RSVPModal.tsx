@@ -16,7 +16,7 @@ type RSVPModalProps = {
   visible: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  status: 'going' | 'interested' | 'not_going';
+  status: 'going' | 'interested';
   activityTitle: string;
   loading?: boolean;
 };
@@ -46,14 +46,6 @@ const RSVPModal: React.FC<RSVPModalProps> = ({
           title: 'Mark as Interested',
           message: 'Save this activity to your interested list?',
           confirmText: 'Yes, I\'m Interested',
-        };
-      case 'not_going':
-        return {
-          icon: 'close-circle' as const,
-          color: '#EF4444',
-          title: 'Cancel RSVP',
-          message: 'Are you sure you want to cancel your RSVP?',
-          confirmText: 'Yes, Cancel RSVP',
         };
     }
   };

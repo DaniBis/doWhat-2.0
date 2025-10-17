@@ -7,13 +7,20 @@ import ActivityCard from "@/components/ActivityCard";
 import { supabase } from "@/lib/supabase/browser";
 
 // Supabase relationship selects can return either an object or array depending on FK cardinality
-interface ActivityRef { id: string; name: string }
-interface VenueRef { name: string; lat?: number; lng?: number }
+interface ActivityRef {
+  id: string;
+  name: string;
+  description?: string | null;
+  activity_types?: string[] | null;
+}
+interface VenueRef { id?: string | null; name: string; lat?: number; lng?: number }
 interface BaseSession {
   id: string;
+  created_by?: string | null;
   price_cents: number;
   starts_at: string;
   ends_at: string;
+  venue_id?: string | null;
   activities: ActivityRef[] | ActivityRef | null;
   venues: VenueRef[] | VenueRef | null;
 }
@@ -24,12 +31,19 @@ type Event = BaseSession;
 interface SessionActivityRef { activity_id: string | null }
 interface RsvpSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
 
+interface VenueStats {
+  venueId: string;
+  venueName: string;
+  count: number;
+}
+
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Event[]>([]);
   const [popularEvents, setPopularEvents] = useState<Event[]>([]);
   const [nearbyEvents, setNearbyEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -50,8 +64,9 @@ export default function RecommendationsPage() {
         }
 
         // Get user's RSVP history to understand preferences
-        const { data: auth } = await supabase.auth.getUser();
-        const uid = auth?.user?.id;
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth?.user?.id;
+  setUserId(uid ?? null);
         
         let userActivityTypes: string[] = [];
         if (uid) {
@@ -73,7 +88,9 @@ export default function RecommendationsPage() {
         // Get upcoming events
   const { data: upcomingEvents } = await supabase
           .from("sessions")
-          .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
+          .select(
+            "id, created_by, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
+          )
           .gte("starts_at", new Date().toISOString())
           .order("starts_at", { ascending: true })
           .limit(50);
@@ -84,8 +101,8 @@ export default function RecommendationsPage() {
         const { data: popularData } = await supabase
           .from("sessions")
           .select(`
-            id, price_cents, starts_at, ends_at, 
-            activities(id,name), venues(name),
+            id, created_by, price_cents, starts_at, ends_at, venue_id,
+            activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng),
             rsvps(id)
           `)
           .gte("starts_at", new Date().toISOString())
@@ -129,8 +146,8 @@ export default function RecommendationsPage() {
           const { data: nearbyData } = await supabase
             .from("sessions")
             .select(`
-              id, price_cents, starts_at, ends_at,
-              activities(id,name), venues(name, lat, lng)
+              id, created_by, price_cents, starts_at, ends_at, venue_id,
+              activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)
             `)
             .gte("starts_at", new Date().toISOString())
             .not("venues.lat", "is", null)
@@ -215,6 +232,86 @@ export default function RecommendationsPage() {
     );
   }
 
+  const renderActivityCards = (events: Event[]) => {
+    const grouped = new Map<
+      string,
+      {
+        activity: {
+          id?: string;
+          name?: string | null;
+          description?: string | null;
+          activity_types?: string[] | null;
+        };
+        sessions: Array<{
+          id?: string;
+          created_by?: string | null;
+          price_cents?: number | null;
+          starts_at?: string | null;
+          ends_at?: string | null;
+          venue_id?: string | null;
+          venues?: VenueRef | VenueRef[] | null;
+        }>;
+      }
+    >();
+
+    for (const event of events) {
+      const activityRel = Array.isArray(event.activities) ? event.activities[0] : event.activities;
+      if (!activityRel) continue;
+      const key = activityRel.id ?? activityRel.name ?? event.id;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          activity: {
+            id: activityRel.id,
+            name: activityRel.name,
+            description: activityRel.description ?? null,
+            activity_types: activityRel.activity_types ?? null,
+          },
+          sessions: [],
+        });
+      }
+      grouped.get(key)!.sessions.push({
+        id: event.id,
+        created_by: event.created_by ?? null,
+        price_cents: event.price_cents ?? null,
+        starts_at: event.starts_at,
+        ends_at: event.ends_at,
+        venue_id: event.venue_id ?? null,
+        venues: event.venues ?? null,
+      });
+    }
+
+    const cards = Array.from(grouped.values()).sort((a, b) => {
+      const earliest = (sessions: typeof a.sessions) =>
+        sessions.reduce((min, session) => {
+          if (!session.starts_at) return min;
+          const time = new Date(session.starts_at).getTime();
+          return min == null || time < min ? time : min;
+        }, null as number | null);
+      const aStart = earliest(a.sessions);
+      const bStart = earliest(b.sessions);
+      if (aStart == null && bStart == null) return 0;
+      if (aStart == null) return 1;
+      if (bStart == null) return -1;
+      return aStart - bStart;
+    });
+
+    return cards.map((group) => {
+      const key =
+        group.activity.id ??
+        group.activity.name ??
+        group.sessions[0]?.id ??
+        `${group.sessions[0]?.starts_at ?? "group"}`;
+      return (
+        <ActivityCard
+          key={key}
+          activity={group.activity}
+          sessions={group.sessions}
+          currentUserId={userId}
+        />
+      );
+    });
+  };
+
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
@@ -231,13 +328,7 @@ export default function RecommendationsPage() {
             🎯 Recommended for You
           </h2>
           <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-            {recommendations.map((event) => (
-              <ActivityCard key={event.id} s={{
-                ...event,
-                activities: event.activities || undefined,
-                venues: event.venues || undefined
-              }} />
-            ))}
+            {renderActivityCards(recommendations)}
           </div>
         </section>
       )}
@@ -249,13 +340,7 @@ export default function RecommendationsPage() {
             🔥 Trending Events
           </h2>
           <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-            {popularEvents.map((event) => (
-              <ActivityCard key={event.id} s={{
-                ...event,
-                activities: event.activities || undefined,
-                venues: event.venues || undefined
-              }} />
-            ))}
+            {renderActivityCards(popularEvents)}
           </div>
         </section>
       )}
@@ -267,13 +352,7 @@ export default function RecommendationsPage() {
             📍 Near You
           </h2>
           <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-            {nearbyEvents.map((event) => (
-              <ActivityCard key={event.id} s={{
-                ...event,
-                activities: event.activities || undefined,
-                venues: event.venues || undefined
-              }} />
-            ))}
+            {renderActivityCards(nearbyEvents)}
           </div>
         </section>
       )}

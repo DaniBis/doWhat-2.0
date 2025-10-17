@@ -15,7 +15,7 @@ export default async function ActivityDetails({ params }: { params: { id: string
   const supabase = createClient();
   const { data } = await supabase
     .from("sessions")
-    .select("id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name,lat,lng)")
+  .select("id, activity_id, starts_at, ends_at, price_cents, activities(name), venues(name,lat:lat,lng:lng)")
     .eq("id", params.id)
     .single();
 

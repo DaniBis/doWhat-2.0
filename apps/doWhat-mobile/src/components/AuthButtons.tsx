@@ -1,9 +1,9 @@
-import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, TextInput } from 'react-native';
+import { View, Text, Pressable, TextInput, ActivityIndicator, Linking } from 'react-native';
 
 import { supabase } from '../lib/supabase';
+import { getDeepLinkParam } from '../lib/deepLinking';
 
 type AuthSessionLike = {
   makeRedirectUri: (options?: { useProxy?: boolean; path?: string }) => string;
@@ -26,16 +26,7 @@ try {
 
 type LinkingEvent = { url: string };
 
-const extractQueryParam = (url: string, key: string): string | undefined => {
-  const parsed = Linking.parse(url);
-  const value = parsed.queryParams?.[key];
-  if (typeof value === 'string' && value.length > 0) return value;
-  if (Array.isArray(value)) {
-    const first = value.find((entry) => typeof entry === 'string' && entry.length > 0);
-    return first;
-  }
-  return undefined;
-};
+const extractQueryParam = (url: string, key: string): string | undefined => getDeepLinkParam(url, key);
 
 function useSupabaseOAuthListener() {
   useEffect(() => {
@@ -149,57 +140,154 @@ export default function AuthButtons() {
   }
 
   return (
-    <View style={{ padding: 12, gap: 8 }}>
+    <View style={{ gap: 14 }}>
       {userEmail ? (
         <>
-          <Text>Signed in as {userEmail}</Text>
-          <Pressable onPress={signOut} style={{ padding: 8, borderWidth: 1, borderRadius: 8 }}>
-            <Text>Sign out</Text>
+          <View style={{ gap: 4, alignItems: 'center' }}>
+            <Text style={{ color: '#0f172a', fontSize: 15, fontWeight: '600' }}>Signed in as</Text>
+            <Text style={{ color: '#0f172a', fontSize: 16 }}>{userEmail}</Text>
+          </View>
+          <Pressable
+            onPress={signOut}
+            style={{
+              marginTop: 6,
+              alignSelf: 'center',
+              paddingVertical: 10,
+              paddingHorizontal: 22,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: '#34d399',
+              backgroundColor: '#ecfdf5',
+            }}
+          >
+            <Text style={{ color: '#0d9488', fontWeight: '600' }}>Sign out</Text>
           </Pressable>
         </>
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: 14 }}>
           {!emailMode && (
-            <>
-              <Pressable onPress={signIn} style={{ padding: 12, borderWidth: 1, borderRadius: 10 }}>
-                <Text>Continue with Google</Text>
+            <View style={{ gap: 12 }}>
+              <Pressable
+                onPress={signIn}
+                disabled={busy}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 16,
+                  borderRadius: 18,
+                  backgroundColor: '#0f172a',
+                  shadowColor: '#0f172a',
+                  shadowOpacity: 0.15,
+                  shadowRadius: 18,
+                  shadowOffset: { width: 0, height: 12 },
+                  elevation: 4,
+                  opacity: busy ? 0.7 : 1,
+                  gap: 12,
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#f8fafc" />
+                ) : (
+                  <View
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: 19,
+                      backgroundColor: '#f8fafc',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a' }}>G</Text>
+                  </View>
+                )}
+                <Text style={{ color: '#f1f5f9', fontSize: 16, fontWeight: '700' }}>Continue with Google</Text>
               </Pressable>
-              <Pressable onPress={() => setEmailMode(true)} style={{ padding: 12, borderWidth: 1, borderRadius: 10 }}>
-                <Text>Continue with Email</Text>
+
+              <Pressable
+                onPress={() => setEmailMode(true)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 15,
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: '#cbd5f5',
+                  backgroundColor: '#f8fafc',
+                }}
+              >
+                <Text style={{ color: '#0f172a', fontSize: 16, fontWeight: '600' }}>Use email instead</Text>
               </Pressable>
-            </>
+            </View>
           )}
           {emailMode && (
-            <View style={{ gap: 8 }}>
-              <Text style={{ fontWeight: '600' }}>{isSignup ? 'Create account' : 'Sign in with email'}</Text>
+            <View style={{ gap: 12, backgroundColor: '#f8fafc', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: '#0f172a', fontSize: 15, fontWeight: '600' }}>
+                  {isSignup ? 'Create account' : 'Sign in with email'}
+                </Text>
+                <Pressable onPress={() => setIsSignup(!isSignup)}>
+                  <Text style={{ color: '#0d9488', fontWeight: '600' }}>
+                    {isSignup ? 'Have an account?' : 'Need an account?'}
+                  </Text>
+                </Pressable>
+              </View>
               <TextInput
                 placeholder="you@example.com"
                 autoCapitalize="none"
                 keyboardType="email-address"
                 value={email}
                 onChangeText={setEmail}
-                style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10 }}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#d1d5db',
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  backgroundColor: '#fff',
+                }}
               />
               <TextInput
                 placeholder="Password"
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
-                style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10 }}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#d1d5db',
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  backgroundColor: '#fff',
+                }}
               />
-              {err && <Text style={{ color: '#b91c1c' }}>{err}</Text>}
-              <Pressable onPress={signInWithEmail} disabled={busy} style={{ padding: 12, borderRadius: 10, backgroundColor: busy ? '#9ca3af' : '#10b981' }}>
-                <Text style={{ color: 'white', textAlign: 'center', fontWeight: '600' }}>
-                  {isSignup ? 'Create account' : 'Sign in'}
-                </Text>
-              </Pressable>
-              <Pressable onPress={() => setIsSignup(!isSignup)}>
-                <Text style={{ color: '#0d9488', textAlign: 'center' }}>
-                  {isSignup ? 'Have an account? Sign in' : "Don't have an account? Create one"}
-                </Text>
+              {err && (
+                <Text style={{ color: '#b91c1c', fontWeight: '500', textAlign: 'center' }}>{err}</Text>
+              )}
+              <Pressable
+                onPress={signInWithEmail}
+                disabled={busy}
+                style={{
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: busy ? '#9ca3af' : '#10b981',
+                  alignItems: 'center',
+                }}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#f8fafc" />
+                ) : (
+                  <Text style={{ color: '#f8fafc', fontSize: 15, fontWeight: '700' }}>
+                    {isSignup ? 'Create account' : 'Sign in'}
+                  </Text>
+                )}
               </Pressable>
               <Pressable onPress={() => setEmailMode(false)}>
-                <Text style={{ color: '#6b7280', textAlign: 'center' }}>Back</Text>
+                <Text style={{ color: '#475569', textAlign: 'center', fontWeight: '500' }}>Back</Text>
               </Pressable>
             </View>
           )}

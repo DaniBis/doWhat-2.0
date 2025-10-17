@@ -123,7 +123,6 @@ export default function NearbyPage() {
       }
     } catch {}
 
-    // preload activities for chips
     (async () => {
       const { data, error } = await supabase
         .from("activities")
@@ -131,7 +130,9 @@ export default function NearbyPage() {
         .order("name");
       if (!error && data) setAllActivities(data as Activity[]);
     })();
+  }, []);
 
+  useEffect(() => {
     if ("geolocation" in navigator && (!lat || !lng)) {
       navigator.geolocation.getCurrentPosition(
         (p) => {
@@ -141,7 +142,7 @@ export default function NearbyPage() {
         () => {} // ignore
       );
     }
-  }, []);
+  }, [lat, lng]);
 
   // keep fallback multi and chips in sync (two entry points)
   useEffect(() => {

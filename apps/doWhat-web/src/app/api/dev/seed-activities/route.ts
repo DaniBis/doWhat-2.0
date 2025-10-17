@@ -4,26 +4,6 @@ export const revalidate = 0;
 
 import { db } from '@/lib/db';
 
-const SAMPLE = [
-  { name: 'Archery Club', tags: ['outdoor','focus'], types: ['archery'] },
-  { name: 'Morning Yoga', tags: ['wellness'], types: ['yoga'] },
-  { name: 'Group Run', tags: ['cardio'], types: ['running'] },
-  { name: 'Tennis Meetup', tags: ['rackets'], types: ['tennis'] },
-  { name: 'Climbing Gym', tags: ['indoor'], types: ['climbing'] },
-  { name: 'Pickup Soccer', tags: ['team'], types: ['soccer'] },
-  { name: 'Basketball Court', tags: ['team'], types: ['basketball'] },
-  { name: 'Community Swim', tags: ['water'], types: ['swimming'] },
-  { name: 'Cycling Group', tags: ['cardio'], types: ['cycling'] },
-  { name: 'Hiking Trailhead', tags: ['outdoor'], types: ['hiking'] },
-  { name: 'Golf Range', tags: ['rackets'], types: ['golf'] },
-  { name: 'Surf School', tags: ['water'], types: ['surfing'] },
-];
-
-function jitter(base: number, meters: number) {
-  const deg = meters / 111_320; // rough meters to degrees
-  return base + (Math.random() * 2 - 1) * deg;
-}
-
 export async function POST(request: Request) {
   try {
     const { lat, lng, n = 12, radius = 1500 } = await request.json().catch(() => ({}));
@@ -41,7 +21,7 @@ export async function POST(request: Request) {
     });
     if (error) throw error;
     return NextResponse.json({ ok: true, created: data ?? 0 });
-  } catch (e) {
-    return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: String(error) }, { status: 500 });
   }
 }

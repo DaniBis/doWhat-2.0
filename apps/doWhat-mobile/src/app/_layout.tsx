@@ -1,23 +1,36 @@
 // Work around TS resolution quirks with expo-router types under React 19
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Stack } = require("expo-router");
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import AuthGate from '../components/AuthGate';
 
 export default function Layout() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            staleTime: 60_000,
+          },
+        },
+      }),
+  );
+
   useEffect(() => {
     console.log('Layout component mounted successfully!');
   }, []);
 
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="sessions/[id]"
-        options={{
-          title: 'Session',
-          headerBackTitle: 'Back',
-        }}
-      />
-    </Stack>
+    <QueryClientProvider client={client}>
+      <AuthGate>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="add-event" options={{ headerShown: false }} />
+          <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
+        </Stack>
+      </AuthGate>
+    </QueryClientProvider>
   );
 }

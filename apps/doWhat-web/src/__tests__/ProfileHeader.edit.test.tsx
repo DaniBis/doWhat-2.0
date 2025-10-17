@@ -80,7 +80,7 @@ describe('ProfileHeader editing', () => {
       upload: failingUpload,
       getPublicUrl: getPublicUrlMock,
     }));
-    const { getByText, container, findByText } = render(
+    const { getByText, container, findAllByText } = render(
       <ProfileHeader name="User" editable onProfileUpdated={jest.fn()} />
     );
     // Open edit modal so errorMsg area is rendered when upload fails
@@ -89,6 +89,7 @@ describe('ProfileHeader editing', () => {
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
     fireEvent.change(fileInput, { target: { files: [file] } });
-  expect(await findByText(/Failed to upload image/i)).toBeInTheDocument();
+  const errorMessages = await findAllByText(/Failed to upload image/i);
+    expect(errorMessages.length).toBeGreaterThan(0);
   });
 });

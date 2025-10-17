@@ -4,7 +4,7 @@ export type NearbyQuery = {
   radiusMeters?: number
   activityTypes?: string[]
   tags?: string[]
-  peopleTraits?: string[]
+  traits?: string[]
   limit?: number
 };
 
@@ -14,8 +14,7 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
   const radiusMeters = parseInt(searchParams.get('radius') || '2000');
   const activityTypes = (searchParams.get('types') || '').split(',').filter(Boolean);
   const tags = (searchParams.get('tags') || '').split(',').filter(Boolean);
-  const peopleTraits = (searchParams.get('traits') || '').split(',').filter(Boolean);
+  const traits = (searchParams.get('traits') || '').split(',').filter(Boolean);
   const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 200);
-  return { lat, lng, radiusMeters, activityTypes, tags, peopleTraits, limit };
+  return { lat, lng, radiusMeters, activityTypes, tags, traits, limit };
 }
-

@@ -15,12 +15,13 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       .select('event_id,attendance,updated_at,events(starts_at)')
       .eq('user_id', userId)
       .gte('updated_at', since)
-      .limit(100);
+      .limit(100)
+      .returns<Array<{ event_id: string; attendance: string | null; updated_at: string; events: { starts_at?: string | null } | null }>>();
     if (error) throw error;
-    const timeline: Activity[] = (data as any[]).map(r => ({
+    const timeline: Activity[] = (data ?? []).map((r) => ({
       id: r.event_id,
-      ts: r.events?.starts_at || r.updated_at,
-      kind: r.attendance || 'rsvp',
+      ts: r.events?.starts_at ?? r.updated_at,
+      kind: r.attendance ?? 'rsvp',
       label: `Event ${r.event_id}`
     }));
     return NextResponse.json({ timeline });

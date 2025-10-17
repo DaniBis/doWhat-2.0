@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabase/browser";
+import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Row = {
   id: string;
@@ -15,13 +16,19 @@ type Row = {
   venues?: { name?: string | null } | null;
 };
 
+type EditableFields = {
+  starts_at?: string;
+  ends_at?: string;
+  price_cents?: number | null;
+};
+
 export default function AdminSessions() {
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [email, setEmail] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Record<string, Partial<Row>>>({});
+  const [editing, setEditing] = useState<Record<string, EditableFields>>({});
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,17 +59,26 @@ export default function AdminSessions() {
       setMsg(null);
       const patch = editing[id];
       if (!patch) return;
-      const payload: any = {};
+      const payload: Record<string, unknown> = {};
       if (patch.starts_at) payload.starts_at = new Date(patch.starts_at).toISOString();
       if (patch.ends_at) payload.ends_at = new Date(patch.ends_at).toISOString();
       if (patch.price_cents != null) payload.price_cents = patch.price_cents;
       const { error } = await supabase.from("sessions").update(payload).eq("id", id);
       if (error) throw error;
-      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } as Row : r)));
-      setEditing((e) => ({ ...e, [id]: {} }));
+      setRows((prev) =>
+        prev.map((r) => {
+          if (r.id !== id) return r;
+          const next: Row = { ...r };
+          if (patch.starts_at) next.starts_at = new Date(patch.starts_at).toISOString();
+          if (patch.ends_at) next.ends_at = new Date(patch.ends_at).toISOString();
+          if (patch.price_cents != null) next.price_cents = patch.price_cents;
+          return next;
+        })
+      );
+      setEditing((state) => ({ ...state, [id]: {} }));
       setMsg('Saved.');
-    } catch (e: any) {
-      setErr(e.message ?? "Failed to save");
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to save");
     }
   }
 
@@ -73,8 +89,8 @@ export default function AdminSessions() {
       await supabase.from("sessions").delete().eq("id", id);
       setRows((prev) => prev.filter((r) => r.id !== id));
       setMsg('Deleted.');
-    } catch (e: any) {
-      setErr(e.message ?? "Failed to delete");
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to delete");
     }
   }
 
@@ -117,19 +133,54 @@ export default function AdminSessions() {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const e = editing[r.id] || {};
+              const currentEdit = editing[r.id] || {};
+              const startsDisplay = currentEdit.starts_at ?? r.starts_at?.slice(0,16) ?? "";
+              const endsDisplay = currentEdit.ends_at ?? r.ends_at?.slice(0,16) ?? "";
+              const priceDisplay = ((currentEdit.price_cents ?? r.price_cents ?? 0) / 100).toString();
               return (
                 <tr key={r.id} className="border-t">
                   <td className="p-2">{r.activities?.name ?? "Activity"}</td>
                   <td className="p-2">{r.venues?.name ?? "Venue"}</td>
                   <td className="p-2">
-                    <input type="datetime-local" value={(e.starts_at as any) ?? r.starts_at?.slice(0,16)} onChange={(ev) => setEditing((x) => ({ ...x, [r.id]: { ...(x[r.id]||{}), starts_at: ev.target.value } }))} className="rounded border px-2 py-1" />
+                    <input
+                      type="datetime-local"
+                      value={startsDisplay}
+                      onChange={(event) =>
+                        setEditing((state) => ({
+                          ...state,
+                          [r.id]: { ...(state[r.id] || {}), starts_at: event.target.value },
+                        }))
+                      }
+                      className="rounded border px-2 py-1"
+                    />
                   </td>
                   <td className="p-2">
-                    <input type="datetime-local" value={(e.ends_at as any) ?? r.ends_at?.slice(0,16)} onChange={(ev) => setEditing((x) => ({ ...x, [r.id]: { ...(x[r.id]||{}), ends_at: ev.target.value } }))} className="rounded border px-2 py-1" />
+                    <input
+                      type="datetime-local"
+                      value={endsDisplay}
+                      onChange={(event) =>
+                        setEditing((state) => ({
+                          ...state,
+                          [r.id]: { ...(state[r.id] || {}), ends_at: event.target.value },
+                        }))
+                      }
+                      className="rounded border px-2 py-1"
+                    />
                   </td>
                   <td className="p-2">
-                    <input value={String((e.price_cents ?? r.price_cents ?? 0) / 100)} onChange={(ev) => setEditing((x) => ({ ...x, [r.id]: { ...(x[r.id]||{}), price_cents: Math.round((Number(ev.target.value)||0)*100) } }))} className="w-24 rounded border px-2 py-1" />
+                    <input
+                      value={priceDisplay}
+                      onChange={(event) =>
+                        setEditing((state) => ({
+                          ...state,
+                          [r.id]: {
+                            ...(state[r.id] || {}),
+                            price_cents: Math.round((Number(event.target.value) || 0) * 100),
+                          },
+                        }))
+                      }
+                      className="w-24 rounded border px-2 py-1"
+                    />
                   </td>
                   <td className="p-2">
                     <button onClick={() => save(r.id)} className="mr-2 rounded border px-2 py-1">Save</button>

@@ -5,6 +5,7 @@ import BadgesGrid from '@/components/BadgesGrid';
 import Link from 'next/link';
 import { BADGE_VERIFICATION_THRESHOLD_DEFAULT, type BadgeStatus } from '@dowhat/shared';
 import { supabase } from '@/lib/supabase/browser';
+import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 export default function PublicUserPage() {
   const params = useParams();
@@ -19,7 +20,6 @@ export default function PublicUserPage() {
   const [endorsing, setEndorsing] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>('');
   const [err, setErr] = useState<string>('');
-  const [optimistic, setOptimistic] = useState<Record<string, number>>({});
   const [endorseMsg, setEndorseMsg] = useState('');
   const [endorseErr, setEndorseErr] = useState('');
 
@@ -41,8 +41,8 @@ export default function PublicUserPage() {
           const json = await catalogRes.json();
           setCatalog((json.badges || []) as CatalogEntry[]);
         }
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Error');
+      } catch (error) {
+        setErr(getErrorMessage(error));
       } finally {
         setLoading(false);
       }
@@ -70,7 +70,7 @@ export default function PublicUserPage() {
 
   async function endorse(badge_id: string) {
     setErr(''); setMsg('');
-  setEndorseErr(''); setEndorseMsg('');
+    setEndorseErr(''); setEndorseMsg('');
     setEndorsing(badge_id);
     setBadges(prev => prev.map(b => b.badge_id === badge_id ? { ...b, endorsements: (b.endorsements||0)+1 } : b));
     try {
@@ -79,8 +79,8 @@ export default function PublicUserPage() {
       if (!res.ok) throw new Error(json.error || 'Failed');
       setBadges(prev => prev.map(b => b.badge_id === badge_id ? { ...b, endorsements: json.endorsements, status: json.verified ? 'verified' : b.status } : b));
       setMsg(json.verified ? 'Badge verified!' : 'Endorsed!');
-    } catch(e:any) {
-      setErr(e.message);
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
       const ownedRes = await fetch(`/api/users/${userId}/badges`, { cache: 'no-store' });
       if (ownedRes.ok) {
         const js = await ownedRes.json();
@@ -134,8 +134,7 @@ export default function PublicUserPage() {
         )}
         <div className="grid gap-3 sm:grid-cols-2">
           {badges.map(b => {
-            const endorsementsBase = b.endorsements ?? 0;
-            const endorsements = endorsementsBase + (optimistic[b.badge_id]||0);
+            const endorsements = b.endorsements ?? 0;
             return (
               <div key={b.id} className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3 bg-gray-50">
                 <div className="flex items-start gap-3">

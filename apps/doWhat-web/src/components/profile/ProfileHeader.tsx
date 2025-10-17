@@ -1,13 +1,15 @@
 "use client";
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/browser';
 import { Reliability } from '@/types/profile';
+import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 export function ProfileHeader({
-  userId,
+  userId: _userId,
   name,
   location,
   avatarUrl,
+  bio,
   reliability,
   editable,
   socials: initialSocials,
@@ -17,54 +19,64 @@ export function ProfileHeader({
   name: string;
   location?: string;
   avatarUrl?: string;
+  bio?: string;
   reliability?: Reliability | null;
   editable?: boolean;
   socials?: SocialHandles;
-  onProfileUpdated?: (p: { name?: string; avatarUrl?: string; socials?: SocialHandles }) => void;
+  onProfileUpdated?: (p: { name?: string; avatarUrl?: string; socials?: SocialHandles; bio?: string; location?: string | null }) => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [pendingName, setPendingName] = useState(name);
+  const [pendingBio, setPendingBio] = useState(bio || '');
+  const [pendingLocation, setPendingLocation] = useState(location || '');
   const [socials, setSocials] = useState<SocialHandles>(initialSocials || {});
   const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [locStatus, setLocStatus] = useState<'idle' | 'loading' | 'denied' | 'error'>('idle');
+  const [locError, setLocError] = useState<string | null>(null);
+
+  async function uploadAvatarBlob(file: File) {
+    setErrorMsg(null);
+    if (!/(jpe?g|png|gif|webp|avif)$/i.test(file.name.split('.').pop() ?? '')) {
+      throw new Error('Unsupported file type. Use jpg, png, gif, webp, or avif.');
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      throw new Error('File too large (max 2MB).');
+    }
+    const ext = file.name.split('.').pop();
+    const path = `${crypto.randomUUID()}.${ext}`;
+    const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+    if (uploadError) {
+      if (/row level security/i.test(uploadError.message) || /row-level security/i.test(uploadError.message)) {
+        throw new Error('Upload blocked by RLS policy. Add an INSERT policy on storage.objects for bucket "avatars" allowing authenticated users.');
+      }
+      if (/bucket not found/i.test(uploadError.message)) {
+        throw new Error('Bucket "avatars" not found. Create it in Supabase Storage.');
+      }
+      throw new Error(uploadError.message);
+    }
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+    const publicUrl = data?.publicUrl;
+    if (!publicUrl) throw new Error('Could not generate public URL.');
+    await onProfileUpdated?.({ avatarUrl: publicUrl });
+  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      setErrorMsg(null);
       setUploading(true);
-      const ext = file.name.split('.').pop();
-      // Store object directly (optionally nest by userId later). Avoid prefixing bucket name again.
-      const path = `${crypto.randomUUID()}.${ext}`;
-      if (!/(jpe?g|png|gif|webp|avif)$/i.test(ext||'')) {
-        throw new Error('Unsupported file type. Use jpg, png, gif, webp, or avif.');
-      }
-      if (file.size > 2*1024*1024) { // 2MB limit
-        throw new Error('File too large (max 2MB).');
-      }
-      // Single bucket strategy (public bucket). Requires INSERT policy if private or RLS enforced.
-      const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
-      if (uploadError) {
-        // Provide friendlier guidance for common RLS / bucket issues
-        if (/row level security/i.test(uploadError.message) || /row-level security/i.test(uploadError.message)) {
-          throw new Error('Upload blocked by RLS policy. Add an INSERT policy on storage.objects for bucket "avatars" allowing authenticated users.');
-        }
-        if (/bucket not found/i.test(uploadError.message)) {
-          throw new Error('Bucket "avatars" not found. Create it in Supabase Storage.');
-        }
-        throw new Error(uploadError.message);
-      }
-      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-      const publicUrl = data?.publicUrl;
-      if (!publicUrl) throw new Error('Could not generate public URL.');
-      onProfileUpdated?.({ avatarUrl: publicUrl });
-    } catch (err: any) {
+      await uploadAvatarBlob(file);
+    } catch (error) {
+      const message = getErrorMessage(error);
       // eslint-disable-next-line no-console
-      console.error('Avatar upload failed', err);
-      setErrorMsg(err?.message ? `Failed to upload image: ${err.message}` : 'Failed to upload image');
+      console.error('Avatar upload failed', error);
+      setErrorMsg(`Failed to upload image: ${message}`);
     } finally {
       setUploading(false);
       // Allow re-selecting the same file after failure/success
@@ -110,20 +122,148 @@ export function ProfileHeader({
   }
 
   // Load socials from localStorage when modal opens
-  function openEdit() { setPendingName(name); setEditOpen(true); }
+  useEffect(() => { setPendingName(name); }, [name]);
+  useEffect(() => { setPendingBio(bio || ''); }, [bio]);
+  useEffect(() => { setSocials(initialSocials || {}); }, [initialSocials?.instagram, initialSocials?.whatsapp]);
+  useEffect(() => { setPendingLocation(location || ''); }, [location]);
 
-  function saveEdits() {
-    const update: { name?: string; socials?: SocialHandles } = {};
-    if (pendingName && pendingName !== name) update.name = pendingName;
-    update.socials = socials;
-    onProfileUpdated?.(update);
-    setEditOpen(false);
+  function openEdit() {
+    setPendingName(name);
+    setPendingBio(bio || '');
+    setPendingLocation(location || '');
+    setSocials(initialSocials || {});
+    setErrorMsg(null);
+    setLocError(null);
+    setLocStatus('idle');
+    setEditOpen(true);
   }
+
+  function resolveLocationFromDevice() {
+    if (!('geolocation' in navigator)) {
+      setLocError('Location services are not available in this browser.');
+      setLocStatus('error');
+      return;
+    }
+    setLocStatus('loading');
+    setLocError(null);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        let label = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
+        try {
+          const resp = await fetch(`/api/geocode?lat=${latitude}&lng=${longitude}`);
+          if (resp.ok) {
+            const result = await resp.json();
+            if (result?.label) label = result.label;
+          }
+        } catch (error) {
+          console.warn('[ProfileHeader] reverse geocode failed', error);
+        }
+        setPendingLocation(label);
+        setLocStatus('idle');
+      } catch (error) {
+        console.warn('[ProfileHeader] processing geolocation failed', error);
+        setLocError('Unable to read your location. Try again shortly.');
+        setLocStatus('error');
+      }
+    }, (err) => {
+      console.warn('[ProfileHeader] geolocation request denied', err);
+      setLocError(err.code === err.PERMISSION_DENIED ? 'Location permission denied.' : 'Unable to access your location.');
+      setLocStatus('denied');
+    }, { enableHighAccuracy: false, timeout: 8000 });
+  }
+
+  async function saveEdits() {
+    if (!onProfileUpdated) { setEditOpen(false); return; }
+    const trimmedName = pendingName.trim();
+    if (!trimmedName) {
+      setErrorMsg('Display name cannot be empty.');
+      return;
+    }
+    const update: { name?: string; socials?: SocialHandles; bio?: string; location?: string | null } = {};
+    if (trimmedName !== name) update.name = trimmedName;
+
+    const cleanedSocials: SocialHandles = {};
+    const nextInstagram = socials.instagram?.trim() ?? '';
+    const prevInstagram = initialSocials?.instagram?.trim() ?? '';
+    if (nextInstagram !== prevInstagram) cleanedSocials.instagram = nextInstagram ? nextInstagram : null;
+    const nextWhatsapp = socials.whatsapp?.trim() ?? '';
+    const prevWhatsapp = initialSocials?.whatsapp?.trim() ?? '';
+    if (nextWhatsapp !== prevWhatsapp) cleanedSocials.whatsapp = nextWhatsapp ? nextWhatsapp : null;
+    if (Object.keys(cleanedSocials).length) update.socials = cleanedSocials;
+
+    const nextBio = (pendingBio ?? '').trim();
+    if (nextBio !== (bio ?? '')) update.bio = nextBio;
+
+    const nextLocation = pendingLocation.trim().slice(0, 120);
+    if (nextLocation !== (location ?? '')) update.location = nextLocation ? nextLocation : null;
+
+    if (!update.name && !update.bio && !update.socials && !('location' in update)) {
+      setEditOpen(false);
+      return;
+    }
+
+    setSaving(true);
+    setErrorMsg(null);
+    try {
+      await onProfileUpdated(update);
+      setEditOpen(false);
+    } catch (error) {
+      console.error('Profile save failed', error);
+      setErrorMsg(getErrorMessage(error) || 'Failed to save profile.');
+    } finally {
+      setSaving(false);
+    }
+  }
+  useEffect(() => {
+    const node = dropZoneRef.current;
+    if (!node) return;
+
+    const handleDragOver = (event: DragEvent) => {
+      event.preventDefault();
+      setDragActive(true);
+    };
+
+    const handleDragLeave = () => {
+      setDragActive(false);
+    };
+
+    const handleDrop = async (event: DragEvent) => {
+      event.preventDefault();
+      setDragActive(false);
+      const files = event.dataTransfer?.files;
+      if (!files || !files.length) return;
+      const file = files[0];
+      try {
+        setUploading(true);
+        await uploadAvatarBlob(file);
+      } catch (error) {
+        console.error('Avatar drop failed', error);
+        setErrorMsg(`Failed to upload image: ${getErrorMessage(error)}`);
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    node.addEventListener('dragover', handleDragOver);
+    node.addEventListener('dragleave', handleDragLeave);
+    node.addEventListener('drop', handleDrop);
+
+    return () => {
+      node.removeEventListener('dragover', handleDragOver);
+      node.removeEventListener('dragleave', handleDragLeave);
+      node.removeEventListener('drop', handleDrop);
+    };
+  }, []);
+
   return (
     <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-blue-900 text-white">
       <div className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex flex-col sm:flex-row sm:items-center gap-6">
-          <div className="relative w-28 h-28 rounded-full ring-4 ring-white/20 overflow-hidden flex items-center justify-center bg-white/10 group">
+          <div
+            ref={dropZoneRef}
+            className={`relative w-28 h-28 rounded-full ring-4 ring-white/20 overflow-hidden flex items-center justify-center bg-white/10 group ${dragActive ? 'ring-emerald-300 ring-offset-2 ring-offset-emerald-200' : ''}`}
+          >
             {avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
@@ -177,6 +317,11 @@ export function ProfileHeader({
             )}
           </div>
         </div>
+        {errorMsg && (
+          <div className="mt-4 text-sm text-red-200 bg-white/10 border border-red-200/40 px-3 py-2 rounded-md max-w-md">
+            {errorMsg}
+          </div>
+        )}
       </div>
   {editOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -191,6 +336,44 @@ export function ProfileHeader({
         className="w-full mb-4 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
               placeholder="Your name"
             />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bio</label>
+            <textarea
+              value={pendingBio}
+              onChange={e=>setPendingBio(e.target.value)}
+              rows={3}
+              className="w-full mb-4 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
+              placeholder="Share a short blurb"
+            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <input
+              value={pendingLocation}
+              onChange={(e) => setPendingLocation(e.target.value.slice(0, 120))}
+              placeholder="City, neighbourhood, or leave blank"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <button
+                type="button"
+                onClick={resolveLocationFromDevice}
+                disabled={locStatus === 'loading'}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+              >
+                {locStatus === 'loading' ? 'Locating…' : 'Use my current location'}
+              </button>
+              {pendingLocation && (
+                <button
+                  type="button"
+                  onClick={() => { setPendingLocation(''); setLocStatus('idle'); setLocError(null); }}
+                  className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-500 hover:bg-gray-100"
+                >
+                  Clear
+                </button>
+              )}
+              <span className="text-[11px] text-gray-400">Keep it general if you prefer privacy.</span>
+            </div>
+            {locError && (
+              <div className="mt-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">{locError}</div>
+            )}
             <div className="mb-4 flex flex-col gap-3">
               <div className="text-xs font-medium text-gray-700 uppercase tracking-wide">Social Connections</div>
               <div className="grid grid-cols-1 gap-3">
@@ -208,7 +391,7 @@ export function ProfileHeader({
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={()=>setEditOpen(false)} className="px-4 py-2 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cancel</button>
-              <button onClick={saveEdits} className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700">Save</button>
+              <button onClick={saveEdits} disabled={saving || locStatus === 'loading'} className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
             </div>
           </div>
         </div>
@@ -217,7 +400,7 @@ export function ProfileHeader({
   );
 }
 
-export type SocialHandles = { instagram?: string; whatsapp?: string };
+export type SocialHandles = { instagram?: string | null; whatsapp?: string | null };
 
 function ReliabilityComponent({ label, value, raw }: { label: string; value: number; raw?: boolean }) {
   const pct = raw ? value : Math.round(value);

@@ -1,66 +1,105 @@
-import { ExpoConfig } from 'expo/config';
+import { ConfigContext, ExpoConfig } from 'expo/config';
 
-// Import JSON config
-import appJson from './app.json';
+export default ({ config }: ConfigContext): ExpoConfig => {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const webBaseUrl =
+    process.env.EXPO_PUBLIC_WEB_URL ||
+    process.env.EXPO_PUBLIC_WEB_BASE_URL ||
+    process.env.EXPO_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_WEB_URL;
 
-// Read environment variables
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-const webBaseUrl =
-  process.env.EXPO_PUBLIC_WEB_URL ||
-  process.env.EXPO_PUBLIC_WEB_BASE_URL ||
-  process.env.EXPO_PUBLIC_SITE_URL ||
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  process.env.NEXT_PUBLIC_WEB_URL;
-// Ensure Android manifest has a concrete Google Maps API key to avoid placeholder errors during build
-const googleMapsApiKey =
-  process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
-  process.env.GOOGLE_MAPS_API_KEY ||
-  'dev-placeholder-key';
+  // Ensure Android manifest has a concrete Google Maps API key to avoid placeholder errors during build
+  const googleMapsApiKey =
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    'dev-placeholder-key';
 
-const config = {
-  ...appJson.expo,
-  plugins: [
-    ...(appJson.expo?.plugins ?? []),
-    [
-      'expo-maps',
-      {
-        googleMapsApiKey,
+  const plugins = new Set(config.plugins ?? []);
+  plugins.add('expo-router');
+  const resolvedMapboxToken =
+    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
+    process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
+    process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
+    process.env.MAPBOX_ACCESS_TOKEN ||
+    '';
+
+  if (resolvedMapboxToken && !process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN) {
+    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = resolvedMapboxToken;
+  }
+  if (resolvedMapboxToken && !process.env.EXPO_PUBLIC_MAPBOX_TOKEN) {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = resolvedMapboxToken;
+  }
+
+  const mapboxAccessToken = resolvedMapboxToken;
+
+  return {
+    name: 'doWhat',
+    slug: 'doWhat-mobile',
+    scheme: 'dowhat',
+    version: '1.0.0',
+    entryPoint: './index.ts',
+    orientation: 'portrait',
+    icon: './assets/icon.png',
+    userInterfaceStyle: 'light',
+    jsEngine: 'hermes',
+    splash: {
+      image: './assets/splash-icon.png',
+      resizeMode: 'contain',
+      backgroundColor: '#ffffff',
+    },
+    ios: {
+      bundleIdentifier: 'com.dowhat.app',
+      supportsTablet: true,
+      infoPlist: {
+        NSLocationWhenInUseUsageDescription: 'We use your location to find nearby activities.',
+        NSLocationAlwaysAndWhenInUseUsageDescription:
+          'Allow doWhat to access your location in the background to keep nearby activities up to date.',
+        UIBackgroundModes: ['location'],
+        NSAppTransportSecurity: {
+          NSAllowsArbitraryLoads: true,
+          NSAllowsLocalNetworking: true,
+        },
       },
-    ],
-  ],
-  ios: {
-    ...appJson.expo?.ios,
-    infoPlist: {
-      ...(appJson.expo?.ios?.infoPlist || {}),
-      UIBackgroundModes: [
-        ...(appJson.expo?.ios?.infoPlist?.UIBackgroundModes || []),
-        'location',
+    },
+    android: {
+      package: 'com.dowhat.app',
+      adaptiveIcon: {
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#ffffff',
+      },
+      permissions: [
+        'ACCESS_FINE_LOCATION',
+        'ACCESS_COARSE_LOCATION',
+        'ACCESS_BACKGROUND_LOCATION',
+        'FOREGROUND_SERVICE',
+        'FOREGROUND_SERVICE_LOCATION',
+        'READ_MEDIA_IMAGES',
       ],
-      NSAppTransportSecurity: {
-        NSAllowsArbitraryLoads: true,
-        NSAllowsLocalNetworking: true,
+      config: {
+        googleMaps: {
+          apiKey: googleMapsApiKey,
+        },
       },
     },
-  },
-  android: {
-    ...appJson.expo?.android,
-    config: {
-      ...(appJson.expo?.android?.config || {}),
-      googleMaps: {
-        apiKey: googleMapsApiKey,
+    web: {
+      favicon: './assets/favicon.png',
+    },
+    extra: {
+      EXPO_PUBLIC_SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: 'YOUR-ANON-KEY',
+      supabaseUrl,
+      supabaseAnonKey,
+      webBaseUrl,
+      mapboxAccessToken,
+      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: mapboxAccessToken,
+      EXPO_PUBLIC_MAPBOX_TOKEN: mapboxAccessToken,
+      eas: {
+        projectId: 'your-eas-project-id',
       },
     },
-  },
-  extra: {
-    ...appJson.expo.extra,
-    supabaseUrl,
-    supabaseAnonKey,
-    webBaseUrl,
-    eas: {
-      projectId: "your-eas-project-id", // Replace with your EAS project ID if needed
-    },
-  },
+    plugins: Array.from(plugins),
+  };
 };
-
-export default config;

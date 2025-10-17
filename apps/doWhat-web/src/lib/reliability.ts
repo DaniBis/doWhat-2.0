@@ -2,11 +2,6 @@
 // Focus: pure functions + thin Supabase aggregation helpers
 import { RELIABILITY_DEFAULT_WEIGHTS, type ReliabilityMetricsWindow, type ReliabilityComponentsBreakdown } from '@dowhat/shared';
 
-// Lightweight shapes (mirror DB columns minimally)
-interface ParticipantRow { attendance: string | null; updated_at: string; punctuality: string | null; role: 'host'|'guest'; }
-interface ReviewRow { stars: number; reviewer_id: string; created_at: string; }
-interface ReputationRow { rep: number }
-
 export interface ReliabilityScoreResult {
   score: number;
   confidence: number;

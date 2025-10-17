@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { aggregateMetricsForUser } from '@/lib/reliabilityAggregate';
+import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 // POST /api/reliability/recompute/:id  (admin / cron protected by CRON_SECRET header)
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const result = await aggregateMetricsForUser(supabase, userId);
     return NextResponse.json({ ok: true, score: result.score, confidence: result.confidence });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

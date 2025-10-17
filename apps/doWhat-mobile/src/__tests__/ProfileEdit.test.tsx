@@ -8,6 +8,8 @@ jest.mock('../lib/supabase', () => ({
   supabase: {
     auth: {
       getUser: jest.fn(),
+      onAuthStateChange: jest.fn(),
+      updateUser: jest.fn(),
     },
     from: jest.fn(),
   }
@@ -43,21 +45,28 @@ function createProfilesSelectMock(result?: any, error?: any) {
   const upsert: jest.Mock = jest.fn();
   // @ts-expect-error jest v30 Mock typing is too strict here
   upsert.mockResolvedValue({ error: null });
+  const updateEq: jest.Mock = jest.fn();
+  // @ts-expect-error jest v30 Mock typing is too strict here
+  updateEq.mockResolvedValue({ error: null });
+  const update: jest.Mock = jest.fn().mockReturnValue({ eq: updateEq });
   return {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     maybeSingle,
     upsert,
+    update,
   } as any;
 }
 
-// NOTE: Skipped for now because the profile route moved to a simplified UI
-// and the test harness for RN components (ScrollView/RefreshControl) needs
-// deeper setup. The web app and other mobile tests still pass.
-describe.skip('Mobile Profile edit', () => {
+describe('Mobile Profile edit', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFetch.mockClear();
     supabaseAny.auth.getUser.mockResolvedValue({ data: { user: { id: 'u-1', email: 'u@example.com' } } });
+    supabaseAny.auth.onAuthStateChange.mockReturnValue({
+      data: { subscription: { unsubscribe: jest.fn() } },
+    });
+    supabaseAny.auth.updateUser.mockResolvedValue({ data: { user: { id: 'u-1' } }, error: null });
     supabaseAny.from.mockImplementation((table: string) => {
       if (table === 'profiles') {
         return createProfilesSelectMock({ full_name: 'Old Name', avatar_url: 'https://img/old.png' });
@@ -70,7 +79,9 @@ describe.skip('Mobile Profile edit', () => {
   });
 
   it('loads current profile values into inputs', async () => {
-    const { findByDisplayValue } = render(<Profile />);
+    const { findByText, findByDisplayValue } = render(<Profile />);
+    await findByText('Old Name');
+    fireEvent.press(await findByText('Edit Profile'));
     expect(await findByDisplayValue('Old Name')).toBeTruthy();
   });
 
@@ -78,19 +89,16 @@ describe.skip('Mobile Profile edit', () => {
     const profileBuilder = createProfilesSelectMock({ full_name: 'Old Name', avatar_url: 'https://img/old.png' });
     supabaseAny.from.mockImplementation((table: string) => profileBuilder);
 
-    const { getByText, getAllByDisplayValue, getByDisplayValue, getByPlaceholderText } = render(<Profile />);
-    await waitFor(() => getByDisplayValue('Old Name'));
+    const { getByText, findByText, findByDisplayValue } = render(<Profile />);
+    fireEvent.press(await findByText('Edit Profile'));
 
-    // Change name and avatar URL
-    const nameInput = getByDisplayValue('Old Name');
+    const nameInput = await findByDisplayValue('Old Name');
     fireEvent.changeText(nameInput, 'New Name');
-    const avatarInput = getAllByDisplayValue('https://img/old.png')[0];
-    fireEvent.changeText(avatarInput, 'https://img/new.png');
 
-    fireEvent.press(getByText('Save changes'));
+    fireEvent.press(getByText('Save'));
 
     await waitFor(() => {
-      expect(profileBuilder.upsert).toHaveBeenCalledWith(expect.objectContaining({ full_name: 'New Name', avatar_url: 'https://img/new.png' }), { onConflict: 'id' });
+      expect(profileBuilder.upsert).toHaveBeenCalledWith(expect.objectContaining({ full_name: 'New Name' }), { onConflict: 'id' });
     });
   });
 
@@ -99,11 +107,14 @@ describe.skip('Mobile Profile edit', () => {
     failingBuilder.upsert.mockResolvedValueOnce({ error: { message: 'boom' } });
     supabaseAny.from.mockImplementation((table: string) => failingBuilder);
 
-    const { getByText, getByDisplayValue, findByText } = render(<Profile />);
-    await waitFor(() => getByDisplayValue('Old Name'));
+    const { getByText, findByDisplayValue, findByText, findAllByText } = render(<Profile />);
+    fireEvent.press(await findByText('Edit Profile'));
 
-    fireEvent.press(getByText('Save changes'));
-    expect(await findByText('boom')).toBeTruthy();
+    await findByDisplayValue('Old Name');
+
+    fireEvent.press(getByText('Save'));
+    const errors = await findAllByText('boom');
+    expect(errors.length).toBeGreaterThan(0);
   });
 });
 /* eslint-disable @typescript-eslint/no-var-requires */

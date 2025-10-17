@@ -9,20 +9,29 @@ export default function GeoRequirementBanner() {
 
   useEffect(() => {
     let mounted = true;
+    let status: PermissionStatus | undefined;
+    let handleChange: (() => void) | undefined;
     (async () => {
       try {
-        const perm: any = await (navigator as any)?.permissions?.query?.({ name: "geolocation" });
-        if (perm?.state && mounted) setState(perm.state);
-        perm?.addEventListener?.("change", () => {
-          if (!mounted) return;
-          setState((perm as any).state);
-        });
+        const permissionsApi = navigator.permissions;
+        status = await permissionsApi?.query({ name: "geolocation" as PermissionName });
+        if (status?.state && mounted) setState(status.state);
+        handleChange = () => {
+          if (!mounted || !status) return;
+          setState(status.state);
+        };
+        status?.addEventListener("change", handleChange);
       } catch {
         // Older browsers/Safari: fall back to prompt state
         setState("prompt");
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+      if (status && handleChange) {
+        status.removeEventListener("change", handleChange);
+      }
+    };
   }, []);
 
   if (!visible) return null;
@@ -65,4 +74,3 @@ export default function GeoRequirementBanner() {
     </div>
   );
 }
-

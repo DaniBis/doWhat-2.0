@@ -5,4 +5,6 @@ export * from "./icons";
 export * from "./theme";
 export * from "./icons";
 export * from "./badges";
+export * from "./map";
+export * from "./analytics";
 // badges type definitions are TypeScript-only; skip exporting compiled .js to avoid jest resolution issues

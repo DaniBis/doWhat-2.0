@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type { Reliability, AttendanceMetrics } from '@/types/profile';
+import type { ReliabilityComponentsBreakdown, ReliabilityMetricsWindow } from '@dowhat/shared';
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const userId = params.id;
@@ -10,14 +11,14 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       .from('reliability_index')
       .select('score,confidence,components_json')
       .eq('user_id', userId)
-      .maybeSingle();
+      .maybeSingle<{ score: number | null; confidence: number | null; components_json: ReliabilityComponentsBreakdown | null }>();
     const { data: metrics } = await supabase
       .from('reliability_metrics')
       .select('window_30d_json,window_90d_json')
       .eq('user_id', userId)
-      .maybeSingle();
-    const w30 = (metrics?.window_30d_json as any) || {};
-    const w90 = (metrics?.window_90d_json as any) || {};
+      .maybeSingle<{ window_30d_json: ReliabilityMetricsWindow | null; window_90d_json: ReliabilityMetricsWindow | null }>();
+    const w30 = metrics?.window_30d_json ?? {};
+    const w90 = metrics?.window_90d_json ?? {};
     const attendance: AttendanceMetrics = {
       attended30: w30.attended || 0,
       noShow30: w30.no_shows || 0,
@@ -28,7 +29,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       lateCancel90: w90.late_cancels || 0,
       excused90: w90.excused || 0,
     };
-    const components = (idx?.components_json as any) || {};
+    const components = idx?.components_json ?? {};
     const reliability: Reliability = {
       score: Number(idx?.score || 0),
       confidence: Number(idx?.confidence || 0),

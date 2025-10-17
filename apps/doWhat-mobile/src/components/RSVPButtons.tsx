@@ -5,7 +5,6 @@ import RSVPModal from './RSVPModal';
 type RSVPButtonsProps = {
   onPressGoing: () => void;
   onPressInterested: () => void;
-  onPressDecline: () => void;
   currentStatus?: 'going' | 'interested' | 'declined' | null;
   activityTitle?: string;
   loading?: boolean;
@@ -14,20 +13,15 @@ type RSVPButtonsProps = {
 const RSVPButtons: React.FC<RSVPButtonsProps> = ({
   onPressGoing,
   onPressInterested,
-  onPressDecline,
   currentStatus,
   activityTitle = 'Activity',
   loading = false,
 }) => {
   const [modalVisible, setModalVisible] = useState(false);
-  const [pendingAction, setPendingAction] = useState<'going' | 'interested' | 'not_going' | null>(null);
+  const [pendingAction, setPendingAction] = useState<'going' | 'interested' | null>(null);
 
-  const handleButtonPress = (action: 'going' | 'interested' | 'declined') => {
-    if (action === 'declined') {
-      setPendingAction('not_going');
-    } else {
-      setPendingAction(action);
-    }
+  const handleButtonPress = (action: 'going' | 'interested') => {
+    setPendingAction(action);
     setModalVisible(true);
   };
 
@@ -36,8 +30,6 @@ const RSVPButtons: React.FC<RSVPButtonsProps> = ({
       onPressGoing();
     } else if (pendingAction === 'interested') {
       onPressInterested();
-    } else if (pendingAction === 'not_going') {
-      onPressDecline();
     }
     setModalVisible(false);
     setPendingAction(null);
@@ -91,25 +83,6 @@ const RSVPButtons: React.FC<RSVPButtonsProps> = ({
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[
-            styles.button,
-            styles.declineButton,
-            currentStatus === 'declined' && styles.activeButton,
-          ]}
-          onPress={() => handleButtonPress('declined')}
-          disabled={loading}
-        >
-          <Text
-            style={[
-              styles.buttonText,
-              styles.declineText,
-              currentStatus === 'declined' && styles.activeButtonText,
-            ]}
-          >
-            Decline
-          </Text>
-        </TouchableOpacity>
       </View>
 
       {pendingAction && (
@@ -158,13 +131,6 @@ const styles = StyleSheet.create({
   },
   interestedText: {
     color: '#2C7BF6',
-  },
-  declineButton: {
-    borderColor: '#EF4444',
-    backgroundColor: 'transparent',
-  },
-  declineText: {
-    color: '#EF4444',
   },
   activeButton: {
     backgroundColor: '#F3F4F6',

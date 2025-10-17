@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { listActiveUserIds, aggregateMetricsForUser } from '@/lib/reliabilityAggregate';
+import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 // POST /api/reliability/recompute  (batch)  headers: x-cron-secret
 // Optional query params: limit, offset, days
@@ -14,17 +15,17 @@ export async function POST(req: NextRequest) {
   const days = Math.min(Number(url.searchParams.get('days') || 90), 365);
   try {
     const userIds = await listActiveUserIds(supabase, days, limit, offset);
-    const results: any[] = [];
+    const results: Array<{ user_id: string; score?: number; confidence?: number; error?: string }> = [];
     for (const id of userIds) {
       try {
         const r = await aggregateMetricsForUser(supabase, id);
         results.push({ user_id: id, score: r.score, confidence: r.confidence });
-      } catch (e: any) {
-        results.push({ user_id: id, error: e.message });
+      } catch (error: unknown) {
+        results.push({ user_id: id, error: getErrorMessage(error) });
       }
     }
     return NextResponse.json({ count: results.length, results });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

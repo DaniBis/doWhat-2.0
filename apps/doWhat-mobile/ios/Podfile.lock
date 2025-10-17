@@ -94,7 +94,7 @@ PODS:
     - ExpoModulesCore
   - ExpoFileSystem (16.0.9):
     - ExpoModulesCore
-  - ExpoHead (3.4.8):
+  - ExpoHead (3.4.10):
     - ExpoModulesCore
   - ExpoImageManipulator (11.8.0):
     - EXImageLoader
@@ -105,10 +105,6 @@ PODS:
     - ExpoModulesCore
   - ExpoLinearGradient (12.7.2):
     - ExpoModulesCore
-  - ExpoMaps (0.4.1):
-    - ExpoModulesCore
-    - GoogleMaps (= 7.3.0)
-    - GooglePlaces (= 7.3.0)
   - ExpoModulesCore (1.11.14):
     - glog
     - RCT-Folly (= 2022.05.16.00)
@@ -118,7 +114,7 @@ PODS:
     - ReactCommon/turbomodule/core
   - ExpoWebBrowser (12.8.2):
     - ExpoModulesCore
-  - EXSplashScreen (0.26.4):
+  - EXSplashScreen (0.26.5):
     - ExpoModulesCore
     - glog
     - RCT-Folly (= 2022.05.16.00)
@@ -137,16 +133,18 @@ PODS:
     - ReactCommon/turbomodule/core (= 0.73.6)
   - fmt (6.2.1)
   - glog (0.3.5)
-  - GoogleMaps (7.3.0):
-    - GoogleMaps/Maps (= 7.3.0)
-  - GoogleMaps/Base (7.3.0)
-  - GoogleMaps/Maps (7.3.0):
-    - GoogleMaps/Base
-  - GooglePlaces (7.3.0)
   - hermes-engine (0.73.6):
     - hermes-engine/Pre-built (= 0.73.6)
   - hermes-engine/Pre-built (0.73.6)
   - libevent (2.1.12)
+  - MapboxCommon (24.15.3):
+    - Turf (= 4.0.0)
+  - MapboxCoreMaps (11.15.3):
+    - MapboxCommon (= 24.15.3)
+  - MapboxMaps (11.15.3):
+    - MapboxCommon (= 24.15.3)
+    - MapboxCoreMaps (= 11.15.3)
+    - Turf (= 4.0.0)
   - RCT-Folly (2022.05.16.00):
     - boost
     - DoubleConversion
@@ -1187,23 +1185,34 @@ PODS:
     - React-jsi (= 0.73.6)
     - React-logger (= 0.73.6)
     - React-perflogger (= 0.73.6)
-  - RNCAsyncStorage (2.2.0):
+  - RNCAsyncStorage (1.21.0):
     - React-Core
   - RNGestureHandler (2.14.1):
     - glog
     - RCT-Folly (= 2022.05.16.00)
     - React-Core
+  - rnmapbox-maps (10.2.1):
+    - MapboxMaps (~> 11.15.2)
+    - React
+    - React-Core
+    - rnmapbox-maps/DynamicLibrary (= 10.2.1)
+    - Turf
+  - rnmapbox-maps/DynamicLibrary (10.2.1):
+    - MapboxMaps (~> 11.15.2)
+    - React
+    - React-Core
+    - Turf
   - RNReanimated (3.6.3):
     - glog
     - RCT-Folly (= 2022.05.16.00)
     - React-Core
     - ReactCommon/turbomodule/core
-  - RNScreens (3.31.1):
+  - RNScreens (3.29.0):
     - glog
     - RCT-Folly (= 2022.05.16.00)
     - React-Core
-    - React-RCTImage
   - SocketRocket (0.6.1)
+  - Turf (4.0.0)
   - UMAppLoader (4.5.1)
   - Yoga (1.14.0)
 
@@ -1232,7 +1241,6 @@ DEPENDENCIES:
   - ExpoImagePicker (from `../../../node_modules/expo-image-picker/ios`)
   - ExpoKeepAwake (from `../../../node_modules/expo-keep-awake/ios`)
   - ExpoLinearGradient (from `../../../node_modules/expo-linear-gradient/ios`)
-  - ExpoMaps (from `../../../node_modules/expo-maps/ios`)
   - ExpoModulesCore (from `../../../node_modules/expo-modules-core`)
   - ExpoWebBrowser (from `../../../node_modules/expo-web-browser/ios`)
   - EXSplashScreen (from `../../../node_modules/expo-splash-screen/ios`)
@@ -1289,6 +1297,7 @@ DEPENDENCIES:
   - ReactCommon/turbomodule/core (from `../../../node_modules/react-native/ReactCommon`)
   - "RNCAsyncStorage (from `../../../node_modules/@react-native-async-storage/async-storage`)"
   - RNGestureHandler (from `../../../node_modules/react-native-gesture-handler`)
+  - "rnmapbox-maps (from `../../../node_modules/@rnmapbox/maps`)"
   - RNReanimated (from `../../../node_modules/react-native-reanimated`)
   - RNScreens (from `../../../node_modules/react-native-screens`)
   - UMAppLoader (from `../../../node_modules/unimodules-app-loader/ios`)
@@ -1297,10 +1306,12 @@ DEPENDENCIES:
 SPEC REPOS:
   trunk:
     - fmt
-    - GoogleMaps
-    - GooglePlaces
     - libevent
+    - MapboxCommon
+    - MapboxCoreMaps
+    - MapboxMaps
     - SocketRocket
+    - Turf
 
 EXTERNAL SOURCES:
   boost:
@@ -1351,8 +1362,6 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/expo-keep-awake/ios"
   ExpoLinearGradient:
     :path: "../../../node_modules/expo-linear-gradient/ios"
-  ExpoMaps:
-    :path: "../../../node_modules/expo-maps/ios"
   ExpoModulesCore:
     :path: "../../../node_modules/expo-modules-core"
   ExpoWebBrowser:
@@ -1460,6 +1469,8 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/@react-native-async-storage/async-storage"
   RNGestureHandler:
     :path: "../../../node_modules/react-native-gesture-handler"
+  rnmapbox-maps:
+    :path: "../../../node_modules/@rnmapbox/maps"
   RNReanimated:
     :path: "../../../node_modules/react-native-reanimated"
   RNScreens:
@@ -1482,82 +1493,84 @@ SPEC CHECKSUMS:
   EXNotifications: 9fd42ca3c5998ae93a2ac869ed9a47467c433219
   Expo: 1b33cb8ab60cff9abf805ed6020af3d1846e457c
   expo-dev-client: 775a683302570193a7ba71032d0b1b82f6ad1454
-  expo-dev-launcher: 4b9190f0879290b57ed89cc5c24592d4ce981f85
-  expo-dev-menu: efe7323e7f918e437a02f20063eb2b55c13dfe99
+  expo-dev-launcher: acd5b1e03e649e96675c85314a9d8745f23648d1
+  expo-dev-menu: 2b4ce6108396233849b71805906129de15aadfbc
   expo-dev-menu-interface: 44e69ddff62bbc6c5418c200e657635720b5a480
   ExpoBlur: 3a9548a738624968836926f4aa1e18fa22155640
   ExpoCrypto: 9be8806e896380cb18e5d3d2c13a89ce2f36946a
   ExpoDevice: fc21b9193d704f3759c1ede1b383fcdb0370b46a
   ExpoFileSystem: df58e1eb2a4d6f1006a1ca70bddfbbf63e52fa4f
-  ExpoHead: dae7e0e9f8b2e65f8fb56f7a7fe1014a1eacc6ab
+  ExpoHead: 304de9c15437e3c4c0691587a3bb59ae42ad399f
   ExpoImageManipulator: 0c2ada7a028619ea1cc0c670bfa90c8ebeaa4af4
   ExpoImagePicker: d06822d74f1f0e7fe7cb070ece0fff6e678fa3eb
   ExpoKeepAwake: 3b8cf8533b9212500565a1e41fb080fc5af29918
   ExpoLinearGradient: 501f9bbd83f3ec1d0e0425862b9ef4693605fc1c
-  ExpoMaps: ed07722645a5dcc844223c0a7266728d949d26e5
-  ExpoModulesCore: 43ebd65adf2c0e6ffb0de24a41f8f7de12829331
+  ExpoModulesCore: bc9f47045cd97b741444e335880d65c681d39007
   ExpoWebBrowser: c5d027f58a0b2c1926c86ce3596c94490a639fa2
-  EXSplashScreen: a3a2dbbea3ffd61ceca25553f688eed8391033a3
+  EXSplashScreen: 32c0a1ee2e9b416a5fb8ba41419bd040868e5dfe
   EXTaskManager: 8c5683c2fb543cf2baa77bab4ad130b7e3829c4a
   EXUpdatesInterface: 3e444e2093e25b7ca0999a7d8c16e8392dee70c3
   FBLazyVector: f64d1e2ea739b4d8f7e4740cde18089cd97fe864
   FBReactNativeSpec: 8f31f6e66f9eb51d7529f7fabc9b2878171a8f29
   fmt: ff9d55029c625d3757ed641535fd4a75fedc7ce9
   glog: c5d68082e772fa1c511173d6b30a9de2c05a69a2
-  GoogleMaps: a146f275ee429d14822178c7a841c03366ec92a1
-  GooglePlaces: 0609463845250bbadafa1739938181e54dece439
   hermes-engine: 9cecf9953a681df7556b8cc9c74905de8f3293c0
   libevent: 4049cae6c81cdb3654a443be001fb9bdceff7913
+  MapboxCommon: 6ec87f5836c143ca213af8e3470665ab65a4e356
+  MapboxCoreMaps: 79c46da85dbfe6f7d8c46414b89fea14f1222de5
+  MapboxMaps: 191e37638b8465fe8db51d0302c44d536ebcd687
   RCT-Folly: cd21f1661364f975ae76b3308167ad66b09f53f5
   RCTRequired: ca1d7414aba0b27efcfa2ccd37637edb1ab77d96
   RCTTypeSafety: 678e344fb976ff98343ca61dc62e151f3a042292
   React: e296bcebb489deaad87326067204eb74145934ab
   React-callinvoker: d0b7015973fa6ccb592bb0363f6bc2164238ab8c
-  React-Codegen: a89833d9b3ccafeb8cc7b2e87800aad8903b8990
+  React-Codegen: 85d92b5c230a36aae8f4e33a36e0a3868afbf32f
   React-Core: 3c065b603637303cd150644b633e0b8980d258f1
   React-CoreModules: 069bdb1c6013215afe85fb9627569dc1f21b8f44
   React-cxxreact: a1ec4ab2c051f62ab752b86acb3ab1498d46d82f
-  React-debug: d444db402065cca460d9c5b072caab802a04f729
-  React-Fabric: 30d61b17f5ec61b8f69e074d359a942c8edb48ed
-  React-FabricImage: 52209c0a7828893788d89b342657747fff852e52
-  React-graphics: 2d3bb1c23fb71e7dc0f25e1c13f9cd8a0f331166
+  React-debug: f9c7f6877e2dad21448d12fe48d8192e0df918b4
+  React-Fabric: 8de1229b641ad30b7ed95ff65366096a8b9cd1af
+  React-FabricImage: 25f2af65256b43e2cce6226e81ebb01c7ac462c0
+  React-graphics: a6972da987434afb6466a5e737b48e0fdc89ac34
   React-hermes: 2b8dd8fa2082a7e219cd329ee1c5eec18b82b206
-  React-ImageManager: 37eeded59dc2bac8d76c9f78f421980c972215b6
-  React-jserrorhandler: 1ddd1e3e596bd3846ad81d2aa7ca3946c15b9ed0
+  React-ImageManager: 01382570d648ecc2ca380c48e9c7c300f34b0a0a
+  React-jserrorhandler: ac5f640370915806125eacefa428625217924d8e
   React-jsi: 84c4e48ed0a563c9e103514ea9572bac486a61a1
   React-jsiexecutor: 6206f71ec0fe8e0d5db321a7f7d91922d310fee9
   React-jsinspector: 85583ef014ce53d731a98c66a0e24496f7a83066
   React-logger: 55764cd993880c6f887505854581c9faf68feff2
-  React-Mapbuffer: 15dfcfeb4428d8799cce75e7fe85b18b706029e0
+  React-Mapbuffer: 0cc88310e28eba4f864893221b238ea3bdfd8a43
   react-native-safe-area-context: bf9d9d58f0f6726d4a6257088044c2595017579d
-  React-nativeconfig: b4d4e9901d4cabb57be63053fd2aa6086eb3c85f
-  React-NativeModulesApple: 541d64309a3037060cc416db5c8a63ee5884048e
+  React-nativeconfig: e700ac3ec3d66329076bd2c2787a204411815d43
+  React-NativeModulesApple: eca91542f6d31ae0a929ad5eada8c6175f49bc0d
   React-perflogger: 5f49905de275bac07ac7ea7f575a70611fa988f2
   React-RCTActionSheet: 37edf35aeb8e4f30e76c82aab61f12d1b75c04ec
   React-RCTAnimation: b49b2e3beffa553e2120ef0767ce99b4591893c4
   React-RCTAppDelegate: 95e826d48b372cb5c90947c72667f3ce86e77009
   React-RCTBlob: c88cdc50aa116f53353b82d2d394d49e1de47ad3
-  React-RCTFabric: b6f90f1bfd1f601e66f4deeb9b21e217c6fb6b69
+  React-RCTFabric: 2cab327b01775d14d1a3d39d34b334c74b1bd484
   React-RCTImage: 665aaf80481423b2e896dcc67afa72e5993a2a4c
   React-RCTLinking: a9321777212cf50b396983b4f3b3190fbfe53aa8
   React-RCTNetwork: 4726e738c784679902d8425bd02c78f7e69d2ebf
   React-RCTSettings: 4831390d89a911f10f154d5c440f6312f8aebe3d
   React-RCTText: 7b1451059ba1d2c40f057c58211864c5e81e90a4
   React-RCTVibration: d23654befc1d9eda8b69b0e9d4127800abcae76f
-  React-rendererdebug: ec22f2e3e545bd0ad15abc6e5710595ccfe45c94
-  React-rncore: 6a87857c165e2d7a2c20e27677e12aa4102cb8ed
+  React-rendererdebug: c9117b65219d9cd0c1c5fddf62babbeb6ba207d6
+  React-rncore: 602d6951277170f1d7e969f9621820d3a3e9d0aa
   React-runtimeexecutor: bb328dbe2865f3a550df0240df8e2d8c3aaa4c57
-  React-runtimescheduler: a01dfb7ca980edebcc7d2d289ca900dea5d7e28b
-  React-utils: 288c9cb9a73bb150c273c84df7c2f8546f28e23f
-  ReactCommon: 2e5492a3e3a8e72d635c266405e49d12627e5bf0
-  RNCAsyncStorage: b44e8a4e798c3e1f56bffccd0f591f674fb9198f
-  RNGestureHandler: dd5543af5c344cb2bdd8de81a8ec85adb5ec4b4b
-  RNReanimated: 2f6e5a01a3d1b159804965527b29170993470076
-  RNScreens: 321d9067091167f6255474ea0567f4b4ac09958a
+  React-runtimescheduler: 6373bc46f03b0e95454d939dea3f7048318fcedf
+  React-utils: 37c85694c95f61e9f860eab782d9d0e62384cd05
+  ReactCommon: 60bf23971eac7945401582de39e0171d32155d07
+  RNCAsyncStorage: a03b770a50541a761447cea9c24536047832124d
+  RNGestureHandler: 758d382274dfcb9f791f90b2beff774d25e358ce
+  rnmapbox-maps: 92d93408ec8e778da4a15e9037fe2cdee566df90
+  RNReanimated: 2b42c727ac6ab261924e60fff8d4d33fd4386661
+  RNScreens: 1174f55dd2f72abe45a4e48bf20e552feb051600
   SocketRocket: f32cd54efbe0f095c4d7594881e52619cfe80b17
+  Turf: c9eb11a65d96af58cac523460fd40fec5061b081
   UMAppLoader: 79d3ee6aa2447a1fe2e8b0d07acf2de106e55b58
   Yoga: 805bf71192903b20fc14babe48080582fee65a80
 
-PODFILE CHECKSUM: d80b9256bfe94bc76b4a01d5f6532b0c57589cee
+PODFILE CHECKSUM: ce0426a4b8cb07661e5a4e1ad5ffad04ccaecf36
 
 COCOAPODS: 1.16.2

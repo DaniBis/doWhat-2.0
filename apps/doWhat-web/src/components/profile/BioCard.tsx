@@ -1,11 +1,12 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export function BioCard({ bio: initialBio, editable, onSave }: { bio?: string; editable?: boolean; onSave?: (bio: string)=>Promise<void>|void }) {
   const [editing, setEditing] = useState(false);
   const [bio, setBio] = useState(initialBio || '');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  useEffect(() => { setBio(initialBio || ''); }, [initialBio]);
   async function handleSave() {
     if (!onSave) return;
     setSaving(true); setMsg('');

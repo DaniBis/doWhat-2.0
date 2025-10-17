@@ -22,7 +22,12 @@ returns table (
   venue_lng double precision,
   distance_km numeric
 ) language sql stable as $$
-  with params as (select p_lat as lat, p_lng as lng, p_km as km),
+  with params as (
+    select
+      p_lat as param_lat,
+      p_lng as param_lng,
+      p_km as km
+  ),
   base as (
     select s.id as session_id,
            s.starts_at,
@@ -37,9 +42,9 @@ returns table (
            -- Haversine (approx) in km
            (6371 * acos(
               least(1, greatest(-1,
-                cos(radians((select lat from params))) * cos(radians(v.lat)) *
-                cos(radians(v.lng) - radians((select lng from params))) +
-                sin(radians((select lat from params))) * sin(radians(v.lat))
+                cos(radians((select param_lat from params))) * cos(radians(v.lat)) *
+                cos(radians(v.lng) - radians((select param_lng from params))) +
+                sin(radians((select param_lat from params))) * sin(radians(v.lat))
               ))
            )) as distance_km
     from sessions s
@@ -49,7 +54,9 @@ returns table (
       and (activities is null or s.activity_id = any(activities))
       and (day is null or date(s.starts_at) = day)
   )
-  select * from base where distance_km <= (select km from params);
+  select *
+  from base
+  where distance_km <= (select km from params);
 $$;
 
 -- Optional helpful indexes

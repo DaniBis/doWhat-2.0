@@ -10,6 +10,10 @@ const NearbyDiscoverList = dynamic(() => import("@/components/home/NearbyDiscove
 export default async function HomePage({ searchParams }: { searchParams?: SearchParams }) {
   const supabase = createClient();
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   const typesCsv = (typeof searchParams?.types === 'string' ? searchParams?.types : Array.isArray(searchParams?.types) ? searchParams?.types[0] : '') || '';
   const types = typesCsv.split(',').map((s) => s.trim()).filter(Boolean);
   const priceMin = Number(typeof searchParams?.price_min === 'string' ? searchParams?.price_min : Array.isArray(searchParams?.price_min) ? searchParams?.price_min[0] : '0') || 0;
@@ -17,9 +21,13 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
 
   let query = supabase
     .from("sessions")
-    .select("id, price_cents, starts_at, ends_at, activities!inner(id,name), venues(name)")
+    .select(
+  "id, created_by, price_cents, starts_at, ends_at, venue_id, activities!inner(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
+    )
     .order("starts_at", { ascending: true })
     .limit(20);
+
+  query = query.gte("starts_at", new Date().toISOString());
 
   if (priceMin > 0) query = query.gte('price_cents', Math.round(priceMin * 100));
   if (priceMax < 100) query = query.lte('price_cents', Math.round(priceMax * 100));
@@ -34,7 +42,116 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
     return <pre>Error: {error.message}</pre>;
   }
 
-  const rows = data ?? [];
+  type SessionRow = {
+    id: string;
+    created_by?: string | null;
+    price_cents?: number | null;
+    starts_at?: string | null;
+    ends_at?: string | null;
+    venue_id?: string | null;
+    activities?:
+      | {
+          id?: string;
+          name?: string | null;
+          description?: string | null;
+          activity_types?: string[] | null;
+        }
+      | Array<{
+          id?: string;
+          name?: string | null;
+          description?: string | null;
+          activity_types?: string[] | null;
+        }>;
+    venues?:
+      | {
+          id?: string | null;
+          name?: string | null;
+          lat?: number | null;
+          lng?: number | null;
+        }
+      | Array<{
+          id?: string | null;
+          name?: string | null;
+          lat?: number | null;
+          lng?: number | null;
+        }>;
+  };
+
+  const rows: SessionRow[] = (data ?? []) as SessionRow[];
+
+  type Group = {
+    activity: {
+      id?: string;
+      name?: string | null;
+      description?: string | null;
+      activity_types?: string[] | null;
+    };
+    sessions: Array<{
+      id?: string;
+      created_by?: string | null;
+      price_cents?: number | null;
+      starts_at?: string | null;
+      ends_at?: string | null;
+      venue_id?: string | null;
+      venues?: VenueRef | VenueRef[] | null;
+    }>;
+  };
+
+  type VenueRef = {
+    id?: string | null;
+    name?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  };
+
+  const grouped = new Map<string, Group>();
+
+  for (const session of rows) {
+    const activityRel = Array.isArray(session.activities)
+      ? session.activities[0]
+      : session.activities;
+    if (!activityRel) continue;
+    const key = activityRel.id ?? activityRel.name ?? session.id;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        activity: {
+          id: activityRel.id ?? undefined,
+          name: activityRel.name ?? null,
+          description: activityRel.description ?? null,
+          activity_types: activityRel.activity_types ?? null,
+        },
+        sessions: [],
+      });
+    }
+
+    const bucket = grouped.get(key)!;
+    bucket.sessions.push({
+      id: session.id,
+      created_by: session.created_by ?? null,
+      price_cents: session.price_cents ?? null,
+      starts_at: session.starts_at ?? null,
+      ends_at: session.ends_at ?? null,
+      venue_id: session.venue_id ?? null,
+      venues: session.venues ?? null,
+    });
+  }
+
+  const cards = Array.from(grouped.values()).sort((a, b) => {
+    const aStart = a.sessions.reduce((min, s) => {
+      if (!s.starts_at) return min;
+      const time = new Date(s.starts_at).getTime();
+      return min == null || time < min ? time : min;
+    }, null as number | null);
+    const bStart = b.sessions.reduce((min, s) => {
+      if (!s.starts_at) return min;
+      const time = new Date(s.starts_at).getTime();
+      return min == null || time < min ? time : min;
+    }, null as number | null);
+    if (aStart == null && bStart == null) return 0;
+    if (aStart == null) return 1;
+    if (bStart == null) return -1;
+    return aStart - bStart;
+  });
 
   return (
     <main className="min-h-screen">
@@ -70,9 +187,21 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
           </div>
         ) : (
           <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-            {rows.map((s) => (
-              <ActivityCard key={s.id} s={s} />
-            ))}
+            {cards.map((group) => {
+              const key =
+                group.activity.id ??
+                group.activity.name ??
+                group.sessions[0]?.id ??
+                `${group.sessions[0]?.starts_at ?? "group"}`;
+              return (
+                <ActivityCard
+                  key={key}
+                  activity={group.activity}
+                  sessions={group.sessions}
+                  currentUserId={user?.id}
+                />
+              );
+            })}
           </div>
         )}
         {/* Nearby discovered via API */}

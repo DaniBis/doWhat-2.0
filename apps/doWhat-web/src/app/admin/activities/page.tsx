@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabase/browser";
+import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Activity = { id: string; name: string };
 
@@ -28,9 +29,13 @@ export default function AdminActivities() {
       setIsAdmin(em ? allow.includes(em.toLowerCase()) : false);
 
       setLoading(true);
-      const { data, error } = await supabase.from("activities").select("id,name").order("name");
+      const { data, error } = await supabase
+        .from("activities")
+        .select("id,name")
+        .order("name")
+        .returns<Activity[]>();
       if (error) setErr(error.message);
-      else setRows((data ?? []) as Activity[]);
+      else setRows(data ?? []);
       setLoading(false);
     })();
   }, []);
@@ -41,13 +46,17 @@ export default function AdminActivities() {
       setMsg(null);
       const n = name.trim();
       if (!n) return;
-      const { data, error } = await supabase.from("activities").insert({ name: n }).select("id,name").single();
+      const { data, error } = await supabase
+        .from("activities")
+        .insert({ name: n })
+        .select("id,name")
+        .single<Activity>();
       if (error) throw error;
-      setRows((prev) => [...prev, data as Activity].sort((a, b) => a.name.localeCompare(b.name)));
+      setRows((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
       setName("");
       setMsg('Added.');
-    } catch (e: any) {
-      setErr(e.message ?? "Failed to add");
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to add");
     }
   }
 
@@ -58,8 +67,8 @@ export default function AdminActivities() {
       await supabase.from("activities").delete().eq("id", id);
       setRows((prev) => prev.filter((r) => r.id !== id));
       setMsg('Deleted.');
-    } catch (e: any) {
-      setErr(e.message ?? "Failed to delete");
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error) || "Failed to delete");
     }
   }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type { Trait } from '@/types/profile';
+import type { ReliabilityComponentsBreakdown } from '@dowhat/shared';
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const url = new URL(req.url);
@@ -13,8 +14,8 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       .from('reliability_index')
       .select('components_json')
       .eq('user_id', userId)
-      .maybeSingle();
-    const c = (idx?.components_json as any) || {};
+      .maybeSingle<{ components_json: ReliabilityComponentsBreakdown | null }>();
+    const c = idx?.components_json ?? {};
     const traits: Trait[] = [
       { id: 'attendance_30', name: 'Attendance (30d)', score: c.AS_30 || 0, confidence: 0.7, category: 'engagement' },
       { id: 'attendance_90', name: 'Attendance (90d)', score: c.AS_90 || 0, confidence: 0.7, category: 'engagement' },

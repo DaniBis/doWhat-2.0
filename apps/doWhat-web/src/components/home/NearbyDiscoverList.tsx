@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Item = { id: string; name: string; venue?: string; lat?: number; lng?: number; distance_m?: number };
@@ -51,7 +52,12 @@ export default function NearbyDiscoverList() {
             {typeof it.distance_m === 'number' && (
               <div className="mb-2 text-xs text-gray-500">~{Math.round(it.distance_m / 10) / 100} km away</div>
             )}
-            <a href={`/activities/${it.id}`} className="text-emerald-700 hover:underline text-sm">View details →</a>
+            <Link
+              href={{ pathname: `/activities/${it.id}` }}
+              className="text-emerald-700 hover:underline text-sm"
+            >
+              View details →
+            </Link>
           </div>
         ))}
       </div>

@@ -128,7 +128,11 @@ export default function Saved() {
 			) : (
 				<View style={{ gap: 12 }}>
 					{items.map((activity) => (
-						<Link key={activity.id} href={`/activities/${activity.id}`} asChild>
+						<Link
+							key={activity.id}
+							href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
+							asChild
+						>
 							<Pressable style={{
 								backgroundColor: 'white',
 								borderRadius: 12,
