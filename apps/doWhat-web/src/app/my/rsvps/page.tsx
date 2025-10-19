@@ -62,15 +62,19 @@ export default function MyRsvpsPage() {
       if (e2) setErr(e2.message);
 
       const nextByActivity = new Map<string, Session>();
-      for (const s of (sessions ?? []) as any[]) {
-        const key = s.activity_id as string;
-        if (!nextByActivity.has(key)) nextByActivity.set(key, s as Session);
+      const sessionRows: Session[] = Array.isArray(sessions) ? (sessions as Session[]) : [];
+      for (const session of sessionRows) {
+        const key = session.activity_id;
+        if (!nextByActivity.has(key)) nextByActivity.set(key, session);
       }
 
-      const merged = (rsvps ?? [])
-        .map((r) => ({ rsvp: r as Row, sess: nextByActivity.get(r.activity_id) }))
-        .filter((x) => x.sess)
-        .map((x) => ({ ...(x.sess as Session), rsvp: x.rsvp }));
+      const rsvpRows: Row[] = Array.isArray(rsvps) ? (rsvps as Row[]) : [];
+      const merged = rsvpRows
+        .map((rsvp) => {
+          const session = nextByActivity.get(rsvp.activity_id);
+          return session ? { ...session, rsvp } : null;
+        })
+        .filter((value): value is Session & { rsvp: Row } => value !== null);
 
       setRows(merged);
       setLoading(false);

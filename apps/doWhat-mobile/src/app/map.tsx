@@ -1,7 +1,9 @@
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
+import MapboxModuleRaw from '@rnmapbox/maps';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ComponentType } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -42,7 +44,8 @@ import { createWebUrl } from '../lib/web';
 import { supabase } from '../lib/supabase';
 import { createMapboxFallbackHtml } from '../lib/mapboxHtml';
 import { WebView } from 'react-native-webview';
-import type { WebViewMessageEvent } from 'react-native-webview';
+import type { WebViewMessageEvent, WebView as WebViewInstance } from 'react-native-webview';
+import type { FeatureCollection } from 'geojson';
 
 const resolveMapboxToken = (): string => {
   const fromEnv = (
@@ -55,11 +58,15 @@ const resolveMapboxToken = (): string => {
   ).trim();
   if (fromEnv) return fromEnv;
   try {
-    const extras = (Constants.expoConfig ?? (Constants.manifest as any) ?? {}).extra ?? {};
+    const manifestExtras =
+      Constants.manifest && typeof Constants.manifest === 'object' && 'extra' in Constants.manifest
+        ? (Constants.manifest as { extra?: Record<string, unknown> | undefined }).extra
+        : undefined;
+    const extras = (Constants.expoConfig?.extra ?? manifestExtras ?? {}) as Record<string, unknown>;
     const candidate =
       extras?.mapboxAccessToken ||
       extras?.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
-  extras?.EXPO_PUBLIC_MAPBOX_TOKEN ||
+      extras?.EXPO_PUBLIC_MAPBOX_TOKEN ||
       extras?.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
       extras?.NEXT_PUBLIC_MAPBOX_TOKEN ||
       extras?.MAPBOX_ACCESS_TOKEN ||
@@ -79,30 +86,66 @@ if (__DEV__) {
 const mapboxWarningState = { logged: false };
 const mapFetcherLogState = { primaryFailureLogged: false, supabaseFailureLogged: false };
 
+type MapboxReactComponent = ComponentType<Record<string, unknown>>;
+
 type MapboxModuleShape = {
-  MapView?: any;
-  Camera?: any;
-  ShapeSource?: any;
-  CircleLayer?: any;
-  SymbolLayer?: any;
-  UserLocation?: any;
+  MapView?: MapboxReactComponent;
+  Camera?: MapboxReactComponent;
+  ShapeSource?: MapboxReactComponent;
+  CircleLayer?: MapboxReactComponent;
+  SymbolLayer?: MapboxReactComponent;
+  UserLocation?: MapboxReactComponent;
   setAccessToken?: (token: string) => void;
   setTelemetryEnabled?: (enabled: boolean) => void;
 };
 
+type MapboxMapHandle = {
+  getVisibleBounds?: () => Promise<[[number, number], [number, number]]>;
+};
+
+type MapboxCameraHandle = {
+  setCamera: (options: {
+    centerCoordinate?: [number, number];
+    zoomLevel?: number;
+    animationDuration?: number;
+  }) => void;
+};
+
+type MapboxShapeSourceHandle = {
+  getClusterExpansionZoom: (clusterId: number) => Promise<number>;
+};
+
+type MapboxPressFeature = {
+  geometry?: { coordinates?: unknown };
+  properties?: {
+    id?: unknown;
+    cluster?: unknown;
+    cluster_id?: unknown;
+    [key: string]: unknown;
+  };
+};
+
+type MapboxShapePressEvent = {
+  features?: MapboxPressFeature[];
+};
+
+type MapboxFilterExpression = [string, ...unknown[]];
+
 const Mapbox: MapboxModuleShape | null = (() => {
   try {
-    const required = require('@rnmapbox/maps') as
-      | MapboxModuleShape
-      | { default: MapboxModuleShape };
-    const resolved: MapboxModuleShape =
-      (required as { default?: MapboxModuleShape }).default ?? (required as MapboxModuleShape);
+    const candidate =
+      (MapboxModuleRaw as { default?: MapboxModuleShape } | undefined)?.default ??
+      (MapboxModuleRaw as MapboxModuleShape | undefined);
+
+    if (!candidate) {
+      throw new Error('Mapbox module missing');
+    }
 
     if (MAPBOX_TOKEN) {
-      resolved.setAccessToken?.(MAPBOX_TOKEN);
+      candidate.setAccessToken?.(MAPBOX_TOKEN);
     }
-    resolved.setTelemetryEnabled?.(false);
-    return resolved;
+    candidate.setTelemetryEnabled?.(false);
+    return candidate;
   } catch (error) {
     if (__DEV__ && !mapboxWarningState.logged) {
       mapboxWarningState.logged = true;
@@ -431,10 +474,10 @@ export default function MapScreen() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
-  const mapRef = useRef<any>(null);
-  const cameraRef = useRef<any>(null);
-  const sourceRef = useRef<any>(null);
-  const webViewRef = useRef<any>(null);
+  const mapRef = useRef<MapboxMapHandle | null>(null);
+  const cameraRef = useRef<MapboxCameraHandle | null>(null);
+  const sourceRef = useRef<MapboxShapeSourceHandle | null>(null);
+  const webViewRef = useRef<WebViewInstance | null>(null);
   const [webReady, setWebReady] = useState(false);
   const lastWebPayloadRef = useRef<string | null>(null);
   const pendingRecentreRef = useRef<{ center: MapCoordinates; zoom?: number } | null>(null);
@@ -582,13 +625,13 @@ export default function MapScreen() {
   });
 
   const activities = nearby.data?.activities ?? [];
-  const featureCollection = useMemo(() => activitiesToFeatureCollection(activities), [activities]);
+  const featureCollection = useMemo<FeatureCollection>(() => activitiesToFeatureCollection(activities), [activities]);
 
-  const selectedPointFilter = useMemo(
+  const selectedPointFilter = useMemo<MapboxFilterExpression>(
     () =>
-      selectedActivity
-        ? (['all', ['!has', 'point_count'], ['==', ['get', 'id'], selectedActivity.id]] as const)
-        : (['all', ['==', ['get', 'id'], '__none__']] as const),
+      (selectedActivity
+        ? ['all', ['!has', 'point_count'], ['==', ['get', 'id'], selectedActivity.id]]
+        : ['all', ['==', ['get', 'id'], '__none__']]) as MapboxFilterExpression,
     [selectedActivity],
   );
 
@@ -706,13 +749,25 @@ export default function MapScreen() {
   }, [center, radiusMeters, track]);
 
   const handleShapePress = useCallback(
-    async (event: any) => {
+    async (event: MapboxShapePressEvent) => {
       const feature = event?.features?.[0];
       if (!feature || !sourceRef.current) return;
-      const coordinates = feature.geometry?.coordinates as [number, number] | undefined;
-      if (feature.properties?.cluster) {
+      const coordinatesRaw = feature.geometry?.coordinates;
+      const coordinates =
+        Array.isArray(coordinatesRaw) &&
+        coordinatesRaw.length >= 2 &&
+        typeof coordinatesRaw[0] === 'number' &&
+        typeof coordinatesRaw[1] === 'number'
+          ? ([coordinatesRaw[0], coordinatesRaw[1]] as [number, number])
+          : undefined;
+      const properties = feature.properties ?? {};
+
+      const isCluster = Boolean(properties.cluster);
+      if (isCluster) {
+        const clusterId = typeof properties.cluster_id === 'number' ? properties.cluster_id : undefined;
+        if (clusterId == null) return;
         try {
-          const zoom = await sourceRef.current.getClusterExpansionZoom(feature.properties.cluster_id);
+          const zoom = await sourceRef.current.getClusterExpansionZoom(clusterId);
           if (zoom != null && coordinates && cameraRef.current) {
             cameraRef.current.setCamera({
               centerCoordinate: coordinates,
@@ -725,7 +780,8 @@ export default function MapScreen() {
         }
         return;
       }
-      const id = feature.properties?.id as string | undefined;
+
+      const id = typeof properties.id === 'string' ? properties.id : undefined;
       if (!id) return;
       const match = activities.find((activity) => activity.id === id);
       if (match) {
@@ -807,7 +863,7 @@ export default function MapScreen() {
     (event: WebViewMessageEvent) => {
       const dataString = event.nativeEvent?.data;
       if (!dataString) return;
-      let payload: any;
+      let payload: unknown;
       try {
         payload = JSON.parse(dataString);
       } catch (error) {
@@ -815,14 +871,15 @@ export default function MapScreen() {
         return;
       }
       if (!payload || typeof payload !== 'object') return;
-      if (payload.type === 'ready') {
+      const typed = payload as { type?: string; center?: MapCoordinates; radiusMeters?: unknown; activityId?: unknown };
+      if (typed.type === 'ready') {
         setWebReady(true);
         lastWebPayloadRef.current = null;
         return;
       }
-      if (payload.type === 'move') {
-        const nextCenter = payload.center as MapCoordinates | undefined;
-        const nextRadius = typeof payload.radiusMeters === 'number' ? payload.radiusMeters : undefined;
+      if (typed.type === 'move') {
+        const nextCenter = typed.center;
+        const nextRadius = typeof typed.radiusMeters === 'number' ? typed.radiusMeters : undefined;
         if (nextCenter) {
           setCenter((prev) => {
             if (!prev) return nextCenter;
@@ -836,8 +893,8 @@ export default function MapScreen() {
         }
         return;
       }
-      if (payload.type === 'select' && payload.activityId) {
-        const match = activities.find((activity) => activity.id === payload.activityId);
+      if (typed.type === 'select' && typeof typed.activityId === 'string') {
+        const match = activities.find((activity) => activity.id === typed.activityId);
         if (match) {
           setSelectedActivity(match);
           track('map_activity_focus', { activityId: match.id, source: 'map' });
@@ -890,7 +947,7 @@ export default function MapScreen() {
             <MapboxGL.ShapeSource
               id="activities"
               ref={sourceRef}
-              shape={featureCollection as any}
+              shape={featureCollection}
               cluster
               clusterRadius={48}
               clusterMaxZoom={16}
@@ -907,7 +964,7 @@ export default function MapScreen() {
               <MapboxGL.CircleLayer
                 id="selected-point"
                 aboveLayerID="activity-points"
-                filter={selectedPointFilter as unknown as any[]}
+                filter={selectedPointFilter}
                 style={{
                   circleColor: '#ffffff',
                   circleRadius: MAPBOX_POINT_RADIUS + 6,

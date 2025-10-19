@@ -5,6 +5,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Link } = require('expo-router');
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import type { ElementRef } from 'react';
 import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking, Platform, ActionSheetIOS, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -64,6 +65,27 @@ type CatalogBadgeEntry = {
 };
 
 type ImagePickerModule = typeof import('expo-image-picker');
+type ImagePickerOptions = import('expo-image-picker').ImagePickerOptions;
+type ExtendedImagePickerOptions = ImagePickerOptions & { copyToCacheDirectory?: boolean };
+type PressableHandle = ElementRef<typeof Pressable>;
+type WebFile = (File | Blob) & { name?: string };
+
+type FileListLike = {
+  length: number;
+  [index: number]: WebFile;
+};
+
+type DragEventLike = {
+  preventDefault: () => void;
+  dataTransfer?: {
+    files?: FileListLike | null;
+  } | null;
+};
+
+type HtmlElementLike = {
+  addEventListener: (type: string, listener: (event: DragEventLike) => void) => void;
+  removeEventListener: (type: string, listener: (event: DragEventLike) => void) => void;
+};
 
 type ProfileCachePayload = {
   id: string;
@@ -170,18 +192,37 @@ const requestPickerPermission = async (picker: ImagePickerModule, source: Avatar
 };
 
 const launchPicker = async (picker: ImagePickerModule, source: AvatarSource) => {
-  const presentationStyle = (picker as ImagePickerModule & { UIImagePickerPresentationStyle?: { FULL_SCREEN?: string } }).UIImagePickerPresentationStyle?.FULL_SCREEN;
-  const baseOptions = { allowsEditing: true, aspect: [1, 1] as [number, number], quality: 0.8, copyToCacheDirectory: true } as const;
+  const presentationStyle = picker.UIImagePickerPresentationStyle?.FULL_SCREEN;
+  const baseOptions: ExtendedImagePickerOptions = {
+    allowsEditing: true,
+    aspect: [1, 1] as [number, number],
+    quality: 0.8,
+    copyToCacheDirectory: true,
+  };
   if (source === 'library') {
     if (typeof picker.launchImageLibraryAsync !== 'function') {
       throw new Error('Image picker native module missing. Rebuild dev client after adding expo-image-picker.');
     }
-    return picker.launchImageLibraryAsync({ mediaTypes: picker.MediaTypeOptions.Images, presentationStyle, ...baseOptions });
+    const options: ExtendedImagePickerOptions = {
+      ...baseOptions,
+      mediaTypes: picker.MediaTypeOptions?.Images ?? undefined,
+    };
+    if (presentationStyle) {
+      options.presentationStyle = presentationStyle;
+    }
+    return picker.launchImageLibraryAsync(options);
   }
   if (typeof picker.launchCameraAsync !== 'function') {
     throw new Error('Camera picker not available on this build.');
   }
-  return picker.launchCameraAsync({ ...baseOptions, presentationStyle: undefined, mediaTypes: picker.MediaTypeOptions?.Images ?? undefined } as any);
+  const cameraOptions: ExtendedImagePickerOptions = {
+    ...baseOptions,
+    mediaTypes: picker.MediaTypeOptions?.Images ?? undefined,
+  };
+  if (presentationStyle) {
+    cameraOptions.presentationStyle = presentationStyle;
+  }
+  return picker.launchCameraAsync(cameraOptions);
 };
 
 const toBadgeMeta = (raw: unknown): BadgeMeta | null => {
@@ -274,7 +315,7 @@ export default function ProfileSimple() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const imagePickerRef = useRef<ImagePickerModule | null>(null); // cache dynamic module
-  const avatarDropRef = useRef<any>(null);
+  const avatarDropRef = useRef<PressableHandle | null>(null);
   const [avatarDropActive, setAvatarDropActive] = useState(false);
   // Feature flags discovered at runtime (schema / native capabilities)
   const [supportsInstagram, setSupportsInstagram] = useState(true);
@@ -678,8 +719,11 @@ export default function ProfileSimple() {
 
       try {
         await attemptBaseUpsert(basePayload);
-      } catch (baseError: any) {
-        const message = typeof baseError?.message === 'string' ? baseError.message.toLowerCase() : '';
+      } catch (baseError: unknown) {
+        const message =
+          typeof baseError === 'object' && baseError && 'message' in baseError && typeof (baseError as { message: unknown }).message === 'string'
+            ? ((baseError as { message: string }).message.toLowerCase())
+            : '';
         if (canUseLocation && /last_(lat|lng)/.test(message)) {
           canUseLocation = false;
           setSupportsLocation(false);
@@ -912,7 +956,7 @@ export default function ProfileSimple() {
         uri?: string;
         fileName?: string | null;
         mimeType?: string | null;
-        webFile?: any;
+        webFile?: WebFile;
       },
     ) => {
       const storage = supabase.storage.from('avatars');
@@ -994,10 +1038,13 @@ export default function ProfileSimple() {
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const node = avatarDropRef.current as any;
-    if (!node) return;
+    const node = avatarDropRef.current;
+    const element = node as unknown as HtmlElementLike | null;
+    if (!element || typeof element.addEventListener !== 'function' || typeof element.removeEventListener !== 'function') {
+      return;
+    }
 
-    const handleDragOver = (event: any) => {
+    const handleDragOver = (event: DragEventLike) => {
       event.preventDefault();
       setAvatarDropActive(true);
     };
@@ -1006,13 +1053,13 @@ export default function ProfileSimple() {
       setAvatarDropActive(false);
     };
 
-    const handleDrop = async (event: any) => {
+    const handleDrop = async (event: DragEventLike) => {
       event.preventDefault();
       setAvatarDropActive(false);
       const files = event.dataTransfer?.files;
       if (!files || !files.length) return;
       const file = files[0];
-      if (!file.type.startsWith('image/')) {
+      if (!file?.type?.startsWith('image/')) {
         setErr('Please drop an image file.');
         return;
       }
@@ -1035,14 +1082,14 @@ export default function ProfileSimple() {
       }
     };
 
-    node.addEventListener('dragover', handleDragOver);
-    node.addEventListener('dragleave', handleDragLeave);
-    node.addEventListener('drop', handleDrop);
+    element.addEventListener('dragover', handleDragOver);
+    element.addEventListener('dragleave', handleDragLeave);
+    element.addEventListener('drop', handleDrop);
 
     return () => {
-      node.removeEventListener('dragover', handleDragOver);
-      node.removeEventListener('dragleave', handleDragLeave);
-      node.removeEventListener('drop', handleDrop);
+      element.removeEventListener('dragover', handleDragOver);
+      element.removeEventListener('dragleave', handleDragLeave);
+      element.removeEventListener('drop', handleDrop);
     };
   }, [uploadAvatarFile, supabase]);
 

@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import React from 'react';
 
 // Mock Next.js modules
 jest.mock('next/navigation', () => ({
@@ -58,7 +59,6 @@ jest.mock('mapbox-gl', () => ({
 }));
 
 jest.mock('react-map-gl', () => {
-  const React = require('react');
   const Mock = ({ children }: { children?: React.ReactNode }) =>
     React.createElement('div', { 'data-testid': 'mapbox-mock' }, children);
   const passthrough = ({ children }: { children?: React.ReactNode }) =>

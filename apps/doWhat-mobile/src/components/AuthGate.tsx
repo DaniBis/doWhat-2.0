@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import AuthButtons from './AuthButtons';
@@ -66,8 +67,6 @@ function deriveDraft(session: Session, profile: ProfileRow | null): ProfileDraft
     bio: profile?.bio ?? '',
   };
 }
-
-const { LinearGradient } = require('expo-linear-gradient');
 
 function SignInScreen() {
   return (

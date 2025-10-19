@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import type { User } from "@supabase/supabase-js";
 
 import { supabase } from "@/lib/supabase/browser";
 
@@ -13,7 +14,7 @@ type AuthButtonsProps = {
 };
 
 export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [signingIn, setSigningIn] = useState(false);
   const [showEmail, setShowEmail] = useState(false);

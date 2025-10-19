@@ -68,7 +68,7 @@ const clusterCountLayer: LayerProps = {
   filter: ["has", "point_count"],
   layout: {
     "text-field": "{point_count_abbreviated}",
-    "text-font": MAPBOX_CLUSTER_COUNT_FONT as unknown as string[],
+    "text-font": [...MAPBOX_CLUSTER_COUNT_FONT],
     "text-size": MAPBOX_CLUSTER_COUNT_TEXT_SIZE,
   },
   paint: {
@@ -150,11 +150,11 @@ export default function WebMap({
   }, [activities, selected]);
 
   const featureCollection = useMemo(() => activitiesToFeatureCollection(activities), [activities]);
-  const selectedFilter = useMemo(
+  const selectedFilter = useMemo<NonNullable<LayerProps["filter"]>>(
     () =>
       selected
-        ? (['all', ['!has', 'point_count'], ['==', ['get', 'id'], selected.id]] as const)
-        : (['all', ['==', ['get', 'id'], '__none__']] as const),
+        ? ["all", ["!has", "point_count"], ["==", ["get", "id"], selected.id]]
+        : ["all", ["==", ["get", "id"], "__none__"]],
     [selected],
   );
 
@@ -266,7 +266,7 @@ export default function WebMap({
             id="selected-point"
             type="circle"
             source="activities"
-            filter={selectedFilter as unknown as any}
+            filter={selectedFilter}
             paint={{
               "circle-color": "#ffffff",
               "circle-radius": MAPBOX_POINT_RADIUS + 6,

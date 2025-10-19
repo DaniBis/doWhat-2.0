@@ -60,11 +60,21 @@ target 'doWhat' do
       :mac_catalyst_enabled => false
     )
 
+    # Ensure all pods build with the minimum deployment target required by Mapbox (iOS 15.1+).
+    deployment_target = podfile_properties['ios.deploymentTarget'] || '15.1'
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = podfile_properties['ios.deploymentTarget'] || '15.1'
+        current_target = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        next unless current_target
+
+        if current_target.to_f < deployment_target.to_f
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = deployment_target
+        end
       end
     end
+
+    # Apply rnmapbox specific post install hooks so Mapbox v11 support flags are added.
+    RNMapboxMaps.post_install(installer) if defined?(RNMapboxMaps)
 
     # This is necessary for Xcode 14, because it signs resource bundles by default
     # when building for devices.

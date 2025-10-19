@@ -18,6 +18,14 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
   const plugins = new Set(config.plugins ?? []);
   plugins.add('expo-router');
+  plugins.add([
+    'expo-build-properties',
+    {
+      ios: {
+        deploymentTarget: '15.1',
+      },
+    },
+  ]);
   const resolvedMapboxToken =
     process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
     process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
@@ -52,6 +60,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     ios: {
       bundleIdentifier: 'com.dowhat.app',
+      deploymentTarget: '15.1',
       supportsTablet: true,
       infoPlist: {
         NSLocationWhenInUseUsageDescription: 'We use your location to find nearby activities.',

@@ -42,9 +42,13 @@ jest.mock('expo-location', () => ({
 }));
 
 // Light-touch mocks only when directly imported in unit tests; avoid overriding react-native.
-jest.mock('expo-maps', () => ({
-  MapView: 'MapView'
-}));
+jest.mock(
+  'expo-maps',
+  () => ({
+    MapView: 'MapView',
+  }),
+  { virtual: true }
+);
 
 // Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () => ({
