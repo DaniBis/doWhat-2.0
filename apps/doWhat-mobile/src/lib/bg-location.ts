@@ -93,7 +93,15 @@ export async function ensureBackgroundLocation(): Promise<boolean> {
     if (__DEV__) console.log('[bg-location] started');
     return true;
   } catch (error) {
-    if (__DEV__) console.warn('[bg-location] failed to start', error instanceof Error ? error.message : error);
+    if (error instanceof Error && error.message?.includes('Foreground service permissions were not found')) {
+      if (__DEV__) {
+        console.warn(
+          '[bg-location] foreground service permission missing. Rebuild the native app after adding android.permission.FOREGROUND_SERVICE_LOCATION.',
+        );
+      }
+    } else if (__DEV__) {
+      console.warn('[bg-location] failed to start', error instanceof Error ? error.message : error);
+    }
     return false;
   }
 }

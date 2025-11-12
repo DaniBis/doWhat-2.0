@@ -54,16 +54,46 @@ function resolveHostFromDebugger(): string | null {
 export function getWebBaseUrl(): string {
   if (cachedBaseUrl) return cachedBaseUrl;
 
+  const normaliseCandidate = (candidate?: string | null): string | null => {
+    if (!candidate) return null;
+    const trimmed = trimTrailingSlash(candidate);
+    if (!trimmed) return null;
+    try {
+      const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+      const hostname = url.hostname.toLowerCase();
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !Constants.isDevice) {
+        // iOS simulator can speak to localhost directly.
+        url.hostname = '127.0.0.1';
+        return trimTrailingSlash(url.toString());
+      }
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        const runtimeHost = resolveHostFromDebugger();
+        if (runtimeHost && runtimeHost !== '127.0.0.1' && runtimeHost !== 'localhost') {
+          url.hostname = runtimeHost;
+        }
+      }
+      if (!url.port) {
+        const fallbackPort = process.env.EXPO_PUBLIC_WEB_PORT || process.env.EXPO_PUBLIC_SITE_PORT || '3002';
+        url.port = fallbackPort;
+      }
+      return trimTrailingSlash(url.toString());
+    } catch {
+      return trimmed;
+    }
+  };
+
   for (const candidate of envCandidates) {
-    if (candidate) {
-      cachedBaseUrl = trimTrailingSlash(candidate);
+    const normalised = normaliseCandidate(candidate);
+    if (normalised) {
+      cachedBaseUrl = normalised;
       return cachedBaseUrl;
     }
   }
 
   for (const candidate of extraCandidates()) {
-    if (candidate) {
-      cachedBaseUrl = trimTrailingSlash(candidate);
+    const normalised = normaliseCandidate(candidate);
+    if (normalised) {
+      cachedBaseUrl = normalised;
       return cachedBaseUrl;
     }
   }

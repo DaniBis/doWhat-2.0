@@ -39,6 +39,9 @@ end
 
 target 'doWhat' do
   use_expo_modules!
+# @generated begin react-native-maps - expo prebuild (DO NOT MODIFY) sync-e9cc66c360abe50bc66d89fffb3c55b034d7d369
+  pod 'react-native-google-maps', path: File.dirname(`node --print "require.resolve('react-native-maps/package.json')"`)
+# @generated end react-native-maps
   config = use_native_modules!
 
   use_frameworks! :linkage => podfile_properties['ios.useFrameworks'].to_sym if podfile_properties['ios.useFrameworks']
@@ -47,6 +50,7 @@ target 'doWhat' do
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
+    :fabric_enabled => false,
     # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/..",
     # Note that if you have use_frameworks! enabled, Flipper will not work if enabled
@@ -59,22 +63,6 @@ target 'doWhat' do
       config[:reactNativePath],
       :mac_catalyst_enabled => false
     )
-
-    # Ensure all pods build with the minimum deployment target required by Mapbox (iOS 15.1+).
-    deployment_target = podfile_properties['ios.deploymentTarget'] || '15.1'
-    installer.pods_project.targets.each do |target|
-      target.build_configurations.each do |config|
-        current_target = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-        next unless current_target
-
-        if current_target.to_f < deployment_target.to_f
-          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = deployment_target
-        end
-      end
-    end
-
-    # Apply rnmapbox specific post install hooks so Mapbox v11 support flags are added.
-    RNMapboxMaps.post_install(installer) if defined?(RNMapboxMaps)
 
     # This is necessary for Xcode 14, because it signs resource bundles by default
     # when building for devices.

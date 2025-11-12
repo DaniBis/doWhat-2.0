@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
 	View,
 	Text,
@@ -12,13 +12,17 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
-type FilterOptions = {
-	// People filter options only
-	personalityTraits: string[];
-	skillLevels: string[];
-	ageRanges: string[];
-	groupSizePreference: string[];
-};
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+	DEFAULT_PEOPLE_FILTER_PREFERENCES,
+	countActivePeopleFilters,
+	loadUserPreference,
+	normalisePeopleFilterPreferences,
+	saveUserPreference,
+	type PeopleFilterPreferences,
+} from '@dowhat/shared';
+
+import { supabase } from '../lib/supabase';
 
 type UserTrait = {
 	trait_name: string;
@@ -45,18 +49,107 @@ const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
 const ageRanges = ['18-25', '26-35', '36-45', '46-55', '55+'];
 const groupSizes = ['1-5 people', '6-15 people', '16-30 people', '30+ people'];
 
+const PEOPLE_LOCAL_KEY = 'people_filters:v1';
+
 export default function PeopleFilterScreen() {
-	const [filters, setFilters] = useState<FilterOptions>({
-		personalityTraits: [],
-		skillLevels: [],
-		ageRanges: [],
-		groupSizePreference: [],
-	});
+	const [peopleFilters, setPeopleFilters] = useState<PeopleFilterPreferences>(
+		DEFAULT_PEOPLE_FILTER_PREFERENCES,
+	);
 	const [nearbyTraits, setNearbyTraits] = useState<UserTrait[]>([]);
+	const [userId, setUserId] = useState<string | null>(null);
+	const [initialised, setInitialised] = useState(false);
+	const [isLoading, setIsLoading] = useState(true);
 
 	useEffect(() => {
 		fetchNearbyTraits();
 	}, []);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		const readLocal = async (): Promise<PeopleFilterPreferences | null> => {
+			try {
+				const raw = await AsyncStorage.getItem(PEOPLE_LOCAL_KEY);
+				if (!raw) return null;
+				return normalisePeopleFilterPreferences(JSON.parse(raw) as PeopleFilterPreferences);
+			} catch (error) {
+				console.warn('[people-filters] unable to parse cached filters', error);
+				return null;
+			}
+		};
+
+		const bootstrap = async () => {
+			try {
+				const { data } = await supabase.auth.getUser();
+				if (cancelled) return;
+				const user = data.user ?? null;
+				setUserId(user?.id ?? null);
+
+				if (user?.id) {
+					try {
+						const remote = await loadUserPreference<PeopleFilterPreferences>(
+							supabase,
+							user.id,
+							'people_filters',
+						);
+						if (!cancelled && remote) {
+							setPeopleFilters(normalisePeopleFilterPreferences(remote));
+							return;
+						}
+					} catch (error) {
+						console.warn('[people-filters] failed to load remote preferences', error);
+					}
+				}
+
+				const local = await readLocal();
+				if (!cancelled && local) {
+					setPeopleFilters(local);
+				}
+			} finally {
+				if (!cancelled) {
+					setInitialised(true);
+					setIsLoading(false);
+				}
+			}
+		};
+
+		bootstrap();
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	const persistPreferences = useCallback(
+		async (next: PeopleFilterPreferences) => {
+			const normalised = normalisePeopleFilterPreferences(next);
+			try {
+				await AsyncStorage.setItem(PEOPLE_LOCAL_KEY, JSON.stringify(normalised));
+			} catch (error) {
+				console.warn('[people-filters] unable to cache filters locally', error);
+			}
+			if (userId) {
+				try {
+					await saveUserPreference(supabase, userId, 'people_filters', normalised);
+				} catch (error) {
+					console.warn('[people-filters] failed to persist remote preferences', error);
+				}
+			}
+		},
+		[userId],
+	);
+
+	useEffect(() => {
+		if (!initialised) return;
+		void persistPreferences(peopleFilters);
+	}, [peopleFilters, initialised, persistPreferences]);
+
+	const updatePeopleFilters = useCallback(
+		(updater: (prev: PeopleFilterPreferences) => PeopleFilterPreferences) => {
+			setPeopleFilters((prev) => normalisePeopleFilterPreferences(updater(prev)));
+		},
+		[],
+	);
 
 	const fetchNearbyTraits = async () => {
 		try {
@@ -72,47 +165,38 @@ export default function PeopleFilterScreen() {
 	};
 
 	const toggleFilter = (
-		category:
-			| 'personalityTraits'
-			| 'skillLevels'
-			| 'ageRanges'
-			| 'groupSizePreference',
+		category: 'personalityTraits' | 'skillLevels' | 'ageRanges' | 'groupSizePreference',
 		value: string,
 	) => {
-		setFilters(prev => ({
+		updatePeopleFilters((prev) => ({
 			...prev,
 			[category]: prev[category].includes(value)
 				? prev[category].filter((item) => item !== value)
-				: [...prev[category], value]
+				: [...prev[category], value],
 		}));
 	};
 
-	const getActiveFiltersCount = () => {
-		return filters.personalityTraits.length +
-					 filters.skillLevels.length +
-					 filters.ageRanges.length +
-				 filters.groupSizePreference.length;
-	};
-
 	const clearAllFilters = () => {
-		setFilters({
-			personalityTraits: [],
-			skillLevels: [],
-			ageRanges: [],
-			groupSizePreference: [],
-		});
+		updatePeopleFilters(() => DEFAULT_PEOPLE_FILTER_PREFERENCES);
 	};
 
 	const applyFilters = () => {
-		// In a real app, this would apply the filters to the activity search
-		console.log('Applying filters:', filters);
+		console.log('Applying filters:', peopleFilters);
 		router.back();
 	};
+
+	const activeFiltersCount = useMemo(
+		() => countActivePeopleFilters(peopleFilters),
+		[peopleFilters],
+	);
 
 	// Removed Activity Filters UI
 
 	const renderPeopleFilters = () => (
 		<ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+			{isLoading && (
+				<Text style={styles.loadingText}>Loading your saved preferences…</Text>
+			)}
 			{/* Popular Traits in Your Area */}
 			<View style={styles.filterSection}>
 				<Text style={styles.filterTitle}>Popular Personality Traits Nearby</Text>
@@ -123,15 +207,17 @@ export default function PeopleFilterScreen() {
 							key={trait.trait_name}
 							style={[
 								styles.traitCard,
-								filters.personalityTraits.includes(trait.trait_name) && styles.traitCardActive
+								peopleFilters.personalityTraits.includes(trait.trait_name) && styles.traitCardActive,
 							]}
 							onPress={() => toggleFilter('personalityTraits', trait.trait_name)}
 						>
 							<Text style={styles.traitIcon}>{trait.icon}</Text>
-							<Text style={[
-								styles.traitName,
-								filters.personalityTraits.includes(trait.trait_name) && styles.traitNameActive
-							]}>
+							<Text
+								style={[
+									styles.traitName,
+									peopleFilters.personalityTraits.includes(trait.trait_name) && styles.traitNameActive,
+								]}
+							>
 								{trait.trait_name}
 							</Text>
 							<Text style={styles.traitCount}>{trait.count} people</Text>
@@ -149,14 +235,16 @@ export default function PeopleFilterScreen() {
 							key={level}
 							style={[
 								styles.filterChip,
-								filters.skillLevels.includes(level) && styles.filterChipActive
+								peopleFilters.skillLevels.includes(level) && styles.filterChipActive,
 							]}
 							onPress={() => toggleFilter('skillLevels', level)}
 						>
-							<Text style={[
-								styles.filterChipText,
-								filters.skillLevels.includes(level) && styles.filterChipTextActive
-							]}>
+							<Text
+								style={[
+									styles.filterChipText,
+									peopleFilters.skillLevels.includes(level) && styles.filterChipTextActive,
+								]}
+							>
 								{level}
 							</Text>
 						</TouchableOpacity>
@@ -173,14 +261,16 @@ export default function PeopleFilterScreen() {
 							key={age}
 							style={[
 								styles.filterChip,
-								filters.ageRanges.includes(age) && styles.filterChipActive
+								peopleFilters.ageRanges.includes(age) && styles.filterChipActive,
 							]}
 							onPress={() => toggleFilter('ageRanges', age)}
 						>
-							<Text style={[
-								styles.filterChipText,
-								filters.ageRanges.includes(age) && styles.filterChipTextActive
-							]}>
+							<Text
+								style={[
+									styles.filterChipText,
+									peopleFilters.ageRanges.includes(age) && styles.filterChipTextActive,
+								]}
+							>
 								{age}
 							</Text>
 						</TouchableOpacity>
@@ -197,14 +287,16 @@ export default function PeopleFilterScreen() {
 							key={size}
 							style={[
 								styles.filterChip,
-								filters.groupSizePreference.includes(size) && styles.filterChipActive
+								peopleFilters.groupSizePreference.includes(size) && styles.filterChipActive,
 							]}
 							onPress={() => toggleFilter('groupSizePreference', size)}
 						>
-							<Text style={[
-								styles.filterChipText,
-								filters.groupSizePreference.includes(size) && styles.filterChipTextActive
-							]}>
+							<Text
+								style={[
+									styles.filterChipText,
+									peopleFilters.groupSizePreference.includes(size) && styles.filterChipTextActive,
+								]}
+							>
 								{size}
 							</Text>
 						</TouchableOpacity>
@@ -248,9 +340,13 @@ export default function PeopleFilterScreen() {
 
 			{/* Apply Button */}
 			<View style={styles.bottomBar}>
-				<TouchableOpacity style={styles.applyButton} onPress={applyFilters}>
+				<TouchableOpacity
+					style={[styles.applyButton, isLoading && styles.applyButtonDisabled]}
+					onPress={applyFilters}
+					disabled={isLoading}
+				>
 					<Text style={styles.applyButtonText}>
-						Apply {getActiveFiltersCount() > 0 ? `${getActiveFiltersCount()} ` : ''}Filters
+						Apply {activeFiltersCount > 0 ? `${activeFiltersCount} ` : ''}Filters
 					</Text>
 				</TouchableOpacity>
 			</View>
@@ -333,6 +429,12 @@ const styles = StyleSheet.create({
 	filterSection: {
 		marginHorizontal: 20,
 		marginBottom: 28,
+	},
+	loadingText: {
+		marginHorizontal: 20,
+		marginBottom: 12,
+		fontSize: 12,
+		color: '#6B7280',
 	},
 	filterTitle: {
 		fontSize: 18,
@@ -418,10 +520,12 @@ const styles = StyleSheet.create({
 		paddingVertical: 16,
 		alignItems: 'center',
 	},
+	applyButtonDisabled: {
+		opacity: 0.6,
+	},
 	applyButtonText: {
 		fontSize: 16,
 		fontWeight: '700',
 		color: '#FFFFFF',
 	},
 });
-

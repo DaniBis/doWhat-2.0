@@ -45,6 +45,7 @@ export interface MapActivitiesResponse {
 }
 
 export type MapActivityFeatureProperties = {
+  kind: 'activity';
   id: string;
   name: string;
   venue?: string | null;
@@ -67,7 +68,29 @@ export interface MapActivityFeature {
   properties: MapActivityFeatureProperties;
 }
 
+export type EventFeatureProperties = {
+  kind: 'event';
+  id: string;
+  title: string;
+  start_at: string;
+  end_at?: string | null;
+  venue_name?: string | null;
+  url?: string | null;
+  status: string;
+  tags?: string[] | null;
+  place_id?: string | null;
+};
+
+export type MapFeature = MapActivityFeature | {
+  type: 'Feature';
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
+  properties: EventFeatureProperties;
+};
+
 export interface MapFeatureCollection {
   type: 'FeatureCollection';
-  features: MapActivityFeature[];
+  features: MapFeature[];
 }

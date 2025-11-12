@@ -1,0 +1,66 @@
+BEGIN:VCALENDAR
+PRODID:-//DoWhat//Event Fixture//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:bkk-fixture-001@dowhat
+DTSTAMP:20250301T020000Z
+DTSTART;TZID=Asia/Bangkok:20250305T183000
+DTEND;TZID=Asia/Bangkok:20250305T200000
+SUMMARY:Chao Phraya Sunset Yoga
+DESCRIPTION:Sunset rooftop yoga session overlooking the river. Mats provided.
+LOCATION:River Deck Rooftop, 123 Riverside Rd, Bangkok
+GEO:13.724500;100.515800
+CATEGORIES:fitness,yoga
+URL:https://example.com/events/bkk-sunset-yoga
+END:VEVENT
+BEGIN:VEVENT
+UID:bkk-fixture-002@dowhat
+DTSTAMP:20250301T021000Z
+DTSTART;TZID=Asia/Bangkok:20250306T090000
+DTEND;TZID=Asia/Bangkok:20250306T110000
+SUMMARY:Bangkok Board Game Brunch
+DESCRIPTION:Morning board games meetup with coffee and pastries included.
+LOCATION:Gamehaus Sathorn, 42 Naradhiwas, Bangkok
+GEO:13.720200;100.526700
+CATEGORIES:community,board_games
+URL:https://example.com/events/bkk-boardgame-brunch
+END:VEVENT
+BEGIN:VEVENT
+UID:bkk-fixture-003@dowhat
+DTSTAMP:20250301T022000Z
+DTSTART;TZID=Asia/Bangkok:20250307T193000
+DTEND;TZID=Asia/Bangkok:20250307T213000
+SUMMARY:Silom Social Run
+DESCRIPTION:5 km social run followed by refreshments at the finish line.
+LOCATION:Lumpini Park Gate 4, Bangkok
+GEO:13.729900;100.541300
+CATEGORIES:fitness,running
+URL:https://example.com/events/bkk-social-run
+END:VEVENT
+BEGIN:VEVENT
+UID:bkk-fixture-004@dowhat
+DTSTAMP:20250301T023000Z
+DTSTART;TZID=Asia/Bangkok:20250308T140000
+DTEND;TZID=Asia/Bangkok:20250308T160000
+SUMMARY:Creative Watercolour Workshop
+DESCRIPTION:Hands-on watercolour class with local artist. Materials included.
+LOCATION:Art Loft, 55 Soi Chulalongkorn, Bangkok
+GEO:13.736800;100.530400
+CATEGORIES:arts_culture,workshop
+URL:https://example.com/events/bkk-watercolour
+END:VEVENT
+BEGIN:VEVENT
+UID:bkk-fixture-005@dowhat
+DTSTAMP:20250301T024000Z
+DTSTART;TZID=Asia/Bangkok:20250309T100000
+DTEND;TZID=Asia/Bangkok:20250309T123000
+SUMMARY:Weekend Chess in the Park
+DESCRIPTION:Open-air chess tournament with timed matches and prizes.
+LOCATION:Benjakitti Park Pavilion, Bangkok
+GEO:13.728600;100.560200
+CATEGORIES:community,chess
+URL:https://example.com/events/bkk-chess-park
+END:VEVENT
+END:VCALENDAR

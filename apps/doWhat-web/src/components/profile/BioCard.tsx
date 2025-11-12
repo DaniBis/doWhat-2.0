@@ -10,7 +10,14 @@ export function BioCard({ bio: initialBio, editable, onSave }: { bio?: string; e
   async function handleSave() {
     if (!onSave) return;
     setSaving(true); setMsg('');
-    try { await onSave(bio); setMsg('Saved'); setEditing(false);} catch(e:any){ setMsg(e.message||'Failed'); }
+    try {
+      await onSave(bio);
+      setMsg('Saved');
+      setEditing(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed';
+      setMsg(message);
+    }
     finally { setSaving(false); }
   }
   return (

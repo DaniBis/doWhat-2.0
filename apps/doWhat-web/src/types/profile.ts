@@ -46,5 +46,5 @@ export type Activity = {
   ts: string; // ISO timestamp
   kind: string;
   label: string;
-  meta?: Record<string, any>;
+  meta?: Record<string, unknown>;
 };

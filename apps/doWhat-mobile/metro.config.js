@@ -1,3 +1,4 @@
+const fs = require("fs");
 const path = require("path");
 
 const { getDefaultConfig } = require("expo/metro-config");
@@ -18,6 +19,39 @@ try {
   );
 } catch (e) {
   expoRouterPath = null;
+}
+
+// Metro still resolves "./node_modules/expo-router/entry" relative to the project root.
+// When using pnpm the package physically lives under the workspace root, so we ensure
+// a stable symlink exists within the app's local node_modules directory. This mirrors
+// what Yarn/npm would provide and prevents repeated 404s for expo-router/entry when
+// the Android dev client requests the bundle.
+if (expoRouterPath) {
+  const localExpoRouterPath = path.join(projectRoot, "node_modules", "expo-router");
+  try {
+    const stats = fs.lstatSync(localExpoRouterPath);
+    const isDirOrLink = stats.isDirectory() || stats.isSymbolicLink();
+    let pointsToCorrectTarget = false;
+    if (stats.isSymbolicLink()) {
+      try {
+        pointsToCorrectTarget = fs.realpathSync(localExpoRouterPath) === expoRouterPath;
+      } catch {
+        pointsToCorrectTarget = false;
+      }
+    }
+
+    if (!isDirOrLink || (stats.isSymbolicLink() && !pointsToCorrectTarget)) {
+      fs.rmSync(localExpoRouterPath, { force: true, recursive: true });
+      fs.symlinkSync(expoRouterPath, localExpoRouterPath, "junction");
+    }
+  } catch (error) {
+    fs.mkdirSync(path.dirname(localExpoRouterPath), { recursive: true });
+    try {
+      fs.symlinkSync(expoRouterPath, localExpoRouterPath, "junction");
+    } catch (linkError) {
+      console.warn("[metro.config] Failed to create expo-router symlink:", linkError.message);
+    }
+  }
 }
 
 // Watch the whole monorepo and pnpm virtual store
@@ -95,6 +129,6 @@ config.transformer.getTransformOptions = async () => ({
 });
 
 // Ensure proper resolver configuration for Hermes
-config.resolver.sourceExts = ['jsx', 'js', 'ts', 'tsx', 'json', 'cjs'];
+config.resolver.sourceExts = ['jsx', 'js', 'ts', 'tsx', 'json', 'cjs', 'mjs'];
 
 module.exports = config;

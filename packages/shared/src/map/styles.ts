@@ -11,4 +11,4 @@ export const MAPBOX_POINT_STROKE_WIDTH = 2;
 
 export const MAPBOX_CLUSTER_COUNT_TEXT_COLOR = "#0f172a";
 export const MAPBOX_CLUSTER_COUNT_TEXT_SIZE = 12;
-export const MAPBOX_CLUSTER_COUNT_FONT = ["Inter Semi Bold", "Arial Unicode MS Bold"] as const;
+export const MAPBOX_CLUSTER_COUNT_FONT = ["DIN Pro Medium", "Arial Unicode MS Bold"] as const;

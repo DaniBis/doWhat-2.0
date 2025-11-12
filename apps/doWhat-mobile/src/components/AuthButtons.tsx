@@ -1,16 +1,24 @@
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useState } from 'react';
-import { View, Text, Pressable, TextInput, ActivityIndicator, Linking } from 'react-native';
+import Constants from 'expo-constants';
+import { useEffect, useMemo, useState } from 'react';
+import { View, Text, Pressable, TextInput, ActivityIndicator, Linking, Platform } from 'react-native';
 
 import { supabase } from '../lib/supabase';
 import { getDeepLinkParam } from '../lib/deepLinking';
 
 type AuthSessionLike = {
-  makeRedirectUri: (options?: { useProxy?: boolean; path?: string }) => string;
+  makeRedirectUri: (options?: { useProxy?: boolean; path?: string; scheme?: string }) => string;
+  startAsync?: (config: { authUrl: string; returnUrl?: string }) => Promise<{ type: string; url?: string; params?: Record<string, string> }>;
 };
 
+const FALLBACK_SCHEME = 'dowhat';
+
 const fallbackAuthSession: AuthSessionLike = {
-  makeRedirectUri: ({ path } = {}) => (path ? `dowhat://${path}` : 'dowhat://auth-callback'),
+  makeRedirectUri: ({ path, scheme } = {}) => {
+    const resolvedScheme = scheme || FALLBACK_SCHEME;
+    return path ? `${resolvedScheme}://${path}` : `${resolvedScheme}://auth-callback`;
+  },
+  startAsync: undefined,
 };
 
 let AuthSession: AuthSessionLike = fallbackAuthSession;
@@ -31,7 +39,9 @@ const extractQueryParam = (url: string, key: string): string | undefined => getD
 function useSupabaseOAuthListener() {
   useEffect(() => {
     // Completes auth session on iOS after returning from SFSafariViewController
-    try { WebBrowser.maybeCompleteAuthSession?.(); } catch {}
+    try {
+      WebBrowser.maybeCompleteAuthSession?.();
+    } catch {}
 
     const handleURL = async (url: string) => {
       try {
@@ -45,7 +55,9 @@ function useSupabaseOAuthListener() {
     };
 
     const subscription = Linking.addEventListener('url', ({ url }: LinkingEvent) => handleURL(url));
-    Linking.getInitialURL().then((initialUrl) => { if (initialUrl) handleURL(initialUrl); });
+    Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl) handleURL(initialUrl);
+    });
     return () => subscription.remove();
   }, []);
 }
@@ -60,6 +72,40 @@ export default function AuthButtons() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const redirectTo = useMemo(() => {
+    const scheme = (Constants?.expoConfig?.scheme as string | undefined) ?? FALLBACK_SCHEME;
+    const appOwnership = Constants?.appOwnership ?? null;
+    const shouldUseProxy = appOwnership === 'expo' && Platform.OS !== 'web';
+
+    try {
+      return AuthSession.makeRedirectUri({
+        path: 'auth-callback',
+        scheme,
+        useProxy: shouldUseProxy,
+      });
+    } catch (error) {
+      if (__DEV__) console.warn('[auth] makeRedirectUri failed, falling back', error);
+      return `${scheme}://auth-callback`;
+    }
+  }, []);
+
+  const startAuthFlow = useMemo(() => {
+    return async (authUrl: string) => {
+      if (!authUrl) return null;
+
+      if (AuthSession.startAsync) {
+        return AuthSession.startAsync({ authUrl, returnUrl: redirectTo });
+      }
+
+      if (WebBrowser.openAuthSessionAsync) {
+        return WebBrowser.openAuthSessionAsync(authUrl, redirectTo);
+      }
+
+      await Linking.openURL(authUrl);
+      return null;
+    };
+  }, [redirectTo]);
 
   useEffect(() => {
     let mounted = true;
@@ -77,47 +123,101 @@ export default function AuthButtons() {
   }, []);
 
   async function signIn() {
-    // Compute both native deep link and Expo proxy URL; prefer proxy in Expo Go
-    const redirectTo = AuthSession.makeRedirectUri({ useProxy: true, path: 'auth-callback' });
-    if (__DEV__) console.log('[auth] redirectTo', redirectTo);
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo },
-    });
-    if (__DEV__) console.log('[auth] signInWithOAuth error?', error?.message);
-    if (__DEV__) console.log('[auth] supabase auth url', data?.url);
-    if (error) {
-      console.warn('[auth] error', error.message);
-      return;
-    }
-    if (data?.url) {
-      // Open auth and wait for redirect back to our redirectTo
-      if (__DEV__) console.log('[auth] opening browser to', data.url);
-      const result = WebBrowser.openAuthSessionAsync
-        ? await WebBrowser.openAuthSessionAsync(data.url, redirectTo)
-        : null;
-      if (__DEV__) console.log('[auth] auth result', result);
-      if (result?.type === 'success' && result.url) {
-        // Parse both fragment (#) and query (?) params
-        const url = result.url;
-        const fragment = url.split('#')[1] || '';
-        const query = url.split('?')[1] || '';
-        const params = new URLSearchParams(fragment || query);
-        const code = params.get('code') || undefined;
-        const accessToken = params.get('access_token') || undefined;
-        const refreshToken = params.get('refresh_token') || undefined;
-        if (__DEV__) console.log('[auth] parsed params', { code, accessToken: !!accessToken, refreshToken: !!refreshToken });
-        if (code) {
-          await supabase.auth.exchangeCodeForSession(code);
-        } else if (accessToken) {
-          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
-        }
+    setErr(null);
+    setBusy(true);
+    try {
+      if (__DEV__) console.log('[auth] redirectTo', redirectTo);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+      if (__DEV__) console.log('[auth] signInWithOAuth error?', error?.message);
+      if (__DEV__) console.log('[auth] supabase auth url', data?.url);
+      if (error) {
+        throw error;
       }
+      if (!data?.url) {
+        throw new Error('Unable to start Google sign-in.');
+      }
+
+      const result = await startAuthFlow(data.url);
+      if (__DEV__) console.log('[auth] auth result', result);
+      if (!result || typeof result !== 'object') {
+        return;
+      }
+
+      if ('type' in result && result.type && result.type !== 'success') {
+        if (__DEV__) console.log('[auth] auth flow ended with', result.type);
+        return;
+      }
+
+      const paramsFromResult = 'params' in result ? result.params ?? {} : {};
+      const errorMessage = paramsFromResult?.error_description || paramsFromResult?.error;
+      if (errorMessage) {
+        setErr(errorMessage);
+        return;
+      }
+
+      const directCode = paramsFromResult?.code;
+      const directAccessToken = paramsFromResult?.access_token;
+      const directRefreshToken = paramsFromResult?.refresh_token;
+      if (directCode) {
+        await supabase.auth.exchangeCodeForSession(directCode);
+        setErr(null);
+        return;
+      }
+      if (directAccessToken) {
+        await supabase.auth.setSession({ access_token: directAccessToken, refresh_token: directRefreshToken ?? '' });
+        setErr(null);
+        return;
+      }
+
+      const url = 'url' in result && typeof result.url === 'string' ? result.url : undefined;
+      if (!url) {
+        setErr('Google sign-in did not return a session.');
+        return;
+      }
+
+      const fragment = url.split('#')[1] || '';
+      const query = url.split('?')[1] || '';
+      const params = new URLSearchParams(fragment || query);
+      const code = params.get('code') || undefined;
+      const accessToken = params.get('access_token') || undefined;
+      const refreshToken = params.get('refresh_token') || undefined;
+      const paramError = params.get('error') || params.get('error_description');
+
+      if (paramError) {
+        setErr(paramError);
+        return;
+      }
+
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+        setErr(null);
+        return;
+      }
+      if (accessToken) {
+        await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
+        setErr(null);
+        return;
+      }
+
+      setErr('Google sign-in was cancelled before completion.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to sign in right now.';
+      if (__DEV__) console.warn('[auth] signIn error', message, error);
+      setErr(message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function signOut() {
     await supabase.auth.signOut();
+    setErr(null);
   }
 
   async function signInWithEmail() {
@@ -126,13 +226,20 @@ export default function AuthButtons() {
     try {
       if (!email || !password) throw new Error('Email and password are required');
       if (isSignup) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
+        if (!data.session) {
+          setErr('Check your inbox to confirm your email before signing in.');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
     } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'email_address_invalid') {
+        setErr('Please use a valid email address (e.g., Gmail or your real provider).');
+        return;
+      }
       setErr(error instanceof Error ? error.message : 'Authentication failed');
     } finally {
       setBusy(false);
@@ -205,8 +312,15 @@ export default function AuthButtons() {
                 <Text style={{ color: '#f1f5f9', fontSize: 16, fontWeight: '700' }}>Continue with Google</Text>
               </Pressable>
 
+              {err && !emailMode && (
+                <Text style={{ color: '#b91c1c', fontWeight: '500', textAlign: 'center' }}>{err}</Text>
+              )}
+
               <Pressable
-                onPress={() => setEmailMode(true)}
+                onPress={() => {
+                  setErr(null);
+                  setEmailMode(true);
+                }}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
@@ -228,7 +342,12 @@ export default function AuthButtons() {
                 <Text style={{ color: '#0f172a', fontSize: 15, fontWeight: '600' }}>
                   {isSignup ? 'Create account' : 'Sign in with email'}
                 </Text>
-                <Pressable onPress={() => setIsSignup(!isSignup)}>
+                <Pressable
+                  onPress={() => {
+                    setErr(null);
+                    setIsSignup((value) => !value);
+                  }}
+                >
                   <Text style={{ color: '#0d9488', fontWeight: '600' }}>
                     {isSignup ? 'Have an account?' : 'Need an account?'}
                   </Text>
@@ -286,7 +405,12 @@ export default function AuthButtons() {
                   </Text>
                 )}
               </Pressable>
-              <Pressable onPress={() => setEmailMode(false)}>
+              <Pressable
+                onPress={() => {
+                  setErr(null);
+                  setEmailMode(false);
+                }}
+              >
                 <Text style={{ color: '#475569', textAlign: 'center', fontWeight: '500' }}>Back</Text>
               </Pressable>
             </View>

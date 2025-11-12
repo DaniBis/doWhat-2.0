@@ -44,13 +44,16 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
     });
 
     if (!res.ok) {
-      let info: any = null;
+      let info: unknown = null;
       try {
         info = await res.json();
       } catch {
         // ignore
       }
-      const message = info?.error || `Failed to load nearby activities (${res.status})`;
+      const message =
+        (typeof info === 'object' && info && 'error' in info && typeof (info as { error?: unknown }).error === 'string'
+          ? (info as { error: string }).error
+          : null) || `Failed to load nearby activities (${res.status})`;
       throw new Error(message);
     }
 

@@ -15,7 +15,7 @@ const getPublicUrlMock = jest.fn().mockReturnValue({ data: { publicUrl: 'https:/
 jest.mock('@/lib/supabase/browser', () => ({
   supabase: {
     storage: {
-      from: jest.fn((bucket: string) => ({
+  from: jest.fn(() => ({
         upload: uploadMock,
         getPublicUrl: getPublicUrlMock,
       }))

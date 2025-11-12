@@ -22,8 +22,6 @@ type Event = {
 };
 
 type Activity = { id: string; name: string };
-type Venue = { id: string; name: string };
-
 export default function SearchPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -32,12 +30,10 @@ export default function SearchPage() {
   const [results, setResults] = useState<Event[]>([]);
   const [loading, setLoading] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [venues, setVenues] = useState<Venue[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
-  
+
   // Filters
   const [selectedActivityIds, setSelectedActivityIds] = useState<string[]>([]);
-  const [selectedVenueIds, setSelectedVenueIds] = useState<string[]>([]);
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]);
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
     start: new Date().toISOString().split('T')[0],
@@ -70,13 +66,9 @@ export default function SearchPage() {
       const { data: auth } = await supabase.auth.getUser();
       setUserId(auth?.user?.id ?? null);
 
-      const [activitiesRes, venuesRes] = await Promise.all([
-        supabase.from('activities').select('id, name').order('name'),
-        supabase.from('venues').select('id, name').order('name'),
-      ]);
+      const { data: activitiesRes } = await supabase.from('activities').select('id, name').order('name');
       
-      if (activitiesRes.data) setActivities(activitiesRes.data);
-      if (venuesRes.data) setVenues(venuesRes.data);
+      if (activitiesRes) setActivities(activitiesRes);
     })();
   }, []);
 
@@ -99,11 +91,6 @@ export default function SearchPage() {
       // Filter by activities
       if (selectedActivityIds.length > 0) {
         queryBuilder = queryBuilder.in('activity_id', selectedActivityIds);
-      }
-
-      // Filter by venues
-      if (selectedVenueIds.length > 0) {
-        queryBuilder = queryBuilder.in('venue_id', selectedVenueIds);
       }
 
       // Text search
@@ -161,7 +148,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [query, selectedActivityIds, selectedVenueIds, priceRange, dateRange, maxDistance, userLocation, sortBy]);
+  }, [query, selectedActivityIds, priceRange, dateRange, maxDistance, userLocation, sortBy]);
 
   // Perform search when filters change
   useEffect(() => {
@@ -335,12 +322,11 @@ export default function SearchPage() {
           {loading ? 'Searching...' : `${results.length} events found`}
         </h2>
         
-        {(selectedActivityIds.length > 0 || selectedVenueIds.length > 0 || query) && (
+        {(selectedActivityIds.length > 0 || query) && (
           <button
             onClick={() => {
               setQuery('');
               setSelectedActivityIds([]);
-              setSelectedVenueIds([]);
               setPriceRange([0, 100]);
               setDateRange({
                 start: new Date().toISOString().split('T')[0],

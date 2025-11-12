@@ -1,19 +1,22 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 
-type FilterOptions = {
-  radius: number;
-  priceRange: [number, number];
-  categories: string[];
-  timeOfDay: string[];
-  // People filter options
-  personalityTraits: string[];
-  skillLevels: string[];
-  ageRanges: string[];
-  groupSizePreference: string[];
-};
+import {
+  DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  DEFAULT_PEOPLE_FILTER_PREFERENCES,
+  countActiveActivityFilters,
+  countActivePeopleFilters,
+  loadUserPreference,
+  normaliseActivityFilterPreferences,
+  normalisePeopleFilterPreferences,
+  saveUserPreference,
+  type ActivityFilterPreferences,
+  type PeopleFilterPreferences,
+} from '@dowhat/shared';
+
+import { supabase } from '@/lib/supabase/browser';
 
 type UserTrait = {
   trait_name: string;
@@ -57,17 +60,21 @@ const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
 const ageRanges = ['18-25', '26-35', '36-45', '46-55', '55+'];
 const groupSizes = ['1-5 people', '6-15 people', '16-30 people', '30+ people'];
 
+const ACTIVITY_LOCAL_KEY = 'activity_filters:v1';
+const PEOPLE_LOCAL_KEY = 'people_filters:v1';
+
+type PeopleArrayKeys = 'personalityTraits' | 'skillLevels' | 'ageRanges' | 'groupSizePreference';
+
 export default function PeopleFilterPage() {
-  const [filters, setFilters] = useState<FilterOptions>({
-    radius: 10,
-    priceRange: [0, 100],
-    categories: [],
-    timeOfDay: [],
-    personalityTraits: [],
-    skillLevels: [],
-    ageRanges: [],
-    groupSizePreference: [],
-  });
+  const [activityFilters, setActivityFilters] = useState<ActivityFilterPreferences>(
+    DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  );
+  const [peopleFilters, setPeopleFilters] = useState<PeopleFilterPreferences>(
+    DEFAULT_PEOPLE_FILTER_PREFERENCES,
+  );
+  const [userId, setUserId] = useState<string | null>(null);
+  const [initialised, setInitialised] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'activities' | 'people'>('people');
   const [nearbyTraits, setNearbyTraits] = useState<UserTrait[]>([]);
@@ -75,6 +82,153 @@ export default function PeopleFilterPage() {
   useEffect(() => {
     fetchNearbyTraits();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const readLocalActivity = (): ActivityFilterPreferences | null => {
+      if (typeof window === 'undefined') return null;
+      try {
+        const raw = window.localStorage.getItem(ACTIVITY_LOCAL_KEY);
+        if (!raw) return null;
+        return normaliseActivityFilterPreferences(JSON.parse(raw) as ActivityFilterPreferences);
+      } catch (error) {
+        console.warn('[people-filters] failed to parse cached activity filters', error);
+        return null;
+      }
+    };
+
+    const readLocalPeople = (): PeopleFilterPreferences | null => {
+      if (typeof window === 'undefined') return null;
+      try {
+        const raw = window.localStorage.getItem(PEOPLE_LOCAL_KEY);
+        if (!raw) return null;
+        return normalisePeopleFilterPreferences(JSON.parse(raw) as PeopleFilterPreferences);
+      } catch (error) {
+        console.warn('[people-filters] failed to parse cached people filters', error);
+        return null;
+      }
+    };
+
+    const bootstrap = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const user = data.user ?? null;
+        setUserId(user?.id ?? null);
+
+        if (user?.id) {
+          try {
+            const [remoteActivity, remotePeople] = await Promise.all([
+              loadUserPreference<ActivityFilterPreferences>(supabase, user.id, 'activity_filters'),
+              loadUserPreference<PeopleFilterPreferences>(supabase, user.id, 'people_filters'),
+            ]);
+            if (!cancelled) {
+              if (remoteActivity) {
+                setActivityFilters(normaliseActivityFilterPreferences(remoteActivity));
+              } else {
+                const fallback = readLocalActivity();
+                if (fallback) setActivityFilters(fallback);
+              }
+              if (remotePeople) {
+                setPeopleFilters(normalisePeopleFilterPreferences(remotePeople));
+              } else {
+                const fallback = readLocalPeople();
+                if (fallback) setPeopleFilters(fallback);
+              }
+            }
+            return;
+          } catch (error) {
+            console.warn('[people-filters] failed to load remote preferences', error);
+          }
+        }
+
+        if (!cancelled) {
+          const localActivity = readLocalActivity();
+          if (localActivity) setActivityFilters(localActivity);
+          const localPeople = readLocalPeople();
+          if (localPeople) setPeopleFilters(localPeople);
+        }
+      } finally {
+        if (!cancelled) {
+          setInitialised(true);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistActivity = useCallback(
+    async (next: ActivityFilterPreferences) => {
+      const normalised = normaliseActivityFilterPreferences(next);
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(ACTIVITY_LOCAL_KEY, JSON.stringify(normalised));
+        } catch (error) {
+          console.warn('[people-filters] unable to cache activity filters locally', error);
+        }
+      }
+      if (userId) {
+        try {
+          await saveUserPreference(supabase, userId, 'activity_filters', normalised);
+        } catch (error) {
+          console.warn('[people-filters] failed to persist activity filters remotely', error);
+        }
+      }
+    },
+    [userId],
+  );
+
+  const persistPeople = useCallback(
+    async (next: PeopleFilterPreferences) => {
+      const normalised = normalisePeopleFilterPreferences(next);
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(PEOPLE_LOCAL_KEY, JSON.stringify(normalised));
+        } catch (error) {
+          console.warn('[people-filters] unable to cache people filters locally', error);
+        }
+      }
+      if (userId) {
+        try {
+          await saveUserPreference(supabase, userId, 'people_filters', normalised);
+        } catch (error) {
+          console.warn('[people-filters] failed to persist people filters remotely', error);
+        }
+      }
+    },
+    [userId],
+  );
+
+  useEffect(() => {
+    if (!initialised) return;
+    void persistActivity(activityFilters);
+  }, [activityFilters, initialised, persistActivity]);
+
+  useEffect(() => {
+    if (!initialised) return;
+    void persistPeople(peopleFilters);
+  }, [peopleFilters, initialised, persistPeople]);
+
+  const updateActivityFilters = useCallback(
+    (updater: (prev: ActivityFilterPreferences) => ActivityFilterPreferences) => {
+      setActivityFilters((prev) => normaliseActivityFilterPreferences(updater(prev)));
+    },
+    [],
+  );
+
+  const updatePeopleFilters = useCallback(
+    (updater: (prev: PeopleFilterPreferences) => PeopleFilterPreferences) => {
+      setPeopleFilters((prev) => normalisePeopleFilterPreferences(updater(prev)));
+    },
+    [],
+  );
 
   const fetchNearbyTraits = async () => {
     try {
@@ -89,44 +243,54 @@ export default function PeopleFilterPage() {
     }
   };
 
-  const toggleFilter = (category: 'categories' | 'timeOfDay' | 'personalityTraits' | 'skillLevels' | 'ageRanges' | 'groupSizePreference', value: string) => {
-    setFilters(prev => ({
+  const toggleFilter = (
+    category: 'categories' | 'timeOfDay' | PeopleArrayKeys,
+    value: string,
+  ) => {
+    if (category === 'categories') {
+      updateActivityFilters((prev) => ({
+        ...prev,
+        categories: prev.categories.includes(value)
+          ? prev.categories.filter((item) => item !== value)
+          : [...prev.categories, value],
+      }));
+      return;
+    }
+    if (category === 'timeOfDay') {
+      updateActivityFilters((prev) => ({
+        ...prev,
+        timeOfDay: prev.timeOfDay.includes(value)
+          ? prev.timeOfDay.filter((item) => item !== value)
+          : [...prev.timeOfDay, value],
+      }));
+      return;
+    }
+
+    updatePeopleFilters((prev) => ({
       ...prev,
       [category]: prev[category].includes(value)
-        ? prev[category].filter((item) => item !== value)
-        : [...prev[category], value]
+        ? prev[category].filter((item: string) => item !== value)
+        : [...prev[category], value],
     }));
   };
 
-  const getActiveFiltersCount = () => {
-    return filters.categories.length + 
-           filters.timeOfDay.length +
-           filters.personalityTraits.length +
-           filters.skillLevels.length +
-           filters.ageRanges.length +
-           filters.groupSizePreference.length +
-           (filters.radius !== 10 ? 1 : 0) +
-           (filters.priceRange[0] !== 0 || filters.priceRange[1] !== 100 ? 1 : 0);
-  };
-
   const clearAllFilters = () => {
-    setFilters({
-      radius: 10,
-      priceRange: [0, 100],
-      categories: [],
-      timeOfDay: [],
-      personalityTraits: [],
-      skillLevels: [],
-      ageRanges: [],
-      groupSizePreference: [],
-    });
+    updateActivityFilters(() => DEFAULT_ACTIVITY_FILTER_PREFERENCES);
+    updatePeopleFilters(() => DEFAULT_PEOPLE_FILTER_PREFERENCES);
   };
 
   const applyFilters = () => {
-    // In a real app, this would apply the filters to the activity search
-    console.log('Applying filters:', filters);
+    console.log('Applying filters:', {
+      activity: activityFilters,
+      people: peopleFilters,
+    });
     window.history.back();
   };
+
+  const activeFiltersCount = useMemo(
+    () => countActiveActivityFilters(activityFilters) + countActivePeopleFilters(peopleFilters),
+    [activityFilters, peopleFilters],
+  );
 
   const renderActivityFilters = () => (
     <div className="space-y-8">
@@ -138,7 +302,7 @@ export default function PeopleFilterPage() {
             <button
               key={category}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                filters.categories.includes(category)
+                activityFilters.categories.includes(category)
                   ? 'bg-blue-500 border-blue-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-blue-500 hover:text-blue-500'
               }`}
@@ -158,7 +322,7 @@ export default function PeopleFilterPage() {
             <button
               key={time}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                filters.timeOfDay.includes(time)
+                activityFilters.timeOfDay.includes(time)
                   ? 'bg-blue-500 border-blue-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-blue-500 hover:text-blue-500'
               }`}
@@ -176,17 +340,27 @@ export default function PeopleFilterPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-medium text-gray-900">Distance: {filters.radius} miles</span>
+              <span className="font-medium text-gray-900">Distance: {activityFilters.radius} miles</span>
               <div className="flex gap-2">
                 <button 
                   className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600"
-                  onClick={() => setFilters(prev => ({...prev, radius: Math.max(1, prev.radius - 5)}))}
+                  onClick={() =>
+                    updateActivityFilters((prev) => ({
+                      ...prev,
+                      radius: Math.max(1, prev.radius - 5),
+                    }))
+                  }
                 >
                   -
                 </button>
                 <button 
                   className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600"
-                  onClick={() => setFilters(prev => ({...prev, radius: Math.min(50, prev.radius + 5)}))}
+                  onClick={() =>
+                    updateActivityFilters((prev) => ({
+                      ...prev,
+                      radius: Math.min(50, prev.radius + 5),
+                    }))
+                  }
                 >
                   +
                 </button>
@@ -195,7 +369,7 @@ export default function PeopleFilterPage() {
           </div>
           
           <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="font-medium text-gray-900 mb-1">Budget: ${filters.priceRange[0]} - ${filters.priceRange[1]}</div>
+            <div className="font-medium text-gray-900 mb-1">Budget: ${activityFilters.priceRange[0]} - ${activityFilters.priceRange[1]}</div>
             <div className="text-sm text-gray-500">Click to adjust price range</div>
           </div>
         </div>
@@ -214,7 +388,7 @@ export default function PeopleFilterPage() {
             <button
               key={trait.trait_name}
               className={`p-4 rounded-lg border-2 text-center transition-all ${
-                filters.personalityTraits.includes(trait.trait_name)
+                peopleFilters.personalityTraits.includes(trait.trait_name)
                   ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-200 bg-white hover:border-blue-300'
               }`}
@@ -222,7 +396,7 @@ export default function PeopleFilterPage() {
             >
               <div className="text-2xl mb-2">{trait.icon}</div>
               <div className={`font-medium text-sm mb-1 ${
-                filters.personalityTraits.includes(trait.trait_name) ? 'text-blue-700' : 'text-gray-900'
+                peopleFilters.personalityTraits.includes(trait.trait_name) ? 'text-blue-700' : 'text-gray-900'
               }`}>
                 {trait.trait_name}
               </div>
@@ -240,7 +414,7 @@ export default function PeopleFilterPage() {
             <button
               key={level}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                filters.skillLevels.includes(level)
+                peopleFilters.skillLevels.includes(level)
                   ? 'bg-purple-500 border-purple-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-purple-500 hover:text-purple-500'
               }`}
@@ -260,7 +434,7 @@ export default function PeopleFilterPage() {
             <button
               key={age}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                filters.ageRanges.includes(age)
+                peopleFilters.ageRanges.includes(age)
                   ? 'bg-green-500 border-green-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-green-500 hover:text-green-500'
               }`}
@@ -280,7 +454,7 @@ export default function PeopleFilterPage() {
             <button
               key={size}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                filters.groupSizePreference.includes(size)
+                peopleFilters.groupSizePreference.includes(size)
                   ? 'bg-orange-500 border-orange-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-orange-500 hover:text-orange-500'
               }`}
@@ -344,6 +518,9 @@ export default function PeopleFilterPage() {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
+        {isLoading && (
+          <div className="mb-6 text-sm text-gray-500">Loading your saved preferences…</div>
+        )}
         {activeTab === 'people' ? renderPeopleFilters() : renderActivityFilters()}
       </div>
 
@@ -352,9 +529,10 @@ export default function PeopleFilterPage() {
         <div className="max-w-7xl mx-auto">
           <button 
             onClick={applyFilters}
-            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-4 px-6 rounded-lg transition-colors"
+            disabled={isLoading}
+            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-4 px-6 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Apply {getActiveFiltersCount() > 0 ? `${getActiveFiltersCount()} ` : ''}Filters
+            Apply {activeFiltersCount > 0 ? `${activeFiltersCount} ` : ''}Filters
           </button>
         </div>
       </div>

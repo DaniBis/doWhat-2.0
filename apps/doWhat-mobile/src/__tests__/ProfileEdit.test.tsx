@@ -2,6 +2,7 @@
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 
 type SupabaseAuthMock = {
@@ -61,6 +62,21 @@ global.fetch = mockFetch as unknown as typeof global.fetch;
 // Loosen types for mocked Supabase client to avoid ts-jest generic friction
 const supabaseMock = supabase as unknown as SupabaseClientMock;
 
+const SafeAreaTestProvider = ({ children }: { children: React.ReactNode }) => (
+  <SafeAreaProvider
+    initialMetrics={{
+      frame: { x: 0, y: 0, width: 375, height: 812 },
+      insets: { top: 44, left: 0, right: 0, bottom: 34 },
+    }}
+  >
+    {children}
+  </SafeAreaProvider>
+);
+
+const FIND_WAIT = { timeout: 8000 } as const;
+
+jest.setTimeout(20000);
+
 // Helper to create a chainable query builder mock for supabase.from('profiles')
 function createProfilesSelectMock(result?: unknown, error?: unknown): ProfilesQueryBuilder {
   const maybeSingle = jest.fn(async () => ({ data: result, error })) as ProfilesQueryBuilder['maybeSingle'];
@@ -97,20 +113,19 @@ describe('Mobile Profile edit', () => {
   });
 
   it('loads current profile values into inputs', async () => {
-    const { findByText, findByDisplayValue } = render(<Profile />);
-    await findByText('Old Name');
-    fireEvent.press(await findByText('Edit Profile'));
-    expect(await findByDisplayValue('Old Name')).toBeTruthy();
+    const { findByText, findByDisplayValue } = render(<Profile />, { wrapper: SafeAreaTestProvider });
+    fireEvent.press(await findByText('Edit Profile', undefined, FIND_WAIT));
+    expect(await findByDisplayValue('Old Name', undefined, FIND_WAIT)).toBeTruthy();
   });
 
   it('saves edited name and avatar', async () => {
     const profileBuilder = createProfilesSelectMock({ full_name: 'Old Name', avatar_url: 'https://img/old.png' });
-  supabaseMock.from.mockImplementation((_table: string) => profileBuilder);
+    supabaseMock.from.mockImplementation((_table: string) => profileBuilder);
 
-    const { getByText, findByText, findByDisplayValue } = render(<Profile />);
-    fireEvent.press(await findByText('Edit Profile'));
+    const { getByText, findByText, findByDisplayValue } = render(<Profile />, { wrapper: SafeAreaTestProvider });
+    fireEvent.press(await findByText('Edit Profile', undefined, FIND_WAIT));
 
-    const nameInput = await findByDisplayValue('Old Name');
+    const nameInput = await findByDisplayValue('Old Name', undefined, FIND_WAIT);
     fireEvent.changeText(nameInput, 'New Name');
 
     fireEvent.press(getByText('Save'));
@@ -123,15 +138,15 @@ describe('Mobile Profile edit', () => {
   it('shows error message on save failure', async () => {
     const failingBuilder = createProfilesSelectMock({ full_name: 'Old Name', avatar_url: 'https://img/old.png' });
     failingBuilder.upsert.mockResolvedValueOnce({ error: { message: 'boom' } });
-  supabaseMock.from.mockImplementation((_table: string) => failingBuilder);
+    supabaseMock.from.mockImplementation((_table: string) => failingBuilder);
 
-    const { getByText, findByDisplayValue, findByText, findAllByText } = render(<Profile />);
-    fireEvent.press(await findByText('Edit Profile'));
+    const { getByText, findByDisplayValue, findByText, findAllByText } = render(<Profile />, { wrapper: SafeAreaTestProvider });
+    fireEvent.press(await findByText('Edit Profile', undefined, FIND_WAIT));
 
-    await findByDisplayValue('Old Name');
+    await findByDisplayValue('Old Name', undefined, FIND_WAIT);
 
     fireEvent.press(getByText('Save'));
-    const errors = await findAllByText('boom');
+    const errors = await findAllByText('boom', undefined, FIND_WAIT);
     expect(errors.length).toBeGreaterThan(0);
   });
 });

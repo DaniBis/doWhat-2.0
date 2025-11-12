@@ -1,0 +1,31 @@
+diff --git a/React/Fabric/RCTThirdPartyFabricComponentsProvider.h b/React/Fabric/RCTThirdPartyFabricComponentsProvider.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..178791a2c9901eb04fce499949ba6332111d6ec8
+--- /dev/null
++++ b/React/Fabric/RCTThirdPartyFabricComponentsProvider.h
+@@ -0,0 +1,11 @@
++#import <React/RCTComponentViewProtocol.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++Class<RCTComponentViewProtocol> RCTThirdPartyFabricComponentsProvider(const char *name);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/React/Fabric/RCTThirdPartyFabricComponentsProvider.mm b/React/Fabric/RCTThirdPartyFabricComponentsProvider.mm
+new file mode 100644
+index 0000000000000000000000000000000000000000..b83f58797650381ef1a29fee4acb6975bac0bce9
+--- /dev/null
++++ b/React/Fabric/RCTThirdPartyFabricComponentsProvider.mm
+@@ -0,0 +1,8 @@
++#import "RCTThirdPartyFabricComponentsProvider.h"
++
++#import <React/RCTComponentViewProtocol.h>
++
++Class<RCTComponentViewProtocol> RCTThirdPartyFabricComponentsProvider(const char *name)
++{
++  return nil;
++}

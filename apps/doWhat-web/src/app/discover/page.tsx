@@ -30,13 +30,6 @@ type Event = BaseSession;
 
 interface SessionActivityRef { activity_id: string | null }
 interface RsvpSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
-
-interface VenueStats {
-  venueId: string;
-  venueName: string;
-  count: number;
-}
-
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Event[]>([]);
   const [popularEvents, setPopularEvents] = useState<Event[]>([]);
@@ -46,28 +39,32 @@ export default function RecommendationsPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+      },
+      () => {
+        // Silent fail
+      }
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadData = async () => {
+      setLoading(true);
       try {
-        // Get user location
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              setUserLocation({
-                lat: position.coords.latitude,
-                lng: position.coords.longitude,
-              });
-            },
-            () => {
-              // Silent fail
-            }
-          );
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id ?? null;
+        if (!cancelled) {
+          setUserId(uid);
         }
 
-        // Get user's RSVP history to understand preferences
-  const { data: auth } = await supabase.auth.getUser();
-  const uid = auth?.user?.id;
-  setUserId(uid ?? null);
-        
         let userActivityTypes: string[] = [];
         if (uid) {
           const { data: userRsvps } = await supabase
@@ -76,7 +73,7 @@ export default function RecommendationsPage() {
             .eq("user_id", uid);
           const typed = (userRsvps || []) as unknown as RsvpSessionRef[];
           userActivityTypes = typed
-            .map(r => {
+            .map((r) => {
               const s = r.sessions;
               if (!s) return null;
               if (Array.isArray(s)) return s[0]?.activity_id || null;
@@ -85,8 +82,7 @@ export default function RecommendationsPage() {
             .filter((v): v is string => Boolean(v));
         }
 
-        // Get upcoming events
-  const { data: upcomingEvents } = await supabase
+        const { data: upcomingEvents } = await supabase
           .from("sessions")
           .select(
             "id, created_by, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
@@ -95,9 +91,12 @@ export default function RecommendationsPage() {
           .order("starts_at", { ascending: true })
           .limit(50);
 
-        if (!upcomingEvents) return;
+        if (!upcomingEvents) {
+          return;
+        }
 
-        // Get popular events (most RSVPs)
+        const typedUpcoming = upcomingEvents as Event[];
+
         const { data: popularData } = await supabase
           .from("sessions")
           .select(`
@@ -109,39 +108,43 @@ export default function RecommendationsPage() {
           .order("starts_at", { ascending: true })
           .limit(20);
 
-        if (popularData) {
+        if (popularData && !cancelled) {
           const typedPopular = popularData as PopularSession[];
           const sortedByRsvps: Event[] = typedPopular
-            .map<PopularSortable>(ev => ({ ...ev, rsvp_count: ev.rsvps?.length ?? 0 }))
+            .map<PopularSortable>((ev) => ({ ...ev, rsvp_count: ev.rsvps?.length ?? 0 }))
             .sort((a, b) => b.rsvp_count - a.rsvp_count)
             .slice(0, 6)
-            .map(({ rsvps: _r, rsvp_count: _c, ...rest }) => rest);
+            .map((ev) => {
+              const { rsvps, rsvp_count, ...rest } = ev;
+              void rsvps;
+              void rsvp_count;
+              return rest;
+            });
           setPopularEvents(sortedByRsvps);
         }
 
-        // Recommendations based on user preferences
-  let recommendedEvents = upcomingEvents as Event[];
+        let recommendedEvents = typedUpcoming;
         if (userActivityTypes.length > 0) {
-          recommendedEvents = upcomingEvents.filter(event => {
+          recommendedEvents = typedUpcoming.filter((event) => {
             const activities = event.activities;
             if (!activities) return false;
-            const activityId = Array.isArray(activities) 
-              ? activities[0]?.id 
+            const activityId = Array.isArray(activities)
+              ? activities[0]?.id
               : (activities as { id: string; name: string }).id;
-            return userActivityTypes.includes(activityId || '');
+            return userActivityTypes.includes(activityId || "");
           });
         }
-        
-        // If no preference-based recommendations, show random selection
+
         if (recommendedEvents.length === 0) {
-          recommendedEvents = upcomingEvents
+          recommendedEvents = [...typedUpcoming]
             .sort(() => Math.random() - 0.5)
             .slice(0, 6);
         }
-        
-        setRecommendations(recommendedEvents.slice(0, 6));
-        
-        // Nearby events (if location available)
+
+        if (!cancelled) {
+          setRecommendations(recommendedEvents.slice(0, 6));
+        }
+
         if (userLocation) {
           const { data: nearbyData } = await supabase
             .from("sessions")
@@ -154,26 +157,26 @@ export default function RecommendationsPage() {
             .not("venues.lng", "is", null)
             .order("starts_at", { ascending: true });
 
-          if (nearbyData) {
+          if (nearbyData && !cancelled) {
             const typedNearby = nearbyData as Event[];
             const extractVenue = (v: Event["venues"]): VenueRef | null => {
               if (!v) return null;
               return Array.isArray(v) ? (v[0] || null) : v;
             };
             const nearbyFiltered = typedNearby
-              .map(ev => ({ ev, venue: extractVenue(ev.venues) }))
-              .filter(item => item.venue?.lat != null && item.venue?.lng != null)
-              .map(item => ({ ...item.ev, venue: item.venue as VenueRef }))
-              .filter(ev => {
+              .map((ev) => ({ ev, venue: extractVenue(ev.venues) }))
+              .filter((item) => item.venue?.lat != null && item.venue?.lng != null)
+              .map((item) => ({ ...item.ev, venue: item.venue as VenueRef }))
+              .filter((ev) => {
                 const venue = extractVenue(ev.venues);
-                if (!venue?.lat || !venue.lng) return false;
+                if (!venue?.lat || !venue.lng || !userLocation) return false;
                 const distance = calculateDistance(
                   userLocation.lat,
                   userLocation.lng,
                   venue.lat,
                   venue.lng
                 );
-                return distance <= 25; // Within 25km
+                return distance <= 25;
               })
               .sort((a, b) => {
                 const venueA = extractVenue(a.venues)!;
@@ -197,11 +200,21 @@ export default function RecommendationsPage() {
           }
         }
       } catch (error) {
-        console.error("Error loading recommendations:", error);
+        if (!cancelled) {
+          console.error("Error loading recommendations:", error);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    })();
+    };
+
+    loadData();
+
+    return () => {
+      cancelled = true;
+    };
   }, [userLocation?.lat, userLocation?.lng]);
 
   // Calculate distance between two points using Haversine formula

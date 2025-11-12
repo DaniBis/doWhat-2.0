@@ -1,8 +1,7 @@
+import type { EventSummary } from '../events/types';
 import type { MapActivitiesQuery, MapActivity, MapFeatureCollection, MapFilters } from './types';
 
 export const DEFAULT_RADIUS_METERS = 2500;
-
-const EMPTY_ARRAY: readonly string[] = Object.freeze([]);
 
 const sortStrings = (value?: string[] | null): string[] => {
   if (!value?.length) return [];
@@ -42,6 +41,7 @@ export const activitiesToFeatureCollection = (activities: MapActivity[]): MapFea
         coordinates: [activity.lng, activity.lat],
       },
       properties: {
+        kind: 'activity' as const,
         id: activity.id,
         name: activity.name,
         venue: activity.venue ?? null,
@@ -53,6 +53,31 @@ export const activitiesToFeatureCollection = (activities: MapActivity[]): MapFea
         tags: activity.tags ?? null,
         traits: activity.traits ?? null,
         distance_m: activity.distance_m ?? null,
+      },
+    })),
+});
+
+export const activitiesToEventsFeatureCollection = (events: EventSummary[]): MapFeatureCollection => ({
+  type: 'FeatureCollection',
+  features: events
+    .filter((event) => Number.isFinite(event.lat ?? NaN) && Number.isFinite(event.lng ?? NaN))
+    .map((event) => ({
+      type: 'Feature' as const,
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [event.lng as number, event.lat as number],
+      },
+      properties: {
+        kind: 'event' as const,
+        id: event.id,
+        title: event.title,
+        start_at: event.start_at,
+        end_at: event.end_at,
+        venue_name: event.venue_name ?? null,
+        url: event.url ?? null,
+        status: event.status,
+        tags: event.tags ?? null,
+        place_id: event.place_id ?? null,
       },
     })),
 });
@@ -72,4 +97,31 @@ export const mergeSearchParams = (base: URLSearchParams, extra: URLSearchParams)
     clone.set(key, value);
   });
   return clone;
+};
+
+const SEED_MARKERS = new Set(['seed', 'demo-seed', 'dev-seed']);
+
+export type SeedTaggable = {
+  tags?: (string | null)[] | null;
+  venue?: string | null;
+};
+
+const normalisePotentialTag = (value?: string | null) => (typeof value === 'string' ? value.trim().toLowerCase() : '');
+
+export const hasSeedMarker = (candidate: SeedTaggable | null | undefined): boolean => {
+  if (!candidate) return false;
+  const tagValues = (candidate.tags ?? []).map(normalisePotentialTag);
+  if (tagValues.some((tag) => SEED_MARKERS.has(tag))) {
+    return true;
+  }
+  const venue = normalisePotentialTag(candidate.venue);
+  if (venue && (venue === 'seeded spot' || venue.endsWith('(seeded)'))) {
+    return true;
+  }
+  return false;
+};
+
+export const filterOutSeedActivities = <T extends SeedTaggable>(items: readonly T[] | null | undefined): T[] => {
+  if (!items?.length) return [];
+  return items.filter((item) => !hasSeedMarker(item));
 };

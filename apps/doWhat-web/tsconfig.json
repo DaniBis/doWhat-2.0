@@ -10,7 +10,9 @@
       "@/*": [
         "src/*"
       ],
-  "@dowhat/shared": ["../../packages/shared/src/index.ts"]
+      "@dowhat/shared": [
+        "../../packages/shared/src/index.ts"
+      ]
     },
     "allowJs": false,
     "strict": true,
@@ -34,7 +36,8 @@
     "**/*.tsx",
     "next-env.d.ts",
     ".next/types/**/*.ts",
-    "src/lib/__tests__/**/*.ts"
+    "src/lib/__tests__/**/*.ts",
+    "./.next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -1,0 +1,18 @@
+diff --git a/package.json b/package.json
+index e241a53496d4c1dfa942ca405063234ca93f9817..d479149181bff4ac4a5bcad1101cba5c96149bed 100644
+--- a/package.json
++++ b/package.json
+@@ -19,9 +19,10 @@
+   "types": "./lib/src/index.d.ts",
+   "exports": {
+     ".": {
+-      "types": "./lib/src/index.d.ts",
+-      "import": "./esm.mjs",
+-      "default": "./lib/src/index.js"
++  "types": "./lib/src/index.d.ts",
++  "import": "./lib/src/index.js",
++  "require": "./lib/src/index.js",
++  "default": "./lib/src/index.js"
+     }
+   },
+   "files": [

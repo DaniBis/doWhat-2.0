@@ -23,8 +23,11 @@ export default function NearbyDiscoverList() {
             const res = await fetch(url.toString());
             const json = await res.json();
             if (!cancelled) setItems(json.activities || []);
-          } catch (e: any) {
-            if (!cancelled) setErr(e?.message || 'Failed to load nearby activities');
+          } catch (error) {
+            if (!cancelled) {
+              const message = error instanceof Error ? error.message : 'Failed to load nearby activities';
+              setErr(message);
+            }
           }
         },
         () => {
@@ -64,4 +67,3 @@ export default function NearbyDiscoverList() {
     </div>
   );
 }
-

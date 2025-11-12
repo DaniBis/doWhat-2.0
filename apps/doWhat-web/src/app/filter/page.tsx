@@ -1,24 +1,30 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-type FilterOptions = {
-  radius: number;
-  priceRange: [number, number];
-  categories: string[];
-  timeOfDay: string[];
-};
+import {
+  DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  countActiveActivityFilters,
+  loadUserPreference,
+  normaliseActivityFilterPreferences,
+  saveUserPreference,
+  type ActivityFilterPreferences,
+} from '@dowhat/shared';
+
+import { supabase } from '@/lib/supabase/browser';
+
+const LOCAL_STORAGE_KEY = 'activity_filters:v1';
 
 const categories = [
   { id: 'fitness', name: 'Fitness', icon: '💪' },
   { id: 'food', name: 'Food & Drink', icon: '🍽️' },
-  { id: 'arts', name: 'Arts & Culture', icon: '🎨' },
-  { id: 'outdoor', name: 'Outdoor', icon: '🌲' },
-  { id: 'social', name: 'Social', icon: '👥' },
-  { id: 'learning', name: 'Learning', icon: '📚' },
-  { id: 'entertainment', name: 'Entertainment', icon: '🎪' },
+  { id: 'arts_culture', name: 'Arts & Culture', icon: '🎨' },
+  { id: 'outdoors', name: 'Outdoor', icon: '🌲' },
+  { id: 'community', name: 'Social', icon: '👥' },
+  { id: 'education', name: 'Learning', icon: '📚' },
+  { id: 'event_space', name: 'Entertainment', icon: '🎪' },
   { id: 'wellness', name: 'Wellness', icon: '🧘' },
 ];
 
@@ -31,51 +37,132 @@ const timeSlots = [
 
 export default function FilterPage() {
   const searchParams = useSearchParams();
-  const [filters, setFilters] = useState<FilterOptions>({
-    radius: 10,
-    priceRange: [0, 100],
-    categories: [],
-    timeOfDay: [],
-  });
-
+  const [userId, setUserId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<ActivityFilterPreferences>(
+    DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  );
   const [from, setFrom] = useState<string>('');
+  const [initialised, setInitialised] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setFrom(searchParams.get('from') || '');
   }, [searchParams]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const readLocal = (): ActivityFilterPreferences | null => {
+      if (typeof window === 'undefined') return null;
+      try {
+        const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as ActivityFilterPreferences;
+        return normaliseActivityFilterPreferences(parsed);
+      } catch (error) {
+        console.warn('[activity-filters] unable to parse cached preferences', error);
+        return null;
+      }
+    };
+
+    const bootstrap = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const user = data.user ?? null;
+        setUserId(user?.id ?? null);
+
+        if (user?.id) {
+          try {
+            const remote = await loadUserPreference<ActivityFilterPreferences>(
+              supabase,
+              user.id,
+              'activity_filters',
+            );
+            if (!cancelled && remote) {
+              setFilters(normaliseActivityFilterPreferences(remote));
+              return;
+            }
+          } catch (error) {
+            console.warn('[activity-filters] failed to load remote preferences', error);
+          }
+        }
+
+        const local = readLocal();
+        if (!cancelled && local) {
+          setFilters(local);
+        }
+      } finally {
+        if (!cancelled) {
+          setInitialised(true);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistPreferences = useCallback(
+    async (next: ActivityFilterPreferences) => {
+      const normalised = normaliseActivityFilterPreferences(next);
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalised));
+        } catch (error) {
+          console.warn('[activity-filters] unable to cache preferences locally', error);
+        }
+      }
+      if (userId) {
+        try {
+          await saveUserPreference(supabase, userId, 'activity_filters', normalised);
+        } catch (error) {
+          console.warn('[activity-filters] failed to persist remote preferences', error);
+        }
+      }
+    },
+    [userId],
+  );
+
+  useEffect(() => {
+    if (!initialised) return;
+    void persistPreferences(filters);
+  }, [filters, initialised, persistPreferences]);
+
+  const updateFilters = useCallback(
+    (updater: (prev: ActivityFilterPreferences) => ActivityFilterPreferences) => {
+      setFilters((prev) => normaliseActivityFilterPreferences(updater(prev)));
+    },
+    [],
+  );
+
   const toggleCategory = (categoryId: string) => {
-    setFilters(prev => ({
+    updateFilters((prev) => ({
       ...prev,
       categories: prev.categories.includes(categoryId)
-        ? prev.categories.filter(id => id !== categoryId)
+        ? prev.categories.filter((id) => id !== categoryId)
         : [...prev.categories, categoryId],
     }));
   };
 
   const toggleTimeSlot = (timeId: string) => {
-    setFilters(prev => ({
+    updateFilters((prev) => ({
       ...prev,
       timeOfDay: prev.timeOfDay.includes(timeId)
-        ? prev.timeOfDay.filter(id => id !== timeId)
+        ? prev.timeOfDay.filter((id) => id !== timeId)
         : [...prev.timeOfDay, timeId],
     }));
   };
 
   const resetFilters = () => {
-    setFilters({
-      radius: 10,
-      priceRange: [0, 100],
-      categories: [],
-      timeOfDay: [],
-    });
+    updateFilters(() => DEFAULT_ACTIVITY_FILTER_PREFERENCES);
   };
 
-  const activeFiltersCount = 
-    filters.categories.length + 
-    filters.timeOfDay.length + 
-    (filters.radius !== 10 ? 1 : 0) +
-    (filters.priceRange[0] !== 0 || filters.priceRange[1] !== 100 ? 1 : 0);
+  const activeFiltersCount = useMemo(() => countActiveActivityFilters(filters), [filters]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -97,6 +184,9 @@ export default function FilterPage() {
         {/* Current Filters Summary */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Current Filters</h2>
+          {isLoading && (
+            <p className="mb-4 text-xs text-gray-500">Loading your saved preferences…</p>
+          )}
           {activeFiltersCount === 0 ? (
             <div className="text-center py-8">
               <div className="text-4xl mb-4">⚙️</div>
@@ -148,7 +238,7 @@ export default function FilterPage() {
                   {[5, 10, 15, 25, 50].map((radius) => (
                     <button
                       key={radius}
-                      onClick={() => setFilters(prev => ({ ...prev, radius }))}
+                      onClick={() => updateFilters((prev) => ({ ...prev, radius }))}
                       className={`px-3 py-1 rounded-md text-sm font-medium ${
                         filters.radius === radius
                           ? 'bg-blue-500 text-white'
@@ -173,10 +263,14 @@ export default function FilterPage() {
                   <input
                     type="number"
                     value={filters.priceRange[0]}
-                    onChange={(e) => setFilters(prev => ({ 
-                      ...prev, 
-                      priceRange: [parseInt(e.target.value) || 0, prev.priceRange[1]]
-                    }))}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      const nextMin = Number.isFinite(raw) ? raw : 0;
+                      updateFilters((prev) => ({
+                        ...prev,
+                        priceRange: [nextMin, prev.priceRange[1]],
+                      }));
+                    }}
                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -185,10 +279,16 @@ export default function FilterPage() {
                   <input
                     type="number"
                     value={filters.priceRange[1]}
-                    onChange={(e) => setFilters(prev => ({ 
-                      ...prev, 
-                      priceRange: [prev.priceRange[0], parseInt(e.target.value) || 100]
-                    }))}
+                    onChange={(e) => {
+                      const raw = Number(e.target.value);
+                      updateFilters((prev) => {
+                        const nextMax = Number.isFinite(raw) ? raw : prev.priceRange[0];
+                        return {
+                          ...prev,
+                          priceRange: [prev.priceRange[0], nextMax],
+                        };
+                      });
+                    }}
                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>

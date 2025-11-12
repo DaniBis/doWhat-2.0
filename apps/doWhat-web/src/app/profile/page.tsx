@@ -21,7 +21,6 @@ export default function ProfilePage() {
   const [attendance, setAttendance] = useState<AttendanceMetrics | undefined>();
   const [traits, setTraits] = useState<Trait[]>([]);
   const [badges, setBadges] = useState<Badge[]>([]);
-  const [bioSaving, setBioSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +83,6 @@ export default function ProfilePage() {
 
   async function saveBio(bio: string) {
     if (!userId) return;
-    setBioSaving(true);
     try {
       const resp = await fetch(`/api/profile/${userId}/update`, {
         method: 'POST',
@@ -98,8 +96,6 @@ export default function ProfilePage() {
       setProfile(p => p ? { ...p, bio } : p);
     } catch (error) {
       setError(getErrorMessage(error));
-    } finally {
-      setBioSaving(false);
     }
   }
 

@@ -7,6 +7,7 @@ const { Link } = require('expo-router');
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import type { ElementRef } from 'react';
 import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking, Platform, ActionSheetIOS, Alert } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
@@ -15,6 +16,7 @@ import { theme } from '@dowhat/shared';
 import type { BadgeStatus } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
 import { createWebUrl } from '../lib/web';
+import { emitProfileLocationUpdated } from '../lib/events';
 import { BadgesList, MobileBadgeItem } from '../components/BadgesList';
 
 // Shape of the profiles table (only fields we care about in this screen)
@@ -102,6 +104,226 @@ type ProfileCachePayload = {
   last_lat: number | null;
   last_lng: number | null;
   updated_at?: string | null;
+};
+
+type LocationSuggestion = {
+  id: string;
+  label: string;
+  description?: string | null;
+  lat: number;
+  lng: number;
+};
+
+const MAX_LOCATION_SUGGESTIONS = 5;
+const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
+const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
+
+const coerceNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const coerceLabel = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() ? value.trim() : null;
+
+const toLocationSuggestion = (
+  input: Record<string, unknown> | null | undefined,
+  fallbackLabel?: string | null,
+  idSuffix = '',
+): LocationSuggestion | null => {
+  if (!input) return null;
+  if (typeof input !== 'object') return null;
+  const rawLat =
+    coerceNumber(input['lat']) ??
+    coerceNumber(input['latitude']) ??
+    coerceNumber(input['y']);
+  const rawLng =
+    coerceNumber(input['lng']) ??
+    coerceNumber(input['lon']) ??
+    coerceNumber(input['longitude']) ??
+    coerceNumber(input['x']);
+  if (rawLat == null || rawLng == null) return null;
+
+  const label =
+    coerceLabel(input['label']) ??
+    coerceLabel(input['name']) ??
+    coerceLabel(fallbackLabel) ??
+    coerceLabel(input['display_name']);
+  if (!label) return null;
+
+  const description = (() => {
+    const explicitDescription = coerceLabel(input['description']);
+    if (explicitDescription && explicitDescription !== label) return explicitDescription;
+    const displayName = coerceLabel(input['display_name']);
+    if (displayName && displayName !== label) return displayName;
+    return null;
+  })();
+
+  const lat = Number(rawLat.toFixed(6));
+  const lng = Number(rawLng.toFixed(6));
+  const identifier = `${lat},${lng}${idSuffix ? `-${idSuffix}` : ''}`;
+
+  return {
+    id: identifier,
+    label,
+    description,
+    lat,
+    lng,
+  };
+};
+
+const dedupeSuggestions = (list: LocationSuggestion[]): LocationSuggestion[] => {
+  const seen = new Set<string>();
+  return list.filter((item) => {
+    const key = `${item.label.toLowerCase()}|${item.lat.toFixed(4)}|${item.lng.toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const fetchGeocodeSuggestionsFromBackend = async (
+  query: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<LocationSuggestion[]> => {
+  const url = createWebUrl(`/api/geocode?q=${encodeURIComponent(query)}&limit=${limit}`);
+  const res = await fetch(url.toString(), { signal, credentials: 'include' });
+  if (!res.ok) {
+    throw new Error(`Geocode backend request failed (${res.status})`);
+  }
+  const payload = await res.json() as {
+    label?: string;
+    lat?: number;
+    lng?: number;
+    results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
+  };
+  const suggestions: LocationSuggestion[] = [];
+  if (Array.isArray(payload.results)) {
+    payload.results.forEach((entry, index) => {
+      const suggestion = toLocationSuggestion(entry, payload.label, `backend-${index}`);
+      if (suggestion) suggestions.push(suggestion);
+    });
+  }
+  const primary = toLocationSuggestion(payload, payload.label, 'backend-primary');
+  if (primary) suggestions.unshift(primary);
+  return dedupeSuggestions(suggestions).slice(0, limit);
+};
+
+const fetchGeocodeSuggestionsFromNominatim = async (
+  query: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<LocationSuggestion[]> => {
+  const url = new URL(`${NOMINATIM_BASE_URL}/search`);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('q', query);
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('addressdetails', '1');
+  const res = await fetch(url.toString(), {
+    signal,
+    headers: {
+      'User-Agent': GEOCODE_USER_AGENT,
+      Accept: 'application/json',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Nominatim request failed (${res.status})`);
+  }
+  const payload = (await res.json()) as Array<{
+    lat?: string;
+    lon?: string;
+    display_name?: string;
+    address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
+  }>;
+  const suggestions: LocationSuggestion[] = [];
+  (payload ?? []).forEach((entry, index) => {
+    const addr = entry.address ?? {};
+    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
+    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
+    const label = parts.length ? parts.join(', ') : entry.display_name || query;
+    const suggestion = toLocationSuggestion({
+      label,
+      description: entry.display_name || null,
+      lat: entry.lat,
+      lng: entry.lon,
+    }, label, `nominatim-${index}`);
+    if (suggestion) suggestions.push(suggestion);
+  });
+  return dedupeSuggestions(suggestions).slice(0, limit);
+};
+
+const fetchGeocodeSuggestions = async (
+  query: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<LocationSuggestion[]> => {
+  try {
+    const backend = await fetchGeocodeSuggestionsFromBackend(query, limit, signal);
+    if (backend.length) return backend;
+  } catch (error) {
+    if (signal?.aborted) return [];
+    console.info('[ProfileSimple] backend geocode suggestions failed', error);
+  }
+  try {
+    return await fetchGeocodeSuggestionsFromNominatim(query, limit, signal);
+  } catch (error) {
+    if (signal?.aborted) return [];
+    console.info('[ProfileSimple] nominatim geocode suggestions failed', error);
+    return [];
+  }
+};
+
+const resolveForwardGeocode = async (query: string, signal?: AbortSignal): Promise<LocationSuggestion | null> => {
+  const suggestions = await fetchGeocodeSuggestions(query, 1, signal);
+  return suggestions[0] ?? null;
+};
+
+const reverseGeocode = async (lat: number, lng: number): Promise<string | null> => {
+  const backendUrl = createWebUrl(`/api/geocode?lat=${lat}&lng=${lng}`);
+  try {
+    const res = await fetch(backendUrl.toString(), { credentials: 'include' });
+    if (res.ok) {
+      const payload = await res.json() as { label?: string };
+      if (typeof payload?.label === 'string' && payload.label.trim()) {
+        return payload.label.trim();
+      }
+    }
+  } catch (error) {
+    console.info('[ProfileSimple] reverse geocode backend failed', error);
+  }
+
+  try {
+    const url = new URL(`${NOMINATIM_BASE_URL}/reverse`);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('lat', String(lat));
+    url.searchParams.set('lon', String(lng));
+    url.searchParams.set('zoom', '10');
+    url.searchParams.set('addressdetails', '1');
+    const res = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': GEOCODE_USER_AGENT,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) throw new Error(`Nominatim reverse failed (${res.status})`);
+    const payload = await res.json() as {
+      display_name?: string;
+      address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
+    };
+    const addr = payload.address ?? {};
+    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
+    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
+    const label = parts.length ? parts.join(', ') : payload.display_name || `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
+    return label;
+  } catch (error) {
+    console.info('[ProfileSimple] reverse geocode nominatim failed', error);
+    return null;
+  }
 };
 
 const profileCacheKey = (uid: string) => `profile_simple_cache_v1_${uid}`;
@@ -287,6 +509,7 @@ const ownedToMobileBadge = (badge: OwnedBadge, fallback?: BadgeMeta): MobileBadg
 
 export default function ProfileSimple() {
   console.log('[ProfileSimple] Mounted');
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState<string | null>(null);
   const [fullName, setFullName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -309,6 +532,11 @@ export default function ProfileSimple() {
   const [draftWhatsapp, setDraftWhatsapp] = useState('');
   const [draftBio, setDraftBio] = useState('');
   const [draftLocation, setDraftLocation] = useState('');
+  const [draftLocationSelection, setDraftLocationSelection] = useState<LocationSuggestion | null>(null);
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([]);
+  const [locationSuggestionsLoading, setLocationSuggestionsLoading] = useState(false);
+  const locationSuggestionControllerRef = useRef<AbortController | null>(null);
+  const locationSuggestionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const DRAFT_KEY = 'profile_edit_draft_v1_simple';
   const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
@@ -467,7 +695,14 @@ export default function ProfileSimple() {
       if (nextSupportsInstagram !== supportsInstagram) setSupportsInstagram(nextSupportsInstagram);
       if (nextSupportsWhatsapp !== supportsWhatsapp) setSupportsWhatsapp(nextSupportsWhatsapp);
       if (nextSupportsBio !== supportsBio) setSupportsBio(nextSupportsBio);
-      if (nextSupportsLocation !== supportsLocation) setSupportsLocation(nextSupportsLocation);
+      if (nextSupportsLocation !== supportsLocation) {
+        setSupportsLocation(nextSupportsLocation);
+        if (!nextSupportsLocation) {
+          setDraftLocationSelection(null);
+          setLocationSuggestions([]);
+          setLocationSuggestionsLoading(false);
+        }
+      }
 
       const resolved: ProfileCachePayload = {
         id: uid,
@@ -580,6 +815,9 @@ export default function ProfileSimple() {
           setSupportsBio(true);
           setSupportsLocation(true);
           setDraftLocation('');
+          setDraftLocationSelection(null);
+          setLocationSuggestions([]);
+          setLocationSuggestionsLoading(false);
           setLocFetchError(null);
           setLocFetchBusy(false);
         }
@@ -589,12 +827,28 @@ export default function ProfileSimple() {
     return () => { if (unsub) unsub(); };
   }, [fetchProfile, loadBadges, restoreProfileFromCache]);
 
+  useEffect(() => {
+    if (editOpen) return;
+    if (locationLabel && typeof profileLat === 'number' && typeof profileLng === 'number') {
+      setDraftLocationSelection({ id: 'current', label: locationLabel, description: null, lat: profileLat, lng: profileLng });
+    } else {
+      setDraftLocationSelection(null);
+    }
+  }, [editOpen, locationLabel, profileLat, profileLng]);
+
   function openEdit() {
     setDraftFullName(fullName);
     setDraftInstagram(instagram);
     setDraftWhatsapp(whatsapp);
     setDraftBio(bio);
     setDraftLocation(locationLabel);
+    if (locationLabel && typeof profileLat === 'number' && typeof profileLng === 'number') {
+      setDraftLocationSelection({ id: 'existing', label: locationLabel, description: null, lat: profileLat, lng: profileLng });
+    } else {
+      setDraftLocationSelection(null);
+    }
+    setLocationSuggestions([]);
+    setLocationSuggestionsLoading(false);
     setMsg(null); setErr(null);
     setLocFetchError(null);
     setLocFetchBusy(false);
@@ -607,7 +861,11 @@ export default function ProfileSimple() {
           setDraftInstagram(d.instagram || '');
           setDraftWhatsapp(d.whatsapp || '');
           setDraftBio(d.bio || '');
-          setDraftLocation(d.location || '');
+          const nextDraftLocation = d.location || '';
+          setDraftLocation(nextDraftLocation);
+          if (!nextDraftLocation || nextDraftLocation !== locationLabel) {
+            setDraftLocationSelection(null);
+          }
         }
       } catch {/* ignore */}
       setEditOpen(true);
@@ -665,40 +923,56 @@ export default function ProfileSimple() {
       const cleanAvatarUrl = avatarUrl ? avatarUrl.split('?')[0] : null;
       const normalizedBio = (draftBio ?? '').toString().slice(0, 500);
       const rawLocationInput = (draftLocation ?? '').toString().slice(0, 120);
+      const trimmedLocationInput = rawLocationInput.trim();
       const existingLocation = locationLabel || '';
       let canUseLocation = supportsLocation;
 
-      let finalLocationLabel = rawLocationInput;
+      let finalLocationLabel = trimmedLocationInput;
       let locationLat = profileLat ?? null;
       let locationLng = profileLng ?? null;
+      let coordsResolved = false;
 
-      const shouldGeocode = rawLocationInput
-        ? rawLocationInput !== existingLocation || locationLat == null || locationLng == null
+      if (
+        trimmedLocationInput &&
+        draftLocationSelection &&
+        draftLocationSelection.label === trimmedLocationInput
+      ) {
+        locationLat = draftLocationSelection.lat;
+        locationLng = draftLocationSelection.lng;
+        coordsResolved =
+          typeof draftLocationSelection.lat === 'number' && Number.isFinite(draftLocationSelection.lat) &&
+          typeof draftLocationSelection.lng === 'number' && Number.isFinite(draftLocationSelection.lng);
+      }
+
+      const shouldGeocode = trimmedLocationInput
+        ? !coordsResolved && (trimmedLocationInput !== existingLocation || locationLat == null || locationLng == null)
         : true;
 
-      if (rawLocationInput && shouldGeocode) {
+      if (trimmedLocationInput && shouldGeocode) {
         try {
-          const geocodeUrl = createWebUrl(`/api/geocode?q=${encodeURIComponent(rawLocationInput)}`);
-          const res = await fetch(geocodeUrl.toString());
-          if (res.ok) {
-            const payload = await res.json() as { label?: string; lat?: number; lng?: number };
-            if (typeof payload.lat === 'number' && typeof payload.lng === 'number') {
-              locationLat = payload.lat;
-              locationLng = payload.lng;
-            }
-            if (payload.label) {
-              finalLocationLabel = payload.label;
-            }
+          const resolved = await resolveForwardGeocode(trimmedLocationInput);
+          if (resolved) {
+            locationLat = resolved.lat;
+            locationLng = resolved.lng;
+            finalLocationLabel = resolved.label;
+            coordsResolved = Number.isFinite(locationLat) && Number.isFinite(locationLng);
+            setDraftLocationSelection(resolved);
           } else {
-            setLocFetchError('Unable to find that location. Saved without map focus.');
+            coordsResolved = false;
           }
         } catch (geoError) {
           console.warn('[ProfileSimple] forward geocode failed', geoError);
-          setLocFetchError('Unable to find that location. Saved without map focus.');
+          coordsResolved = false;
         }
-      } else if (!rawLocationInput) {
+        if (!coordsResolved) {
+          setLocFetchError('Unable to find that location. Saved without map focus.');
+          locationLat = null;
+          locationLng = null;
+        }
+      } else if (!trimmedLocationInput) {
         locationLat = null;
         locationLng = null;
+        finalLocationLabel = '';
       }
 
       const basePayload: ProfileUpdatePayload = {
@@ -727,6 +1001,9 @@ export default function ProfileSimple() {
         if (canUseLocation && /last_(lat|lng)/.test(message)) {
           canUseLocation = false;
           setSupportsLocation(false);
+          setDraftLocationSelection(null);
+          setLocationSuggestions([]);
+          setLocationSuggestionsLoading(false);
           const fallbackPayload: ProfileUpdatePayload = {
             id: uid,
             full_name: basePayload.full_name,
@@ -767,7 +1044,13 @@ export default function ProfileSimple() {
           key: 'location',
           value: finalLocationLabel ? finalLocationLabel : null,
           supported: canUseLocation,
-          disable: () => { canUseLocation = false; setSupportsLocation(false); },
+          disable: () => {
+            canUseLocation = false;
+            setSupportsLocation(false);
+            setDraftLocationSelection(null);
+            setLocationSuggestions([]);
+            setLocationSuggestionsLoading(false);
+          },
         },
       ];
 
@@ -813,6 +1096,9 @@ export default function ProfileSimple() {
             if (/column .* does not exist/i.test(msg)) {
             canUseLocation = false;
             setSupportsLocation(false);
+            setDraftLocationSelection(null);
+            setLocationSuggestions([]);
+            setLocationSuggestionsLoading(false);
             } else {
               throw coordError;
             }
@@ -828,6 +1114,13 @@ export default function ProfileSimple() {
       applyDraftsToState();
       setProfileLat(locationLat ?? null);
       setProfileLng(locationLng ?? null);
+      if (coordsResolved && typeof locationLat === 'number' && typeof locationLng === 'number' && finalLocationLabel) {
+        setDraftLocationSelection({ id: 'saved', label: finalLocationLabel, description: null, lat: locationLat, lng: locationLng });
+      } else if (!finalLocationLabel) {
+        setDraftLocationSelection(null);
+      }
+      setLocationSuggestions([]);
+      setLocationSuggestionsLoading(false);
 
       try {
         await supabase.auth.updateUser({
@@ -844,6 +1137,9 @@ export default function ProfileSimple() {
 
       if (uid) await fetchProfile(uid, { fallbackBio: metadataFallback.bio || null });
       setMsg('Saved');
+      if (canUseLocation && coordsResolved && typeof locationLat === 'number' && typeof locationLng === 'number' && finalLocationLabel) {
+        emitProfileLocationUpdated({ lat: locationLat, lng: locationLng, label: finalLocationLabel });
+      }
       try {
         await AsyncStorage.removeItem(DRAFT_KEY);
       } catch {}
@@ -881,45 +1177,168 @@ export default function ProfileSimple() {
   }, [draftFullName, draftInstagram, draftWhatsapp, draftBio, draftLocation, editOpen]);
 
   function clearDraft() {
-  setDraftFullName(fullName);
-  setDraftInstagram(instagram);
-  setDraftWhatsapp(whatsapp);
-  setDraftBio(bio);
-  setDraftLocation(locationLabel);
-  AsyncStorage.removeItem(DRAFT_KEY).catch(()=>{}); setDraftSavedAt(null);
+    setDraftFullName(fullName);
+    setDraftInstagram(instagram);
+    setDraftWhatsapp(whatsapp);
+    setDraftBio(bio);
+    setDraftLocation(locationLabel);
+    if (locationLabel && typeof profileLat === 'number' && typeof profileLng === 'number') {
+    setDraftLocationSelection({ id: 'existing', label: locationLabel, description: null, lat: profileLat, lng: profileLng });
+  } else {
+    setDraftLocationSelection(null);
   }
+  setLocationSuggestions([]);
+  setLocationSuggestionsLoading(false);
+  setLocFetchError(null);
+  AsyncStorage.removeItem(DRAFT_KEY).catch(() => {});
+  setDraftSavedAt(null);
+  }
+
+  const handleDraftLocationChange = useCallback(
+    (value: string) => {
+      const trimmed = value.slice(0, 120);
+      setDraftLocation(trimmed);
+      if (draftLocationSelection && draftLocationSelection.label !== trimmed) {
+        setDraftLocationSelection(null);
+      }
+      setLocFetchError(null);
+      if (!trimmed || trimmed.trim().length < 2) {
+        if (locationSuggestionDebounceRef.current) {
+          clearTimeout(locationSuggestionDebounceRef.current);
+          locationSuggestionDebounceRef.current = null;
+        }
+        if (locationSuggestionControllerRef.current) {
+          locationSuggestionControllerRef.current.abort();
+          locationSuggestionControllerRef.current = null;
+        }
+        setLocationSuggestions([]);
+        setLocationSuggestionsLoading(false);
+      }
+    },
+    [draftLocationSelection],
+  );
 
   const handleUseDeviceLocation = useCallback(async () => {
     setLocFetchError(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        setLocFetchError('Location permission denied.');
-        return;
+      setLocFetchError('Location permission denied.');
+      return;
+    }
+    setLocFetchBusy(true);
+    const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    const { latitude, longitude } = position.coords;
+    let label = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
+      const reverseLabel = await reverseGeocode(latitude, longitude);
+      if (reverseLabel) {
+        label = reverseLabel;
       }
-      setLocFetchBusy(true);
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const { latitude, longitude } = position.coords;
-      let label = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
-      try {
-        const geocodeUrl = createWebUrl(`/api/geocode?lat=${latitude}&lng=${longitude}`);
-        const response = await fetch(geocodeUrl.toString());
-        if (response.ok) {
-          const payload = await response.json();
-          if (payload?.label && typeof payload.label === 'string') {
-            label = payload.label;
-          }
-        }
-      } catch (geoError) {
-        console.info('[ProfileSimple] reverse geocode failed', geoError);
+      if (locationSuggestionDebounceRef.current) {
+        clearTimeout(locationSuggestionDebounceRef.current);
+        locationSuggestionDebounceRef.current = null;
+      }
+      if (locationSuggestionControllerRef.current) {
+        locationSuggestionControllerRef.current.abort();
+        locationSuggestionControllerRef.current = null;
       }
       setDraftLocation(label);
+      setDraftLocationSelection({ id: `device-${Date.now()}`, label, description: null, lat: latitude, lng: longitude });
+      setLocationSuggestions([]);
+      setLocationSuggestionsLoading(false);
       setLocFetchError(null);
     } catch (error) {
       setLocFetchError(describeError(error, 'Unable to fetch your location.'));
     } finally {
       setLocFetchBusy(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!editOpen || !supportsLocation) return;
+    const query = (draftLocation ?? '').trim();
+
+    if (locationSuggestionDebounceRef.current) {
+      clearTimeout(locationSuggestionDebounceRef.current);
+      locationSuggestionDebounceRef.current = null;
+    }
+
+    if (!query || query.length < 2 || (draftLocationSelection && draftLocationSelection.label === query)) {
+      if (locationSuggestionControllerRef.current) {
+        locationSuggestionControllerRef.current.abort();
+        locationSuggestionControllerRef.current = null;
+      }
+      setLocationSuggestions([]);
+      setLocationSuggestionsLoading(false);
+      return;
+    }
+
+    locationSuggestionDebounceRef.current = setTimeout(() => {
+      if (locationSuggestionControllerRef.current) {
+        locationSuggestionControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      locationSuggestionControllerRef.current = controller;
+      setLocationSuggestionsLoading(true);
+      fetchGeocodeSuggestions(query, MAX_LOCATION_SUGGESTIONS, controller.signal)
+        .then((suggestions) => {
+          if (controller.signal.aborted) return;
+          setLocationSuggestions(suggestions);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          console.info('[ProfileSimple] location suggestions failed', error);
+          setLocationSuggestions([]);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setLocationSuggestionsLoading(false);
+          }
+          if (locationSuggestionControllerRef.current === controller) {
+            locationSuggestionControllerRef.current = null;
+          }
+        });
+    }, 350);
+
+    return () => {
+      if (locationSuggestionDebounceRef.current) {
+        clearTimeout(locationSuggestionDebounceRef.current);
+        locationSuggestionDebounceRef.current = null;
+      }
+    };
+  }, [draftLocation, editOpen, supportsLocation, draftLocationSelection]);
+
+  useEffect(() => {
+    if (editOpen) return;
+    if (locationSuggestionControllerRef.current) {
+      locationSuggestionControllerRef.current.abort();
+      locationSuggestionControllerRef.current = null;
+    }
+    setLocationSuggestions([]);
+    setLocationSuggestionsLoading(false);
+  }, [editOpen]);
+
+  useEffect(() => () => {
+    if (locationSuggestionControllerRef.current) {
+      locationSuggestionControllerRef.current.abort();
+      locationSuggestionControllerRef.current = null;
+    }
+  }, []);
+
+  const handleSelectLocationSuggestion = useCallback((suggestion: LocationSuggestion) => {
+    if (locationSuggestionDebounceRef.current) {
+      clearTimeout(locationSuggestionDebounceRef.current);
+      locationSuggestionDebounceRef.current = null;
+    }
+    if (locationSuggestionControllerRef.current) {
+      locationSuggestionControllerRef.current.abort();
+      locationSuggestionControllerRef.current = null;
+    }
+    setDraftLocation(suggestion.label);
+    setDraftLocationSelection(suggestion);
+    setLocationSuggestions([]);
+    setLocationSuggestionsLoading(false);
+    setLocFetchError(null);
   }, []);
 
   async function ensureImagePicker(): Promise<ImagePickerModule> {
@@ -1103,8 +1522,17 @@ export default function ProfileSimple() {
 
 
   return (
-    <ScrollView style={{ flex:1, backgroundColor: theme.colors.bg }} contentContainerStyle={{ paddingBottom: 24 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> }>
-      <LinearGradient colors={[theme.colors.brandTeal, theme.colors.brandTealDark]} style={{ paddingTop:16, paddingBottom:24, paddingHorizontal:16, borderBottomLeftRadius:24, borderBottomRightRadius:24 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.brandTeal }} edges={['left', 'right', 'bottom']}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: theme.colors.bg }}
+        contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentInsetAdjustmentBehavior="never"
+      >
+        <LinearGradient
+          colors={[theme.colors.brandTeal, theme.colors.brandTealDark]}
+          style={{ paddingTop: 16 + insets.top, paddingBottom: 24, paddingHorizontal: 16, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}
+        >
         <Link href="/" asChild><Pressable><Text style={{ color:'white' }}>&larr; Home</Text></Pressable></Link>
         <View style={{ flexDirection:'row', alignItems:'center', marginTop:16, gap:12 }}>
           <Pressable
@@ -1253,10 +1681,41 @@ export default function ProfileSimple() {
                   <Text style={{ marginTop:10, marginBottom:6, color: theme.colors.ink60 }}>Location</Text>
                   <TextInput
                     value={draftLocation}
-                    onChangeText={(value) => setDraftLocation(value.slice(0, 120))}
+                    onChangeText={handleDraftLocationChange}
                     placeholder="City, neighbourhood, or leave blank"
                     style={{ borderWidth:1, borderRadius:10, padding:10, borderColor:'#e5e7eb' }}
                   />
+                  {supportsLocation && editOpen && draftLocation.trim().length >= 2 && (
+                    <>
+                      {locationSuggestionsLoading && (
+                        <View style={{ flexDirection:'row', alignItems:'center', marginTop:6, gap:8 }}>
+                          <ActivityIndicator size="small" color="#0c4a6e" />
+                          <Text style={{ color:'#0c4a6e', fontSize:12 }}>Searching…</Text>
+                        </View>
+                      )}
+                      {locationSuggestions.length > 0 && (
+                        <View style={{ marginTop:6, borderWidth:1, borderColor:'#e2e8f0', borderRadius:12, backgroundColor:'#f8fafc' }}>
+                          {locationSuggestions.map((suggestion, index) => (
+                            <Pressable
+                              key={suggestion.id}
+                              onPress={() => handleSelectLocationSuggestion(suggestion)}
+                              style={{
+                                paddingVertical:10,
+                                paddingHorizontal:12,
+                                borderBottomWidth: index === locationSuggestions.length - 1 ? 0 : 1,
+                                borderBottomColor:'#e2e8f0',
+                              }}
+                            >
+                              <Text style={{ color:'#0f172a', fontWeight:'600' }}>{suggestion.label}</Text>
+                              {suggestion.description && suggestion.description !== suggestion.label && (
+                                <Text style={{ marginTop:2, color:'#475569', fontSize:12 }}>{suggestion.description}</Text>
+                              )}
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
+                    </>
+                  )}
                   <View style={{ flexDirection:'row', alignItems:'center', marginTop:6, gap:8 }}>
                     <Pressable
                       onPress={handleUseDeviceLocation}
@@ -1269,7 +1728,13 @@ export default function ProfileSimple() {
                     </Pressable>
                     {!!draftLocation && (
                       <Pressable
-                        onPress={() => { setDraftLocation(''); setLocFetchError(null); }}
+                        onPress={() => {
+                          setDraftLocation('');
+                          setDraftLocationSelection(null);
+                          setLocationSuggestions([]);
+                          setLocationSuggestionsLoading(false);
+                          setLocFetchError(null);
+                        }}
                         style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:999, borderWidth:1, borderColor:'#d1d5db' }}
                       >
                         <Text style={{ color:'#374151', fontWeight:'600', fontSize:12 }}>Clear</Text>
@@ -1314,6 +1779,7 @@ export default function ProfileSimple() {
         <Text style={{ fontSize:16, fontWeight:'700', color: theme.colors.brandInk, marginBottom:10 }}>Badges</Text>
         <BadgesList items={mergedBadges} onEndorse={() => { /* endorsement UI omitted in simple mode */ }} />
       </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }

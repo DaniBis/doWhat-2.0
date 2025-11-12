@@ -10,6 +10,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import {
   activitiesToFeatureCollection,
   DEFAULT_RADIUS_METERS,
+  formatEventTimeRange,
   MAPBOX_CLUSTER_COLORS,
   MAPBOX_CLUSTER_COUNT_FONT,
   MAPBOX_CLUSTER_COUNT_TEXT_COLOR,
@@ -23,7 +24,21 @@ import {
   MAPBOX_STYLE_URL,
   type MapActivity,
   type MapCoordinates,
+  activitiesToEventsFeatureCollection,
+  type EventSummary,
 } from "@dowhat/shared";
+
+export type ViewBounds = {
+  sw: MapCoordinates;
+  ne: MapCoordinates;
+};
+
+export type MapMovePayload = {
+  center: MapCoordinates;
+  radiusMeters: number;
+  zoom: number;
+  bounds: ViewBounds;
+};
 
 const MAPBOX_TOKEN =
   process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
@@ -89,6 +104,30 @@ const pointLayer: LayerProps = {
   },
 };
 
+const eventPointLayer: LayerProps = {
+  id: "events-point",
+  type: "circle",
+  source: "events",
+  paint: {
+    "circle-color": "#f59e0b",
+    "circle-radius": MAPBOX_POINT_RADIUS,
+    "circle-stroke-color": "#f97316",
+    "circle-stroke-width": MAPBOX_POINT_STROKE_WIDTH,
+  },
+};
+
+const selectedEventLayer: LayerProps = {
+  id: "selected-event",
+  type: "circle",
+  source: "events",
+  paint: {
+    "circle-color": "#ffffff",
+    "circle-radius": MAPBOX_POINT_RADIUS + 6,
+    "circle-stroke-color": "#f97316",
+    "circle-stroke-width": 4,
+  },
+};
+
 const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -111,28 +150,41 @@ type MapViewState = {
 type Props = {
   center: MapCoordinates;
   activities: MapActivity[];
+  events: EventSummary[];
   radiusMeters?: number;
   isLoading?: boolean;
-  onMoveEnd?: (payload: { center: MapCoordinates; radiusMeters: number; zoom: number }) => void;
+  onMoveEnd?: (payload: MapMovePayload) => void;
   onSelectActivity?: (activity: MapActivity) => void;
+  onSelectEvent?: (event: EventSummary) => void;
   onRequestDetails?: (activity: MapActivity) => void;
+  onRequestEventDetails?: (event: EventSummary) => void;
+  mode?: 'activities' | 'events' | 'both';
+  activeActivityId?: string | null;
+  activeEventId?: string | null;
 };
 
 export default function WebMap({
   center,
   activities,
+  events,
   radiusMeters = DEFAULT_RADIUS_METERS,
   isLoading = false,
   onMoveEnd,
   onSelectActivity,
+  onSelectEvent,
   onRequestDetails,
+  onRequestEventDetails,
+  mode = 'activities',
+  activeActivityId,
+  activeEventId,
 }: Props) {
   const [viewState, setViewState] = useState<MapViewState>({
     latitude: center.lat,
     longitude: center.lng,
     zoom: 12,
   });
-  const [selected, setSelected] = useState<MapActivity | null>(null);
+  const [selectedActivity, setSelectedActivity] = useState<MapActivity | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
   const mapRef = useRef<MapRef | null>(null);
 
   useEffect(() => {
@@ -140,22 +192,60 @@ export default function WebMap({
   }, [center.lat, center.lng]);
 
   useEffect(() => {
-    if (!selected) return;
-    const updated = activities.find((act) => act.id === selected.id);
-    if (!updated) {
-      setSelected(null);
-    } else if (updated !== selected) {
-      setSelected(updated);
+    if (activeActivityId) {
+      const activity = activities.find((candidate) => candidate.id === activeActivityId) ?? null;
+      setSelectedActivity(activity);
+    } else {
+      setSelectedActivity(null);
     }
-  }, [activities, selected]);
+  }, [activeActivityId, activities]);
 
-  const featureCollection = useMemo(() => activitiesToFeatureCollection(activities), [activities]);
+  useEffect(() => {
+    if (activeEventId) {
+      const event = events.find((candidate) => candidate.id === activeEventId) ?? null;
+      setSelectedEvent(event);
+    } else {
+      setSelectedEvent(null);
+    }
+  }, [activeEventId, events]);
+
+  useEffect(() => {
+    if (mode === 'events') {
+      setSelectedActivity(null);
+    }
+    if (mode === 'activities') {
+      setSelectedEvent(null);
+    }
+  }, [mode]);
+
+  const activityFeatures = useMemo(() => activitiesToFeatureCollection(activities), [activities]);
+  const eventFeatures = useMemo(() => activitiesToEventsFeatureCollection(events), [events]);
+  const showActivities = mode === 'activities' || mode === 'both';
+  const showEvents = mode === 'events' || mode === 'both';
+  const interactiveLayerIds = useMemo(() => {
+    const ids: string[] = [];
+    if (showActivities) {
+      ids.push(clusterLayer.id!, pointLayer.id!, 'selected-point');
+    }
+    if (showEvents) {
+      ids.push(eventPointLayer.id!, selectedEventLayer.id!);
+    }
+    return ids;
+  }, [showActivities, showEvents]);
   const selectedFilter = useMemo<NonNullable<LayerProps["filter"]>>(
     () =>
-      selected
-        ? ["all", ["!has", "point_count"], ["==", ["get", "id"], selected.id]]
+      selectedActivity
+        ? ["all", ["!has", "point_count"], ["==", ["get", "id"], selectedActivity.id]]
         : ["all", ["==", ["get", "id"], "__none__"]],
-    [selected],
+    [selectedActivity],
+  );
+
+  const selectedEventFilter = useMemo<NonNullable<LayerProps["filter"]>>(
+    () =>
+      selectedEvent
+        ? ["all", ["==", ["get", "id"], selectedEvent.id]]
+        : ["all", ["==", ["get", "id"], "__none__"]],
+    [selectedEvent],
   );
 
   const handleMove = useCallback((event: ViewStateChangeEvent) => {
@@ -163,8 +253,7 @@ export default function WebMap({
     setViewState({ latitude: vs.latitude, longitude: vs.longitude, zoom: vs.zoom });
   }, []);
 
-  const handleMoveEnd = useCallback(
-    (event: ViewStateChangeEvent) => {
+  const handleMoveEnd = useCallback(() => {
       const map = mapRef.current;
       if (!map) return;
       const centerLngLat = map.getCenter();
@@ -182,10 +271,12 @@ export default function WebMap({
         center: { lat: centerLngLat.lat, lng: centerLngLat.lng },
         radiusMeters: approxRadius,
         zoom: map.getZoom(),
+        bounds: {
+          ne: { lat: northEast.lat, lng: northEast.lng },
+          sw: { lat: southWest.lat, lng: southWest.lng },
+        },
       });
-    },
-    [onMoveEnd],
-  );
+    }, [onMoveEnd]);
 
   const handleMapClick = useCallback(
     (event: MapLayerMouseEvent) => {
@@ -193,12 +284,26 @@ export default function WebMap({
       if (!map) return;
       const feature = event.features?.[0];
       if (!feature) return;
+      const kind = feature.properties?.kind;
+      if (kind === 'event') {
+        const eventId = feature.properties?.id as string | undefined;
+        if (!eventId) return;
+        const evt = events.find((candidate) => candidate.id === eventId);
+        if (evt) {
+          setSelectedActivity(null);
+          setSelectedEvent(evt);
+          onSelectEvent?.(evt);
+        }
+        return;
+      }
+
       const source = map.getSource("activities");
       if (!source || !("getClusterExpansionZoom" in source)) {
         if (!feature.properties?.id) return;
         const activity = activities.find((act) => act.id === feature.properties?.id);
         if (activity) {
-          setSelected(activity);
+          setSelectedEvent(null);
+          setSelectedActivity(activity);
           onSelectActivity?.(activity);
         }
         return;
@@ -211,19 +316,20 @@ export default function WebMap({
             ? (feature.geometry.coordinates as [number, number])
             : ([event.lngLat.lng, event.lngLat.lat] as [number, number]);
           const [lng, lat] = coords;
-          setViewState((prev) => ({ latitude: lat, longitude: lng, zoom }));
+          setViewState({ latitude: lat, longitude: lng, zoom });
         });
         return;
       }
-      const activityId = feature.properties?.id;
+      const activityId = feature.properties?.id as string | undefined;
       if (!activityId) return;
       const activity = activities.find((act) => act.id === activityId);
       if (activity) {
-        setSelected(activity);
+        setSelectedEvent(null);
+        setSelectedActivity(activity);
         onSelectActivity?.(activity);
       }
     },
-    [activities, onSelectActivity],
+    [activities, events, onSelectActivity, onSelectEvent],
   );
 
   if (!MAPBOX_TOKEN) {
@@ -243,7 +349,7 @@ export default function WebMap({
         mapStyle={MAPBOX_STYLE_URL}
         reuseMaps
         attributionControl
-        interactiveLayerIds={[clusterLayer.id!, pointLayer.id!]}
+        interactiveLayerIds={interactiveLayerIds}
         {...viewState}
         onMove={handleMove}
         onMoveEnd={handleMoveEnd}
@@ -251,59 +357,109 @@ export default function WebMap({
         style={{ width: "100%", height: "100%" }}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
-        <Source
-          id="activities"
-          type="geojson"
-          data={featureCollection}
-          cluster
-          clusterRadius={48}
-          clusterMaxZoom={16}
-        >
-          <Layer {...clusterLayer} />
-          <Layer {...clusterCountLayer} />
-          <Layer {...pointLayer} />
-          <Layer
-            id="selected-point"
-            type="circle"
-            source="activities"
-            filter={selectedFilter}
-            paint={{
-              "circle-color": "#ffffff",
-              "circle-radius": MAPBOX_POINT_RADIUS + 6,
-              "circle-stroke-color": MAPBOX_POINT_COLOR,
-              "circle-stroke-width": 4,
-            }}
-          />
-        </Source>
-        {selected && (
+        {showActivities && (
+          <Source
+            id="activities"
+            type="geojson"
+            data={activityFeatures}
+            cluster
+            clusterRadius={48}
+            clusterMaxZoom={16}
+          >
+            <Layer {...clusterLayer} />
+            <Layer {...clusterCountLayer} />
+            <Layer {...pointLayer} />
+            <Layer
+              id="selected-point"
+              type="circle"
+              source="activities"
+              filter={selectedFilter}
+              paint={{
+                "circle-color": "#ffffff",
+                "circle-radius": MAPBOX_POINT_RADIUS + 6,
+                "circle-stroke-color": MAPBOX_POINT_COLOR,
+                "circle-stroke-width": 4,
+              }}
+            />
+          </Source>
+        )}
+        {showEvents && (
+          <Source id="events" type="geojson" data={eventFeatures}>
+            <Layer {...eventPointLayer} />
+            <Layer {...selectedEventLayer} filter={selectedEventFilter} />
+          </Source>
+        )}
+        {selectedActivity && (
           <Popup
             closeButton
             closeOnClick={false}
             focusAfterOpen={false}
             maxWidth="280px"
             anchor="top"
-            longitude={selected.lng}
-            latitude={selected.lat}
-            onClose={() => setSelected(null)}
+            longitude={selectedActivity.lng}
+            latitude={selectedActivity.lat}
+            onClose={() => setSelectedActivity(null)}
           >
             <div className="space-y-2 text-sm text-slate-700">
-              <div className="font-semibold text-slate-900">{selected.name}</div>
-              {selected.venue && <div>📍 {selected.venue}</div>}
-              {selected.distance_m != null && (
+              <div className="font-semibold text-slate-900">{selectedActivity.name}</div>
+              {selectedActivity.venue && <div>📍 {selectedActivity.venue}</div>}
+              {selectedActivity.distance_m != null && (
                 <div className="text-xs text-slate-500">
-                  ~{Math.round((selected.distance_m / 1000) * 10) / 10} km away
+                  ~{Math.round((selectedActivity.distance_m / 1000) * 10) / 10} km away
                 </div>
               )}
               <button
                 type="button"
                 onClick={(event) => {
                   event.preventDefault();
-                  onRequestDetails?.(selected);
+                  onRequestDetails?.(selectedActivity);
                 }}
                 className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
               >
                 View details →
               </button>
+            </div>
+          </Popup>
+        )}
+        {showEvents && selectedEvent && (
+          <Popup
+            closeButton
+            closeOnClick={false}
+            focusAfterOpen={false}
+            maxWidth="280px"
+            anchor="top"
+            longitude={selectedEvent.lng ?? 0}
+            latitude={selectedEvent.lat ?? 0}
+            onClose={() => setSelectedEvent(null)}
+          >
+            <div className="space-y-2 text-sm text-slate-700">
+              <div className="font-semibold text-slate-900">{selectedEvent.title}</div>
+              {selectedEvent.venue_name && <div>📍 {selectedEvent.venue_name}</div>}
+              <EventTimeDisplay event={selectedEvent} />
+              <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                {selectedEvent.tags?.slice(0, 3).map((tag) => (
+                  <span key={tag} className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRequestEventDetails?.(selectedEvent)}
+                className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                View details →
+              </button>
+              {selectedEvent.url && (
+                <a
+                  href={selectedEvent.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                >
+                  View source →
+                </a>
+              )}
             </div>
           </Popup>
         )}
@@ -316,6 +472,27 @@ export default function WebMap({
       <div className="pointer-events-none absolute bottom-4 left-4 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-slate-600 shadow">
         Radius ≈ {Math.round(radiusMeters / 100) / 10} km
       </div>
+    </div>
+  );
+}
+
+function EventTimeDisplay({ event }: { event: EventSummary }) {
+  const { start, end } = formatEventTimeRange(event);
+  const formatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }),
+    [],
+  );
+
+  return (
+    <div className="text-xs text-slate-500">
+      {formatter.format(start)}
+      {end ? ` — ${formatter.format(end)}` : ''}
     </div>
   );
 }

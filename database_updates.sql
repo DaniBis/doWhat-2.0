@@ -214,7 +214,10 @@ RETURNS TABLE (
   venue text,
   lat_out double precision,
   lng_out double precision,
-  distance_m double precision
+  distance_m double precision,
+  activity_types text[],
+  tags text[],
+  traits text[]
 ) LANGUAGE sql STABLE AS $$
   WITH p AS (
     SELECT ST_SetSRID(ST_MakePoint(lng, lat), 4326) AS pt
@@ -224,12 +227,16 @@ RETURNS TABLE (
          a.venue,
          a.lat AS lat_out,
          a.lng AS lng_out,
-         ST_DistanceSphere(a.geom, p.pt) AS distance_m
+         ST_DistanceSphere(a.geom, p.pt) AS distance_m,
+         a.activity_types,
+         a.tags,
+         a.traits
   FROM activities a, p
   WHERE a.geom IS NOT NULL
     AND ST_DWithin(a.geom, p.pt, radius_m)
     AND (types IS NULL OR a.activity_types && types)
     AND (tags IS NULL OR a.tags && tags)
+    AND NOT (a.tags && ARRAY['seed'])
   ORDER BY ST_DistanceSphere(a.geom, p.pt)
   LIMIT limit_rows;
 $$;
@@ -237,55 +244,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.activities_nearby(double precision, double precision, integer, text[], text[], integer)
   TO anon, authenticated;
 
--- Seed activities around a center (dev helper)
-CREATE OR REPLACE FUNCTION public.seed_activities(
-  lat double precision,
-  lng double precision,
-  n integer DEFAULT 12,
-  radius_m integer DEFAULT 1500
-)
-RETURNS INTEGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  i integer := 0;
-  cnt integer := 0;
-  la double precision;
-  ln double precision;
-  meters double precision;
-  angle double precision;
-  deg_per_m double precision := 1.0/111320.0;
-  names text[] := ARRAY[
-    'Archery Club','Morning Yoga','Group Run','Tennis Meetup','Climbing Gym',
-    'Pickup Soccer','Basketball Court','Community Swim','Cycling Group','Hiking Trailhead',
-    'Golf Range','Surf School'
-  ];
-  nm text;
-BEGIN
-  IF n < 1 THEN n := 1; END IF;
-  IF n > 50 THEN n := 50; END IF;
-  IF radius_m < 100 THEN radius_m := 100; END IF;
-  IF radius_m > 5000 THEN radius_m := 5000; END IF;
-
-  FOR i IN 1..n LOOP
-    nm := names[((i-1) % array_length(names,1)) + 1];
-    meters := radius_m * (0.4 + random()*0.6);
-    angle := random() * 2 * pi();
-    la := lat + (meters * sin(angle)) * deg_per_m;
-    ln := lng + (meters * cos(angle)) * deg_per_m / cos(radians(lat));
-    BEGIN
-      INSERT INTO activities(name, venue, lat, lng, activity_types, tags)
-      VALUES (nm, 'Seeded spot', la, ln, ARRAY[nm]::text[], ARRAY['seed'])
-      ON CONFLICT DO NOTHING;
-      cnt := cnt + 1;
-    EXCEPTION WHEN others THEN
-      -- ignore per-row errors
-      NULL;
-    END;
-  END LOOP;
-  RETURN cnt;
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.seed_activities(double precision,double precision,integer,integer) TO anon, authenticated;
+-- TODO: Replace the placeholder event feed URLs with live Bangkok sources when available.
+INSERT INTO public.event_sources (url, type, venue_hint, city, enabled)
+VALUES
+  ('https://todo.example.com/bangkok/community.ics', 'ics', 'Riverside Bangkok', 'bangkok', FALSE),
+  ('https://todo.example.com/bangkok/happenings.rss', 'rss', 'Siam Square', 'bangkok', FALSE),
+  ('https://todo.example.com/bangkok/listings.json', 'jsonld', 'Thonglor District', 'bangkok', FALSE)
+ON CONFLICT (url) DO NOTHING;

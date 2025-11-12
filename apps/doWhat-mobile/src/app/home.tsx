@@ -1,8 +1,19 @@
 import { supabase } from "../lib/supabase";
 import { createWebUrl } from "../lib/web";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
-import type { ActivityRow } from "@dowhat/shared";
-import { formatPrice, formatDateRange } from "@dowhat/shared";
+import {
+  normaliseActivityName,
+  formatPrice,
+  formatDateRange,
+  createPlacesFetcher,
+  formatPlaceUpdatedLabel,
+  DEFAULT_CITY_SLUG,
+  getCityConfig,
+  theme,
+  type PlaceSummary,
+  type PlacesViewportQuery,
+  type ActivityRow,
+} from "@dowhat/shared";
 import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
@@ -14,12 +25,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
 import ActivityIcon from '../components/ActivityIcon';
-import { theme } from '@dowhat/shared';
 import { Ionicons } from '@expo/vector-icons';
 import RsvpBadges from "../components/RsvpBadges";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
 import type { Session } from '@supabase/supabase-js';
+import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -70,6 +81,18 @@ function HomeScreen() {
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
   const nearbyApiFailureLogged = useRef(false);
   const nearbyFallbackFailureLogged = useRef(false);
+  const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
+  const [placesError, setPlacesError] = useState<string | null>(null);
+  const placesFetchFailureLogged = useRef(false);
+  const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
+  const placesFetcher = useMemo(
+    () =>
+      createPlacesFetcher({
+        buildUrl: () => createWebUrl('/api/places').toString(),
+        includeCredentials: true,
+      }),
+    [],
+  );
 
     const FALLBACK_RADIUS_METERS = 2500;
 
@@ -136,11 +159,12 @@ function HomeScreen() {
         const name = typeof activities?.name === 'string' && activities.name.trim()
           ? activities.name
           : key;
-        const existing = acc[key];
+        const groupKey = normaliseActivityName(name);
+        const existing = acc[groupKey];
         if (existing) {
           existing.count += 1;
         } else {
-          acc[key] = { id: key, name, count: 1 };
+          acc[groupKey] = { id: groupKey, name, count: 1 };
         }
         return acc;
       }, {});
@@ -159,13 +183,13 @@ function HomeScreen() {
       const list = Array.isArray(json?.activities) ? json.activities : [];
       const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
         if (!item?.name) { return acc; }
-        const key = item.id ?? item.name;
+        const key = normaliseActivityName(item.name);
         const existing = acc[key];
         if (existing) {
           existing.count += 1;
         } else {
           acc[key] = {
-            id: item.id ?? key,
+            id: key,
             name: item.name,
             count: 1,
           };
@@ -191,6 +215,46 @@ function HomeScreen() {
       }
     }
   }, [fetchNearbyFromSupabase]);
+
+  const fetchPlacesViewport = useCallback(
+    async (latNow: number | null, lngNow: number | null) => {
+      try {
+        const city = defaultCity;
+        const hasLocation = latNow != null && lngNow != null;
+        const latitudeDelta = hasLocation
+          ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
+          : city.defaultRegion.latitudeDelta;
+        const longitudeDelta = hasLocation
+          ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
+          : city.defaultRegion.longitudeDelta;
+        const centerLat = hasLocation ? latNow! : city.center.lat;
+        const centerLng = hasLocation ? lngNow! : city.center.lng;
+        const bounds: PlacesViewportQuery['bounds'] = {
+          sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
+          ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
+        };
+        const query: PlacesViewportQuery = {
+          bounds,
+          limit: 24,
+        };
+        if (!hasLocation) {
+          query.city = city.slug;
+        }
+        const response = await placesFetcher(query);
+        setNearbyPlaces(response.places ?? []);
+        setPlacesError(null);
+        placesFetchFailureLogged.current = false;
+      } catch (err) {
+        if (__DEV__ && !placesFetchFailureLogged.current) {
+          placesFetchFailureLogged.current = true;
+          console.info('[Home] Places fetch failed', err);
+        }
+        setNearbyPlaces([]);
+        setPlacesError(err instanceof Error ? err.message : 'Unable to load nearby places.');
+      }
+    },
+    [defaultCity, placesFetcher],
+  );
 
   const load = useCallback(async () => {
     setError(null);
@@ -239,6 +303,7 @@ function HomeScreen() {
         } catch {}
       }
       await fetchNearbyActivities(latNow, lngNow);
+      await fetchPlacesViewport(latNow, lngNow);
       
       // Get current sessions with future start times
       const now = new Date().toISOString();
@@ -256,7 +321,7 @@ function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [fetchNearbyActivities]);
+  }, [fetchNearbyActivities, fetchPlacesViewport]);
 
   useEffect(() => {
     ensureBackgroundLocation().catch(() => {});
@@ -281,12 +346,13 @@ function HomeScreen() {
             const la = Number(loc.coords.latitude.toFixed(6));
             const ln = Number(loc.coords.longitude.toFixed(6));
             fetchNearbyActivities(la, ln);
+            fetchPlacesViewport(la, ln);
           }
         );
       } catch {}
     })();
     return () => { sub?.remove(); };
-  }, [fetchNearbyActivities]);
+  }, [fetchNearbyActivities, fetchPlacesViewport]);
 
   // Simulate search suggestions (replace with real API)
   const searchSuggestions = activities ? activities
@@ -323,6 +389,7 @@ function HomeScreen() {
     });
     return { idSet, nameSet };
   }, [activities]);
+
 
   const activityEventCounts = useMemo(() => {
     const idMap = new Map<string, number>();
@@ -373,6 +440,7 @@ function HomeScreen() {
   }, [rows, activityPresence]);
 
   const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
+  const topPlaces = useMemo(() => nearbyPlaces.slice(0, 12), [nearbyPlaces]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -497,6 +565,84 @@ function HomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           )}
         >
+          {topPlaces.length > 0 ? (
+            <View style={{ marginTop: 28 }}>
+              <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827' }}>Popular nearby places</Text>
+                <Text style={{ color: '#6B7280', marginTop: 4 }}>Quick picks straight from the Discover map.</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, columnGap: 14 }}
+              >
+                {topPlaces.map((place) => {
+                  const appearance = resolveCategoryAppearance(place);
+                  const primaryCategory = resolvePrimaryCategoryKey(place);
+                  const categoryLabel = primaryCategory
+                    ? formatCategoryLabel(primaryCategory)
+                    : place.categories?.[0]
+                      ? formatCategoryLabel(place.categories[0])
+                      : 'Activity';
+                  const updatedLabel = formatPlaceUpdatedLabel(place);
+                  const locality = place.address ?? place.locality ?? null;
+                  return (
+                    <Pressable
+                      key={place.id}
+                      onPress={() => router.push('/(tabs)/map')}
+                      style={{
+                        width: 240,
+                        borderRadius: 18,
+                        padding: 16,
+                        backgroundColor: '#0F172A',
+                        shadowColor: '#000',
+                        shadowOpacity: 0.12,
+                        shadowRadius: 10,
+                        shadowOffset: { width: 0, height: 6 },
+                        elevation: 4,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <View
+                          style={{
+                            width: 52,
+                            height: 52,
+                            borderRadius: 26,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: 'rgba(255,255,255,0.12)',
+                            borderWidth: 1,
+                            borderColor: appearance.color,
+                          }}
+                        >
+                          <Text style={{ fontSize: 24 }}>{appearance.emoji}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={{ color: '#F8FAFC', fontSize: 16, fontWeight: '700' }}>
+                            {place.name}
+                          </Text>
+                          <Text style={{ color: '#E2E8F0', fontSize: 13, marginTop: 4 }}>{categoryLabel}</Text>
+                          {locality ? (
+                            <Text numberOfLines={1} style={{ color: '#CBD5E1', fontSize: 12, marginTop: 4 }}>
+                              {locality}
+                            </Text>
+                          ) : null}
+                          <Text style={{ color: '#CBD5E1', fontSize: 11, marginTop: locality ? 4 : 6 }}>
+                            {updatedLabel}
+                          </Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : placesError ? (
+            <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
+              <Text style={{ color: '#DC2626', fontSize: 13 }}>{placesError}</Text>
+            </View>
+          ) : null}
+
           {filteredActivities.length === 0 && searchQuery ? (
             <View style={{
               flex: 1,

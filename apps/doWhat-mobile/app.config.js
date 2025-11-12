@@ -26,22 +26,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       },
     },
   ]);
-  const resolvedMapboxToken =
-    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ||
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
-    process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
-    process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
-    process.env.MAPBOX_ACCESS_TOKEN ||
-    '';
-
-  if (resolvedMapboxToken && !process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN) {
-    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = resolvedMapboxToken;
-  }
-  if (resolvedMapboxToken && !process.env.EXPO_PUBLIC_MAPBOX_TOKEN) {
-    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = resolvedMapboxToken;
-  }
-
-  const mapboxAccessToken = resolvedMapboxToken;
 
   return {
     name: 'doWhat',
@@ -62,6 +46,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       bundleIdentifier: 'com.dowhat.app',
       deploymentTarget: '15.1',
       supportsTablet: true,
+      config: {
+        googleMapsApiKey,
+      },
       infoPlist: {
         NSLocationWhenInUseUsageDescription: 'We use your location to find nearby activities.',
         NSLocationAlwaysAndWhenInUseUsageDescription:
@@ -102,9 +89,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       supabaseUrl,
       supabaseAnonKey,
       webBaseUrl,
-      mapboxAccessToken,
-      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: mapboxAccessToken,
-      EXPO_PUBLIC_MAPBOX_TOKEN: mapboxAccessToken,
       eas: {
         projectId: 'your-eas-project-id',
       },
