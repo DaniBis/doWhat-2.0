@@ -72,13 +72,49 @@ pnpm install
 Web dev:
 
 ```
+pnpm dev:web
+```
+
+or
+
+```
 pnpm --filter ./apps/doWhat-web dev
 ```
 
 Mobile dev (Expo):
 
 ```
+pnpm dev:mobile
+```
+
+or
+
+```
 pnpm --filter ./apps/doWhat-mobile exec expo start -c
+```
+
+Run on iOS (requires macOS with Xcode):
+
+```
+pnpm ios
+```
+
+or start iOS development server directly:
+
+```
+pnpm dev:ios
+```
+
+Run on Android:
+
+```
+pnpm android
+```
+
+or start Android development server directly:
+
+```
+pnpm dev:android
 ```
 
 ## Admin features
