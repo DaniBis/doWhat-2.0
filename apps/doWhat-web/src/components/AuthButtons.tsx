@@ -9,7 +9,7 @@ export default function AuthButtons() {
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    const mounted = true;
+    let mounted = true;
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (mounted) setEmail(data.user?.email ?? null);
@@ -17,7 +17,10 @@ export default function AuthButtons() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setEmail(session?.user?.email ?? null);
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   if (!email)

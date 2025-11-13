@@ -86,11 +86,15 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 
 ## Database notes
 
-- `apps/doWhat-web/src/lib/supabase/migrations/002_schema.sql` – core tables example (users, activities, rsvps)
-- `apps/doWhat-web/src/lib/supabase/migrations/003_profiles.sql` – `profiles` table with `id -> auth.users(id)`
-- `apps/doWhat-web/src/lib/supabase/migrations/004_sessions_nearby.sql` – RPC used by web + mobile nearby search
+**Important**: Run migrations in order in your Supabase SQL Editor:
 
-Enable RLS if desired and add policies (examples commented inside the migration file).
+1. `apps/doWhat-web/src/lib/supabase/migrations/002_schema.sql` – core tables (activities, venues, sessions, rsvps)
+2. `apps/doWhat-web/src/lib/supabase/migrations/003_profiles.sql` – profiles table linked to auth.users
+3. `apps/doWhat-web/src/lib/supabase/migrations/004_sessions_nearby.sql` – RPC function for nearby search (used by web + mobile)
+
+Migration `005_sessions_created_by.sql` is no longer needed as `created_by` is now in the main schema.
+
+Enable RLS if desired and add policies (examples are commented in the migration files).
 
 ## Deploy
 
