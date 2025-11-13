@@ -21,7 +21,7 @@ export default async function RootLayout({
               <a href="/nearby" className="text-brand-teal">Nearby</a>
               <a href="/my/rsvps" className="text-brand-teal">My RSVPs</a>
               <a href="/profile" className="text-brand-teal">Profile</a>
-              <a href="/admin/new" className="text-brand-teal">New</a>
+              <a href="/admin/sessions" className="text-brand-teal">Admin</a>
             </nav>
             <AuthButtons />
           </div>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import AdminNav from "@/components/AdminNav";
 import { supabase } from "@/lib/supabase/browser";
 
 type Activity = { id: string; name: string };
@@ -83,9 +84,8 @@ export default function AdminActivities() {
       <div className="mb-3 flex items-center gap-2">
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
         <h1 className="text-lg font-semibold">Manage Activities</h1>
-        <Link href="/admin/sessions" className="ml-auto text-brand-teal">Sessions</Link>
-        <Link href="/admin/venues" className="text-brand-teal">Venues</Link>
       </div>
+      <AdminNav current="/admin/activities" />
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
       {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
 

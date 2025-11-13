@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import AdminNav from "@/components/AdminNav";
 import { supabase } from "@/lib/supabase/browser";
 
 type Row = {
@@ -99,6 +100,7 @@ export default function AdminSessions() {
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
         <h1 className="text-lg font-semibold">Manage Sessions</h1>
       </div>
+      <AdminNav current="/admin/sessions" />
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
       {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
       {loading ? (

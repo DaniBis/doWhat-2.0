@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import AdminNav from "@/components/AdminNav";
 import { supabase } from "@/lib/supabase/browser";
 
 type Option = { id: string; name: string };
@@ -149,6 +150,8 @@ export default function AdminNewSessionPage() {
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
         <h1 className="text-lg font-semibold">Create Session</h1>
       </div>
+
+      <AdminNav current="/admin/new" />
 
       {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
       {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}

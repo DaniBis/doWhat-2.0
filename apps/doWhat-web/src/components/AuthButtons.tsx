@@ -47,7 +47,6 @@ export default function AuthButtons() {
           Sign out
         </button>
       </form>
-      <Link href="/profile" className="rounded border px-2 py-1">Profile</Link>
     </div>
   );
 }
