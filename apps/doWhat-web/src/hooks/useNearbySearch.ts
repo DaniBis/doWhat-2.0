@@ -79,7 +79,7 @@ export function useNearbySearch() {
 
   const useMyLocation = useCallback(async () => {
     try {
-      const perm = await (navigator as any)?.permissions?.query?.({
+      const perm = await navigator?.permissions?.query?.({
         name: "geolocation",
       });
       if (perm?.state === "denied") {

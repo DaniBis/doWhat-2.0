@@ -12,6 +12,13 @@ module.exports = {
       borderRadius: {
         xl: "0.75rem",
       },
+      colors: {
+        brand: {
+          teal: "#0d9488",
+          mustard: "#FDB515",
+          slate: "#1e293b",
+        },
+      },
     },
   },
   plugins: [],

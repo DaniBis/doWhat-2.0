@@ -1,0 +1,58 @@
+
+> doWhat-mobile@0.1.0 start:ios /Users/dan/dowhat/apps/doWhat-mobile
+> expo start --dev-client --ios -c
+
+env: load .env.local
+env: export NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY
+Could not find a shared URI scheme for the dev client between the local /ios and /android directories. App launches (QR code, interstitial, terminal keys) may not work as expected. You can configure a custom scheme using the --scheme option, or by running npx expo prebuild to regenerate the native directories with URI schemes.
+Starting project at /Users/dan/dowhat/apps/doWhat-mobile
+Using src/app as the root directory for Expo Router.
+[metro.config] extraNodeModules: [
+  'expo-router',
+  'expo-image-picker',
+  'expo-image-manipulator',
+  'react-native-gesture-handler',
+  'react-native-reanimated',
+  'expo',
+  'expo-modules-core',
+  'react-native',
+  'react'
+]
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+› Opening com.dowhat.app on doWhat
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+iOS apps/doWhat-mobile/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓░░░░░░░░░░ 38.0% ( 90/202)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓░░░░░░░░░░ 42.7% (344/553)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓░░░░░░░░ 54.5% (613/830)
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+native@7.1.17_react-native@0.79.6_@babel+core@7.28.4_@types+react@18.2.79_react@18.2.0__react@18.2.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓░░░░░░ 65.2% ( 866/1084)
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+core@7.12.4_react@18.2.0/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓░░░░░ 71.4% (1077/1275)
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░ 86.8% (1280/1383)
+ WARN  The package /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback contains an invalid package.json configuration. Consider raising this issue with the package maintainer(s).
+Reason: The resolution for "/Users/dan/dowhat/node_modules/.pnpm/@react-navigation+elements@2.6.4_@react-navigation+native@7.1.17_react-native@0.79.6_@babel+c_helxhklce6x4om6quzlaxnlvxm/node_modules/use-latest-callback" defined in "exports" is /Users/dan/dowhat/node_modules/.pnpm/use-latest-callback@0.2.4_react@18.2.0/node_modules/use-latest-callback/esm.mjs, however this file does not exist. Falling back to file-based resolution.
+iOS apps/doWhat-mobile/index.ts ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 95.3% (1470/1506)
+iOS Bundled 27133ms apps/doWhat-mobile/index.ts (1539 modules)
+ ERROR  [runtime not ready]: Invariant Violation: TurboModuleRegistry.getEnforcing(...): 'RNGestureHandlerModule' could not be found. Verify that a module by this name is registered in the native binary., js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'S' of undefined, js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'default' of undefined, js engine: hermes
+Could not open editor, you can set it by defining the $EDITOR environment variable with the binary of your editor. (e.g. "vscode" or "atom")
+ ERROR  [runtime not ready]: Error: Non-js exception: AppRegistryBinding::stopSurface failed. Global was not installed., js engine: hermes
+iOS Bundled 1199ms apps/doWhat-mobile/index.ts (1 module)
+ ERROR  [runtime not ready]: Invariant Violation: TurboModuleRegistry.getEnforcing(...): 'RNGestureHandlerModule' could not be found. Verify that a module by this name is registered in the native binary., js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'S' of undefined, js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'default' of undefined, js engine: hermes
+Could not open editor, you can set it by defining the $EDITOR environment variable with the binary of your editor. (e.g. "vscode" or "atom")
+Could not open editor, you can set it by defining the $EDITOR environment variable with the binary of your editor. (e.g. "vscode" or "atom")
+ ERROR  [runtime not ready]: Error: Non-js exception: AppRegistryBinding::stopSurface failed. Global was not installed., js engine: hermes
+iOS Bundled 4886ms apps/doWhat-mobile/index.ts (1 module)
+iOS apps/doWhat-mobile/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+ ERROR  [runtime not ready]: Invariant Violation: TurboModuleRegistry.getEnforcing(...): 'RNGestureHandlerModule' could not be found. Verify that a module by this name is registered in the native binary., js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'S' of undefined, js engine: hermes
+ ERROR  [runtime not ready]: TypeError: Cannot read property 'default' of undefined, js engine: hermes
+Could not open editor, you can set it by defining the $EDITOR environment variable with the binary of your editor. (e.g. "vscode" or "atom")

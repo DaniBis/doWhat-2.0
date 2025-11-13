@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { supabase } from "@/lib/supabase/browser";
+import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Option = { id: string; name: string };
 
@@ -66,9 +67,9 @@ export default function AdminNewSessionPage() {
       .from("activities")
       .insert({ name })
       .select("id")
-      .single();
+      .single<{ id: string }>();
     if (error) throw error;
-    return (data as any).id as string;
+    return data.id;
   }
 
   async function ensureVenue(): Promise<string> {
@@ -77,16 +78,16 @@ export default function AdminNewSessionPage() {
     if (!name) throw new Error("Enter venue name or select one.");
     const lat = venueLat ? Number(venueLat) : null;
     const lng = venueLng ? Number(venueLng) : null;
-    const payload: Record<string, any> = { name };
+    const payload: Record<string, unknown> = { name };
     if (!Number.isNaN(lat)) payload.lat = lat;
     if (!Number.isNaN(lng)) payload.lng = lng;
     const { data, error } = await supabase
       .from("venues")
       .insert(payload)
       .select("id")
-      .single();
+      .single<{ id: string }>();
     if (error) throw error;
-    return (data as any).id as string;
+    return data.id;
   }
 
   async function onCreate() {
@@ -114,15 +115,15 @@ export default function AdminNewSessionPage() {
         .from("sessions")
         .insert({ activity_id: actId, venue_id: venId, price_cents: cents, starts_at: starts, ends_at: ends })
         .select("id")
-        .single();
+        .single<{ id: string }>();
       if (error) throw error;
 
       setMsg("Session created. Redirecting…");
-      const id = (data as any).id as string;
+      const id = data.id;
       // Navigate to the new session page
       window.location.href = `/sessions/${id}`;
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }

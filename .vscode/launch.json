@@ -6,7 +6,7 @@
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "dowhat-web", "dev"],
+      "runtimeArgs": ["--filter", "doWhat-web", "dev"],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}"
     }

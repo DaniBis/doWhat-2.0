@@ -1,0 +1,31 @@
+name: Nightly Places Refresh
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger places refresh
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PLACES_REFRESH_ENDPOINT: ${{ secrets.PLACES_REFRESH_ENDPOINT }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo 'CRON_SECRET missing'; exit 1; fi
+          if [ -z "$PLACES_REFRESH_ENDPOINT" ]; then
+            echo 'PLACES_REFRESH_ENDPOINT missing'; exit 1; fi
+          HTTP_STATUS=$(curl -s -w "\n%{http_code}" -X POST "$PLACES_REFRESH_ENDPOINT" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -H 'content-length: 0' \
+            -o /tmp/places-refresh-response.json)
+          RESPONSE_CODE=$(echo "$HTTP_STATUS" | tail -n1)
+          cat /tmp/places-refresh-response.json
+          if [ "$RESPONSE_CODE" -ge 400 ]; then
+            echo "Places refresh failed with status $RESPONSE_CODE" >&2
+            exit 1
+          fi

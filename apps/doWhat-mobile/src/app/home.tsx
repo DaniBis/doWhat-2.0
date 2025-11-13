@@ -1,72 +1,266 @@
 import { supabase } from "../lib/supabase";
+import { createWebUrl } from "../lib/web";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
-
-import type { ActivityRow } from "@dowhat/shared";
-import { formatPrice, formatDateRange } from "@dowhat/shared";
-import * as Linking from 'expo-linking';
+import {
+  normaliseActivityName,
+  formatPrice,
+  formatDateRange,
+  createPlacesFetcher,
+  formatPlaceUpdatedLabel,
+  DEFAULT_CITY_SLUG,
+  getCityConfig,
+  theme,
+  type PlaceSummary,
+  type PlacesViewportQuery,
+  type ActivityRow,
+} from "@dowhat/shared";
 import * as Location from 'expo-location';
-import { Link, useFocusEffect } from "expo-router";
-import { useEffect, useState, useCallback } from "react";
-import { View, Text, Pressable, FlatList, RefreshControl, Platform } from "react-native";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const ExpoRouter = require("expo-router");
+const { Link, useFocusEffect, router } = ExpoRouter;
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { LinearGradient } = require('expo-linear-gradient');
+import Brand from '../components/Brand';
+import ActivityIcon from '../components/ActivityIcon';
+import { Ionicons } from '@expo/vector-icons';
+import RsvpBadges from "../components/RsvpBadges";
+import SearchBar from "../components/SearchBar";
+import EmptyState from "../components/EmptyState";
+import type { Session } from '@supabase/supabase-js';
+import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
+
+const { width: screenWidth } = Dimensions.get('window');
 
 // Map activity names/ids to icons and colors (customize as needed)
-const activityVisuals: Record<string, { icon: string; color: string }> = {
-  'Rock Climbing': { icon: '🧗', color: '#fbbf24' },
-  'Running': { icon: '🏃', color: '#f59e42' },
-  'Yoga': { icon: '🧘', color: '#a3e635' },
-  'Cycling': { icon: '🚴', color: '#38bdf8' },
-  'Swimming': { icon: '🏊', color: '#60a5fa' },
-  'Hiking': { icon: '🥾', color: '#f87171' },
-  'Soccer': { icon: '⚽', color: '#fbbf24' },
-  'Basketball': { icon: '🏀', color: '#f59e42' },
-  // Add more as needed
+const activityVisuals: Record<string, { icon: string; color: string; bgColor: string }> = {
+  'Rock Climbing': { icon: '🧗', color: '#FF6B35', bgColor: '#FFF4F1' },
+  'Running': { icon: '🏃', color: '#4ECDC4', bgColor: '#F0FDFC' },
+  'Yoga': { icon: '🧘', color: '#45B7D1', bgColor: '#F0F9FF' },
+  'Cycling': { icon: '🚴', color: '#96CEB4', bgColor: '#F0FDF4' },
+  'Swimming': { icon: '🏊', color: '#FFEAA7', bgColor: '#FFFBEB' },
+  'Hiking': { icon: '🥾', color: '#DDA0DD', bgColor: '#FAF5FF' },
+  'Soccer': { icon: '⚽', color: '#FF7675', bgColor: '#FEF2F2' },
+  'Basketball': { icon: '🏀', color: '#74B9FF', bgColor: '#EFF6FF' },
+  'Tennis': { icon: '🎾', color: '#00B894', bgColor: '#ECFDF5' },
+  'Golf': { icon: '⛳', color: '#FDCB6E', bgColor: '#FFFBEB' },
+  'Skiing': { icon: '⛷️', color: '#6C5CE7', bgColor: '#F5F3FF' },
+  'Surfing': { icon: '🏄', color: '#00CED1', bgColor: '#F0FDFA' },
 };
-import AuthButtons from "../components/AuthButtons";
-import RsvpBadges from "../components/RsvpBadges";
+
+const defaultVisual = { icon: '🎯', color: '#FF6B35', bgColor: '#FFF4F1' };
 
 type NearbyActivity = { id: string; name: string; count: number };
 
-export default function Index() {
+type ProfileLocationRow = {
+  last_lat: number | null;
+  last_lng: number | null;
+};
+
+type NearbyApiActivity = {
+  id?: string | null;
+  name?: string | null;
+};
+
+type NearbyApiResponse = {
+  activities?: NearbyApiActivity[];
+};
+
+function HomeScreen() {
+  const insets = useSafeAreaInsets();
+  const isAndroid = Platform.OS === 'android';
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [session, setSession] = useState<any>(null);
-  const [lat, setLat] = useState<string>("");
-  const [lng, setLng] = useState<string>("");
+  const [session, setSession] = useState<Session | null>(null);
   const [activities, setActivities] = useState<NearbyActivity[] | null>(null);
-  const [bgPerm, setBgPerm] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
-  const [startingBg, setStartingBg] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
+  const nearbyApiFailureLogged = useRef(false);
+  const nearbyFallbackFailureLogged = useRef(false);
+  const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
+  const [placesError, setPlacesError] = useState<string | null>(null);
+  const placesFetchFailureLogged = useRef(false);
+  const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
+  const placesFetcher = useMemo(
+    () =>
+      createPlacesFetcher({
+        buildUrl: () => createWebUrl('/api/places').toString(),
+        includeCredentials: true,
+      }),
+    [],
+  );
 
-  async function fetchNearbyActivities(latNow: number | null, lngNow: number | null) {
-    const { data: near } = await supabase.rpc('sessions_nearby', {
-      lat: latNow ?? null,
-      lng: lngNow ?? null,
-      p_km: 25,
-      activities: null,
-      day: null,
-    });
-    const arr = (near ?? []) as any[];
-    if (arr.length) {
-      const map: Record<string, NearbyActivity> = {};
-      for (const r of arr) {
-        if (!map[r.activity_id]) map[r.activity_id] = { id: r.activity_id, name: r.activity_name, count: 0 };
-        map[r.activity_id].count += 1;
+    const FALLBACK_RADIUS_METERS = 2500;
+
+    const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371000;
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    const fetchNearbyFromSupabase = useCallback(async (latNow: number, lngNow: number) => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(
+          `id, activity_id,
+           activities!inner(id, name),
+           venues!inner(id, name, venue_lat:lat, venue_lng:lng)`
+        )
+        .not('venues.lat', 'is', null)
+        .not('venues.lng', 'is', null)
+        .gte('starts_at', new Date().toISOString())
+        .limit(200);
+
+      if (error) throw error;
+      const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+      const grouped = rows.reduce<Record<string, NearbyActivity>>((acc, row) => {
+        const venues = Array.isArray(row.venues)
+          ? (row.venues[0] as Record<string, unknown> | undefined)
+          : (row.venues as Record<string, unknown> | undefined);
+        const activities = Array.isArray(row.activities)
+          ? (row.activities[0] as Record<string, unknown> | undefined)
+          : (row.activities as Record<string, unknown> | undefined);
+
+  const latValue = (venues?.venue_lat ?? venues?.lat) as unknown;
+  const lngValue = (venues?.venue_lng ?? venues?.lng) as unknown;
+        const lat =
+          typeof latValue === 'number'
+            ? latValue
+            : latValue != null && latValue !== ''
+              ? Number(latValue)
+              : NaN;
+        const lng =
+          typeof lngValue === 'number'
+            ? lngValue
+            : lngValue != null && lngValue !== ''
+              ? Number(lngValue)
+              : NaN;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return acc;
+        const distance = haversineMeters(latNow, lngNow, lat, lng);
+        if (!Number.isFinite(distance) || distance > FALLBACK_RADIUS_METERS) return acc;
+        const idRaw =
+          (row.activity_id as string | null | undefined) ??
+          (activities?.id as string | null | undefined) ??
+          (activities?.name as string | null | undefined) ??
+          (row.id as string | null | undefined);
+        if (!idRaw) return acc;
+        const key = String(idRaw);
+        const name = typeof activities?.name === 'string' && activities.name.trim()
+          ? activities.name
+          : key;
+        const groupKey = normaliseActivityName(name);
+        const existing = acc[groupKey];
+        if (existing) {
+          existing.count += 1;
+        } else {
+          acc[groupKey] = { id: groupKey, name, count: 1 };
+        }
+        return acc;
+      }, {});
+      return Object.values(grouped).sort((a, b) => b.count - a.count);
+    }, []);
+
+  const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
+    if (latNow == null || lngNow == null) { setActivities([]); return; }
+    try {
+  const url = createWebUrl('/api/nearby');
+      url.searchParams.set('lat', String(latNow));
+      url.searchParams.set('lng', String(lngNow));
+      url.searchParams.set('radius', '2500');
+      const res = await fetch(url.toString());
+      const json = await res.json() as NearbyApiResponse;
+      const list = Array.isArray(json?.activities) ? json.activities : [];
+      const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
+        if (!item?.name) { return acc; }
+        const key = normaliseActivityName(item.name);
+        const existing = acc[key];
+        if (existing) {
+          existing.count += 1;
+        } else {
+          acc[key] = {
+            id: key,
+            name: item.name,
+            count: 1,
+          };
+        }
+        return acc;
+      }, {});
+      const grouped = Object.values(groupedMap).sort((a, b) => b.count - a.count);
+      setActivities(grouped);
+    } catch (apiError) {
+      if (__DEV__ && !nearbyApiFailureLogged.current) {
+        nearbyApiFailureLogged.current = true;
+        console.info('[Home] Nearby API failed, falling back to Supabase', apiError);
       }
-      setActivities(Object.values(map).sort((a,b)=> b.count - a.count));
-    } else {
-      setActivities([]);
+      try {
+        const fallback = await fetchNearbyFromSupabase(latNow, lngNow);
+        setActivities(fallback);
+      } catch (fallbackErr) {
+        if (__DEV__ && !nearbyFallbackFailureLogged.current) {
+          nearbyFallbackFailureLogged.current = true;
+          console.info('[Home] Nearby Supabase fallback failed', fallbackErr);
+        }
+        setActivities([]);
+      }
     }
-  }
+  }, [fetchNearbyFromSupabase]);
 
-  async function load() {
+  const fetchPlacesViewport = useCallback(
+    async (latNow: number | null, lngNow: number | null) => {
+      try {
+        const city = defaultCity;
+        const hasLocation = latNow != null && lngNow != null;
+        const latitudeDelta = hasLocation
+          ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
+          : city.defaultRegion.latitudeDelta;
+        const longitudeDelta = hasLocation
+          ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
+          : city.defaultRegion.longitudeDelta;
+        const centerLat = hasLocation ? latNow! : city.center.lat;
+        const centerLng = hasLocation ? lngNow! : city.center.lng;
+        const bounds: PlacesViewportQuery['bounds'] = {
+          sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
+          ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
+        };
+        const query: PlacesViewportQuery = {
+          bounds,
+          limit: 24,
+        };
+        if (!hasLocation) {
+          query.city = city.slug;
+        }
+        const response = await placesFetcher(query);
+        setNearbyPlaces(response.places ?? []);
+        setPlacesError(null);
+        placesFetchFailureLogged.current = false;
+      } catch (err) {
+        if (__DEV__ && !placesFetchFailureLogged.current) {
+          placesFetchFailureLogged.current = true;
+          console.info('[Home] Places fetch failed', err);
+        }
+        setNearbyPlaces([]);
+        setPlacesError(err instanceof Error ? err.message : 'Unable to load nearby places.');
+      }
+    },
+    [defaultCity, placesFetcher],
+  );
+
+  const load = useCallback(async () => {
     setError(null);
     try {
-      // ensure auth state
       const { data: auth } = await supabase.auth.getSession();
       setSession(auth.session ?? null);
-
-      // try to grab a quick position (non-blocking UI) and use it immediately
       let latNow: number | null = null;
       let lngNow: number | null = null;
       try {
@@ -78,20 +272,14 @@ export default function Index() {
         if (last?.coords) {
           latNow = Number(last.coords.latitude.toFixed(6));
           lngNow = Number(last.coords.longitude.toFixed(6));
-          setLat(String(latNow));
-          setLng(String(lngNow));
         }
       } catch {}
-
-      // If we still don't have a coordinate, try the background-stored one
       if (latNow == null || lngNow == null) {
         try {
           const cached = await getLastKnownBackgroundLocation();
           if (cached) {
             latNow = cached.lat;
             lngNow = cached.lng;
-            setLat(String(latNow));
-            setLng(String(lngNow));
           }
         } catch {}
       }
@@ -100,46 +288,52 @@ export default function Index() {
           const { data: auth } = await supabase.auth.getUser();
           const uid = auth?.user?.id ?? null;
           if (uid) {
-            const { data } = await supabase.from('profiles').select('last_lat,last_lng').eq('id', uid).maybeSingle();
-            const la = (data as any)?.last_lat; const ln = (data as any)?.last_lng;
-            if (la != null && ln != null) { latNow = la; lngNow = ln; setLat(String(la)); setLng(String(ln)); }
+            const { data } = await supabase
+              .from('profiles')
+              .select('last_lat,last_lng')
+              .eq('id', uid)
+              .maybeSingle<ProfileLocationRow>();
+            const la = data?.last_lat ?? null;
+            const ln = data?.last_lng ?? null;
+            if (la != null && ln != null) {
+              latNow = la;
+              lngNow = ln;
+            }
           }
         } catch {}
       }
-
-      // Preload activities nearby (aggregate from RPC)
       await fetchNearbyActivities(latNow, lngNow);
-
+      await fetchPlacesViewport(latNow, lngNow);
+      
+      // Get current sessions with future start times
+      const now = new Date().toISOString();
       const { data, error } = await supabase
         .from("sessions")
         .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
+        .gte("starts_at", now) // Only future sessions
         .order("starts_at", { ascending: true })
         .limit(20);
       if (error) setError(error.message);
       else setRows((data ?? []) as ActivityRow[]);
+    } catch (err) {
+      console.error('Home screen load error:', err);
+      setError('Failed to load activities. Please check your internet connection and try again.');
     } finally {
       setLoading(false);
     }
-  }
+  }, [fetchNearbyActivities, fetchPlacesViewport]);
 
   useEffect(() => {
-    // Start background location in parallel; ignore if user declines.
     ensureBackgroundLocation().catch(() => {});
     load();
-    // Also read background permission status to show a banner
-    (async () => {
-      try { const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); } catch {}
-    })();
-  }, []);
+  }, [load]);
 
-  // Refresh list when screen regains focus (e.g., after background updates)
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [])
+    }, [load])
   );
 
-  // Foreground watcher keeps activities fresh while app is open
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     (async () => {
@@ -148,31 +342,111 @@ export default function Index() {
         if (perm.status !== 'granted') return;
         sub = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.Balanced, distanceInterval: 100 },
-          (loc) => {
+          (loc: Location.LocationObject) => {
             const la = Number(loc.coords.latitude.toFixed(6));
             const ln = Number(loc.coords.longitude.toFixed(6));
-            setLat(String(la));
-            setLng(String(ln));
+            fetchNearbyActivities(la, ln);
+            fetchPlacesViewport(la, ln);
           }
         );
       } catch {}
     })();
     return () => { sub?.remove(); };
-  }, []);
+  }, [fetchNearbyActivities, fetchPlacesViewport]);
 
-  // When lat/lng state changes, refresh nearby activities
+  // Simulate search suggestions (replace with real API)
+  const searchSuggestions = activities ? activities
+    .filter(activity =>
+      activity.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
+      activity.name.toLowerCase() !== searchQuery.toLowerCase()
+    )
+    .slice(0, 3)
+    .map(activity => activity.name) : [];
+
   useEffect(() => {
-    const la = parseFloat(lat); const ln = parseFloat(lng);
-    if (!Number.isNaN(la) && !Number.isNaN(ln)) {
-      fetchNearbyActivities(la, ln);
+    if (activities) {
+      const filtered = activities.filter(activity =>
+        activity.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredActivities(filtered);
     }
-  }, [lat, lng]);
+  }, [activities, searchQuery]);
 
-  async function onRefresh() {
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+  };
+
+  const handleFilter = () => {
+    router.push('/filter');
+  };
+
+  const activityPresence = useMemo(() => {
+    const idSet = new Set<string>();
+    const nameSet = new Set<string>();
+    (activities ?? []).forEach((activity) => {
+      if (activity?.id) idSet.add(String(activity.id));
+      if (activity?.name) nameSet.add(activity.name.trim().toLowerCase());
+    });
+    return { idSet, nameSet };
+  }, [activities]);
+
+
+  const activityEventCounts = useMemo(() => {
+    const idMap = new Map<string, number>();
+    const nameMap = new Map<string, number>();
+    rows.forEach((session) => {
+      const activityId = session.activities?.id != null ? String(session.activities.id) : null;
+      if (activityId) {
+        idMap.set(activityId, (idMap.get(activityId) ?? 0) + 1);
+      }
+      const activityName = typeof session.activities?.name === 'string' ? session.activities.name.trim().toLowerCase() : '';
+      if (activityName) {
+        nameMap.set(activityName, (nameMap.get(activityName) ?? 0) + 1);
+      }
+    });
+    return { idMap, nameMap };
+  }, [rows]);
+
+  const getActivitySessionCount = useCallback(
+    (activity: NearbyActivity): number => {
+      const idKey = activity?.id ? String(activity.id) : null;
+      if (idKey && activityEventCounts.idMap.has(idKey)) {
+        return activityEventCounts.idMap.get(idKey) ?? 0;
+      }
+      const normalizedName = activity?.name?.trim().toLowerCase() ?? '';
+      if (normalizedName && activityEventCounts.nameMap.has(normalizedName)) {
+        return activityEventCounts.nameMap.get(normalizedName) ?? 0;
+      }
+      return 0;
+    },
+    [activityEventCounts]
+  );
+
+  const standaloneSessions = useMemo(() => {
+    if (rows.length === 0) return rows;
+    const hasActivityFilters = activityPresence.idSet.size > 0 || activityPresence.nameSet.size > 0;
+    if (!hasActivityFilters) return rows;
+    return rows.filter((session) => {
+      const activityId = session.activities?.id != null ? String(session.activities.id) : null;
+      if (activityId && activityPresence.idSet.has(activityId)) {
+        return false;
+      }
+      const activityName = typeof session.activities?.name === 'string' ? session.activities.name.trim().toLowerCase() : '';
+      if (activityName && activityPresence.nameSet.has(activityName)) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, activityPresence]);
+
+  const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
+  const topPlaces = useMemo(() => nearbyPlaces.slice(0, 12), [nearbyPlaces]);
+
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
-  }
+  }, [load]);
 
   if (error) {
     return <Text style={{ padding: 16, color: "red" }}>Error: {error}</Text>;
@@ -180,7 +454,8 @@ export default function Index() {
 
   if (loading) {
     return (
-      <View style={{ padding: 12, gap: 12 }}>
+      <View style={{ padding: 12, gap: 12, backgroundColor: '#f0f0f0' }}>
+        <Text style={{ padding: 16, fontSize: 16, textAlign: 'center' }}>🔄 Loading doWhat...</Text>
         {[0,1,2].map((i) => (
           <View key={i} style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
             <View style={{ height: 16, width: 120, backgroundColor: '#e5e7eb', borderRadius: 4 }} />
@@ -193,117 +468,329 @@ export default function Index() {
     );
   }
 
-  // Gate: sign-in required before showing activities/sessions
+  // Fail-safe: AuthGate should prevent this, but keep a lightweight fallback.
   if (!session) {
     return (
-      <View style={{ padding: 16 }}>
-        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Welcome to doWhat</Text>
-        <Text>Sign in to discover activities near you.</Text>
-        <View style={{ marginTop: 12 }}>
-          <AuthButtons />
-        </View>
-      </View>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <Text style={{ color: '#111827', fontSize: 16, padding: 24, textAlign: 'center' }}>
+          Please sign in to view nearby activities.
+        </Text>
+      </SafeAreaView>
     );
   }
 
-  // Show activities grid if we have a nearby list
-  if (activities && activities.length) {
+  // New design: header + discover grid + (optional) upcoming sessions
+  {
     return (
-      <View style={{ flex: 1, padding: 12 }}>
-        <View style={{ marginBottom: 12 }}>
-          <AuthButtons />
-        </View>
-        {bgPerm !== 'granted' && (
-          <View style={{ borderWidth: 1, borderRadius: 12, padding: 10, marginBottom: 12, backgroundColor: 'rgba(245, 158, 11, 0.08)', borderColor: '#f59e0b' }}>
-            <Text style={{ fontWeight: '700', marginBottom: 6 }}>Enable background location</Text>
-            <Text style={{ color: '#4b5563' }}>Allow “Always” to keep nearby activities fresh even when the app is closed.</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <Pressable
-                onPress={async () => { setStartingBg(true); const ok = await ensureBackgroundLocation(); setStartingBg(false); const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); if (Platform.OS==='ios' && b.status!== 'granted') Linking.openSettings?.(); }}
-                style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, opacity: startingBg ? 0.6 : 1 }}
-                disabled={startingBg}
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['top', 'left', 'right']}>
+        <StatusBar barStyle="light-content" backgroundColor="#2C3E50" />
+        
+        {/* Modern Header */}
+        <LinearGradient
+          colors={[theme.colors.brandTeal, theme.colors.brandTealDark]}
+          style={{
+            paddingHorizontal: 20,
+            paddingTop: insets.top + (isAndroid ? 6 : 12),
+            paddingBottom: isAndroid ? 56 : 76,
+            borderBottomLeftRadius: 28,
+            borderBottomRightRadius: 28,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              onPress={() => router.push('/(tabs)/profile')}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="person" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Brand />
+            <TouchableOpacity
+              onPress={() => router.push('/(tabs)/map')}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="map" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+          <View style={{ marginTop: isAndroid ? 12 : 18 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, letterSpacing: 0.2 }}>Find your next activity</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginTop: 4 }}>Explore nearby experiences</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 20 }}>
+              Browse curated activities, see who is going, and create your own events.
+            </Text>
+          </View>
+        </LinearGradient>
+
+        <View style={{ paddingHorizontal: 20, marginTop: isAndroid ? -34 : -44 }}>
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: 20,
+            padding: 16,
+            shadowColor: '#000',
+            shadowOpacity: 0.08,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 6 },
+            elevation: 4,
+          }}>
+            <SearchBar
+              onSearch={handleSearch}
+              onFilter={handleFilter}
+              suggestedSearches={searchSuggestions}
+              placeholder="Search for activities..."
+            />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={() => router.push('/people-filter')}
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(100,116,255,0.08)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
               >
-                <Text>{startingBg ? 'Requesting…' : 'Enable'}</Text>
-              </Pressable>
-              <Pressable onPress={() => Linking.openSettings?.()} style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text>Open Settings</Text>
-              </Pressable>
+                <Ionicons name="people" size={16} color="#6366F1" />
+                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#3730A3' }}>Find People</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/add-event')}
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
+              >
+                <Ionicons name="add" size={16} color="#FFFFFF" />
+                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#FFFFFF' }}>Create Event</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        )}
-        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Activities near you</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {activities.map((a) => {
-            const visual = activityVisuals[a.name] || { icon: '🎯', color: '#fbbf24' };
-            return (
-              <Link key={a.id} href={`/activities/${a.id}`} asChild>
-                <Pressable style={{ width: '33%', padding: 8, alignItems: 'center' }}>
-                  <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: visual.color, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 28 }}>{visual.icon}</Text>
-                  </View>
-                  <Text numberOfLines={1} style={{ marginTop: 6, fontWeight: '600' }}>{a.name}</Text>
-                  <Text style={{ fontSize: 12, color: '#6b7280' }}>{a.count} places/events</Text>
-                </Pressable>
-              </Link>
-            );
-          })}
         </View>
-        {/* fallback section */}
-        {!activities.length && (
-          <Text style={{ marginTop: 12 }}>No activities found nearby yet.</Text>
-        )}
-      </View>
+
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={(
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          )}
+        >
+          {topPlaces.length > 0 ? (
+            <View style={{ marginTop: 28 }}>
+              <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827' }}>Popular nearby places</Text>
+                <Text style={{ color: '#6B7280', marginTop: 4 }}>Quick picks straight from the Discover map.</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, columnGap: 14 }}
+              >
+                {topPlaces.map((place) => {
+                  const appearance = resolveCategoryAppearance(place);
+                  const primaryCategory = resolvePrimaryCategoryKey(place);
+                  const categoryLabel = primaryCategory
+                    ? formatCategoryLabel(primaryCategory)
+                    : place.categories?.[0]
+                      ? formatCategoryLabel(place.categories[0])
+                      : 'Activity';
+                  const updatedLabel = formatPlaceUpdatedLabel(place);
+                  const locality = place.address ?? place.locality ?? null;
+                  return (
+                    <Pressable
+                      key={place.id}
+                      onPress={() => router.push('/(tabs)/map')}
+                      style={{
+                        width: 240,
+                        borderRadius: 18,
+                        padding: 16,
+                        backgroundColor: '#0F172A',
+                        shadowColor: '#000',
+                        shadowOpacity: 0.12,
+                        shadowRadius: 10,
+                        shadowOffset: { width: 0, height: 6 },
+                        elevation: 4,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <View
+                          style={{
+                            width: 52,
+                            height: 52,
+                            borderRadius: 26,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: 'rgba(255,255,255,0.12)',
+                            borderWidth: 1,
+                            borderColor: appearance.color,
+                          }}
+                        >
+                          <Text style={{ fontSize: 24 }}>{appearance.emoji}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={{ color: '#F8FAFC', fontSize: 16, fontWeight: '700' }}>
+                            {place.name}
+                          </Text>
+                          <Text style={{ color: '#E2E8F0', fontSize: 13, marginTop: 4 }}>{categoryLabel}</Text>
+                          {locality ? (
+                            <Text numberOfLines={1} style={{ color: '#CBD5E1', fontSize: 12, marginTop: 4 }}>
+                              {locality}
+                            </Text>
+                          ) : null}
+                          <Text style={{ color: '#CBD5E1', fontSize: 11, marginTop: locality ? 4 : 6 }}>
+                            {updatedLabel}
+                          </Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : placesError ? (
+            <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
+              <Text style={{ color: '#DC2626', fontSize: 13 }}>{placesError}</Text>
+            </View>
+          ) : null}
+
+          {filteredActivities.length === 0 && searchQuery ? (
+            <View style={{
+              flex: 1,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingHorizontal: 20,
+              paddingTop: 60,
+            }}>
+              <EmptyState
+                icon="search"
+                title="No results found"
+                subtitle={`No activities found for "${searchQuery}"`}
+                actionText="Clear Search"
+                onAction={() => handleSearch('')}
+              />
+            </View>
+          ) : (
+            <View style={{ paddingHorizontal: 20 }}>
+              {/* Section Header */}
+              <View style={{ marginBottom: 20 }}>
+                <Text style={{
+                  fontSize: 22,
+                  fontWeight: '800',
+                  color: '#1F2937',
+                  marginBottom: 6,
+                }}>
+                  {searchQuery ? `Results for "${searchQuery}"` : 'Nearby Activities'}
+                </Text>
+                <Text style={{
+                  fontSize: 14,
+                  color: '#6B7280',
+                  fontWeight: '500',
+                }}>
+                  {searchQuery 
+                    ? `${filteredActivities.length} activities found`
+                    : `${activities?.length ?? 0} activities in your area`
+                  }
+                </Text>
+              </View>
+              
+              {/* Activities Grid */}
+              <View style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                justifyContent: 'space-between',
+                gap: 16,
+              }}>
+                {(searchQuery ? filteredActivities : (activities ?? [])).map((activity) => {
+                  const sessionCount = getActivitySessionCount(activity);
+                  const derivedCount = Math.max(sessionCount, activity.count ?? 0);
+                  const visual = activityVisuals[activity.name] || defaultVisual;
+                  return (
+                    <Link
+                      key={activity.id}
+                      href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
+                      asChild
+                    >
+                      <Pressable style={{
+                        width: (screenWidth - 56) / 2, // Account for padding and gap
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 20,
+                        padding: 20,
+                        alignItems: 'center',
+                        shadowColor: '#000',
+                        shadowOpacity: 0.08,
+                        shadowRadius: 12,
+                        shadowOffset: { width: 0, height: 4 },
+                        elevation: 4,
+                        marginBottom: 16,
+                      }}>
+                        {/* Activity Icon Container */}
+                        <View style={{
+                          width: 84,
+                          height: 84,
+                          borderRadius: 42,
+                          backgroundColor: theme.colors.brandYellow,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginBottom: 16,
+                          ...theme.shadow.card,
+                        }}>
+                          <ActivityIcon name={activity.name} size={32} color="#111827" />
+                        </View>
+                        
+                        {/* Activity Info */}
+                        <Text numberOfLines={2} style={{
+                          fontSize: 16,
+                          fontWeight: '700',
+                          color: '#1F2937',
+                          textAlign: 'center',
+                          lineHeight: 22,
+                          marginBottom: 8,
+                        }}>
+                          {activity.name}
+                        </Text>
+                        
+                        {/* Activity Count */}
+                        <View style={{
+                          backgroundColor: visual.color + '15',
+                          borderRadius: 12,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                        }}>
+                          <Text style={{
+                            fontSize: 12,
+                            fontWeight: '600',
+                            color: visual.color,
+                          }}>
+                            Activity: {derivedCount}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    </Link>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+          {/* Upcoming sessions */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 12 }}>
+              Upcoming Sessions
+            </Text>
+            {standaloneSessions.length === 0 ? (
+              <View style={{ alignItems: 'center', padding: 16 }}>
+                <Text style={{ color: '#6B7280' }}>No sessions yet. Be the first to create one!</Text>
+              </View>
+            ) : (
+              upcomingStandaloneSessions.map((s) => (
+                <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
+                  <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
+                  <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
+                  <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
+                  <RsvpBadges activityId={s.activities?.id ?? null} />
+                  <Link href={`/sessions/${s.id}`} asChild>
+                    <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
+                      <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>
+                    </Pressable>
+                  </Link>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
-
-  if (!rows.length) {
-    return <Text style={{ padding: 16 }}>No sessions yet.</Text>;
-  }
-
-  return (
-    <FlatList
-      contentContainerStyle={{ padding: 12, gap: 12 }}
-      data={rows}
-      keyExtractor={(s) => String(s.id)}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      renderItem={({ item: s }) => (
-        <View style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}>
-          <Text style={{ fontSize: 18, fontWeight: "600" }}>
-            {s.activities?.name ?? "Running"}
-          </Text>
-          <Text style={{ marginTop: 4 }}>{s.venues?.name ?? "Venue"}</Text>
-          <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
-          <Text style={{ marginTop: 4 }}>
-            {formatDateRange(s.starts_at, s.ends_at)}
-          </Text>
-          <RsvpBadges activityId={(s as any)?.activities?.id ?? null} />
-          <Link href={`/sessions/${s.id}`} asChild>
-            <Pressable style={{ marginTop: 12, padding: 10, backgroundColor: "#16a34a", borderRadius: 8 }}>
-              <Text style={{ color: "white", textAlign: "center" }}>View details</Text>
-            </Pressable>
-          </Link>
-        </View>
-      )}
-      ListHeaderComponent={
-        <>
-          <AuthButtons />
-          <Link href="/(tabs)/profile" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
-              <Text style={{ textAlign: 'center' }}>Profile</Text>
-            </Pressable>
-          </Link>
-          <Link href="/my-rsvps" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12, marginBottom: 8 }}>
-              <Text style={{ textAlign: 'center' }}>My RSVPs</Text>
-            </Pressable>
-          </Link>
-          <Link href="/(tabs)/nearby" asChild>
-            <Pressable style={{ padding: 8, borderWidth: 1, borderRadius: 8, marginHorizontal: 12 }}>
-              <Text style={{ textAlign: 'center' }}>Find nearby activities</Text>
-            </Pressable>
-          </Link>
-        </>
-      }
-    />
-  );
 }
+
+export default HomeScreen;

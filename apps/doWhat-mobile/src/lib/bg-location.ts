@@ -7,41 +7,49 @@ import { supabase } from './supabase';
 export const BG_LOCATION_TASK = 'BG_LOCATION_TASK';
 const STORAGE_KEY = '@bg_last_location';
 
+type BackgroundLocationPayload = {
+  lat: number;
+  lng: number;
+  ts: number;
+};
+
 // Define the background task at module load time (guard for Fast Refresh).
 if (!TaskManager.isTaskDefined?.(BG_LOCATION_TASK)) {
-TaskManager.defineTask(BG_LOCATION_TASK, async ({ data, error }) => {
-  if (error) {
-    if (__DEV__) console.warn('[bg-location] task error', error.message);
-    return;
-  }
-  const { locations } = (data as any) ?? {};
-  if (!locations?.length) return;
-  const loc = locations[0];
-  const payload = {
-    lat: loc.coords.latitude as number,
-    lng: loc.coords.longitude as number,
-    ts: Date.now(),
-  };
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    if (__DEV__) console.log('[bg-location] stored', payload);
-    // Best-effort: push to Supabase profile if signed in and schema supports it
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id;
-      if (uid) {
-        await supabase.from('profiles').update({
-          last_lat: payload.lat,
-          last_lng: payload.lng,
-          last_location_at: new Date(payload.ts).toISOString(),
-          updated_at: new Date(payload.ts).toISOString(),
-        }).eq('id', uid);
-      }
-    } catch (e: any) {
-      if (__DEV__) console.log('[bg-location] push to supabase skipped', e?.message ?? e);
+  TaskManager.defineTask<{ locations?: Location.LocationObject[] | undefined }>(BG_LOCATION_TASK, async ({ data, error }) => {
+    if (error) {
+      if (__DEV__) console.warn('[bg-location] task error', error.message);
+      return;
     }
-  } catch {}
-});
+    const locations = data?.locations?.filter((loc): loc is Location.LocationObject => Boolean(loc?.coords)) ?? [];
+    const [loc] = locations;
+    if (!loc) return;
+    const payload: BackgroundLocationPayload = {
+      lat: loc.coords.latitude,
+      lng: loc.coords.longitude,
+      ts: Date.now(),
+    };
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      if (__DEV__) console.log('[bg-location] stored', payload);
+      // Best-effort: push to Supabase profile if signed in and schema supports it
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id;
+        if (uid) {
+          await supabase.from('profiles').update({
+            last_lat: payload.lat,
+            last_lng: payload.lng,
+            last_location_at: new Date(payload.ts).toISOString(),
+            updated_at: new Date(payload.ts).toISOString(),
+          }).eq('id', uid);
+        }
+      } catch (pushError) {
+        if (__DEV__) console.log('[bg-location] push to supabase skipped', pushError);
+      }
+    } catch (storageError) {
+      if (__DEV__) console.warn('[bg-location] failed to persist location', storageError);
+    }
+  });
 }
 
 export async function ensureBackgroundLocation(): Promise<boolean> {
@@ -84,8 +92,16 @@ export async function ensureBackgroundLocation(): Promise<boolean> {
     });
     if (__DEV__) console.log('[bg-location] started');
     return true;
-  } catch (e: any) {
-    if (__DEV__) console.warn('[bg-location] failed to start', e?.message ?? e);
+  } catch (error) {
+    if (error instanceof Error && error.message?.includes('Foreground service permissions were not found')) {
+      if (__DEV__) {
+        console.warn(
+          '[bg-location] foreground service permission missing. Rebuild the native app after adding android.permission.FOREGROUND_SERVICE_LOCATION.',
+        );
+      }
+    } else if (__DEV__) {
+      console.warn('[bg-location] failed to start', error instanceof Error ? error.message : error);
+    }
     return false;
   }
 }
@@ -97,15 +113,15 @@ export async function stopBackgroundLocation() {
   } catch {}
 }
 
-export async function getLastKnownBackgroundLocation(): Promise<{
-  lat: number;
-  lng: number;
-  ts: number;
-} | null> {
+export async function getLastKnownBackgroundLocation(): Promise<BackgroundLocationPayload | null> {
   try {
     const s = await AsyncStorage.getItem(STORAGE_KEY);
     if (!s) return null;
-    return JSON.parse(s);
+    const parsed = JSON.parse(s) as BackgroundLocationPayload;
+    if (typeof parsed.lat !== 'number' || typeof parsed.lng !== 'number' || typeof parsed.ts !== 'number') {
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }

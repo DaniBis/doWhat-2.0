@@ -1,24 +1,42 @@
-import { Stack } from "expo-router";
-import * as WebBrowser from 'expo-web-browser';
-// Register background location task early in app lifecycle
-import '../lib/bg-location';
-import * as Notifications from 'expo-notifications';
-
-// Ensure auth session completes on iOS after OAuth redirect
-WebBrowser.maybeCompleteAuthSession();
-
-// Set a basic notifications handler
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: false, shouldSetBadge: false }),
-});
+// Work around TS resolution quirks with expo-router types under React 19
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Stack } = require("expo-router");
+import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import AuthGate from '../components/AuthGate';
 
 export default function Layout() {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            staleTime: 60_000,
+          },
+        },
+      }),
+  );
+
+  useEffect(() => {
+    console.log('Layout component mounted successfully!');
+  }, []);
+
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="sessions/[id]" options={{ title: 'Session' }} />
-      <Stack.Screen name="activities/[id]" options={{ title: 'Activity' }} />
-      <Stack.Screen name="add-event" options={{ title: 'Add event' }} />
-    </Stack>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <QueryClientProvider client={client}>
+          <AuthGate>
+            <Stack>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="add-event" options={{ headerShown: false }} />
+              <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
+            </Stack>
+          </AuthGate>
+        </QueryClientProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

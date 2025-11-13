@@ -62,15 +62,19 @@ export default function MyRsvpsPage() {
       if (e2) setErr(e2.message);
 
       const nextByActivity = new Map<string, Session>();
-      for (const s of (sessions ?? []) as any[]) {
-        const key = s.activity_id as string;
-        if (!nextByActivity.has(key)) nextByActivity.set(key, s as Session);
+      const sessionRows: Session[] = Array.isArray(sessions) ? (sessions as Session[]) : [];
+      for (const session of sessionRows) {
+        const key = session.activity_id;
+        if (!nextByActivity.has(key)) nextByActivity.set(key, session);
       }
 
-      const merged = (rsvps ?? [])
-        .map((r) => ({ rsvp: r as Row, sess: nextByActivity.get(r.activity_id) }))
-        .filter((x) => x.sess)
-        .map((x) => ({ ...(x.sess as Session), rsvp: x.rsvp }));
+      const rsvpRows: Row[] = Array.isArray(rsvps) ? (rsvps as Row[]) : [];
+      const merged = rsvpRows
+        .map((rsvp) => {
+          const session = nextByActivity.get(rsvp.activity_id);
+          return session ? { ...session, rsvp } : null;
+        })
+        .filter((value): value is Session & { rsvp: Row } => value !== null);
 
       setRows(merged);
       setLoading(false);
@@ -111,8 +115,14 @@ export default function MyRsvpsPage() {
             <div className="mt-2 flex gap-2">
               <button className="rounded border px-2 py-1" onClick={() => updateStatus(a.activity_id, "going")}>Going</button>
               <button className="rounded border px-2 py-1" onClick={() => updateStatus(a.activity_id, "interested")}>Interested</button>
-              <button className="rounded border px-2 py-1" onClick={() => updateStatus(a.activity_id, "declined")}>Declined</button>
-              <Link href={`/sessions/${a.id}`} className="ml-auto text-brand-teal">Open</Link>
+              {a.id ? (
+                <Link
+                  href={{ pathname: `/sessions/${a.id}` }}
+                  className="ml-auto text-brand-teal"
+                >
+                  Open
+                </Link>
+              ) : null}
             </div>
           </li>
         ))}

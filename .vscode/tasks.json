@@ -1,35 +1,110 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "web:dev",
-      "type": "shell",
-      "command": "pnpm --filter dowhat-web dev",
-      "problemMatcher": []
-    },
-    {
-      "label": "mobile:dev",
-      "type": "shell",
-      "command": "pnpm --filter dowhat-mobile exec expo start -c",
-      "problemMatcher": []
-    },
-    {
-      "label": "typecheck",
-      "type": "shell",
-      "command": "pnpm -w run typecheck",
-      "problemMatcher": []
-    },
-    {
-      "label": "lint",
-      "type": "shell",
-      "command": "pnpm -w run lint",
-      "problemMatcher": []
-    },
-    {
-      "label": "health",
-      "type": "shell",
-      "command": "curl -s http://localhost:3000/api/health || true",
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "web:dev",
+			"type": "shell",
+			"command": "pnpm --filter dowhat-web dev",
+			"problemMatcher": []
+		},
+		{
+			"label": "mobile:dev",
+			"type": "shell",
+			"command": "pnpm --filter doWhat-mobile exec expo start -c",
+			"problemMatcher": []
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck",
+			"problemMatcher": []
+		},
+		{
+			"label": "lint",
+			"type": "shell",
+			"command": "pnpm -w run lint",
+			"problemMatcher": []
+		},
+		{
+			"label": "health",
+			"type": "shell",
+			"command": "curl -s http://localhost:3002/api/health || true",
+			"problemMatcher": []
+		},
+		{
+			"label": "quick:health",
+			"type": "shell",
+			"command": "curl -s http://localhost:3002/api/health || true"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "lint",
+			"type": "shell",
+			"command": "pnpm -w run lint"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "lint",
+			"type": "shell",
+			"command": "pnpm -w run lint"
+		},
+		{
+			"label": "quick:health",
+			"type": "shell",
+			"command": "curl -s http://localhost:3002/api/health || true"
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "pnpm -w run typecheck"
+		},
+		{
+			"label": "test",
+			"type": "shell",
+			"command": "pnpm -w run test -- --maxWorkers=50%",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "test:passWithNoTests",
+			"type": "shell",
+			"command": "pnpm -w run test -- --passWithNoTests",
+			"group": "test"
+		}
+	]
 }

@@ -16,5 +16,11 @@
   "files.exclude": {
     "**/.expo": true,
     "**/.turbo": true
-  }
+  },
+
+  // Tame Copilot Chat auto-iterate request bursts
+  "github.copilot.chat.continue.maxRequests": 25,
+  "CodeGPT.apiKey": "Anthropic",
+  "java.compile.nullAnalysis.mode": "automatic"
+
 }

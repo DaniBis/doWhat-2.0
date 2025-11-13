@@ -1,0 +1,52 @@
+name: Nightly Trait Recompute
+
+on:
+  schedule:
+    - cron: '30 3 * * *' # 03:30 UTC nightly
+  workflow_dispatch: {}
+
+jobs:
+  recompute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        run: npm i -g pnpm@9
+
+      - name: Install deps (minimal)
+        run: pnpm install --frozen-lockfile
+
+      - name: Recompute traits (batched)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          TRAITS_RECOMPUTE_ENDPOINT: ${{ secrets.TRAITS_RECOMPUTE_ENDPOINT }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo 'CRON_SECRET missing'; exit 1; fi
+          if [ -z "$TRAITS_RECOMPUTE_ENDPOINT" ]; then
+            echo 'TRAITS_RECOMPUTE_ENDPOINT missing'; exit 1; fi
+          LIMIT=250
+          OFFSET=0
+          ITER=0
+          while true; do
+            echo "Batch $ITER offset=$OFFSET limit=$LIMIT"
+            RESP=$(curl -s -X POST "$TRAITS_RECOMPUTE_ENDPOINT?offset=$OFFSET&limit=$LIMIT" -H "x-cron-secret: $CRON_SECRET" -H 'content-length: 0')
+            echo "Response: $RESP"
+            COUNT=$(echo "$RESP" | jq -r '.processed // 0')
+            [ "$COUNT" = "null" ] && COUNT=0
+            if [ $COUNT -lt $LIMIT ]; then
+              echo "Done (processed $COUNT < limit $LIMIT)"; break; fi
+            OFFSET=$((OFFSET + LIMIT))
+            ITER=$((ITER + 1))
+            if [ $ITER -gt 200 ]; then
+              echo 'Too many iterations, aborting'; exit 1; fi
+          done
