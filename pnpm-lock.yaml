@@ -135,6 +135,13 @@ importers:
       tailwindcss-react-native:
         specifier: ^1.7.10
         version: 1.7.10(tailwindcss@3.4.17)
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.1
+        version: 19.1.12
+      '@types/react-dom':
+        specifier: ^19.0.1
+        version: 19.1.9(@types/react@19.1.12)
 
   apps/doWhat-web:
     dependencies:

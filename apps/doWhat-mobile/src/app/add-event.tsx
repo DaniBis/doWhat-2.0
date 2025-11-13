@@ -10,15 +10,19 @@ type Option = { id: string; name: string };
 export default function AddEvent() {
   const router = useRouter();
   const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
-  const [activities, setActivities] = useState<Option[]>([]);
-  const [venues, setVenues] = useState<Option[]>([]);
+  // These are loaded for future features but not yet used in UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_activities, setActivities] = useState<Option[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_venues, setVenues] = useState<Option[]>([]);
 
   const [activityId, setActivityId] = useState('');
   const [activityName, setActivityName] = useState('');
   const [venueId, setVenueId] = useState('');
   const [venueName, setVenueName] = useState('');
   const [suggestedName, setSuggestedName] = useState<string | null>(null);
-  const [suggesting, setSuggesting] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_suggesting, setSuggesting] = useState(false);
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [price, setPrice] = useState('');

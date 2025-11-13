@@ -219,7 +219,7 @@ export default function Index() {
             <Text style={{ color: '#4b5563' }}>Allow “Always” to keep nearby activities fresh even when the app is closed.</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
               <Pressable
-                onPress={async () => { setStartingBg(true); const ok = await ensureBackgroundLocation(); setStartingBg(false); const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); if (Platform.OS==='ios' && b.status!== 'granted') Linking.openSettings?.(); }}
+                onPress={async () => { setStartingBg(true); await ensureBackgroundLocation(); setStartingBg(false); const b = await Location.getBackgroundPermissionsAsync(); setBgPerm(b.status as any); if (Platform.OS==='ios' && b.status!== 'granted') Linking.openSettings?.(); }}
                 style={{ borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, opacity: startingBg ? 0.6 : 1 }}
                 disabled={startingBg}
               >

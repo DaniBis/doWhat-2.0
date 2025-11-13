@@ -1,6 +1,4 @@
 import { formatDateRange, formatPrice } from "@dowhat/shared";
-import * as AuthSession from "expo-auth-session";
-import * as Linking from "expo-linking";
 import { useLocalSearchParams } from "expo-router";
 import { Link } from "expo-router";
 import * as WebBrowser from 'expo-web-browser';

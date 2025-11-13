@@ -32,12 +32,12 @@ type Marker = {
   activity_id: string;
 };
 
-type Cluster = {
-  id: string;
-  latitude: number;
-  longitude: number;
-  venues: Marker[];
-};
+// type Cluster = {
+//   id: string;
+//   latitude: number;
+//   longitude: number;
+//   venues: Marker[];
+// };
 
 export default function MapTab() {
   const router = useRouter();
@@ -152,6 +152,7 @@ export default function MapTab() {
     // Load native maps module dynamically; avoid importing if native lib is absent
     (async () => {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const NativeModulesProxy = (require('expo-modules-core') as any)?.NativeModulesProxy;
         const hasNative = Boolean(NativeModulesProxy?.ExpoMaps);
         if (!hasNative) {

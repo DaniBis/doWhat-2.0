@@ -26,6 +26,7 @@ module.exports = {
     "@typescript-eslint/no-explicit-any": "warn",
     "import/order": ["warn", { "newlines-between": "always", alphabetize: { order: "asc", caseInsensitive: true } }],
   },
+  ignorePatterns: ["packages/shared/**/*"],
   overrides: [
     // Node-only files (configs, scripts)
     {
