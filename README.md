@@ -72,14 +72,62 @@ pnpm install
 Web dev:
 
 ```
+pnpm dev:web
+# or
 pnpm --filter ./apps/doWhat-web dev
 ```
 
 Mobile dev (Expo):
 
 ```
+# Start Expo dev server (choose platform manually)
+pnpm dev:mobile
+# or
 pnpm --filter ./apps/doWhat-mobile exec expo start -c
 ```
+
+### Running on iOS Simulator
+
+The iOS script automatically:
+- Boots the iOS simulator if not running (defaults to iPhone 16 Pro)
+- Rebuilds the dev client when native dependencies change
+- Starts the Next.js web dev server (if not already running)
+- Configures Metro bundler for iOS
+
+```
+pnpm dev:mobile:ios
+# or
+pnpm --filter ./apps/doWhat-mobile start:ios
+```
+
+To customize the simulator device, set the `IOS_SIMULATOR_NAME` environment variable:
+
+```
+IOS_SIMULATOR_NAME="iPhone 15" pnpm dev:mobile:ios
+```
+
+### Running on Android Emulator
+
+The Android script automatically:
+- Starts the Android emulator if not running (defaults to Pixel_API_34)
+- Rebuilds the dev client when native dependencies change
+- Starts the Next.js web dev server (if not already running)
+- Sets up ADB reverse proxy for Metro and web server
+- Configures Metro bundler for Android
+
+```
+pnpm dev:mobile:android
+# or
+pnpm --filter ./apps/doWhat-mobile start:android
+```
+
+To customize the emulator device, set the `ANDROID_EMULATOR_NAME` environment variable:
+
+```
+ANDROID_EMULATOR_NAME="Pixel_7_API_34" pnpm dev:mobile:android
+```
+
+**Note:** Ensure you have Android SDK installed and `ANDROID_HOME` or `ANDROID_SDK_ROOT` environment variable set properly.
 
 ## Admin features
 
