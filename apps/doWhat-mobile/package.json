@@ -6,7 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client -c",
     "start:ios": "bash ./scripts/start-ios.sh",
-    "start:android": "expo start --dev-client --android -c",
+    "start:android": "bash ./scripts/start-android.sh",
     "start:web": "expo start --web -c",
     "test": "jest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
