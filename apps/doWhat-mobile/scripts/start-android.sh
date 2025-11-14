@@ -133,6 +133,20 @@ is_emulator_running() {
   adb devices | grep -q "emulator.*device$"
 }
 
+wait_for_emulator_boot() {
+  local timeout=120
+  local elapsed=0
+  while ! is_emulator_running; do
+    if [[ $elapsed -ge $timeout ]]; then
+      echo "Warning: Emulator did not start within ${timeout} seconds."
+      return 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  return 0
+}
+
 if ! is_emulator_running; then
   echo "Starting Android emulator: ${ANDROID_EMULATOR_NAME}"
   
@@ -143,18 +157,7 @@ if ! is_emulator_running; then
     
     # Wait for the emulator to boot
     echo "Waiting for emulator to boot..."
-    local timeout=120
-    local elapsed=0
-    while ! is_emulator_running; do
-      if [[ $elapsed -ge $timeout ]]; then
-        echo "Warning: Emulator did not start within ${timeout} seconds."
-        break
-      fi
-      sleep 2
-      elapsed=$((elapsed + 2))
-    done
-    
-    if is_emulator_running; then
+    if wait_for_emulator_boot; then
       echo "Emulator is now running."
       # Wait a bit more for the emulator to be fully ready
       sleep 5
@@ -241,8 +244,8 @@ fi
 # Set up ADB reverse proxy for Metro and web server
 if is_emulator_running; then
   echo "Setting up ADB reverse proxy for Metro (port ${METRO_PORT}) and web server (port ${WEB_DEV_PORT})..."
-  adb reverse tcp:${METRO_PORT} tcp:${METRO_PORT} || true
-  adb reverse tcp:${WEB_DEV_PORT} tcp:${WEB_DEV_PORT} || true
+  adb reverse "tcp:${METRO_PORT}" "tcp:${METRO_PORT}" || true
+  adb reverse "tcp:${WEB_DEV_PORT}" "tcp:${WEB_DEV_PORT}" || true
 fi
 
 echo "Starting Expo dev server for Android emulator using host '${DEV_SERVER_HOST}' (${HOST_TYPE}) on port ${METRO_PORT}."
