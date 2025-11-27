@@ -22,27 +22,30 @@ jobs:
           PLACES_REFRESH_ENDPOINT: ${{ secrets.PLACES_REFRESH_ENDPOINT }}
         run: |
           set -o pipefail
-          # fail early with clear message if a required secret is missing
           if [ -z "${CRON_SECRET:-}" ]; then
             echo 'ERROR: CRON_SECRET missing'
             exit 1
           fi
-          if [ -z "${PLACES_REFRESH_ENDPOINT:-}" ]; then
-            echo 'ERROR: PLACES_REFRESH_ENDPOINT missing'
-            exit 1
+
+          if [ -n "${PLACES_REFRESH_ENDPOINT:-}" ]; then
+            TARGET_ENDPOINT="$PLACES_REFRESH_ENDPOINT"
+          else
+            TARGET_ENDPOINT='https://dowhat.app/api/places/refresh'
+            echo 'PLACES_REFRESH_ENDPOINT secret missing, using https://dowhat.app/api/places/refresh'
           fi
 
-          # Perform the POST and capture HTTP status and body
-          HTTP_STATUS_AND_BODY=$(curl -s -w "\n%{http_code}" -X POST "$PLACES_REFRESH_ENDPOINT" \
+          echo "Triggering places refresh via $TARGET_ENDPOINT"
+
+          HTTP_STATUS_AND_BODY=$(curl -s -w "\n%{http_code}" -X POST "$TARGET_ENDPOINT" \
             -H "x-cron-secret: $CRON_SECRET" \
             -H 'content-length: 0' \
             --max-time 30) || true
 
-          # Separate body and status
+          BODY=$(echo "$HTTP_STATUS_AND_BODY" | sed '$d')
           RESPONSE_CODE=$(echo "$HTTP_STATUS_AND_BODY" | tail -n1)
           echo "HTTP response code: $RESPONSE_CODE"
           echo "Response body:"
-          echo "$HTTP_STATUS_AND_BODY" | sed '$d' || true
+          echo "$BODY"
 
           if [ -z "$RESPONSE_CODE" ]; then
             echo "ERROR: no HTTP status returned" >&2
