@@ -24,6 +24,27 @@ const extraCandidates = (): Array<string | undefined> => {
   ];
 };
 
+const adjustHostForRuntime = (url: URL) => {
+  const hostname = url.hostname.toLowerCase();
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return;
+  }
+
+  if (!Constants.isDevice) {
+    if (Platform.OS === 'android') {
+      url.hostname = '10.0.2.2';
+      return;
+    }
+    url.hostname = '127.0.0.1';
+    return;
+  }
+
+  const runtimeHost = resolveHostFromDebugger();
+  if (runtimeHost) {
+    url.hostname = runtimeHost;
+  }
+};
+
 function extractHost(value?: string | null): string | null {
   if (!value) return null;
   const host = value.split(':')[0];
@@ -60,18 +81,7 @@ export function getWebBaseUrl(): string {
     if (!trimmed) return null;
     try {
       const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
-      const hostname = url.hostname.toLowerCase();
-      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !Constants.isDevice) {
-        // iOS simulator can speak to localhost directly.
-        url.hostname = '127.0.0.1';
-        return trimTrailingSlash(url.toString());
-      }
-      if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        const runtimeHost = resolveHostFromDebugger();
-        if (runtimeHost && runtimeHost !== '127.0.0.1' && runtimeHost !== 'localhost') {
-          url.hostname = runtimeHost;
-        }
-      }
+      adjustHostForRuntime(url);
       if (!url.port) {
         const fallbackPort = process.env.EXPO_PUBLIC_WEB_PORT || process.env.EXPO_PUBLIC_SITE_PORT || '3002';
         url.port = fallbackPort;

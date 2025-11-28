@@ -5,6 +5,7 @@ export * from "./icons";
 export * from "./theme";
 export * from "./icons";
 export * from "./badges";
+export * from "./taxonomy";
 export * from "./map";
 export * from "./places";
 export * from "./events/api";

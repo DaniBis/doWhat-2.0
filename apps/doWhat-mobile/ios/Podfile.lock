@@ -1288,7 +1288,7 @@ DEPENDENCIES:
   - React-jsinspector (from `../../../node_modules/react-native/ReactCommon/jsinspector-modern`)
   - React-logger (from `../../../node_modules/react-native/ReactCommon/logger`)
   - React-Mapbuffer (from `../../../node_modules/react-native/ReactCommon`)
-  - react-native-google-maps (from `/Users/dan/dowhat/node_modules/react-native-maps`)
+  - react-native-google-maps (from `/Users/ovidiuban/doWhat-2.0/node_modules/react-native-maps`)
   - react-native-maps (from `../../../node_modules/react-native-maps`)
   - react-native-safe-area-context (from `../../../node_modules/react-native-safe-area-context`)
   - react-native-webview (from `../../../node_modules/react-native-webview`)
@@ -1438,7 +1438,7 @@ EXTERNAL SOURCES:
   React-Mapbuffer:
     :path: "../../../node_modules/react-native/ReactCommon"
   react-native-google-maps:
-    :path: "/Users/dan/dowhat/node_modules/react-native-maps"
+    :path: "/Users/ovidiuban/doWhat-2.0/node_modules/react-native-maps"
   react-native-maps:
     :path: "../../../node_modules/react-native-maps"
   react-native-safe-area-context:
@@ -1589,6 +1589,6 @@ SPEC CHECKSUMS:
   UMAppLoader: 79d3ee6aa2447a1fe2e8b0d07acf2de106e55b58
   Yoga: 805bf71192903b20fc14babe48080582fee65a80
 
-PODFILE CHECKSUM: 0f5254efc49431e3009f1cb51a7a1d2037291529
+PODFILE CHECKSUM: f1e1d7211801bd87d5deb0058419f593b320e10a
 
 COCOAPODS: 1.16.2

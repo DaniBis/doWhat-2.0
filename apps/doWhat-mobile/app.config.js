@@ -1,4 +1,19 @@
 import { ConfigContext, ExpoConfig } from 'expo/config';
+import { config as loadEnv } from 'dotenv';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const loadEnvFile = (relativePath: string) => {
+  const fullPath = path.resolve(__dirname, relativePath);
+  if (fs.existsSync(fullPath)) {
+    loadEnv({ path: fullPath, override: false });
+  }
+};
+
+loadEnvFile('../../.env');
+loadEnvFile('../../.env.local');
+loadEnvFile('./.env');
+loadEnvFile('./.env.local');
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -84,8 +99,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       favicon: './assets/favicon.png',
     },
     extra: {
-      EXPO_PUBLIC_SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
-      EXPO_PUBLIC_SUPABASE_ANON_KEY: 'YOUR-ANON-KEY',
+      EXPO_PUBLIC_SUPABASE_URL: supabaseUrl ?? '',
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey ?? '',
       supabaseUrl,
       supabaseAnonKey,
       webBaseUrl,

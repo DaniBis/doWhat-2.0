@@ -13,17 +13,19 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
-import ngeohash from 'ngeohash';
-import { useRouter } from 'expo-router';
 
 import {
   CITY_SWITCHER_ENABLED,
   DEFAULT_CITY_SLUG,
   createPlacesFetcher,
+  defaultTier3Index,
   getCityCategoryConfigMap,
   getCityConfig,
+  getTier3Ids,
   listCities,
+  trackTaxonomyFiltersApplied,
+  trackTaxonomyToggle,
+  type ActivityTier3WithAncestors,
   type CityCategoryConfig,
   type CityConfig,
   type PlaceSummary,
@@ -31,8 +33,13 @@ import {
   usePlaces,
 } from '@dowhat/shared';
 
+import MapView, { Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
+import ngeohash from 'ngeohash';
+import { useRouter } from 'expo-router';
+
 import { createWebUrl } from '../../../lib/web';
-import { emitMapPlacesUpdated } from '../../../lib/events';
+import { fetchWithTimeout } from '../../../lib/fetchWithTimeout';
+import { emitMapPlacesUpdated, subscribeProfileLocationUpdated } from '../../../lib/events';
 import {
   DEFAULT_CATEGORY_APPEARANCE,
   formatCategoryLabel,
@@ -40,6 +47,8 @@ import {
   resolveCategoryAppearance,
   resolvePrimaryCategoryKey,
 } from '../../../lib/placeCategories';
+import { supabase } from '../../../lib/supabase';
+import TaxonomyCategoryPicker from '../../../components/TaxonomyCategoryPicker';
 
 type MapRegion = {
   latitude: number;
@@ -61,6 +70,96 @@ const buildCategoryLabelMap = (city: CityConfig): Record<string, string> => {
     map[category.key] = category.label;
   });
   return map;
+};
+
+const buildTaxonomyTagMap = () => {
+  const map = new Map<string, string[]>();
+  defaultTier3Index.forEach((entry) => {
+    const tags = entry.tags
+      .map((tag) => normaliseCategoryKey(tag))
+      .filter(Boolean);
+    if (tags.length) {
+      map.set(entry.id, tags);
+    }
+  });
+  return map;
+};
+
+const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
+const GEOCODE_USER_AGENT = 'doWhat/1.0 (mobile@dowhat.app)';
+
+const parseCoordinate = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const coordsApproximatelyEqual = (
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+  epsilon = 0.0005,
+) => Math.abs(a.lat - b.lat) <= epsilon && Math.abs(a.lng - b.lng) <= epsilon;
+
+const geocodeLabelToCoords = async (
+  label: string,
+  signal?: AbortSignal,
+): Promise<{ lat: number; lng: number } | null> => {
+  const query = label.trim();
+  if (!query) return null;
+
+  try {
+    const backendUrl = createWebUrl('/api/geocode');
+    backendUrl.searchParams.set('q', query);
+    const response = await fetchWithTimeout(backendUrl.toString(), { timeoutMs: 7000, signal });
+    if (response.ok) {
+      const payload = (await response.json()) as { lat?: number | string; lng?: number | string };
+      const lat = parseCoordinate(payload.lat);
+      const lng = parseCoordinate(payload.lng);
+      if (lat != null && lng != null) {
+        return { lat, lng };
+      }
+    }
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') {
+      throw error;
+    }
+    console.info('[Map] Backend geocode failed', error);
+  }
+
+  try {
+    const url = new URL(`${NOMINATIM_BASE_URL}/search`);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('q', query);
+    const response = await fetchWithTimeout(url.toString(), {
+      timeoutMs: 8000,
+      signal,
+      headers: {
+        'User-Agent': GEOCODE_USER_AGENT,
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Nominatim search failed (${response.status})`);
+    }
+    const payload = (await response.json()) as Array<{ lat?: string; lon?: string }>;
+    const entry = payload[0];
+    const lat = parseCoordinate(entry?.lat);
+    const lng = parseCoordinate(entry?.lon);
+    if (lat != null && lng != null) {
+      return { lat, lng };
+    }
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') {
+      throw error;
+    }
+    console.info('[Map] Nominatim geocode failed', error);
+  }
+
+  return null;
 };
 
 type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
@@ -541,6 +640,7 @@ const placeMatchesFilters = (
   region: MapRegion,
   reference: Date,
   categoryConfigMap?: Map<string, CityCategoryConfig>,
+  taxonomyTagMap?: Map<string, string[]>,
 ) => {
   if (filters.categories.length) {
     const normalizedCategories = new Set(
@@ -555,20 +655,32 @@ const placeMatchesFilters = (
     );
     const matchesCategory = filters.categories.some((categoryKey) => {
       const config = categoryConfigMap?.get(categoryKey);
-      const targetCategories = config?.queryCategories?.length
-        ? config.queryCategories.map((value) => normaliseCategoryKey(value) ?? value.toLowerCase())
-        : [categoryKey];
-      const hasCategory = targetCategories.some((target) => normalizedCategories.has(target));
-      if (!hasCategory) return false;
-      if (config?.tagFilters?.length) {
-        const normalizedFilters = config.tagFilters
-          .map((value) => normaliseCategoryKey(value) ?? value.toLowerCase())
-          .filter(Boolean);
-        if (!normalizedFilters.some((tag) => placeTags.has(tag))) {
-          return false;
+      if (config) {
+        const targetCategories = config.queryCategories.map((value) => normaliseCategoryKey(value) ?? value.toLowerCase());
+        const hasCategory = targetCategories.some((target) => normalizedCategories.has(target));
+        if (hasCategory) {
+          if (config.tagFilters?.length) {
+            const normalizedFilters = config.tagFilters
+              .map((value) => normaliseCategoryKey(value) ?? value.toLowerCase())
+              .filter(Boolean);
+            if (!normalizedFilters.some((tag) => placeTags.has(tag))) {
+              return false;
+            }
+          }
+          return true;
         }
       }
-      return true;
+
+      const taxonomyTags = taxonomyTagMap?.get(categoryKey);
+      if (taxonomyTags?.length) {
+        const hasTaxonomyTag = taxonomyTags.some((tag) => normalizedCategories.has(tag) || placeTags.has(tag));
+        if (hasTaxonomyTag) {
+          return true;
+        }
+      }
+
+      const normalizedKey = normaliseCategoryKey(categoryKey) ?? categoryKey.trim().toLowerCase();
+      return normalizedCategories.has(normalizedKey) || placeTags.has(normalizedKey);
     });
     if (!matchesCategory) return false;
   }
@@ -760,6 +872,19 @@ export default function MapScreen() {
   const city = useMemo(() => getCityConfig(citySlug), [citySlug]);
   const cityCategoryMap = useMemo(() => getCityCategoryConfigMap(city), [city]);
   const cityRegion = useMemo(() => normaliseRegion(cityToRegion(city)), [city]);
+  const taxonomyIdSet = useMemo(() => new Set(getTier3Ids()), []);
+  const taxonomyIndex = useMemo(() => {
+    const map = new Map<string, ActivityTier3WithAncestors>();
+    defaultTier3Index.forEach((entry) => {
+      map.set(entry.id, entry);
+    });
+    return map;
+  }, []);
+  const taxonomyTagMap = useMemo(() => buildTaxonomyTagMap(), []);
+  const filterValidCategories = useCallback(
+    (ids: string[]) => ids.filter((id) => taxonomyIdSet.has(id)),
+    [taxonomyIdSet],
+  );
 
   const [region, setRegion] = useState<MapRegion>(() => cityRegion);
   const [filters, setFilters] = useState<Filters>(() => cloneFilters(DEFAULT_FILTERS));
@@ -772,17 +897,50 @@ export default function MapScreen() {
     google_places: 0,
   });
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
+  const [profileLocation, setProfileLocation] = useState<{ lat: number; lng: number; label?: string | null } | null>(null);
+  const [locationInitialized, setLocationInitialized] = useState(false);
 
   const mapRef = useRef<ComponentRef<typeof MapView> | null>(null);
   const lastRegionRef = useRef<MapRegion>(cityRegion);
+  const geocodeAbortControllerRef = useRef<AbortController | null>(null);
+  const lastGeocodedLabelRef = useRef<string | null>(null);
+  const lastGeocodedCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const profileLabelRef = useRef<string | null>(null);
+  const supabaseProfileCoordsRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+  const profileUserIdRef = useRef<string | null>(null);
 
-  const categoryOptions = useMemo(
-    () => city.enabledCategories.map(({ key, label }) => ({ key, label })),
-    [city],
-  );
-  const categoryLabelByKey = useMemo(() => buildCategoryLabelMap(city), [city]);
+  const categoryLabelByKey = useMemo(() => {
+    const map = buildCategoryLabelMap(city);
+    defaultTier3Index.forEach((entry) => {
+      map[entry.id] = entry.label;
+      map[entry.tier2Id] = entry.tier2Label;
+      map[entry.tier1Id] = entry.tier1Label;
+    });
+    return map;
+  }, [city]);
   const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
   const filterSummary = useMemo(() => getFilterSummary(filters, categoryLabelByKey), [filters, categoryLabelByKey]);
+  const selectedCategoryLabels = useMemo(
+    () =>
+      filters.categories.map(
+        (id) => taxonomyIndex.get(id)?.label ?? formatCategoryName(id, categoryLabelByKey),
+      ),
+    [filters.categories, taxonomyIndex, categoryLabelByKey],
+  );
+  const draftCategoryLabels = useMemo(
+    () =>
+      draftFilters.categories.map(
+        (id) => taxonomyIndex.get(id)?.label ?? formatCategoryName(id, categoryLabelByKey),
+      ),
+    [draftFilters.categories, taxonomyIndex, categoryLabelByKey],
+  );
+  const selectedCategoryTags = useMemo(() => {
+    const tags = new Set<string>();
+    filters.categories.forEach((id) => {
+      taxonomyTagMap.get(id)?.forEach((tag) => tags.add(tag));
+    });
+    return Array.from(tags);
+  }, [filters.categories, taxonomyTagMap]);
   const headerTitle = useMemo(() => {
     if (filters.categories.length === 1) {
       return `Discover ${formatCategoryName(filters.categories[0], categoryLabelByKey)} Places`;
@@ -795,19 +953,134 @@ export default function MapScreen() {
 
   const now = useMemo(() => new Date(), [filters.timeWindow]);
 
-  const categoriesForQuery = useMemo(() => {
-    if (!filters.categories.length) return undefined;
-    const expanded = new Set<string>();
-    filters.categories.forEach((key) => {
-      const config = cityCategoryMap.get(key);
-      if (config) {
-        config.queryCategories.forEach((value) => expanded.add(value));
-      } else {
-        expanded.add(key);
+  const persistProfileCoords = useCallback(
+    async (label: string, coords: { lat: number; lng: number }) => {
+      const uid = profileUserIdRef.current;
+      if (!uid) return;
+      const previous = supabaseProfileCoordsRef.current;
+      if (previous.lat != null && previous.lng != null) {
+        if (coordsApproximatelyEqual({ lat: previous.lat, lng: previous.lng }, coords)) {
+          return;
+        }
       }
-    });
-    return Array.from(expanded);
-  }, [filters.categories, cityCategoryMap]);
+      try {
+        await supabase
+          .from('profiles')
+          .update({ last_lat: coords.lat, last_lng: coords.lng })
+          .eq('id', uid)
+          .limit(1);
+        supabaseProfileCoordsRef.current = { lat: coords.lat, lng: coords.lng };
+        console.info('[Map] Synced profile coordinates for label', label);
+      } catch (syncError) {
+        console.info('[Map] Failed to persist corrected profile coords', syncError);
+      }
+    },
+    [],
+  );
+
+  const requestGeocodeForLabel = useCallback(
+    (label: string, options?: { force?: boolean }) => {
+      const trimmed = label.trim();
+      if (!trimmed) return;
+      if (!options?.force && lastGeocodedLabelRef.current === trimmed) {
+        const lastServerCoords = supabaseProfileCoordsRef.current;
+        const lastGeocodedCoords = lastGeocodedCoordsRef.current;
+        const hasServerCoords = lastServerCoords.lat != null && lastServerCoords.lng != null;
+        if (!hasServerCoords || !lastGeocodedCoords) {
+          // If we do not have both values available, re-run the geocode instead of skipping.
+        } else if (coordsApproximatelyEqual(lastGeocodedCoords, {
+          lat: lastServerCoords.lat!,
+          lng: lastServerCoords.lng!,
+        })) {
+          return;
+        }
+      }
+
+      geocodeAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      geocodeAbortControllerRef.current = controller;
+
+      (async () => {
+        try {
+          const coords = await geocodeLabelToCoords(trimmed, controller.signal);
+          if (!coords) return;
+          lastGeocodedLabelRef.current = trimmed;
+          lastGeocodedCoordsRef.current = coords;
+          profileLabelRef.current = trimmed;
+          setProfileLocation((prev) => {
+            if (
+              prev &&
+              Math.abs(prev.lat - coords.lat) < 1e-6 &&
+              Math.abs(prev.lng - coords.lng) < 1e-6 &&
+              (prev.label ?? null) === trimmed
+            ) {
+              return prev;
+            }
+            return { lat: coords.lat, lng: coords.lng, label: trimmed };
+          });
+          persistProfileCoords(trimmed, coords);
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') {
+            return;
+          }
+          console.info('[Map] Profile label geocode failed', error);
+        } finally {
+          if (geocodeAbortControllerRef.current === controller) {
+            geocodeAbortControllerRef.current = null;
+          }
+        }
+      })();
+    },
+    [persistProfileCoords],
+  );
+
+  const applyProfileLocation = useCallback(
+    (payload: { lat?: number | null; lng?: number | null; label?: string | null }) => {
+      const nextLabel = typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : null;
+      const prevLabel = profileLabelRef.current;
+      const labelChanged =
+        (nextLabel ?? null) !== (prevLabel ?? null) || (nextLabel == null && prevLabel != null);
+      const nextLat = parseCoordinate(payload.lat);
+      const nextLng = parseCoordinate(payload.lng);
+      const hasCoords = nextLat != null && nextLng != null;
+      const lastGeocodedCoords = lastGeocodedCoordsRef.current;
+      const mismatchWithLastGeocode =
+        hasCoords &&
+        lastGeocodedCoords != null &&
+        !coordsApproximatelyEqual({ lat: nextLat!, lng: nextLng! }, lastGeocodedCoords);
+
+      if (nextLabel != null) {
+        profileLabelRef.current = nextLabel;
+      } else if (payload.label === null) {
+        profileLabelRef.current = null;
+      }
+
+      if (hasCoords) {
+        setProfileLocation((prev) => {
+          if (prev && prev.lat === nextLat && prev.lng === nextLng && prev.label === nextLabel) {
+            return prev;
+          }
+          return { lat: nextLat, lng: nextLng, label: nextLabel ?? prev?.label ?? null };
+        });
+      } else if (nextLabel && labelChanged) {
+        setProfileLocation((prev) => {
+          if (!prev) return prev;
+          if (prev.label === nextLabel) return prev;
+          return { ...prev, label: nextLabel };
+        });
+      }
+
+      if (nextLabel) {
+        requestGeocodeForLabel(nextLabel, { force: !hasCoords || labelChanged || mismatchWithLastGeocode });
+      }
+    },
+    [requestGeocodeForLabel],
+  );
+
+  const categoriesForQuery = useMemo(
+    () => (filters.categories.length ? [...filters.categories] : undefined),
+    [filters.categories],
+  );
 
   const buildViewportQuery = useCallback(
     (regionOverride: MapRegion, overrides?: Partial<PlacesViewportQuery>): PlacesViewportQuery => ({
@@ -844,16 +1117,58 @@ export default function MapScreen() {
 
   useEffect(() => {
     setFilters((prev) => {
-      const allowed = prev.categories.filter((key) => cityCategoryMap.has(key));
+      const allowed = filterValidCategories(prev.categories);
       if (allowed.length === prev.categories.length) return prev;
       return { ...prev, categories: allowed };
     });
     setDraftFilters((prev) => {
-      const allowed = prev.categories.filter((key) => cityCategoryMap.has(key));
+      const allowed = filterValidCategories(prev.categories);
       if (allowed.length === prev.categories.length) return prev;
       return { ...prev, categories: allowed };
     });
-  }, [cityCategoryMap]);
+  }, [filterValidCategories]);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getSession();
+        if (!isMounted || !auth.session?.user?.id) return;
+        profileUserIdRef.current = auth.session.user.id;
+        const { data } = await supabase
+          .from('profiles')
+          .select('location, last_lat, last_lng')
+          .eq('id', auth.session.user.id)
+          .maybeSingle();
+        if (!isMounted || !data) return;
+        supabaseProfileCoordsRef.current = {
+          lat: typeof data.last_lat === 'number' ? data.last_lat : null,
+          lng: typeof data.last_lng === 'number' ? data.last_lng : null,
+        };
+        applyProfileLocation({
+          lat: data.last_lat,
+          lng: data.last_lng,
+          label: typeof data.location === 'string' ? data.location : null,
+        });
+      } catch (err) {
+        console.warn('Failed to fetch profile location', err);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [applyProfileLocation]);
+
+  useEffect(() => {
+    const subscription = subscribeProfileLocationUpdated((payload) => {
+      applyProfileLocation(payload);
+    });
+    return () => subscription.remove();
+  }, [applyProfileLocation]);
+
+  useEffect(() => () => {
+    geocodeAbortControllerRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -861,19 +1176,20 @@ export default function MapScreen() {
       try {
         const existing = await Location.getForegroundPermissionsAsync();
         if (!isMounted) return;
-        if (existing.status === 'granted') {
+        let centerLat: number;
+        let centerLng: number;
+        if (profileLocation) {
+          centerLat = profileLocation.lat;
+          centerLng = profileLocation.lng;
+        } else if (existing.status === 'granted') {
           setHasLocationPermission(true);
           const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           if (isMounted && position) {
-            const nextRegion: MapRegion = {
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
-              longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
-            };
-            setRegion(nextRegion);
-            lastRegionRef.current = nextRegion;
-            setTargetQuery(buildViewportQuery(nextRegion));
+            centerLat = position.coords.latitude;
+            centerLng = position.coords.longitude;
+          } else {
+            centerLat = cityRegion.latitude;
+            centerLng = cityRegion.longitude;
           }
         } else {
           const requested = await Location.requestForegroundPermissionsAsync();
@@ -882,37 +1198,84 @@ export default function MapScreen() {
             setHasLocationPermission(true);
             const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
             if (isMounted && position) {
-              const nextRegion: MapRegion = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
-                longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
-              };
-              setRegion(nextRegion);
-              lastRegionRef.current = nextRegion;
-              setTargetQuery(buildViewportQuery(nextRegion));
+              centerLat = position.coords.latitude;
+              centerLng = position.coords.longitude;
+            } else {
+              centerLat = cityRegion.latitude;
+              centerLng = cityRegion.longitude;
             }
           } else {
             setHasLocationPermission(false);
+            centerLat = cityRegion.latitude;
+            centerLng = cityRegion.longitude;
           }
         }
+        if (isMounted && !locationInitialized) {
+          const nextRegion: MapRegion = {
+            latitude: centerLat,
+            longitude: centerLng,
+            latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
+            longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
+          };
+          setRegion(nextRegion);
+          lastRegionRef.current = nextRegion;
+          setTargetQuery(buildViewportQuery(nextRegion));
+          setLocationInitialized(true);
+        }
       } catch (err) {
-        if (isMounted) {
-          console.warn('Location permission error', err);
+        if (isMounted && !locationInitialized) {
+          console.warn('Location setup error', err);
           setHasLocationPermission(false);
+          // Fallback to profile or city
+          const centerLat = profileLocation?.lat ?? cityRegion.latitude;
+          const centerLng = profileLocation?.lng ?? cityRegion.longitude;
+          const nextRegion: MapRegion = {
+            latitude: centerLat,
+            longitude: centerLng,
+            latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
+            longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
+          };
+          setRegion(nextRegion);
+          lastRegionRef.current = nextRegion;
+          setTargetQuery(buildViewportQuery(nextRegion));
+          setLocationInitialized(true);
         }
       }
     })();
     return () => {
       isMounted = false;
     };
-  }, [buildViewportQuery, cityRegion]);
+  }, [buildViewportQuery, cityRegion, profileLocation, locationInitialized]);
+
+  useEffect(() => {
+    if (locationInitialized && mapRef.current) {
+      // Ensure map is centered on the correct location after initialization
+      // Removed animateToRegion since region prop handles it
+    }
+  }, [locationInitialized]);
+
+  // Update map to profile location if it becomes available after initialization
+  useEffect(() => {
+    if (locationInitialized && profileLocation) {
+      const profileRegion: MapRegion = {
+        latitude: profileLocation.lat,
+        longitude: profileLocation.lng,
+        latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
+        longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
+      };
+      setRegion(profileRegion);
+      lastRegionRef.current = profileRegion;
+      setTargetQuery(buildViewportQuery(profileRegion));
+      // Removed animateToRegion since region prop handles animation
+    }
+  }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery]);
 
   const placesFetcher = useMemo(
     () =>
       createPlacesFetcher({
         buildUrl: () => createWebUrl('/api/places').toString(),
         includeCredentials: true,
+        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
       }),
     [],
   );
@@ -958,8 +1321,11 @@ export default function MapScreen() {
   const deferredRegion = useDeferredValue(region);
 
   const filteredPlaces = useMemo(
-    () => places.filter((place) => placeMatchesFilters(place, filters, deferredRegion, now, cityCategoryMap)),
-    [places, filters, deferredRegion, now, cityCategoryMap],
+    () =>
+      places.filter((place) =>
+        placeMatchesFilters(place, filters, deferredRegion, now, cityCategoryMap, taxonomyTagMap),
+      ),
+    [places, filters, deferredRegion, now, cityCategoryMap, taxonomyTagMap],
   );
 
   const deferredPlaces = useDeferredValue(filteredPlaces);
@@ -978,10 +1344,10 @@ export default function MapScreen() {
       categories: place.tags?.length ? place.tags : place.categories ?? [],
       address: place.address ?? null,
       locality: place.locality ?? null,
-      highlightedCategory: resolvePrimaryCategoryKey(place, filters.categories),
+      highlightedCategory: resolvePrimaryCategoryKey(place, selectedCategoryTags),
     }));
     emitMapPlacesUpdated(broadcast);
-  }, [filteredPlaces, filters.categories]);
+  }, [filteredPlaces, selectedCategoryTags]);
 
   const placesCountLabel = useMemo(() => {
     if (loading && !filteredPlaces.length) return null;
@@ -994,12 +1360,11 @@ export default function MapScreen() {
   const noResultsMessage = useMemo(() => {
     if (loading || filteredPlaces.length || !hasActiveFilters) return null;
     if (filters.categories.length) {
-      const labels = filters.categories.map((key) => formatCategoryName(key, categoryLabelByKey));
-      const labelText = joinWithLimit(labels, 2);
+      const labelText = joinWithLimit(selectedCategoryLabels, 2);
       return `No ${labelText} places match these filters here yet. Try adjusting the filters or moving the map.`;
     }
     return 'No places match the selected filters here yet. Try adjusting the filters or moving the map.';
-  }, [loading, filteredPlaces.length, hasActiveFilters, filters.categories, categoryLabelByKey]);
+  }, [loading, filteredPlaces.length, hasActiveFilters, filters.categories.length, selectedCategoryLabels]);
 
   const providerHint = useMemo(() => {
     if (!filteredPlaces.length) return null;
@@ -1009,14 +1374,10 @@ export default function MapScreen() {
     return null;
   }, [filteredPlaces.length, providerCounts]);
 
-  const toggleCategory = (category: string) => {
-    if (!cityCategoryMap.has(category)) return;
+  const removeCategory = (categoryId: string) => {
     setFilters((prev) => {
-      const exists = prev.categories.includes(category);
-      const nextCategories = exists
-        ? prev.categories.filter((value) => value !== category)
-        : [...prev.categories, category];
-      return { ...prev, categories: nextCategories };
+      if (!prev.categories.includes(categoryId)) return prev;
+      return { ...prev, categories: prev.categories.filter((value) => value !== categoryId) };
     });
   };
 
@@ -1030,21 +1391,37 @@ export default function MapScreen() {
   };
 
   const applyDraftFilters = () => {
-    setFilters(cloneFilters(draftFilters));
+    const nextFilters = cloneFilters(draftFilters);
+    nextFilters.categories = filterValidCategories(nextFilters.categories);
+    setFilters(nextFilters);
     setFilterModalVisible(false);
+    trackTaxonomyFiltersApplied({
+      tier3Ids: nextFilters.categories,
+      platform: 'mobile',
+      surface: 'map_filters',
+      city: city.slug,
+    });
   };
 
   const resetDraftFilters = () => {
     setDraftFilters(cloneFilters(DEFAULT_FILTERS));
   };
 
-  const toggleDraftCategory = (category: string) => {
-    if (!cityCategoryMap.has(category)) return;
+  const toggleDraftCategory = (categoryId: string) => {
+    if (!taxonomyIdSet.has(categoryId)) return;
     setDraftFilters((prev) => {
-      const exists = prev.categories.includes(category);
+      const exists = prev.categories.includes(categoryId);
       const nextCategories = exists
-        ? prev.categories.filter((value) => value !== category)
-        : [...prev.categories, category];
+        ? prev.categories.filter((value) => value !== categoryId)
+        : filterValidCategories([...prev.categories, categoryId]);
+      trackTaxonomyToggle({
+        tier3Id: categoryId,
+        active: !exists,
+        selectionCount: nextCategories.length,
+        platform: 'mobile',
+        surface: 'map_filters',
+        city: city.slug,
+      });
       return { ...prev, categories: nextCategories };
     });
   };
@@ -1079,10 +1456,6 @@ export default function MapScreen() {
       return { ...prev, timeWindow: key };
     });
   };
-
-  useEffect(() => {
-    lastRegionRef.current = region;
-  }, [region]);
 
   const adjustZoom = useCallback(
     (factor: number) => {
@@ -1207,20 +1580,12 @@ export default function MapScreen() {
             <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalContent}>
               <View style={styles.modalSection}>
                 <Text style={styles.modalSectionTitle}>Categories</Text>
-                <View style={styles.modalChipGroup}>
-                  {categoryOptions.map((option) => {
-                    const active = draftFilters.categories.includes(option.key);
-                    return (
-                      <TouchableOpacity
-                        key={`modal-${option.key}`}
-                        onPress={() => toggleDraftCategory(option.key)}
-                        style={[styles.modalChip, active ? styles.modalChipActive : styles.modalChipInactive]}
-                      >
-                        <Text style={active ? styles.modalChipTextActive : styles.modalChipText}>{option.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <Text style={styles.modalSectionSubtitle}>
+                  {draftFilters.categories.length
+                    ? draftCategoryLabels.join(', ')
+                    : 'No categories selected'}
+                </Text>
+                <TaxonomyCategoryPicker selectedIds={draftFilters.categories} onToggle={toggleDraftCategory} />
               </View>
 
               <View style={styles.modalSection}>
@@ -1348,18 +1713,35 @@ export default function MapScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filtersRow}
         >
-          {categoryOptions.map((option) => {
-            const active = filters.categories.includes(option.key);
-            return (
-              <TouchableOpacity
-                key={option.key}
-                onPress={() => toggleCategory(option.key)}
-                style={[styles.filterChip, active ? styles.filterChipActive : styles.filterChipInactive]}
-              >
-                <Text style={active ? styles.filterChipTextActive : styles.filterChipText}>{option.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
+          {filters.categories.length ? (
+            filters.categories.map((categoryId) => {
+              const label =
+                taxonomyIndex.get(categoryId)?.label ?? formatCategoryName(categoryId, categoryLabelByKey);
+              return (
+                <View key={categoryId} style={styles.selectedCategoryChip}>
+                  <Text style={styles.selectedCategoryChipText}>{label}</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.selectedCategoryChipRemove}
+                    onPress={() => removeCategory(categoryId)}
+                  >
+                    <Text style={styles.selectedCategoryChipRemoveText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          ) : (
+            <View style={styles.selectedCategoryChipMuted}>
+              <Text style={styles.selectedCategoryChipMutedText}>All activity types</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={openFilterModal}
+            style={styles.addCategoryChip}
+          >
+            <Text style={styles.addCategoryChipText}>Browse categories</Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
       <View style={styles.mapContainer}>
@@ -1367,7 +1749,7 @@ export default function MapScreen() {
           ref={mapRef}
           provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
           style={StyleSheet.absoluteFillObject}
-          initialRegion={region}
+          region={region}
           onRegionChangeComplete={handleRegionChangeComplete}
           showsUserLocation
           loadingEnabled
@@ -1384,8 +1766,8 @@ export default function MapScreen() {
             </Marker>
           ))}
           {clustered.singles.map(({ place, coordinate }) => {
-            const appearance = resolveCategoryAppearance(place, filters.categories);
-            const primaryCategoryKey = resolvePrimaryCategoryKey(place, filters.categories);
+            const appearance = resolveCategoryAppearance(place, selectedCategoryTags);
+            const primaryCategoryKey = resolvePrimaryCategoryKey(place, selectedCategoryTags);
             const descriptionLabel = primaryCategoryKey
               ? formatCategoryName(primaryCategoryKey, categoryLabelByKey)
               : place.categories[0]
@@ -1401,10 +1783,8 @@ export default function MapScreen() {
               <Marker
                 key={place.id}
                 coordinate={coordinate}
-                onPress={() => {
-                  handleMarkerPress(place, coordinate);
-                  handlePlanEvent(place, descriptionLabel);
-                }}
+                onPress={() => handleMarkerPress(place, coordinate)}
+                onCalloutPress={() => handlePlanEvent(place, descriptionLabel)}
                 title={place.name}
                 description={calloutDescription}
               >
@@ -1556,32 +1936,63 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   filtersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     paddingVertical: 12,
-    columnGap: 10,
   },
-  filterChip: {
+  selectedCategoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    gap: 6,
   },
-  filterChipActive: {
-    borderColor: '#10B981',
-    backgroundColor: '#D1FAE5',
-  },
-  filterChipInactive: {
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-  },
-  filterChipText: {
-    color: '#475569',
+  selectedCategoryChipText: {
     fontSize: 13,
     fontWeight: '600',
+    color: '#1D4ED8',
   },
-  filterChipTextActive: {
-    color: '#047857',
-    fontSize: 13,
+  selectedCategoryChipRemove: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DBEAFE',
+  },
+  selectedCategoryChipRemoveText: {
+    fontSize: 14,
+    color: '#1E3A8A',
     fontWeight: '700',
+  },
+  selectedCategoryChipMuted: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  selectedCategoryChipMutedText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  addCategoryChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#1D4ED8',
+  },
+  addCategoryChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   modalBackdrop: {
     flex: 1,
@@ -1633,6 +2044,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
+    marginBottom: 12,
+  },
+  modalSectionSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
     marginBottom: 12,
   },
   modalChipGroup: {

@@ -6,6 +6,9 @@ import { supabase } from './supabase';
 
 export const BG_LOCATION_TASK = 'BG_LOCATION_TASK';
 const STORAGE_KEY = '@bg_last_location';
+const BG_LOCATION_WRITES_PROFILE =
+  process.env.EXPO_PUBLIC_ENABLE_BG_LOCATION_PROFILE_SYNC === 'true' ||
+  process.env.NEXT_PUBLIC_ENABLE_BG_LOCATION_PROFILE_SYNC === 'true';
 
 type BackgroundLocationPayload = {
   lat: number;
@@ -31,20 +34,25 @@ if (!TaskManager.isTaskDefined?.(BG_LOCATION_TASK)) {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       if (__DEV__) console.log('[bg-location] stored', payload);
-      // Best-effort: push to Supabase profile if signed in and schema supports it
-      try {
-        const { data: auth } = await supabase.auth.getUser();
-        const uid = auth?.user?.id;
-        if (uid) {
-          await supabase.from('profiles').update({
-            last_lat: payload.lat,
-            last_lng: payload.lng,
-            last_location_at: new Date(payload.ts).toISOString(),
-            updated_at: new Date(payload.ts).toISOString(),
-          }).eq('id', uid);
+      if (BG_LOCATION_WRITES_PROFILE) {
+        // Opt-in: push to Supabase profile if signed in and schema supports it
+        try {
+          const { data: auth } = await supabase.auth.getUser();
+          const uid = auth?.user?.id;
+          if (uid) {
+            await supabase
+              .from('profiles')
+              .update({
+                last_lat: payload.lat,
+                last_lng: payload.lng,
+                last_location_at: new Date(payload.ts).toISOString(),
+                updated_at: new Date(payload.ts).toISOString(),
+              })
+              .eq('id', uid);
+          }
+        } catch (pushError) {
+          if (__DEV__) console.log('[bg-location] push to supabase skipped', pushError);
         }
-      } catch (pushError) {
-        if (__DEV__) console.log('[bg-location] push to supabase skipped', pushError);
       }
     } catch (storageError) {
       if (__DEV__) console.warn('[bg-location] failed to persist location', storageError);

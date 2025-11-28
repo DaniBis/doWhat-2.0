@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { createWebUrl } from "../lib/web";
+import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
 import {
   normaliseActivityName,
@@ -89,7 +90,8 @@ function HomeScreen() {
     () =>
       createPlacesFetcher({
         buildUrl: () => createWebUrl('/api/places').toString(),
-        includeCredentials: true,
+        includeCredentials: false,
+        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
       }),
     [],
   );
@@ -174,11 +176,14 @@ function HomeScreen() {
   const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
     if (latNow == null || lngNow == null) { setActivities([]); return; }
     try {
-  const url = createWebUrl('/api/nearby');
+      const url = createWebUrl('/api/nearby');
       url.searchParams.set('lat', String(latNow));
       url.searchParams.set('lng', String(lngNow));
       url.searchParams.set('radius', '2500');
-      const res = await fetch(url.toString());
+      const res = await fetchWithTimeout(url.toString(), { timeoutMs: 8000 });
+      if (!res.ok) {
+        throw new Error(`Nearby API failed (${res.status})`);
+      }
       const json = await res.json() as NearbyApiResponse;
       const list = Array.isArray(json?.activities) ? json.activities : [];
       const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
@@ -235,7 +240,7 @@ function HomeScreen() {
         };
         const query: PlacesViewportQuery = {
           bounds,
-          limit: 24,
+          limit: 50,
         };
         if (!hasLocation) {
           query.city = city.slug;
@@ -244,10 +249,11 @@ function HomeScreen() {
         setNearbyPlaces(response.places ?? []);
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
+        console.log('[Home] Places fetch success', response.places?.length, 'places');
       } catch (err) {
         if (__DEV__ && !placesFetchFailureLogged.current) {
           placesFetchFailureLogged.current = true;
-          console.info('[Home] Places fetch failed', err);
+          console.error('[Home] Places fetch failed', err);
         }
         setNearbyPlaces([]);
         setPlacesError(err instanceof Error ? err.message : 'Unable to load nearby places.');
@@ -483,7 +489,7 @@ function HomeScreen() {
   // New design: header + discover grid + (optional) upcoming sessions
   {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar barStyle="light-content" backgroundColor="#2C3E50" />
         
         {/* Modern Header */}

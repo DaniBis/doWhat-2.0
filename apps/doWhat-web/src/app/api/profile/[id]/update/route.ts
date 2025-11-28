@@ -21,7 +21,36 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const update: Record<string, unknown> = { id: params.id, updated_at: new Date().toISOString() };
   if (typeof body.name === 'string') update.full_name = body.name.slice(0, 120);
   if (typeof body.avatarUrl === 'string') update.avatar_url = body.avatarUrl;
-  if (typeof body.location === 'string') update.location = body.location.slice(0,120);
+  if (typeof body.location === 'string') {
+    const locationString = body.location.slice(0,120);
+    update.location = locationString;
+    
+    // Geocode the location to get coordinates
+    try {
+      const requestOrigin = (() => {
+        try {
+          const url = new URL(req.url);
+          return url.origin;
+        } catch {
+          return null;
+        }
+      })();
+      const baseUrl = requestOrigin || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+      const geocodeUrl = new URL('/api/geocode', baseUrl);
+      geocodeUrl.searchParams.set('q', locationString);
+      const geocodeResponse = await fetch(geocodeUrl.toString());
+      if (geocodeResponse.ok) {
+        const geocodeData = await geocodeResponse.json();
+        if (geocodeData.lat && geocodeData.lng) {
+          update.last_lat = geocodeData.lat;
+          update.last_lng = geocodeData.lng;
+        }
+      }
+    } catch (geocodeError) {
+      console.warn('Failed to geocode location', geocodeError);
+      // Continue without coordinates - location string is still saved
+    }
+  }
   if (typeof body.bio === 'string') {
     update.bio = body.bio.slice(0, 1000);
   } else if (body.bio === null) {

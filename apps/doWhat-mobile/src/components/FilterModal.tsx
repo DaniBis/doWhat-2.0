@@ -9,6 +9,9 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { trackTaxonomyFiltersApplied, trackTaxonomyToggle } from '@dowhat/shared';
+
+import TaxonomyCategoryPicker from './TaxonomyCategoryPicker';
 
 type FilterOptions = {
   radius: number;
@@ -23,17 +26,6 @@ type FilterModalProps = {
   onApply: (filters: FilterOptions) => void;
   initialFilters?: FilterOptions;
 };
-
-const categories = [
-  { id: 'fitness', name: 'Fitness', icon: '💪' },
-  { id: 'food', name: 'Food & Drink', icon: '🍽️' },
-  { id: 'arts', name: 'Arts & Culture', icon: '🎨' },
-  { id: 'outdoor', name: 'Outdoor', icon: '🌲' },
-  { id: 'social', name: 'Social', icon: '👥' },
-  { id: 'learning', name: 'Learning', icon: '📚' },
-  { id: 'entertainment', name: 'Entertainment', icon: '🎪' },
-  { id: 'wellness', name: 'Wellness', icon: '🧘' },
-];
 
 const timeSlots = [
   { id: 'morning', name: 'Morning (6AM - 12PM)', icon: '🌅' },
@@ -56,12 +48,20 @@ const FilterModal: React.FC<FilterModalProps> = ({
   const [filters, setFilters] = useState<FilterOptions>(initialFilters);
 
   const toggleCategory = (categoryId: string) => {
-    setFilters(prev => ({
-      ...prev,
-      categories: prev.categories.includes(categoryId)
+    setFilters(prev => {
+      const exists = prev.categories.includes(categoryId);
+      const categories = exists
         ? prev.categories.filter(id => id !== categoryId)
-        : [...prev.categories, categoryId],
-    }));
+        : [...prev.categories, categoryId];
+      trackTaxonomyToggle({
+        tier3Id: categoryId,
+        active: !exists,
+        selectionCount: categories.length,
+        platform: 'mobile',
+        surface: 'filter_modal',
+      });
+      return { ...prev, categories };
+    });
   };
 
   const toggleTimeSlot = (timeId: string) => {
@@ -80,16 +80,26 @@ const FilterModal: React.FC<FilterModalProps> = ({
       categories: [],
       timeOfDay: [],
     });
+    trackTaxonomyFiltersApplied({
+      tier3Ids: [],
+      platform: 'mobile',
+      surface: 'filter_modal',
+    });
   };
 
   const handleApply = () => {
     onApply(filters);
+    trackTaxonomyFiltersApplied({
+      tier3Ids: filters.categories,
+      platform: 'mobile',
+      surface: 'filter_modal',
+    });
     onClose();
   };
 
-  const activeFiltersCount = 
-    filters.categories.length + 
-    filters.timeOfDay.length + 
+  const activeFiltersCount =
+    filters.categories.length +
+    filters.timeOfDay.length +
     (filters.radius !== 10 ? 1 : 0) +
     (filters.priceRange[0] !== 0 || filters.priceRange[1] !== 100 ? 1 : 0);
 
@@ -114,9 +124,9 @@ const FilterModal: React.FC<FilterModalProps> = ({
                   <View style={styles.customSlider}>
                     <View style={styles.sliderTrack}>
                       <View style={[styles.sliderFill, { width: `${(filters.radius / 50) * 100}%` }]} />
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         style={[styles.sliderThumb, { left: `${(filters.radius / 50) * 100}%` }]}
-                        onPress={() => {}} // Simplified - in real app would implement drag
+                        onPress={() => {}}
                       />
                     </View>
                     <View style={styles.sliderLabels}>
@@ -157,33 +167,14 @@ const FilterModal: React.FC<FilterModalProps> = ({
               {/* Categories */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Categories</Text>
-                <View style={styles.optionsGrid}>
-                  {categories.map((category) => (
-                    <TouchableOpacity
-                      key={category.id}
-                      style={[
-                        styles.optionCard,
-                        filters.categories.includes(category.id) && styles.optionCardSelected,
-                      ]}
-                      onPress={() => toggleCategory(category.id)}
-                    >
-                      <Text style={styles.optionIcon}>{category.icon}</Text>
-                      <Text style={[
-                        styles.optionText,
-                        filters.categories.includes(category.id) && styles.optionTextSelected,
-                      ]}>
-                        {category.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                <TaxonomyCategoryPicker selectedIds={filters.categories} onToggle={toggleCategory} />
               </View>
 
               {/* Time of Day */}
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Time of Day</Text>
                 <View style={styles.timeSlots}>
-                  {timeSlots.map((slot) => (
+                  {timeSlots.map(slot => (
                     <TouchableOpacity
                       key={slot.id}
                       style={[
@@ -193,10 +184,12 @@ const FilterModal: React.FC<FilterModalProps> = ({
                       onPress={() => toggleTimeSlot(slot.id)}
                     >
                       <Text style={styles.timeSlotIcon}>{slot.icon}</Text>
-                      <Text style={[
-                        styles.timeSlotText,
-                        filters.timeOfDay.includes(slot.id) && styles.timeSlotTextSelected,
-                      ]}>
+                      <Text
+                        style={[
+                          styles.timeSlotText,
+                          filters.timeOfDay.includes(slot.id) && styles.timeSlotTextSelected,
+                        ]}
+                      >
                         {slot.name}
                       </Text>
                     </TouchableOpacity>
@@ -345,40 +338,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     fontSize: 14,
     color: '#9CA3AF',
-  },
-  optionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  optionCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    minWidth: 80,
-    flex: 1,
-    maxWidth: '48%',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  optionCardSelected: {
-    backgroundColor: '#EBF4FF',
-    borderColor: '#3B82F6',
-  },
-  optionIcon: {
-    fontSize: 24,
-    marginBottom: 4,
-  },
-  optionText: {
-    fontSize: 12,
-    color: '#6B7280',
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  optionTextSelected: {
-    color: '#3B82F6',
-    fontWeight: '600',
   },
   timeSlots: {
     gap: 8,

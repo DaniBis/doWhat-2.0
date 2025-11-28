@@ -92,32 +92,33 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 
 ## Database notes
 
-Migrations live in `apps/doWhat-web/src/lib/supabase/migrations/` and are ordered:
-
-1. `007_badges.sql`
-2. `008_traits.sql`
-3. `009_policies.sql` (RLS enable + baseline policies)
-4. `014_places.sql` (durable places + provider metrics)
-5. `015_events.sql` (event sources + unified events table)
-
-Apply (psql):
+All SQL migrations now live in `apps/doWhat-web/supabase/migrations/` and follow the numeric prefix ordering (e.g. `014_places.sql`, `018_activity_taxonomy.sql`). A tiny helper script replays only the migrations that have not been stamped in the target database yet.
 
 ```
 export SUPABASE_DB_URL=postgresql://user:pass@host:port/db
 pnpm db:migrate
 ```
 
-Or individually:
+The command above runs `node run_migrations.js`, which will:
+
+- create a `public.schema_migrations` ledger if it does not exist
+- apply each SQL file exactly once (wrapped in a transaction)
+- print progress so you can tail deploy logs or CI output
+
+If you prefer the SQL editor, copy/paste individual files from the same folder in ascending order.
+
+### Activity taxonomy storage
+
+Migration `018_activity_taxonomy.sql` provisions two tables (`activity_categories`, `activity_taxonomy_state`) plus the `v_activity_taxonomy_flat` view so Postgres/Supabase clients can join the taxonomy without importing TypeScript code. After deploying the schema, seed the canonical taxonomy definition via:
 
 ```
-psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/007_badges.sql
-psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/008_traits.sql
-psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/009_policies.sql
-psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/014_places.sql
-psql "$SUPABASE_DB_URL" -f apps/doWhat-web/src/lib/supabase/migrations/015_events.sql
+export SUPABASE_DB_URL=postgresql://user:pass@host:port/db
+pnpm seed:taxonomy
 ```
 
-You can also paste each file into the Supabase SQL editor. The health endpoint `/api/health` now reports missing tables (`badges`, `traits_catalog`, etc.) so you can verify after running migrations.
+The seed script reads `packages/shared/src/taxonomy/activityTaxonomy.ts`, upserts every tier, cleans up removed IDs, and records the semantic version in `activity_taxonomy_state`. Supabase REST and Row Level Security policies allow public read-only access, matching the in-app usage.
+
+The health endpoint `/api/health` still reports missing core tables (`badges`, `traits_catalog`, `places`, etc.) so you can double-check the schema after running migrations.
 
 ### Cron jobs & seed helpers
 

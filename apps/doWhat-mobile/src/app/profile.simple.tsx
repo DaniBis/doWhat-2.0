@@ -31,6 +31,7 @@ type ProfileRow = {
   last_lat?: number | null;
   last_lng?: number | null;
   updated_at?: string | null;
+  personality_traits?: string[] | null;
 };
 
 type ProfileUpdatePayload = {
@@ -101,6 +102,8 @@ type ProfileCachePayload = {
   supportsWhatsapp: boolean;
   supportsBio: boolean;
   supportsLocation: boolean;
+  supportsTraits: boolean;
+  personalityTraits: string[];
   last_lat: number | null;
   last_lng: number | null;
   updated_at?: string | null;
@@ -117,6 +120,35 @@ type LocationSuggestion = {
 const MAX_LOCATION_SUGGESTIONS = 5;
 const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
 const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
+const MAX_PROFILE_TRAITS = 5;
+
+const normaliseProfileTrait = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return null;
+  if (trimmed.length < 2 || trimmed.length > 20) return null;
+  if (!/^[a-zA-Z][-a-zA-Z\s]+$/.test(trimmed)) return null;
+  return trimmed
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const sanitizeProfileTraitList = (input: unknown): string[] => {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of input) {
+    const normalised = normaliseProfileTrait(raw);
+    if (!normalised) continue;
+    const key = normalised.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalised);
+    if (result.length >= MAX_PROFILE_TRAITS) break;
+  }
+  return result;
+};
 
 const coerceNumber = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -516,6 +548,7 @@ export default function ProfileSimple() {
   const [instagram, setInstagram] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [bio, setBio] = useState('');
+  const [personalityTraits, setPersonalityTraits] = useState<string[]>([]);
   const [locationLabel, setLocationLabel] = useState('');
   const [profileLat, setProfileLat] = useState<number | null>(null);
   const [profileLng, setProfileLng] = useState<number | null>(null);
@@ -550,8 +583,10 @@ export default function ProfileSimple() {
   const [supportsWhatsapp, setSupportsWhatsapp] = useState(true);
   const [supportsBio, setSupportsBio] = useState(true);
   const [supportsLocation, setSupportsLocation] = useState(true);
+  const [supportsTraits, setSupportsTraits] = useState(true);
   const [locFetchBusy, setLocFetchBusy] = useState(false);
   const [locFetchError, setLocFetchError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const userIdRef = useRef<string | null>(null);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
@@ -583,6 +618,9 @@ export default function ProfileSimple() {
       setSupportsWhatsapp(parsed.supportsWhatsapp ?? true);
       setSupportsBio(parsed.supportsBio ?? true);
       setSupportsLocation(parsed.supportsLocation ?? true);
+      setSupportsTraits(parsed.supportsTraits ?? true);
+      const cachedTraits = sanitizeProfileTraitList(parsed.personalityTraits ?? []);
+      setPersonalityTraits(cachedTraits);
       const avatar = typeof parsed.avatar_url === 'string' ? parsed.avatar_url : '';
       const instagramVal = typeof parsed.instagram === 'string' ? parsed.instagram : '';
       const whatsappVal = typeof parsed.whatsapp === 'string' ? parsed.whatsapp : '';
@@ -630,14 +668,21 @@ export default function ProfileSimple() {
   }, []);
 
   // Centralized profile fetch so we can reuse after mutations & auth events
-  const fetchProfile = useCallback(async (uid: string, options?: { fallbackBio?: string | null }) => {
+  const fetchProfile = useCallback(async (uid: string, options?: { fallbackBio?: string | null; fallbackTraits?: string[] }) => {
     const fallbackBio = typeof options?.fallbackBio === 'string' ? options.fallbackBio : '';
-    const buildColumns = (includeInstagram: boolean, includeWhatsapp: boolean, includeBio: boolean, includeLocation: boolean) => {
+    const buildColumns = (
+      includeInstagram: boolean,
+      includeWhatsapp: boolean,
+      includeBio: boolean,
+      includeLocation: boolean,
+      includeTraits: boolean,
+    ) => {
       const baseColumns = ['full_name', 'avatar_url'];
       if (includeInstagram) baseColumns.push('instagram');
       if (includeWhatsapp) baseColumns.push('whatsapp');
       if (includeBio) baseColumns.push('bio');
       if (includeLocation) baseColumns.push('location');
+      if (includeTraits) baseColumns.push('personality_traits');
       baseColumns.push('last_lat', 'last_lng');
       return baseColumns;
     };
@@ -646,11 +691,15 @@ export default function ProfileSimple() {
     let nextSupportsWhatsapp = supportsWhatsapp;
     let nextSupportsBio = supportsBio;
     let nextSupportsLocation = supportsLocation;
+    let nextSupportsTraits = supportsTraits;
 
     setErr(null);
 
     try {
-      const requestedColumns = Array.from(new Set(buildColumns(nextSupportsInstagram, nextSupportsWhatsapp, nextSupportsBio, nextSupportsLocation)));
+      const fallbackTraits = sanitizeProfileTraitList(options?.fallbackTraits ?? []);
+      const requestedColumns = Array.from(
+        new Set(buildColumns(nextSupportsInstagram, nextSupportsWhatsapp, nextSupportsBio, nextSupportsLocation, nextSupportsTraits)),
+      );
       const { data, error } = await supabase
         .from('profiles')
         .select(requestedColumns.join(', '))
@@ -678,8 +727,18 @@ export default function ProfileSimple() {
           nextSupportsLocation = false;
           retried = true;
         }
+        if (message.includes('personality_traits') && nextSupportsTraits) {
+          nextSupportsTraits = false;
+          retried = true;
+        }
         if (retried) {
-          const fallbackColumns = buildColumns(nextSupportsInstagram, nextSupportsWhatsapp, nextSupportsBio, nextSupportsLocation);
+          const fallbackColumns = buildColumns(
+            nextSupportsInstagram,
+            nextSupportsWhatsapp,
+            nextSupportsBio,
+            nextSupportsLocation,
+            nextSupportsTraits,
+          );
           const retry = await supabase
             .from('profiles')
             .select(fallbackColumns.join(', '))
@@ -703,6 +762,7 @@ export default function ProfileSimple() {
           setLocationSuggestionsLoading(false);
         }
       }
+      if (nextSupportsTraits !== supportsTraits) setSupportsTraits(nextSupportsTraits);
 
       const resolved: ProfileCachePayload = {
         id: uid,
@@ -716,9 +776,11 @@ export default function ProfileSimple() {
         supportsWhatsapp: nextSupportsWhatsapp,
         supportsBio: nextSupportsBio,
         supportsLocation: nextSupportsLocation,
+        supportsTraits: nextSupportsTraits,
         last_lat: typeof row?.last_lat === 'number' ? row.last_lat : profileLat,
         last_lng: typeof row?.last_lng === 'number' ? row.last_lng : profileLng,
         updated_at: row?.updated_at ?? null,
+        personalityTraits: nextSupportsTraits ? sanitizeProfileTraitList(row?.personality_traits ?? null) : fallbackTraits,
       };
 
       setFullName(resolved.full_name);
@@ -729,6 +791,7 @@ export default function ProfileSimple() {
       setLocationLabel(resolved.location);
       setProfileLat(resolved.last_lat ?? null);
       setProfileLng(resolved.last_lng ?? null);
+      setPersonalityTraits(resolved.personalityTraits);
 
       try {
         await AsyncStorage.setItem(profileCacheKey(uid), JSON.stringify(resolved));
@@ -752,7 +815,7 @@ export default function ProfileSimple() {
       setErr(message);
       return null;
     }
-  }, [supportsInstagram, supportsWhatsapp, supportsBio, supportsLocation, instagram, whatsapp, bio, locationLabel, profileLat, profileLng]);
+  }, [supportsInstagram, supportsWhatsapp, supportsBio, supportsLocation, supportsTraits, instagram, whatsapp, bio, locationLabel, profileLat, profileLng]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -760,8 +823,9 @@ export default function ProfileSimple() {
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth?.user?.id;
       if (uid) {
+        const fallbackTraits = sanitizeProfileTraitList(auth?.user?.user_metadata?.personality_traits);
         await Promise.all([
-          fetchProfile(uid, { fallbackBio: bio }),
+          fetchProfile(uid, { fallbackBio: bio, fallbackTraits }),
           loadBadges(uid),
         ]);
       }
@@ -782,7 +846,8 @@ export default function ProfileSimple() {
         userIdRef.current = uid;
         await restoreProfileFromCache(uid);
         const fallbackBio = typeof auth?.user?.user_metadata?.bio === 'string' ? auth.user.user_metadata.bio : '';
-        await fetchProfile(uid, { fallbackBio });
+        const fallbackTraits = sanitizeProfileTraitList(auth?.user?.user_metadata?.personality_traits);
+        await fetchProfile(uid, { fallbackBio, fallbackTraits });
         await loadBadges(uid);
       } else {
         userIdRef.current = null;
@@ -798,7 +863,8 @@ export default function ProfileSimple() {
           setSignedIn(true);
           await restoreProfileFromCache(signedInId);
           const metaBio = typeof session.user.user_metadata?.bio === 'string' ? session.user.user_metadata?.bio : '';
-          await fetchProfile(signedInId, { fallbackBio: metaBio });
+          const metaTraits = sanitizeProfileTraitList(session.user.user_metadata?.personality_traits);
+          await fetchProfile(signedInId, { fallbackBio: metaBio, fallbackTraits: metaTraits });
           await loadBadges(signedInId);
         } else if (event === 'SIGNED_OUT') {
           userIdRef.current = null;
@@ -814,6 +880,8 @@ export default function ProfileSimple() {
           setSupportsWhatsapp(true);
           setSupportsBio(true);
           setSupportsLocation(true);
+          setSupportsTraits(true);
+          setPersonalityTraits([]);
           setDraftLocation('');
           setDraftLocationSelection(null);
           setLocationSuggestions([]);
@@ -871,6 +939,32 @@ export default function ProfileSimple() {
       setEditOpen(true);
     })();
   }
+
+  const performSignOut = useCallback(async () => {
+    setSigningOut(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (error) {
+      Alert.alert('Sign out failed', describeError(error, 'Unable to sign out right now. Try again in a moment.'));
+    } finally {
+      setSigningOut(false);
+    }
+  }, []);
+
+  const confirmSignOut = useCallback(() => {
+    if (signingOut) return;
+    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: signingOut ? 'Signing out…' : 'Sign out',
+        style: 'destructive',
+        onPress: () => {
+          void performSignOut();
+        },
+      },
+    ]);
+  }, [performSignOut, signingOut]);
 
   function applyDraftsToState() {
     setFullName(draftFullName);
@@ -1522,7 +1616,7 @@ export default function ProfileSimple() {
 
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.brandTeal }} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg }} edges={['left', 'right', 'bottom']}>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.bg }}
         contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
@@ -1586,9 +1680,27 @@ export default function ProfileSimple() {
       </LinearGradient>
 
       <View style={{ marginTop:16, marginHorizontal:16 }}>
-  <Pressable onPress={openEdit} style={{ alignSelf:'flex-start', backgroundColor: theme.colors.brandTeal, paddingVertical:10, paddingHorizontal:18, borderRadius:999 }}>
-          <Text style={{ color:'white', fontWeight:'600' }}>Edit Profile</Text>
-        </Pressable>
+        <View style={{ flexDirection:'row', flexWrap:'wrap', gap:12 }}>
+          <Pressable onPress={openEdit} style={{ alignSelf:'flex-start', backgroundColor: theme.colors.brandTeal, paddingVertical:10, paddingHorizontal:18, borderRadius:999 }}>
+            <Text style={{ color:'white', fontWeight:'600' }}>Edit Profile</Text>
+          </Pressable>
+          <Pressable
+            onPress={confirmSignOut}
+            disabled={signingOut}
+            style={{
+              alignSelf:'flex-start',
+              paddingVertical:10,
+              paddingHorizontal:18,
+              borderRadius:999,
+              borderWidth:1,
+              borderColor:'#dc2626',
+              backgroundColor: signingOut ? 'rgba(248,113,113,0.15)' : 'transparent',
+              opacity: signingOut ? 0.7 : 1,
+            }}
+          >
+            <Text style={{ color:'#dc2626', fontWeight:'600' }}>{signingOut ? 'Signing out…' : 'Sign out'}</Text>
+          </Pressable>
+        </View>
         {msg && <Text style={{ marginTop:8, color:'#065f46' }}>{msg}</Text>}
         {err && <Text style={{ marginTop:8, color:'#b91c1c' }}>{err}</Text>}
       </View>
@@ -1604,6 +1716,39 @@ export default function ProfileSimple() {
           <Text style={{ color:'#374151', lineHeight:20, opacity: locationLabel ? 1 : 0.55 }}>
             {locationLabel || 'No location set. Tap Update to add one.'}
           </Text>
+        </View>
+      </View>
+
+      <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+        <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+          <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Personality traits</Text>
+        </View>
+        <View style={{ padding:14, gap:10 }}>
+          {supportsTraits ? (
+            personalityTraits.length ? (
+              <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                {personalityTraits.map((trait) => (
+                  <View
+                    key={trait}
+                    style={{
+                      paddingVertical:6,
+                      paddingHorizontal:12,
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'#c7d2fe',
+                      backgroundColor:'#eef2ff',
+                    }}
+                  >
+                    <Text style={{ color:'#1e1b4b', fontWeight:'600' }}>{trait}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={{ color:'#94a3b8', fontSize:13 }}>Add a few traits during signup or in a future profile update to showcase your vibe.</Text>
+            )
+          ) : (
+            <Text style={{ color:'#b45309', fontSize:13 }}>Traits are not enabled on this project yet. Run the latest migrations to turn them on.</Text>
+          )}
         </View>
       </View>
 

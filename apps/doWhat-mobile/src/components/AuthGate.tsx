@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import AuthButtons from './AuthButtons';
@@ -15,6 +16,7 @@ type ProfileRow = {
   is_public?: boolean | null;
   bio?: string | null;
   onboarding_complete?: boolean | null;
+  personality_traits?: string[] | null;
 };
 
 type AuthGateProps = {
@@ -28,6 +30,36 @@ type ProfileDraft = {
   socialHandle: string;
   isPublic: boolean;
   bio: string;
+};
+
+const MAX_PERSONALITY_TRAITS = 5;
+
+const normaliseSignupTrait = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return null;
+  if (trimmed.length < 2 || trimmed.length > 20) return null;
+  if (!/^[a-zA-Z][-a-zA-Z\s]+$/.test(trimmed)) return null;
+  return trimmed
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const sanitizeTraitList = (input: unknown): string[] => {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of input) {
+    const normalised = normaliseSignupTrait(raw);
+    if (!normalised) continue;
+    const key = normalised.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalised);
+    if (result.length >= MAX_PERSONALITY_TRAITS) break;
+  }
+  return result;
 };
 
 const normaliseDate = (value: string): string => {
@@ -51,9 +83,19 @@ const isValidDate = (value: string): boolean => {
   return true;
 };
 
+const getMetadataValue = (metadata: Record<string, unknown> | undefined, key: string): string => {
+  const value = metadata?.[key];
+  return typeof value === 'string' ? value : '';
+};
+
 function deriveDraft(session: Session, profile: ProfileRow | null): ProfileDraft {
+  const metadata = session.user?.user_metadata ?? {};
   const email = session.user?.email ?? '';
-  let username = profile?.username ?? '';
+  const suggestedUsername = getMetadataValue(metadata, 'username_suggestion') || getMetadataValue(metadata, 'preferred_username');
+  const metadataBio = getMetadataValue(metadata, 'interests');
+  const metadataContact = getMetadataValue(metadata, 'contact_email');
+
+  let username = profile?.username ?? suggestedUsername ?? '';
   if (!username && email) {
     const base = email.split('@')[0] ?? email;
     username = base.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20);
@@ -61,10 +103,10 @@ function deriveDraft(session: Session, profile: ProfileRow | null): ProfileDraft
   return {
     username,
     birthday: profile?.birthday ? normaliseDate(profile.birthday) : '',
-    contactEmail: profile?.contact_email ?? email ?? '',
+    contactEmail: (profile?.contact_email ?? metadataContact) || email || '',
     socialHandle: profile?.social_handle ?? '',
     isPublic: profile?.is_public ?? true,
-    bio: profile?.bio ?? '',
+    bio: profile?.bio ?? metadataBio ?? '',
   };
 }
 
@@ -151,7 +193,11 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
     setBusy(true);
     setError(null);
     try {
-      const payload = {
+      const metadataTraits = sanitizeTraitList(session.user?.user_metadata?.personality_traits);
+      const existingTraits = sanitizeTraitList(profile?.personality_traits ?? null);
+      const resolvedTraits = metadataTraits.length ? metadataTraits : existingTraits;
+      const shouldSkipTraitOnboarding = resolvedTraits.length > 0;
+      const basePayload = {
         id: session.user.id,
         username: cleanUsername,
         birthday: cleanBirthday,
@@ -161,10 +207,23 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
         bio: cleanBio,
         onboarding_complete: true,
         updated_at: new Date().toISOString(),
-      };
-      const { error: upsertError } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+      } satisfies Record<string, unknown>;
+
+      const includeTraits = resolvedTraits.length > 0;
+      const payloadWithTraits = includeTraits
+        ? { ...basePayload, personality_traits: resolvedTraits }
+        : basePayload;
+
+      let { error: upsertError } = await supabase.from('profiles').upsert(payloadWithTraits, { onConflict: 'id' });
+
+      if (upsertError && includeTraits && /personality_traits/.test(upsertError.message)) {
+        const retry = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
+        upsertError = retry.error ?? null;
+      }
+
       if (upsertError) throw upsertError;
       onComplete();
+      router.replace(shouldSkipTraitOnboarding ? '/(tabs)' : '/onboarding-traits');
     } catch (err) {
       console.error('[AuthGate] profile upsert failed', err);
       let message = 'Unable to save your profile right now.';
@@ -181,6 +240,8 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
         setError('That username is already taken. Try another one.');
       } else if (/column\s+"?(username|birthday|contact_email|social_handle|is_public|onboarding_complete)"?/i.test(message)) {
         setError('Profiles table is missing the onboarding fields. Run migration 012_profile_onboarding.sql against your Supabase database and try again.');
+      } else if (/column\s+"?personality_traits"?/i.test(message)) {
+        setError('Profiles table is missing the personality_traits column. Run migration 020_profile_personality_traits.sql (or apply database_updates.sql) against your Supabase database and try again.');
       } else if (/permission denied/i.test(message)) {
         setError('Permission denied while saving profile. Ensure RLS on public.profiles lets users upsert their own row.');
       } else {
@@ -189,7 +250,7 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
     } finally {
       setBusy(false);
     }
-  }, [username, birthday, contactEmail, socialHandle, isPublic, bio, session.user.id, onComplete]);
+  }, [username, birthday, contactEmail, socialHandle, isPublic, bio, session, profile, onComplete]);
 
   const signOut = useCallback(async () => {
     const { error: signOutError } = await supabase.auth.signOut();
@@ -210,6 +271,9 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
         <Text style={{ color: '#0F172A', fontSize: 26, fontWeight: '800' }}>Complete your profile</Text>
         <Text style={{ color: '#475569', lineHeight: 20 }}>
           Tell the community a little about yourself. You can update these settings later in your profile.
+        </Text>
+        <Text style={{ color: '#0F172A', backgroundColor: '#E0F2FE', borderRadius: 14, padding: 12, fontSize: 13, lineHeight: 18 }}>
+          After you save, we'll guide you through choosing up to five personality traits so people can recognise your vibe.
         </Text>
         <View style={{ padding: 18, borderRadius: 18, backgroundColor: '#F8FAFC', gap: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
           <Text style={{ color: '#64748B', fontSize: 14 }}>Signed in as</Text>
@@ -331,6 +395,28 @@ export default function AuthGate({ children }: AuthGateProps) {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileRevision, setProfileRevision] = useState(0);
+  const sessionTokenRef = useRef<string | null>(null);
+
+  const applySession = useCallback(
+    (nextSession: Session | null) => {
+      const nextToken = nextSession?.access_token ?? null;
+      const prevToken = sessionTokenRef.current;
+      const tokenChanged = prevToken !== nextToken;
+
+      setSession((prev) => {
+        if (!tokenChanged && prevToken !== null) {
+          return prev ?? nextSession;
+        }
+        return nextSession;
+      });
+
+      if (tokenChanged) {
+        sessionTokenRef.current = nextToken;
+        setProfileRevision((rev) => rev + 1);
+      }
+    },
+    [setProfileRevision],
+  );
 
   useEffect(() => {
     let active = true;
@@ -338,24 +424,48 @@ export default function AuthGate({ children }: AuthGateProps) {
       try {
         const { data } = await supabase.auth.getSession();
         if (!active) return;
-        setSession(data.session ?? null);
+        applySession(data.session ?? null);
       } catch (error) {
         if (__DEV__) console.warn('[AuthGate] getSession failed', error);
         if (!active) return;
-        setSession(null);
+        applySession(null);
       } finally {
         if (active) setSessionLoading(false);
       }
     })();
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setProfileRevision((rev) => rev + 1);
+      applySession(nextSession);
     });
     return () => {
       active = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [applySession]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshSessionFromForeground = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!cancelled) {
+          applySession(data.session ?? null);
+        }
+      } catch (error) {
+        if (__DEV__) console.warn('[AuthGate] foreground session refresh failed', error);
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshSessionFromForeground();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [applySession]);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -367,7 +477,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     (async () => {
       try {
         const baseColumns = ['id', 'username', 'birthday'] as const;
-        const optionalColumns = ['contact_email', 'social_handle', 'is_public', 'bio', 'onboarding_complete'];
+        const optionalColumns = ['contact_email', 'social_handle', 'is_public', 'bio', 'onboarding_complete', 'personality_traits'];
 
         const fetchProfile = async (columns: readonly string[]) =>
           supabase

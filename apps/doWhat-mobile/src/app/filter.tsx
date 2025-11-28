@@ -10,29 +10,24 @@ import {
   normaliseActivityFilterPreferences,
   saveUserPreference,
   type ActivityFilterPreferences,
+  defaultTier3Index,
+  getTier3Ids,
+  trackTaxonomyFiltersApplied,
+  trackTaxonomyToggle,
+  type ActivityTier3WithAncestors,
 } from "@dowhat/shared";
 
 import { supabase } from "../lib/supabase";
+import TaxonomyCategoryPicker from "../components/TaxonomyCategoryPicker";
 
 type PriceOptionKey = "all" | "free" | "low" | "medium" | "high";
 type TimeOptionKey = "any" | "early" | "morning" | "afternoon" | "evening" | "night";
-type ActivityCategoryKey =
-  | "Fitness & Sports"
-  | "Arts & Culture"
-  | "Food & Drink"
-  | "Technology"
-  | "Outdoor Adventures"
-  | "Social Events"
-  | "Learning & Education"
-  | "Music & Entertainment";
-type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
-
 export default function FilterScreen() {
   const [priceFilter, setPriceFilter] = useState<PriceOptionKey>("all");
   const [distanceFilter, setDistanceFilter] = useState<number>(10);
   const [timeFilter, setTimeFilter] = useState<TimeOptionKey>("any");
   const [showFreeOnly, setShowFreeOnly] = useState(false);
-  const [selectedCategories, setSelectedCategories] = useState<ActivityCategoryKey[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [initialised, setInitialised] = useState(false);
   const [isLoadingPrefs, setIsLoadingPrefs] = useState(true);
@@ -56,22 +51,24 @@ export default function FilterScreen() {
     { key: "night", label: "Night (9 PM+)", value: "Night (9 PM+)" }
   ];
 
-  const activityCategories: Array<{ key: ActivityCategoryKey; label: string; icon: IoniconName }> = [
-    { key: "Fitness & Sports", label: "Fitness & Sports", icon: "barbell-outline" },
-    { key: "Arts & Culture", label: "Arts & Culture", icon: "color-palette-outline" },
-    { key: "Food & Drink", label: "Food & Drink", icon: "restaurant-outline" },
-    { key: "Technology", label: "Technology", icon: "hardware-chip-outline" },
-    { key: "Outdoor Adventures", label: "Outdoor Adventures", icon: "leaf-outline" },
-    { key: "Social Events", label: "Social Events", icon: "people-outline" },
-    { key: "Learning & Education", label: "Learning & Education", icon: "school-outline" },
-    { key: "Music & Entertainment", label: "Music & Entertainment", icon: "musical-notes-outline" }
-  ];
-
   const ACTIVITY_LOCAL_KEY = "activity_filters:v1";
+  const taxonomyIdSet = useMemo(() => new Set(getTier3Ids()), []);
+  const taxonomyIndex = useMemo(() => {
+    const index = new Map<string, ActivityTier3WithAncestors>();
+    defaultTier3Index.forEach((entry) => {
+      index.set(entry.id, entry);
+    });
+    return index;
+  }, []);
 
-  const categoryKeySet = useMemo(
-    () => new Set<ActivityCategoryKey>(activityCategories.map((entry) => entry.key)),
-    [activityCategories],
+  const filterValidCategories = useCallback(
+    (ids: string[]) => ids.filter((id) => taxonomyIdSet.has(id)),
+    [taxonomyIdSet],
+  );
+
+  const selectedCategoryLabels = useMemo(
+    () => selectedCategories.map((id) => taxonomyIndex.get(id)?.label ?? id),
+    [selectedCategories, taxonomyIndex],
   );
 
   const getPriceRange = (key: PriceOptionKey, freeOnly: boolean): [number, number] => {
@@ -102,18 +99,14 @@ export default function FilterScreen() {
   const applyActivityPreferences = useCallback(
     (prefs: ActivityFilterPreferences) => {
       const normalised = normaliseActivityFilterPreferences(prefs);
-      setSelectedCategories(
-        normalised.categories.filter((category): category is ActivityCategoryKey =>
-          categoryKeySet.has(category as ActivityCategoryKey),
-        ),
-      );
+      setSelectedCategories(filterValidCategories(normalised.categories));
       setDistanceFilter(normalised.radius);
       const isFree = normalised.priceRange[0] === 0 && normalised.priceRange[1] === 0;
       setShowFreeOnly(isFree);
       setPriceFilter(isFree ? "free" : priceKeyFromRange(normalised.priceRange));
       setTimeFilter(timeKeyFromValues(normalised.timeOfDay));
     },
-    [categoryKeySet],
+    [filterValidCategories],
   );
 
   useEffect(() => {
@@ -200,13 +193,24 @@ export default function FilterScreen() {
     void persistPreferences();
   }, [persistPreferences, initialised]);
 
-  const toggleCategory = (categoryKey: ActivityCategoryKey) => {
-    setSelectedCategories(prev => 
-      prev.includes(categoryKey) 
-        ? prev.filter(c => c !== categoryKey)
-        : [...prev, categoryKey]
-    );
-  };
+  const toggleCategory = useCallback(
+    (id: string) => {
+      if (!taxonomyIdSet.has(id)) return;
+      setSelectedCategories((prev) => {
+        const exists = prev.includes(id);
+        const next = exists ? prev.filter((category) => category !== id) : [...prev, id];
+        trackTaxonomyToggle({
+          tier3Id: id,
+          active: !exists,
+          selectionCount: next.length,
+          platform: "mobile",
+          surface: "activity_filters",
+        });
+        return next;
+      });
+    },
+    [taxonomyIdSet],
+  );
 
   const resetFilters = () => {
     setPriceFilter("all");
@@ -214,6 +218,11 @@ export default function FilterScreen() {
     setDistanceFilter(DEFAULT_ACTIVITY_FILTER_PREFERENCES.radius);
     setTimeFilter("any");
     setSelectedCategories([]);
+    trackTaxonomyFiltersApplied({
+      tier3Ids: [],
+      platform: "mobile",
+      surface: "activity_filters",
+    });
   };
 
   const applyFilters = () => {
@@ -222,6 +231,11 @@ export default function FilterScreen() {
       priceRange: getPriceRange(priceFilter, showFreeOnly),
       categories: selectedCategories,
       timeOfDay: timeValuesFromKey(timeFilter),
+    });
+    trackTaxonomyFiltersApplied({
+      tier3Ids: selectedCategories,
+      platform: "mobile",
+      surface: "activity_filters",
     });
     router.back();
   };
@@ -408,50 +422,24 @@ export default function FilterScreen() {
 
           {/* Activity Categories */}
           <View style={{ marginBottom: 24 }}>
-            <Text style={{
-              fontSize: 16,
-              fontWeight: "600",
-              color: "#111827",
-              marginBottom: 12
-            }}>
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "600",
+                color: "#111827",
+                marginBottom: 12,
+              }}
+            >
               Activity Types
             </Text>
-            <View style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              gap: 8
-            }}>
-              {activityCategories.map((category) => (
-                <TouchableOpacity
-                  key={category.key}
-                  onPress={() => toggleCategory(category.key)}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    borderRadius: 20,
-                    backgroundColor: selectedCategories.includes(category.key) ? "#8B5CF6" : "#F3F4F6",
-                    borderWidth: 1,
-                    borderColor: selectedCategories.includes(category.key) ? "#8B5CF6" : "#E5E7EB"
-                  }}
-                >
-                  <Ionicons 
-                    name={category.icon} 
-                    size={16} 
-                    color={selectedCategories.includes(category.key) ? "#FFFFFF" : "#6B7280"} 
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={{
-                    fontSize: 14,
-                    color: selectedCategories.includes(category.key) ? "#FFFFFF" : "#374151",
-                    fontWeight: "500"
-                  }}>
-                    {category.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                {selectedCategories.length === 0
+                  ? "No activity types selected"
+                  : selectedCategoryLabels.join(", ")}
+              </Text>
             </View>
+            <TaxonomyCategoryPicker selectedIds={selectedCategories} onToggle={toggleCategory} />
           </View>
 
           {/* Free Only Toggle */}

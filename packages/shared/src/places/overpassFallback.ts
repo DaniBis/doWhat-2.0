@@ -129,7 +129,7 @@ export async function fetchOverpassPlaceSummaries(options: OverpassFallbackOptio
   }
 
   const safeRadius = Math.max(250, Math.min(Math.round(radiusMeters), 5000));
-  const requestLimit = Math.max(60, Math.min(limit * 3, 180));
+  const requestLimit = Math.max(60, Math.min(limit * 3, 400));
   const overpassQuery = buildOverpassQuery(lat, lng, safeRadius, requestLimit);
 
   const response = await http(OVERPASS_FALLBACK_ENDPOINT, {

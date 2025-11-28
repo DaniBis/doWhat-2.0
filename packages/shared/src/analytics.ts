@@ -23,3 +23,25 @@ export function trackAnalyticsEvent(event: string, payload?: AnalyticsPayload) {
     }
   }
 }
+
+export type TaxonomyToggleAnalyticsPayload = {
+  tier3Id: string;
+  active: boolean;
+  selectionCount: number;
+  platform: 'web' | 'mobile';
+  surface: string;
+  city?: string;
+};
+
+export type TaxonomyFiltersAppliedPayload = {
+  tier3Ids: string[];
+  platform: 'web' | 'mobile';
+  surface: string;
+  city?: string;
+};
+
+export const trackTaxonomyToggle = (payload: TaxonomyToggleAnalyticsPayload) =>
+  trackAnalyticsEvent('taxonomy_category_toggle', payload);
+
+export const trackTaxonomyFiltersApplied = (payload: TaxonomyFiltersAppliedPayload) =>
+  trackAnalyticsEvent('taxonomy_filters_applied', payload);

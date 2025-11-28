@@ -48,7 +48,7 @@ export const createPlacesFetcher = (options: CreatePlacesFetcherOptions): FetchP
       base.searchParams.set(key, value);
     });
 
-    const fallbackLimit = Math.max(1, query.limit ?? 50);
+    const fallbackLimit = Math.max(1, query.limit ?? 200);
     const centerLat = (query.bounds.ne.lat + query.bounds.sw.lat) / 2;
     const centerLng = (query.bounds.ne.lng + query.bounds.sw.lng) / 2;
     const fallbackRadius = estimateRadiusFromBounds(query.bounds);

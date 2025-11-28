@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/places/bangkok",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}

@@ -1,6 +1,13 @@
 import ngeohash from 'ngeohash';
 
-import { getCityCategoryConfigMap, getCityConfig, type CityCategoryConfig } from '@dowhat/shared';
+import {
+  getCityCategoryConfigMap,
+  getCityConfig,
+  type ActivityTier3WithAncestors,
+  type CityCategoryConfig,
+} from '@dowhat/shared';
+
+import { getCachedTaxonomy, getCachedTier3Index, loadTaxonomy } from '@/lib/taxonomy';
 
 import { getOptionalServiceClient } from '@/lib/supabase/service';
 
@@ -115,70 +122,99 @@ const upsertTileCache = async (
   }
 };
 
-const normaliseTag = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+const normaliseTag = (value: string) => value.trim().toLowerCase().replace(/[^0-9a-z]+/g, '_');
 
-const placeMatchesCityCategory = (
-  place: CanonicalPlace,
-  config: CityCategoryConfig,
-): boolean => {
-  const normalizedCategories = new Set(place.categories.map(normaliseTag));
-  const normalizedTags = new Set((place.tags ?? []).map(normaliseTag));
-  const categoryMatch = config.queryCategories.some((category) =>
-    normalizedCategories.has(normaliseTag(category)),
-  );
-  if (!categoryMatch) return false;
+type NormalisedTermSets = {
+  categories: Set<string>;
+  tags: Set<string>;
+};
+
+const buildTaxonomyTagMap = (index: ActivityTier3WithAncestors[]) => {
+  const map = new Map<string, string[]>();
+  index.forEach((entry) => {
+    const tags = entry.tags.map(normaliseTag).filter(Boolean);
+    if (tags.length) {
+      map.set(entry.id, tags);
+    }
+  });
+  return map;
+};
+
+let taxonomyTagMap = buildTaxonomyTagMap(getCachedTier3Index());
+let taxonomyTagVersion = getCachedTaxonomy().version;
+
+const ensureTaxonomyTagMap = async () => {
+  const data = await loadTaxonomy();
+  if (taxonomyTagVersion !== data.version) {
+    taxonomyTagMap = buildTaxonomyTagMap(getCachedTier3Index());
+    taxonomyTagVersion = data.version;
+  }
+  return taxonomyTagMap;
+};
+
+const buildNormalisedTerms = (categories: string[] | undefined, tags?: string[] | null): NormalisedTermSets => ({
+  categories: new Set((categories ?? []).map(normaliseTag).filter(Boolean)),
+  tags: new Set((tags ?? []).map(normaliseTag).filter(Boolean)),
+});
+
+const matchesCityConfig = (candidate: NormalisedTermSets, config: CityCategoryConfig): boolean => {
+  const hasCategory = config.queryCategories
+    .map(normaliseTag)
+    .some((category) => category && candidate.categories.has(category));
+  if (!hasCategory) {
+    return false;
+  }
   if (config.tagFilters?.length) {
-    const hasFilter = config.tagFilters
+    const hasRequiredTag = config.tagFilters
       .map(normaliseTag)
-      .some((tag) => normalizedTags.has(tag));
-    if (!hasFilter) return false;
+      .some((tag) => tag && candidate.tags.has(tag));
+    if (!hasRequiredTag) {
+      return false;
+    }
   }
   return true;
 };
 
-const filterPlacesForCityCategories = (
-  places: CanonicalPlace[],
-  selectedCategories: string[] | undefined,
-  categoryMap: Map<string, CityCategoryConfig>,
-): CanonicalPlace[] => {
-  if (!selectedCategories?.length) return places;
-  return places.filter((place) =>
-    selectedCategories.some((key) => {
-      const config = categoryMap.get(key);
-      if (!config) return false;
-      return placeMatchesCityCategory(place, config);
-    }),
-  );
+const matchesTaxonomyCategory = (candidate: NormalisedTermSets, taxonomyTags: string[] | undefined): boolean => {
+  if (!taxonomyTags?.length) return false;
+  return taxonomyTags.some((tag) => candidate.categories.has(tag) || candidate.tags.has(tag));
 };
 
-const providerPlaceMatchesCityCategory = (
-  place: ProviderPlace,
-  config: CityCategoryConfig,
+const matchesRawCategoryKey = (candidate: NormalisedTermSets, key: string): boolean => {
+  const normalizedKey = normaliseTag(key);
+  if (!normalizedKey) return false;
+  return candidate.categories.has(normalizedKey) || candidate.tags.has(normalizedKey);
+};
+
+const placeMatchesCategorySelection = (
+  candidate: NormalisedTermSets,
+  key: string,
+  categoryMap: Map<string, CityCategoryConfig>,
+  taxonomyTagsById: Map<string, string[]>,
 ): boolean => {
-  const normalizedCategories = new Set((place.categories ?? []).map(normaliseTag));
-  const normalizedTags = new Set((place.tags ?? []).map(normaliseTag));
-  const hasCategory = config.queryCategories.some((category) => normalizedCategories.has(normaliseTag(category)));
-  if (!hasCategory) return false;
-  if (config.tagFilters?.length) {
-    const hasTag = config.tagFilters.map(normaliseTag).some((tag) => normalizedTags.has(tag));
-    if (!hasTag) return false;
+  const config = categoryMap.get(key);
+  if (config && matchesCityConfig(candidate, config)) {
+    return true;
   }
-  return true;
+  if (matchesTaxonomyCategory(candidate, taxonomyTagsById.get(key))) {
+    return true;
+  }
+  return matchesRawCategoryKey(candidate, key);
 };
 
-const filterProviderPlacesForCity = (
-  places: ProviderPlace[],
+const filterPlacesByCategories = <T extends { categories: string[]; tags?: string[] | null }>(
+  places: T[],
   selectedCategories: string[] | undefined,
   categoryMap: Map<string, CityCategoryConfig>,
-): ProviderPlace[] => {
+  taxonomyTagsById: Map<string, string[]>,
+): T[] => {
   if (!selectedCategories?.length) return places;
-  return places.filter((place) =>
-    selectedCategories.some((key) => {
-      const config = categoryMap.get(key);
-      if (!config) return false;
-      return providerPlaceMatchesCityCategory(place, config);
-    }),
-  );
+  return places.filter((place) => {
+    const candidate = buildNormalisedTerms(place.categories, place.tags);
+    return selectedCategories.some((key) =>
+      placeMatchesCategorySelection(candidate, key, categoryMap, taxonomyTagsById),
+    );
+  });
 };
 
 const computeSourceConfidence = (aggregate: PlaceAggregate): number | null => {
@@ -829,6 +865,7 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   let service = getOptionalServiceClient();
   const normalizedCategories = expandCategoryAliases(query.categories ?? []);
   const { categoryMap } = ensureCityCategoryMap(query.city);
+  const taxonomyTagsById = await ensureTaxonomyTagMap();
   const { key: tileKey, centerLat, centerLng } = computeQueryTile(query);
   let existing: ExistingPlaceRow[] = [];
   let sources: PlaceSourceRow[] = [];
@@ -864,7 +901,7 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
       const aggregate = toAggregateFromExisting(row, sources.filter((source) => source.place_id === row.id));
       return toCanonicalPlace(aggregate, row.cached_at ?? nowIso, row.cache_expires_at ?? expiryIso, {});
     });
-    const filtered = filterPlacesForCityCategories(places, query.categories, categoryMap);
+    const filtered = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
     const ranked = rankPlaces(filtered, centerLat, centerLng, now.getTime());
     console.info('[places] response', {
       tileKey,
@@ -891,14 +928,20 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
     providerResults.push(...overpassCall.value.filter((place) => place.canPersist !== false));
   }
 
-  const foursquareCall = await callProvider('foursquare', () =>
+  const _foursquareCall = await callProvider('foursquare', () =>
     fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
   );
-  if (foursquareCall.status === 'fulfilled') {
-    providerResults.push(...foursquareCall.value.filter((place) => place.canPersist !== false));
-  }
+  // Temporarily disabled due to deprecated API
+  // if (_foursquareCall.status === 'fulfilled') {
+  //   providerResults.push(..._foursquareCall.value.filter((place) => place.canPersist !== false));
+  // }
 
-  const filteredProviderResults = filterProviderPlacesForCity(providerResults, query.categories, categoryMap);
+  const filteredProviderResults = filterPlacesByCategories(
+    providerResults,
+    query.categories,
+    categoryMap,
+    taxonomyTagsById,
+  );
 
   const aggregates = [...existingAggregates];
 
@@ -1006,7 +1049,7 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   const tileExpiresIso = new Date(Date.now() + TILE_CACHE_MS).toISOString();
   await upsertTileCache(service, tileKey, nowIso, tileExpiresIso, providerCounts);
 
-  const filteredPlaces = filterPlacesForCityCategories(places, query.categories, categoryMap);
+  const filteredPlaces = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
   const rankedPlaces = rankPlaces(filteredPlaces, centerLat, centerLng, now.getTime());
 
   console.info('[places] response', {

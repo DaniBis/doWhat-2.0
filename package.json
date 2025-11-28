@@ -27,7 +27,8 @@
     "ios": "expo run:ios",
     "db:ensure-profile-columns": "node apps/doWhat-web/scripts/ensure-profile-columns.js",
     "seed:places:bangkok": "node scripts/seed-places-bangkok.mjs",
-    "seed:events:bangkok": "node scripts/seed-events-bangkok.mjs"
+    "seed:events:bangkok": "node scripts/seed-events-bangkok.mjs",
+    "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs"
   },
   "devDependencies": {
     "@jest/globals": "^29.3.1",

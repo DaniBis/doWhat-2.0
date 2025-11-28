@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 
 import {
   CITY_SWITCHER_ENABLED,
@@ -13,6 +13,8 @@ import {
   getCityCategoryConfigMap,
   getCityConfig,
   listCities,
+  trackTaxonomyFiltersApplied,
+  trackTaxonomyToggle,
   type CityCategoryConfig,
   type PlaceSummary,
   type PlacesViewportQuery,
@@ -20,57 +22,76 @@ import {
 } from "@dowhat/shared";
 
 import { PlacesMap } from "@/components/PlacesMap";
+import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
+import { useRuntimeTaxonomy } from "@/hooks/useRuntimeTaxonomy";
 
-const normaliseKey = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+const normaliseTag = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-const expandCategoriesForQuery = (
-  selected: string[],
-  categoryConfigMap: Map<string, CityCategoryConfig>,
-): string[] | undefined => {
-  if (!selected.length) return undefined;
-  const expanded = new Set<string>();
-  selected.forEach((key) => {
-    const config = categoryConfigMap.get(key);
-    if (config) {
-      config.queryCategories.forEach((value) => expanded.add(value));
-    } else {
-      expanded.add(key);
-    }
-  });
-  return Array.from(expanded);
+type NormalisedPlaceTerms = {
+  categories: Set<string>;
+  tags: Set<string>;
 };
 
-const placeMatchesCityCategory = (
-  place: PlaceSummary,
-  categoryKey: string,
-  categoryConfigMap: Map<string, CityCategoryConfig>,
+const buildNormalisedTerms = (place: PlaceSummary): NormalisedPlaceTerms => ({
+  categories: new Set((place.categories ?? []).map(normaliseTag).filter(Boolean)),
+  tags: new Set((place.tags ?? []).map(normaliseTag).filter(Boolean)),
+});
+
+const matchesCityConfig = (
+  candidate: NormalisedPlaceTerms,
+  config: CityCategoryConfig,
 ) => {
-  const config = categoryConfigMap.get(categoryKey);
-  if (!config) return false;
-  const normalizedCategories = new Set(
-    [...(place.categories ?? []), ...(place.tags ?? [])]
-      .map((value) => normaliseKey(value))
-      .filter(Boolean),
-  );
-  const hasCategory = config.queryCategories.some((value) => normalizedCategories.has(normaliseKey(value)));
+  const hasCategory = config.queryCategories
+    .map(normaliseTag)
+    .some((category) => category && (candidate.categories.has(category) || candidate.tags.has(category)));
   if (!hasCategory) return false;
   if (config.tagFilters?.length) {
-    const placeTags = new Set((place.tags ?? []).map((value) => normaliseKey(value)).filter(Boolean));
-    const normalizedFilters = config.tagFilters.map((value) => normaliseKey(value)).filter(Boolean);
-    if (!normalizedFilters.some((tag) => placeTags.has(tag))) {
-      return false;
-    }
+    const hasTag = config.tagFilters
+      .map(normaliseTag)
+      .some((tag) => tag && candidate.tags.has(tag));
+    if (!hasTag) return false;
   }
   return true;
+};
+
+const matchesTaxonomyCategory = (candidate: NormalisedPlaceTerms, taxonomyTags?: string[]) => {
+  if (!taxonomyTags?.length) return false;
+  return taxonomyTags.some((tag) => candidate.categories.has(tag) || candidate.tags.has(tag));
+};
+
+const matchesRawCategoryKey = (candidate: NormalisedPlaceTerms, key: string) => {
+  const normalisedKey = normaliseTag(key);
+  if (!normalisedKey) return false;
+  return candidate.categories.has(normalisedKey) || candidate.tags.has(normalisedKey);
+};
+
+const placeMatchesSelection = (
+  place: PlaceSummary,
+  selectionKey: string,
+  categoryConfigMap: Map<string, CityCategoryConfig>,
+  taxonomyTagMap: Map<string, string[]>,
+) => {
+  const candidate = buildNormalisedTerms(place);
+  const config = categoryConfigMap.get(selectionKey);
+  if (config && matchesCityConfig(candidate, config)) {
+    return true;
+  }
+  if (matchesTaxonomyCategory(candidate, taxonomyTagMap.get(selectionKey))) {
+    return true;
+  }
+  return matchesRawCategoryKey(candidate, selectionKey);
 };
 
 const filterPlacesByCategories = (
   places: PlaceSummary[],
   selected: string[],
   categoryConfigMap: Map<string, CityCategoryConfig>,
+  taxonomyTagMap: Map<string, string[]>,
 ) => {
   if (!selected.length) return places;
-  return places.filter((place) => selected.some((key) => placeMatchesCityCategory(place, key, categoryConfigMap)));
+  return places.filter((place) =>
+    selected.some((key) => placeMatchesSelection(place, key, categoryConfigMap, taxonomyTagMap)),
+  );
 };
 
 const ensureOrigin = () => {
@@ -87,7 +108,7 @@ export default function PlacesPage() {
   const [citySlug, setCitySlug] = useState<string>(DEFAULT_CITY_SLUG);
   const city = useMemo(() => getCityConfig(citySlug), [citySlug]);
   const cityCategoryMap = useMemo(() => getCityCategoryConfigMap(city), [city]);
-  const categoryOptions = useMemo(() => city.enabledCategories, [city]);
+  const { taxonomy, taxonomyTagMap, tier3Ids: taxonomyTier3Set, tier3ById } = useRuntimeTaxonomy();
   const citySwitcherEnabled = CITY_SWITCHER_ENABLED;
 
   const [center, setCenter] = useState(() => city.center);
@@ -100,9 +121,9 @@ export default function PlacesPage() {
   useEffect(() => {
     setCenter(city.center);
     setBounds(city.bbox);
-    setSelectedCategories((prev) => prev.filter((key) => cityCategoryMap.has(key)));
+    setSelectedCategories((prev) => prev.filter((key) => taxonomyTier3Set.has(key)));
     setSelectedPlaceId(null);
-  }, [city, cityCategoryMap]);
+  }, [city, taxonomyTier3Set]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,10 +166,10 @@ export default function PlacesPage() {
     [],
   );
 
-  const categoriesForQuery = useMemo(
-    () => expandCategoriesForQuery(selectedCategories, cityCategoryMap),
-    [selectedCategories, cityCategoryMap],
-  );
+  const categoriesForQuery = useMemo(() => {
+    const deduped = Array.from(new Set(selectedCategories.filter((id) => taxonomyTier3Set.has(id))));
+    return deduped.length ? deduped : undefined;
+  }, [selectedCategories, taxonomyTier3Set]);
 
   const query = bounds
     ? {
@@ -183,8 +204,8 @@ export default function PlacesPage() {
 
   const rawPlaces = placesQuery.data?.places ?? [];
   const places = useMemo(
-    () => filterPlacesByCategories(rawPlaces, selectedCategories, cityCategoryMap),
-    [rawPlaces, selectedCategories, cityCategoryMap],
+    () => filterPlacesByCategories(rawPlaces, selectedCategories, cityCategoryMap, taxonomyTagMap),
+    [rawPlaces, selectedCategories, cityCategoryMap, taxonomyTagMap],
   );
 
   const debouncedBoundsUpdate = useMemo(
@@ -204,13 +225,49 @@ export default function PlacesPage() {
   );
 
   const toggleCategory = (category: string) => {
-    if (!cityCategoryMap.has(category)) return;
+    if (!taxonomyTier3Set.has(category)) return;
     setSelectedCategories((prev) => {
       const exists = prev.includes(category);
-      if (exists) return prev.filter((value) => value !== category);
-      return [...prev, category];
+      const next = exists ? prev.filter((value) => value !== category) : [...prev, category];
+      trackTaxonomyToggle({
+        tier3Id: category,
+        active: !exists,
+        selectionCount: next.length,
+        platform: "web",
+        surface: "places",
+        city: city.slug,
+      });
+      return next;
     });
   };
+
+  const selectedCategoryLabels = useMemo(
+    () => selectedCategories.map((id) => tier3ById.get(id)?.label).filter(Boolean) as string[],
+    [selectedCategories, tier3ById],
+  );
+
+  const selectionSummary = useMemo(() => {
+    if (!selectedCategoryLabels.length) return "Showing all categories";
+    const limit = 3;
+    const preview = selectedCategoryLabels.slice(0, limit).join(", ");
+    const remainder = selectedCategoryLabels.length - limit;
+    return remainder > 0 ? `${preview} +${remainder} more` : preview;
+  }, [selectedCategoryLabels]);
+
+  const lastTrackedSelection = useRef<string | null>(null);
+
+  useEffect(() => {
+    const applied = categoriesForQuery ?? [];
+    const key = `${city.slug}:${applied.join(",")}`;
+    if (lastTrackedSelection.current === key) return;
+    lastTrackedSelection.current = key;
+    trackTaxonomyFiltersApplied({
+      tier3Ids: applied,
+      platform: "web",
+      surface: "places",
+      city: city.slug,
+    });
+  }, [categoriesForQuery, city.slug]);
 
   const handlePlaceSelect = (place: PlaceSummary) => {
     setSelectedPlaceId(place.id);
@@ -253,22 +310,15 @@ export default function PlacesPage() {
           {city.label}. Enable location access to personalise nearby results.
         </div>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        {categoryOptions.map((option) => {
-          const active = selectedCategories.includes(option.key);
-          return (
-            <button
-              key={option.key}
-              type="button"
-              onClick={() => toggleCategory(option.key)}
-              className={`rounded-full border px-3 py-1 text-sm transition ${
-                active ? "border-emerald-500 bg-emerald-100 text-emerald-800" : "border-slate-300 bg-white text-slate-600 hover:border-slate-400"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 shadow-inner">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Filter by activity type</p>
+            <p className="text-sm text-slate-500">Pick one or more taxonomy categories to narrow the map results.</p>
+          </div>
+          <span className="text-sm font-medium text-slate-600">{selectionSummary}</span>
+        </div>
+        <TaxonomyCategoryPicker taxonomy={taxonomy} selectedIds={selectedCategories} onToggle={toggleCategory} />
       </div>
       <div className="grid flex-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="min-h-[320px] rounded-xl border border-slate-200 shadow-sm">

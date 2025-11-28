@@ -94,7 +94,7 @@
 		{
 			"label": "test",
 			"type": "shell",
-			"command": "pnpm -w run test -- --maxWorkers=50%",
+			"command": "pnpm test -- --maxWorkers=50%",
 			"problemMatcher": [
 				"$tsc"
 			],
@@ -103,7 +103,7 @@
 		{
 			"label": "test:passWithNoTests",
 			"type": "shell",
-			"command": "pnpm -w run test -- --passWithNoTests",
+			"command": "pnpm test -- --passWithNoTests",
 			"group": "test"
 		}
 	]
