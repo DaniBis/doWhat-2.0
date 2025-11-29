@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, InteractionManager, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import type { Session } from '@supabase/supabase-js';
@@ -33,6 +33,20 @@ type ProfileDraft = {
 };
 
 const MAX_PERSONALITY_TRAITS = 5;
+
+const deferNavigation = (navigate: () => void) => {
+  InteractionManager.runAfterInteractions(() => {
+    requestAnimationFrame(() => {
+      try {
+        navigate();
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[AuthGate] deferred navigation failed', error);
+        }
+      }
+    });
+  });
+};
 
 const normaliseSignupTrait = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
@@ -86,6 +100,81 @@ const isValidDate = (value: string): boolean => {
 const getMetadataValue = (metadata: Record<string, unknown> | undefined, key: string): string => {
   const value = metadata?.[key];
   return typeof value === 'string' ? value : '';
+};
+
+const getMetadataString = (metadata: Record<string, unknown> | undefined, keys: string[]): string | null => {
+  for (const key of keys) {
+    const value = getMetadataValue(metadata, key);
+    if (value) return value;
+  }
+  return null;
+};
+
+const isForeignKeyMissingUser = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof record.code === 'string' ? record.code : null;
+  const message = typeof record.message === 'string' ? record.message : '';
+  const details = typeof record.details === 'string' ? record.details : '';
+  if (code !== '23503') return false;
+  return /profiles?_id_fkey/i.test(message) || /profiles?_id_fkey/i.test(details) || /table "users"/i.test(details);
+};
+
+const isRowLevelSecurityError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof record.code === 'string' ? record.code : null;
+  const message = typeof record.message === 'string' ? record.message : '';
+  const details = typeof record.details === 'string' ? record.details : '';
+  if (code && code !== '42501') return false;
+  return /row[- ]level security/i.test(message) || /row[- ]level security/i.test(details) || code === '42501';
+};
+
+const ensurePublicUserRowViaRpc = async (session: Session, email: string | undefined, name: string | null) => {
+  const { error } = await supabase.rpc('ensure_public_user_row', {
+    p_user: session.user.id,
+    p_email: email ?? null,
+    p_full_name: name ?? null,
+  });
+  if (error) {
+    if (__DEV__) console.warn('[AuthGate] ensure_public_user_row RPC failed', error);
+    return false;
+  }
+  return true;
+};
+
+const ensureAppUserRow = async (session: Session, fallbackEmail?: string): Promise<boolean> => {
+  const metadata = session.user.user_metadata ?? {};
+  const resolvedEmail = session.user.email || fallbackEmail?.trim();
+  if (!resolvedEmail) {
+    return false;
+  }
+  const resolvedName =
+    getMetadataString(metadata, ['full_name', 'name', 'given_name']) ||
+    (typeof session.user.user_metadata?.preferred_username === 'string' ? session.user.user_metadata.preferred_username : null);
+
+  const { error } = await supabase
+    .from('users')
+    .upsert(
+      {
+        id: session.user.id,
+        email: resolvedEmail,
+        full_name: resolvedName,
+      },
+      { onConflict: 'id' },
+    );
+
+  if (error) {
+    if (isRowLevelSecurityError(error)) {
+      const ensured = await ensurePublicUserRowViaRpc(session, resolvedEmail, resolvedName);
+      if (ensured) {
+        return true;
+      }
+    }
+    if (__DEV__) console.warn('[AuthGate] ensureAppUserRow failed', error);
+    return false;
+  }
+  return true;
 };
 
 function deriveDraft(session: Session, profile: ProfileRow | null): ProfileDraft {
@@ -153,7 +242,7 @@ function SignInScreen() {
 type ProfileSetupProps = {
   session: Session;
   profile: ProfileRow | null;
-  onComplete: () => void;
+  onComplete: (nextRoute?: string) => void;
 };
 
 function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
@@ -193,10 +282,10 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
     setBusy(true);
     setError(null);
     try {
+      await ensureAppUserRow(session, contactEmail);
       const metadataTraits = sanitizeTraitList(session.user?.user_metadata?.personality_traits);
       const existingTraits = sanitizeTraitList(profile?.personality_traits ?? null);
       const resolvedTraits = metadataTraits.length ? metadataTraits : existingTraits;
-      const shouldSkipTraitOnboarding = resolvedTraits.length > 0;
       const basePayload = {
         id: session.user.id,
         username: cleanUsername,
@@ -216,14 +305,21 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
 
       let { error: upsertError } = await supabase.from('profiles').upsert(payloadWithTraits, { onConflict: 'id' });
 
+      if (upsertError && isForeignKeyMissingUser(upsertError)) {
+        const ensured = await ensureAppUserRow(session, contactEmail);
+        if (ensured) {
+          const retry = await supabase.from('profiles').upsert(payloadWithTraits, { onConflict: 'id' });
+          upsertError = retry.error ?? null;
+        }
+      }
+
       if (upsertError && includeTraits && /personality_traits/.test(upsertError.message)) {
         const retry = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
         upsertError = retry.error ?? null;
       }
 
       if (upsertError) throw upsertError;
-      onComplete();
-      router.replace(shouldSkipTraitOnboarding ? '/(tabs)' : '/onboarding-traits');
+      onComplete('/onboarding-traits');
     } catch (err) {
       console.error('[AuthGate] profile upsert failed', err);
       let message = 'Unable to save your profile right now.';
@@ -396,6 +492,7 @@ export default function AuthGate({ children }: AuthGateProps) {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileRevision, setProfileRevision] = useState(0);
   const sessionTokenRef = useRef<string | null>(null);
+  const pendingRouteRef = useRef<string | null>(null);
 
   const applySession = useCallback(
     (nextSession: Session | null) => {
@@ -469,6 +566,7 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   useEffect(() => {
     if (!session?.user?.id) {
+      setProfileLoading(false);
       setProfile(null);
       return;
     }
@@ -536,6 +634,26 @@ export default function AuthGate({ children }: AuthGateProps) {
     };
   }, [session?.user?.id, profileRevision]);
 
+  const profileComplete = isProfileComplete(profile);
+
+  const handleProfileComplete = useCallback(
+    (nextRoute?: string) => {
+      if (nextRoute) {
+        pendingRouteRef.current = nextRoute;
+      }
+      setProfileRevision((rev) => rev + 1);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!session || !profileComplete) return;
+    const target = pendingRouteRef.current;
+    if (!target) return;
+    pendingRouteRef.current = null;
+    deferNavigation(() => router.replace(target));
+  }, [profileComplete, session]);
+
   if (sessionLoading || profileLoading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a' }}>
@@ -549,8 +667,8 @@ export default function AuthGate({ children }: AuthGateProps) {
     return <SignInScreen />;
   }
 
-  if (!isProfileComplete(profile)) {
-    return <ProfileSetup session={session} profile={profile} onComplete={() => setProfileRevision((rev) => rev + 1)} />;
+  if (!profileComplete) {
+    return <ProfileSetup session={session} profile={profile} onComplete={handleProfileComplete} />;
   }
 
   return <>{children}</>;

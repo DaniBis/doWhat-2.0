@@ -1,0 +1,139 @@
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
+type GenericTable = {
+  Row: Record<string, unknown>;
+  Insert: Record<string, unknown>;
+  Update: Record<string, unknown>;
+  Relationships: [];
+};
+
+export type TraitRow = {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UserBaseTraitRow = {
+  user_id: string;
+  trait_id: string;
+  created_at: string;
+};
+
+export type UserTraitVoteRow = {
+  id: string;
+  to_user: string;
+  from_user: string;
+  session_id: string;
+  trait_id: string;
+  created_at: string;
+};
+
+export type UserTraitSummaryRow = {
+  user_id: string;
+  trait_id: string;
+  score: number;
+  base_count: number;
+  vote_count: number;
+  updated_at: string;
+};
+
+export type RsvpRow = {
+  id: string;
+  activity_id: string | null;
+  session_id: string | null;
+  user_id: string;
+  status: "going" | "interested" | "declined";
+  created_at: string;
+};
+
+export type SessionRow = {
+  id: string;
+  activity_id: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_by: string | null;
+};
+
+export type ProfileRow = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
+export interface Database {
+  public: {
+    Tables: {
+      traits: {
+        Row: TraitRow;
+        Insert: Partial<Omit<TraitRow, "name">> & Pick<TraitRow, "name">;
+        Update: Partial<TraitRow>;
+        Relationships: [];
+      };
+      user_base_traits: {
+        Row: UserBaseTraitRow;
+        Insert: Partial<UserBaseTraitRow> & Pick<UserBaseTraitRow, "user_id" | "trait_id">;
+        Update: Partial<UserBaseTraitRow>;
+        Relationships: [];
+      };
+      user_trait_votes: {
+        Row: UserTraitVoteRow;
+        Insert: Partial<UserTraitVoteRow> & Pick<UserTraitVoteRow, "to_user" | "from_user" | "session_id" | "trait_id">;
+        Update: Partial<UserTraitVoteRow>;
+        Relationships: [];
+      };
+      user_trait_summary: {
+        Row: UserTraitSummaryRow;
+        Insert: Partial<UserTraitSummaryRow> & Pick<UserTraitSummaryRow, "user_id" | "trait_id">;
+        Update: Partial<UserTraitSummaryRow>;
+        Relationships: [];
+      };
+      rsvps: {
+        Row: RsvpRow;
+        Insert: Partial<RsvpRow> & Pick<RsvpRow, "user_id">;
+        Update: Partial<RsvpRow>;
+        Relationships: [];
+      };
+      sessions: {
+        Row: SessionRow;
+        Insert: Partial<SessionRow>;
+        Update: Partial<SessionRow>;
+        Relationships: [];
+      };
+      profiles: {
+        Row: ProfileRow;
+        Insert: Partial<ProfileRow> & Pick<ProfileRow, "id">;
+        Update: Partial<ProfileRow>;
+        Relationships: [];
+      };
+    } & {
+      [key: string]: GenericTable;
+    };
+    Functions: {
+      increment_user_trait_score: {
+        Args: {
+          p_user: string;
+          p_trait: string;
+          p_score_delta: number;
+          p_vote_delta?: number | null;
+          p_base_delta?: number | null;
+        };
+        Returns: null;
+      };
+    } & {
+      [key: string]: {
+        Args: Record<string, unknown>;
+        Returns: unknown;
+      };
+    };
+    Enums: Record<string, never>;
+  };
+}

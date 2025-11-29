@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.badges (
 DO $$
 DECLARE
   has_user_badges BOOLEAN;
+  has_legacy_badge_name BOOLEAN;
 BEGIN
   SELECT EXISTS (
     SELECT 1 FROM information_schema.tables
@@ -25,6 +26,18 @@ BEGIN
 
   IF NOT has_user_badges THEN
     RAISE NOTICE '[badges] user_badges table missing; skipping legacy backfill steps';
+    RETURN;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_badges'
+      AND column_name = 'badge_name'
+  ) INTO has_legacy_badge_name;
+
+  IF NOT has_legacy_badge_name THEN
+    RAISE NOTICE '[badges] user_badges table lacks legacy columns; skipping legacy backfill steps';
     RETURN;
   END IF;
 

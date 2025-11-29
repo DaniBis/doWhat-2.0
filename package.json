@@ -38,6 +38,7 @@
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "babel-jest": "^29.3.1",
+    "baseline-browser-mapping": "^2.8.31",
     "esbuild": "^0.25.9",
     "eslint": "^8.57.0",
     "eslint-config-next": "14",
@@ -62,7 +63,8 @@
     "overrides": {
       "metro": "0.80.12",
       "metro-config": "0.80.12",
-      "metro-resolver": "0.80.12"
+      "metro-resolver": "0.80.12",
+      "baseline-browser-mapping": "2.8.31"
     }
   },
   "version": "1.0.0",

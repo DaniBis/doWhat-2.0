@@ -8,7 +8,7 @@ import {
   Platform,
   StyleSheet,
   Animated,
-  FlatList,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -81,37 +81,33 @@ export const validateTrait = (input: string) => {
 
 export async function saveTraitsToSupabase(userId: string, traits: CanonicalTrait[]) {
   if (!traits.length) return;
-  const { data: traitRows, error: traitError } = await supabase
-    .from('traits')
-    .upsert(
-      traits.map((trait) => ({
-        key: trait.key,
-        display_label: trait.display,
-        created_by_user_id: userId,
-      })),
-      { onConflict: 'key', ignoreDuplicates: false }
-    )
-    .select();
+  const canonicalTraits = traits.map((trait) => trait.display.trim()).filter(Boolean);
 
-  if (traitError) {
-    throw traitError;
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({
+      personality_traits: canonicalTraits,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId)
+    .select('id');
+
+  if (error) {
+    throw error;
   }
 
-  const resolvedTraits = traitRows ?? [];
-
-  const assignments = resolvedTraits.map((trait) => ({
-    user_id: userId,
-    trait_id: trait.id,
-    source: 'self',
-    count: 1,
-  }));
-
-  const { error: assignmentError } = await supabase
-    .from('user_trait_assignments')
-    .upsert(assignments, { onConflict: 'user_id,trait_id' });
-
-  if (assignmentError) {
-    throw assignmentError;
+  if (!data?.length) {
+    const { error: upsertError } = await supabase
+      .from('profiles')
+      .upsert(
+        {
+          id: userId,
+          personality_traits: canonicalTraits,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' },
+      );
+    if (upsertError) throw upsertError;
   }
 }
 
@@ -230,20 +226,22 @@ const TraitSelectionScreen: React.FC = () => {
 
   const counter = `${traits.length} / ${MAX_TRAITS} traits added`;
 
-  const renderChip = useCallback(
-    ({ item }: { item: CanonicalTrait }) => (
-      <TraitChip trait={item} onRemove={() => handleRemoveTrait(item.key)} />
-    ),
-    [handleRemoveTrait]
-  );
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={insets.top + 16}
     >
-      <View style={[styles.inner, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }]}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 160 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator
+      >
         <View style={styles.headerRow}>
           <Text style={styles.heading}>Choose 5 traits that describe you</Text>
           <Text style={styles.counter}>{counter}</Text>
@@ -262,6 +260,9 @@ const TraitSelectionScreen: React.FC = () => {
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
+            spellCheck={false}
+            autoComplete="off"
+            textContentType="none"
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!saving && traits.length < MAX_TRAITS}
@@ -270,17 +271,15 @@ const TraitSelectionScreen: React.FC = () => {
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {warning ? <Text style={styles.warning}>{warning}</Text> : null}
 
-        <FlatList
-          data={traits}
-          keyExtractor={(item) => item.key}
-          renderItem={renderChip}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          contentContainerStyle={styles.chipGrid}
-          ListEmptyComponent={<Text style={styles.emptyState}>No traits yet. Start typing above.</Text>}
-        />
-
-        <View style={styles.flexSpacer} />
+        <View style={styles.chipGrid}>
+          {traits.length ? (
+            traits.map((trait) => (
+              <TraitChip key={trait.key} trait={trait} onRemove={() => handleRemoveTrait(trait.key)} />
+            ))
+          ) : (
+            <Text style={styles.emptyState}>No traits yet. Start typing above.</Text>
+          )}
+        </View>
 
         <Pressable
           style={[styles.continueButton, traits.length === MAX_TRAITS ? styles.continueEnabled : styles.continueDisabled]}
@@ -289,7 +288,7 @@ const TraitSelectionScreen: React.FC = () => {
         >
           <Text style={styles.continueText}>{saving ? 'Saving…' : 'Continue'}</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 };
@@ -299,9 +298,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#030712',
   },
-  inner: {
+  scroll: {
     flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
+    flexGrow: 1,
   },
   headerRow: {
     flexDirection: 'row',
@@ -342,9 +344,8 @@ const styles = StyleSheet.create({
   },
   chipGrid: {
     paddingVertical: 24,
-  },
-  columnWrapper: {
-    justifyContent: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
   chip: {
     flexDirection: 'row',
@@ -380,9 +381,6 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'center',
     fontSize: 14,
-  },
-  flexSpacer: {
-    flex: 1,
   },
   continueButton: {
     marginTop: 24,

@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/browser';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { KPIGrid } from '@/components/profile/KPIGrid';
-import { TraitsPreview } from '@/components/profile/TraitsPreview';
 import { BadgesPreview } from '@/components/profile/BadgesPreview';
 import { AttendanceBars } from '@/components/profile/AttendanceBars';
 import { BioCard } from '@/components/profile/BioCard';
 import { ReviewsTab } from '@/components/profile/ReviewsTab';
-import type { KPI, Trait, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
+import { TraitCarousel } from '@/components/traits/TraitCarousel';
+import { resolveTraitIcon } from '@/components/traits/icon-utils';
+import type { TraitSummary } from '@/types/traits';
+import type { KPI, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 type TabKey = 'overview' | 'traits' | 'badges' | 'activities' | 'reviews';
@@ -19,7 +21,7 @@ export default function ProfilePage() {
   const [kpis, setKpis] = useState<KPI[]>([]);
   const [reliability, setReliability] = useState<Reliability | null>(null);
   const [attendance, setAttendance] = useState<AttendanceMetrics | undefined>();
-  const [traits, setTraits] = useState<Trait[]>([]);
+  const [traits, setTraits] = useState<TraitSummary[]>([]);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [loading, setLoading] = useState(true);
@@ -44,7 +46,10 @@ export default function ProfilePage() {
         if (profileRes.ok) setProfile(await profileRes.json());
         if (kpiRes.ok) setKpis(await kpiRes.json());
         if (relRes.ok) { const r = await relRes.json(); setReliability(r.reliability); setAttendance(r.attendance); }
-        if (traitsRes.ok) setTraits(await traitsRes.json());
+        if (traitsRes.ok) {
+          const json = await traitsRes.json();
+          setTraits(Array.isArray(json) ? json : []);
+        }
         if (badgesRes.ok) setBadges(await badgesRes.json());
       } catch(error) {
         setError(getErrorMessage(error));
@@ -182,25 +187,19 @@ export default function ProfilePage() {
         <Tabs active={activeTab} onChange={setActiveTab} />
         {activeTab === 'overview' && (
           <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            <div className="md:col-span-2 lg:col-span-2"><TraitsPreview traits={traits.slice(0,6)} /></div>
+            <div className="md:col-span-2 lg:col-span-2">
+              <TraitCarousel traits={traits.slice(0, 10)} />
+            </div>
             <div className="md:col-span-2 lg:col-span-2"><BadgesPreview badges={badges.slice(0,4)} /></div>
             <div className="md:col-span-2 lg:col-span-2"><AttendanceBars metrics={attendance} /></div>
             <div className="md:col-span-2 lg:col-span-2"><BioCard bio={profile?.bio} editable onSave={saveBio} /></div>
           </div>
         )}
         {activeTab === 'traits' && (
-          <div className="mt-8 space-y-4">{traits.map(t => (
-            <div key={t.id} className="rounded-lg bg-white p-4 border border-gray-200 flex items-center justify-between">
-              <div>
-                <div className="font-medium text-gray-800">{t.name}</div>
-                <div className="text-xs text-gray-600">{t.category}</div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold tabular-nums">{Math.round(t.score)}</span>
-                <span className="w-2 h-2 rounded-full" style={{ background: t.confidence>=0.75?'#059669': t.confidence>=0.5?'#d97706':'#9ca3af'}} />
-              </div>
-            </div>
-          )) || <div className="text-sm text-gray-500">No traits yet.</div>}</div>
+          <div className="mt-8 space-y-6">
+            <TraitCarousel traits={traits} title="Trait stack" description="Scores update as people nominate you." />
+            <TraitSummaryList traits={traits} />
+          </div>
         )}
         {activeTab === 'badges' && (
           <div className="mt-8 grid gap-4 sm:grid-cols-2 md:grid-cols-3">
@@ -284,6 +283,46 @@ function ActivitiesPlaceholder({ userId }: { userId: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function TraitSummaryList({ traits }: { traits: TraitSummary[] }) {
+  if (!traits.length) {
+    return <div className="text-sm text-gray-500">No traits yet.</div>;
+  }
+  return (
+    <div className="space-y-4">
+      {traits.map((trait) => (
+        <TraitSummaryRow key={trait.id} trait={trait} />
+      ))}
+    </div>
+  );
+}
+
+function TraitSummaryRow({ trait }: { trait: TraitSummary }) {
+  const Icon = resolveTraitIcon(trait.icon);
+  const accent = trait.color || '#0EA5E9';
+  const chipBg = `${accent}14`;
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <span
+        className="flex h-12 w-12 items-center justify-center rounded-2xl text-gray-700"
+        style={{ backgroundColor: chipBg, color: accent }}
+      >
+        <Icon className="h-5 w-5" />
+      </span>
+      <div className="flex-1">
+        <p className="text-sm font-semibold text-gray-900">{trait.name}</p>
+        <p className="text-xs text-gray-500">
+          Base picks {trait.baseCount} · Votes {trait.voteCount}
+        </p>
+      </div>
+      <div className="text-right">
+        <p className="text-xs uppercase tracking-wide text-gray-500">Score</p>
+        <p className="text-2xl font-bold text-gray-900">{trait.score}</p>
+        <p className="text-[11px] text-gray-500">Updated {new Date(trait.updatedAt).toLocaleDateString()}</p>
+      </div>
     </div>
   );
 }

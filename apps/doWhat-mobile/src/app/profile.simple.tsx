@@ -67,6 +67,32 @@ type CatalogBadgeEntry = {
   owned: OwnedBadge | null;
 };
 
+type TraitSummary = {
+  id: string;
+  name: string;
+  color?: string | null;
+  icon?: string | null;
+  score: number;
+  baseCount: number;
+  voteCount: number;
+  updatedAt: string;
+};
+
+const FALLBACK_TRAIT_COLOR = '#0EA5E9';
+const TRAIT_ICON_FALLBACK = '✨';
+const TRAIT_ICON_EMOJI_MAP: Record<string, string> = {
+  Heart: '❤️',
+  Sparkles: '✨',
+  Smile: '😊',
+  Zap: '⚡️',
+  Star: '⭐️',
+  Sun: '☀️',
+  Moon: '🌙',
+  Flame: '🔥',
+  Users: '🤝',
+  Shield: '🛡️',
+};
+
 type ImagePickerModule = typeof import('expo-image-picker');
 type ImagePickerOptions = import('expo-image-picker').ImagePickerOptions;
 type ExtendedImagePickerOptions = ImagePickerOptions & { copyToCacheDirectory?: boolean };
@@ -388,6 +414,90 @@ const describeError = (error: unknown, fallback = 'Something went wrong'): strin
   return fallback;
 };
 
+const toFiniteNumber = (value: unknown, fallback = 0): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
+
+const toNonNegativeInt = (value: unknown): number => {
+  const finite = toFiniteNumber(value, 0);
+  if (!Number.isFinite(finite)) return 0;
+  return Math.max(0, Math.round(finite));
+};
+
+const normalizeHexColor = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const prefixed = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+  return /^#([0-9a-f]{6})$/i.test(prefixed) ? prefixed.toUpperCase() : null;
+};
+
+const traitTintFromColor = (color?: string | null, alpha = 0.12): string => {
+  const normalized = normalizeHexColor(color) ?? FALLBACK_TRAIT_COLOR;
+  const hex = normalized.slice(1);
+  const numeric = Number.parseInt(hex, 16);
+  if (!Number.isFinite(numeric)) {
+    return `rgba(14, 165, 233, ${alpha})`;
+  }
+  const r = (numeric >> 16) & 255;
+  const g = (numeric >> 8) & 255;
+  const b = numeric & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const parseTraitSummaryEntry = (raw: unknown): TraitSummary | null => {
+  if (!isRecord(raw)) return null;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id : null;
+  if (!id) return null;
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name : null;
+  if (!name) return null;
+  const color = normalizeHexColor(raw.color) ?? null;
+  const icon = typeof raw.icon === 'string' && raw.icon.trim() ? raw.icon : null;
+  const score = toFiniteNumber(raw.score, 0);
+  const baseCount = toNonNegativeInt(raw.baseCount ?? raw.base_count);
+  const voteCount = toNonNegativeInt(raw.voteCount ?? raw.vote_count);
+  const updatedAtRaw = typeof raw.updatedAt === 'string' && raw.updatedAt.trim()
+    ? raw.updatedAt
+    : typeof raw.updated_at === 'string' && raw.updated_at.trim()
+      ? raw.updated_at
+      : null;
+  const updatedAt = updatedAtRaw ?? new Date().toISOString();
+  return {
+    id,
+    name,
+    color,
+    icon,
+    score,
+    baseCount,
+    voteCount,
+    updatedAt,
+  } satisfies TraitSummary;
+};
+
+const parseTraitSummaries = (raw: unknown): TraitSummary[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(parseTraitSummaryEntry)
+    .filter((entry): entry is TraitSummary => Boolean(entry));
+};
+
+const resolveTraitGlyph = (icon?: string | null): string => {
+  if (!icon) return TRAIT_ICON_FALLBACK;
+  const trimmed = icon.trim();
+  if (!trimmed) return TRAIT_ICON_FALLBACK;
+  if (TRAIT_ICON_EMOJI_MAP[trimmed]) return TRAIT_ICON_EMOJI_MAP[trimmed];
+  if (trimmed.length <= 3) return trimmed.toUpperCase();
+  const first = trimmed.charAt(0);
+  return /[a-z]/i.test(first) ? first.toUpperCase() : TRAIT_ICON_FALLBACK;
+};
+
 const chooseAvatarSource = async (): Promise<AvatarSource | null> => {
   if (Platform.OS === 'ios') {
     return await new Promise((resolve) => {
@@ -549,6 +659,9 @@ export default function ProfileSimple() {
   const [whatsapp, setWhatsapp] = useState('');
   const [bio, setBio] = useState('');
   const [personalityTraits, setPersonalityTraits] = useState<string[]>([]);
+  const [traitSummaries, setTraitSummaries] = useState<TraitSummary[]>([]);
+  const [traitSummariesLoading, setTraitSummariesLoading] = useState(false);
+  const [traitSummaryError, setTraitSummaryError] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState('');
   const [profileLat, setProfileLat] = useState<number | null>(null);
   const [profileLng, setProfileLng] = useState<number | null>(null);
@@ -664,6 +777,34 @@ export default function ProfileSimple() {
     } catch {
       setOwnedBadges([]);
       setCatalogBadges([]);
+    }
+  }, []);
+
+  const loadTraitSummaries = useCallback(async (uid: string) => {
+    setTraitSummaryError(null);
+    setTraitSummariesLoading(true);
+    try {
+      const url = createWebUrl(`/api/profile/${uid}/traits?top=6`);
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        let detail: unknown = null;
+        try {
+          detail = await response.json();
+        } catch {
+          detail = null;
+        }
+        const message = isRecord(detail) && typeof detail.error === 'string'
+          ? detail.error
+          : `Failed to load traits (${response.status})`;
+        throw new Error(message);
+      }
+      const payload: unknown = await response.json();
+      setTraitSummaries(parseTraitSummaries(payload));
+    } catch (error) {
+      setTraitSummaries([]);
+      setTraitSummaryError(describeError(error, 'Traits unavailable right now.'));
+    } finally {
+      setTraitSummariesLoading(false);
     }
   }, []);
 
@@ -827,12 +968,13 @@ export default function ProfileSimple() {
         await Promise.all([
           fetchProfile(uid, { fallbackBio: bio, fallbackTraits }),
           loadBadges(uid),
+          loadTraitSummaries(uid),
         ]);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [fetchProfile, loadBadges, bio]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, bio]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -847,8 +989,11 @@ export default function ProfileSimple() {
         await restoreProfileFromCache(uid);
         const fallbackBio = typeof auth?.user?.user_metadata?.bio === 'string' ? auth.user.user_metadata.bio : '';
         const fallbackTraits = sanitizeProfileTraitList(auth?.user?.user_metadata?.personality_traits);
-        await fetchProfile(uid, { fallbackBio, fallbackTraits });
-        await loadBadges(uid);
+        await Promise.all([
+          fetchProfile(uid, { fallbackBio, fallbackTraits }),
+          loadBadges(uid),
+          loadTraitSummaries(uid),
+        ]);
       } else {
         userIdRef.current = null;
         setSignedIn(false);
@@ -864,8 +1009,11 @@ export default function ProfileSimple() {
           await restoreProfileFromCache(signedInId);
           const metaBio = typeof session.user.user_metadata?.bio === 'string' ? session.user.user_metadata?.bio : '';
           const metaTraits = sanitizeProfileTraitList(session.user.user_metadata?.personality_traits);
-          await fetchProfile(signedInId, { fallbackBio: metaBio, fallbackTraits: metaTraits });
-          await loadBadges(signedInId);
+          await Promise.all([
+            fetchProfile(signedInId, { fallbackBio: metaBio, fallbackTraits: metaTraits }),
+            loadBadges(signedInId),
+            loadTraitSummaries(signedInId),
+          ]);
         } else if (event === 'SIGNED_OUT') {
           userIdRef.current = null;
           setEmail(null);
@@ -882,6 +1030,9 @@ export default function ProfileSimple() {
           setSupportsLocation(true);
           setSupportsTraits(true);
           setPersonalityTraits([]);
+          setTraitSummaries([]);
+          setTraitSummariesLoading(false);
+          setTraitSummaryError(null);
           setDraftLocation('');
           setDraftLocationSelection(null);
           setLocationSuggestions([]);
@@ -893,7 +1044,7 @@ export default function ProfileSimple() {
       unsub = () => listener.subscription.unsubscribe();
     })();
     return () => { if (unsub) unsub(); };
-  }, [fetchProfile, loadBadges, restoreProfileFromCache]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, restoreProfileFromCache]);
 
   useEffect(() => {
     if (editOpen) return;
@@ -1725,7 +1876,17 @@ export default function ProfileSimple() {
         </View>
         <View style={{ padding:14, gap:10 }}>
           {supportsTraits ? (
-            personalityTraits.length ? (
+            traitSummariesLoading ? (
+              <Text style={{ color:'#94a3b8', fontSize:13 }}>Loading trait stats…</Text>
+            ) : traitSummaryError ? (
+              <Text style={{ color:'#b91c1c', fontSize:13 }}>{traitSummaryError}</Text>
+            ) : traitSummaries.length ? (
+              <View style={{ gap:12 }}>
+                {traitSummaries.map((trait) => (
+                  <TraitSummaryCard key={trait.id} trait={trait} />
+                ))}
+              </View>
+            ) : personalityTraits.length ? (
               <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
                 {personalityTraits.map((trait) => (
                   <View
@@ -1926,5 +2087,81 @@ export default function ProfileSimple() {
       </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function TraitSummaryCard({ trait }: { trait: TraitSummary }) {
+  const accent = normalizeHexColor(trait.color) ?? FALLBACK_TRAIT_COLOR;
+  const tint = traitTintFromColor(accent, 0.18);
+  const glyph = resolveTraitGlyph(trait.icon);
+  const scoreDisplay = Number.isInteger(trait.score) ? trait.score.toString() : trait.score.toFixed(1);
+  const updatedLabel = (() => {
+    const parsed = new Date(trait.updatedAt);
+    return Number.isNaN(parsed.getTime()) ? trait.updatedAt : parsed.toLocaleDateString();
+  })();
+
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: accent,
+        borderRadius: 18,
+        padding: 14,
+        backgroundColor: '#fff',
+        shadowColor: '#0f172a',
+        shadowOpacity: 0.05,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 2,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+          <View
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 16,
+              backgroundColor: tint,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>{glyph}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>{trait.name}</Text>
+            <Text style={{ fontSize: 11, color: '#64748b' }}>Updated {updatedLabel}</Text>
+          </View>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>Score</Text>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: '#0f172a' }}>{scoreDisplay}</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', marginTop: 12, gap: 12 }}>
+        <TraitSummaryStat label="Base picks" value={trait.baseCount.toString()} accent={accent} />
+        <TraitSummaryStat label="Votes" value={trait.voteCount.toString()} accent={accent} />
+      </View>
+    </View>
+  );
+}
+
+function TraitSummaryStat({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: traitTintFromColor(accent, 0.3),
+        backgroundColor: traitTintFromColor(accent, 0.12),
+      }}
+    >
+      <Text style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>
+      <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>{value}</Text>
+    </View>
   );
 }

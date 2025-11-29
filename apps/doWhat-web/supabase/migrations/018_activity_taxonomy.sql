@@ -56,7 +56,9 @@ before update on public.activity_taxonomy_state
 for each row
 execute procedure public.fn_touch_activity_taxonomy_state();
 
-create or replace view public.v_activity_taxonomy_flat as
+drop view if exists public.v_activity_taxonomy_flat;
+
+create view public.v_activity_taxonomy_flat as
 select
   tier3.id as tier3_id,
   tier3.label as tier3_label,
