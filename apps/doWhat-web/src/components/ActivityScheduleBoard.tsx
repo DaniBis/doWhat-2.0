@@ -199,6 +199,7 @@ export default function ActivityScheduleBoard({
   currentUserId: _currentUserId,
   showVenueScheduleLink = true,
 }: Props) {
+  void _currentUserId;
   const [windowFilter, setWindowFilter] = useState<WindowOption>("next30");
   const [density, setDensity] = useState<DensityOption>("comfortable");
   const [searchTerm, setSearchTerm] = useState("");

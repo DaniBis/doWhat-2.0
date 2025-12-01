@@ -28,6 +28,7 @@ export default async function RootLayout({
             <div className="flex items-center gap-6">
               <BrandLogo />
               <nav className="hidden gap-4 text-sm font-medium text-slate-600 md:flex">
+                <a href="/venues" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Venues</a>
                 <a href="/map" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Map</a>
                 <a href="/create" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Create</a>
               </nav>

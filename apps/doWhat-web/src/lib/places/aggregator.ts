@@ -931,6 +931,7 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   const _foursquareCall = await callProvider('foursquare', () =>
     fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
   );
+  void _foursquareCall;
   // Temporarily disabled due to deprecated API
   // if (_foursquareCall.status === 'fulfilled') {
   //   providerResults.push(..._foursquareCall.value.filter((place) => place.canPersist !== false));

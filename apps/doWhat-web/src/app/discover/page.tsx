@@ -215,7 +215,7 @@ export default function RecommendationsPage() {
     return () => {
       cancelled = true;
     };
-  }, [userLocation?.lat, userLocation?.lng]);
+  }, [userLocation, userLocation?.lat, userLocation?.lng]);
 
   // Calculate distance between two points using Haversine formula
   function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {

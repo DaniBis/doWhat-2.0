@@ -69,6 +69,33 @@ export type ProfileRow = {
   avatar_url: string | null;
 };
 
+export type VenueRow = {
+  id: string;
+  name: string | null;
+  address?: string | null;
+  lat: number | null;
+  lng: number | null;
+  metadata?: Json | null;
+  raw_description: string | null;
+  raw_reviews: string[] | null;
+  ai_activity_tags: string[] | null;
+  ai_confidence_scores: Json | null;
+  verified_activities: string[] | null;
+  last_ai_update: string | null;
+  needs_verification: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type VenueActivityVoteRow = {
+  venue_id: string;
+  user_id: string;
+  activity_name: string;
+  vote: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -114,6 +141,18 @@ export interface Database {
         Update: Partial<ProfileRow>;
         Relationships: [];
       };
+      venues: {
+        Row: VenueRow;
+        Insert: Partial<VenueRow> & { name?: string | null };
+        Update: Partial<VenueRow>;
+        Relationships: [];
+      };
+      venue_activity_votes: {
+        Row: VenueActivityVoteRow;
+        Insert: Partial<VenueActivityVoteRow> & Pick<VenueActivityVoteRow, "venue_id" | "user_id" | "activity_name" | "vote">;
+        Update: Partial<VenueActivityVoteRow>;
+        Relationships: [];
+      };
     } & {
       [key: string]: GenericTable;
     };
@@ -125,6 +164,12 @@ export interface Database {
           p_score_delta: number;
           p_vote_delta?: number | null;
           p_base_delta?: number | null;
+        };
+        Returns: null;
+      };
+      refresh_verified_activities: {
+        Args: {
+          target_venue: string;
         };
         Returns: null;
       };

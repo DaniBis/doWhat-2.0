@@ -2,11 +2,24 @@
 import pluginReact from 'eslint-plugin-react';
 import pluginReactHooks from 'eslint-plugin-react-hooks';
 import nextPlugin from '@next/eslint-plugin-next';
+import tsPlugin from '@typescript-eslint/eslint-plugin';
+import tsParser from '@typescript-eslint/parser';
 
 export default [
   {
     files: ['**/*.{ts,tsx,js,jsx}'],
-    plugins: { react: pluginReact, 'react-hooks': pluginReactHooks, '@next/next': nextPlugin },
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        project: './tsconfig.json',
+      },
+    },
+    plugins: {
+      react: pluginReact,
+      'react-hooks': pluginReactHooks,
+      '@next/next': nextPlugin,
+      '@typescript-eslint': tsPlugin,
+    },
     settings: { react: { version: 'detect' } },
     rules: {
       'react/react-in-jsx-scope': 'off',
@@ -18,6 +31,12 @@ export default [
   },
   {
     files: ['**/__tests__/**/*.{ts,tsx,js,jsx}', '**/*.test.{ts,tsx,js,jsx}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        project: './tsconfig.json',
+      },
+    },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },

@@ -43,7 +43,11 @@ function toActivityMap(rows: Array<ScheduleSession & { activity_id: string; acti
 }
 
 function normalizeSessions(rows: Array<ScheduleSession & { activity_id: string; activities: ScheduleActivity | ScheduleActivity[] | null }>) {
-  return rows.map(({ activities: _activities, ...rest }) => rest satisfies ScheduleSession);
+  return rows.map((row) => {
+    const { activities, ...rest } = row;
+    void activities;
+    return rest satisfies ScheduleSession;
+  });
 }
 
 export default async function VenueSchedulePage({ params }: { params: { id: string } }) {

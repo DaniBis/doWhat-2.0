@@ -3,6 +3,10 @@ import { fetchFoursquarePlaces } from '../places/providers/foursquare';
 import { fetchGooglePlaces } from '../places/providers/google';
 import type { PlacesQuery } from '../places/types';
 
+type MutableGlobal = typeof globalThis & { fetch?: jest.Mock };
+
+const mutableGlobal = globalThis as MutableGlobal;
+
 describe('places provider adapters', () => {
   const query: PlacesQuery = {
     bounds: {
@@ -15,7 +19,7 @@ describe('places provider adapters', () => {
 
   afterEach(() => {
     jest.resetAllMocks();
-    delete (global as any).fetch;
+    delete mutableGlobal.fetch;
     delete process.env.FOURSQUARE_API_KEY;
     delete process.env.GOOGLE_PLACES_API_KEY;
   });
@@ -47,7 +51,7 @@ describe('places provider adapters', () => {
       ],
     };
 
-    (global as any).fetch = jest.fn(() =>
+    mutableGlobal.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
         json: async () => payload,
@@ -55,7 +59,7 @@ describe('places provider adapters', () => {
     );
 
     const places = await fetchOverpassPlaces(query);
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(mutableGlobal.fetch).toHaveBeenCalledTimes(1);
     expect(places).toHaveLength(1);
     expect(places[0].name).toBe('Dowhat Gym');
     expect(places[0].categories).toContain('activity');
@@ -75,7 +79,7 @@ describe('places provider adapters', () => {
       ],
     };
 
-    (global as any).fetch = jest.fn(() =>
+    mutableGlobal.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
         json: async () => payload,
@@ -109,7 +113,7 @@ describe('places provider adapters', () => {
       ],
     };
 
-    (global as any).fetch = jest.fn(() =>
+    mutableGlobal.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
         json: async () => payload,

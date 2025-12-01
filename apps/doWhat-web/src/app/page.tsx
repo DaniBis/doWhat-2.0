@@ -294,7 +294,11 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
       return a.firstStart - b.firstStart;
     })
     .slice(0, 20)
-    .map(({ firstStart: _ignore, ...rest }) => rest);
+    .map((entry) => {
+      const { firstStart, ...rest } = entry;
+      void firstStart;
+      return rest;
+    });
 
   return (
     <main className="min-h-screen">
@@ -313,6 +317,22 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
               ⚙️ Filters
             </Link>
           </div>
+        </div>
+
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-emerald-100 bg-emerald-50/80 px-5 py-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">New</p>
+            <h3 className="text-xl font-semibold text-emerald-900">Verify where activities really happen</h3>
+            <p className="text-sm text-emerald-700">
+              Help confirm AI suggestions, upvote the best venues, and keep the discovery map accurate for everyone.
+            </p>
+          </div>
+          <Link
+            href="/venues"
+            className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+          >
+            Open verification hub →
+          </Link>
         </div>
 
   {cards.length === 0 ? (

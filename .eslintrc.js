@@ -24,6 +24,8 @@ module.exports = {
     // sensible defaults; we can tighten later
     "react/react-in-jsx-scope": "off",
     "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+    "@next/next/no-img-element": "off",
     "import/order": ["warn", { "newlines-between": "always", alphabetize: { order: "asc", caseInsensitive: true } }],
   },
   overrides: [
