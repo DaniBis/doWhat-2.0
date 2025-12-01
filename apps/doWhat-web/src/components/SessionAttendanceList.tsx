@@ -244,7 +244,7 @@ export default function SessionAttendanceList({
     return () => {
       window.removeEventListener("session-rsvp-updated", handler as EventListener);
     };
-  }, [sessionId]);
+  }, [activityId, sessionId]);
 
   const { going, interested } = useMemo(() => {
     const filtered = rows.filter((row) => row.status === "going" || row.status === "interested");

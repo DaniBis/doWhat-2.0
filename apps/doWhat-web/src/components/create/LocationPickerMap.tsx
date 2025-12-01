@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import Map, { Marker, NavigationControl } from "react-map-gl";
 import type { MapLayerMouseEvent, ViewStateChangeEvent } from "react-map-gl";
@@ -83,7 +84,7 @@ export default function LocationPickerMap({ lat, lng, onChange, height = 280 }: 
         <NavigationControl position="bottom-right" showCompass={false} />
         {lat != null && lng != null ? (
           <Marker latitude={lat} longitude={lng} anchor="bottom">
-            <img src={markerUri} alt="Selected location" className="h-12 w-8" />
+            <Image src={markerUri} alt="Selected location" width={40} height={52} className="h-12 w-8" unoptimized />
           </Marker>
         ) : (
           <Marker latitude={viewState.latitude} longitude={viewState.longitude} anchor="bottom">

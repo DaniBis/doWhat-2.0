@@ -29,6 +29,7 @@ import { supabase } from "@/lib/supabase/browser";
 const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
+const EMPTY_ACTIVITIES: MapActivity[] = [];
 
 const formatKilometres = (meters?: number | null) => {
   if (!meters || meters <= 0) return "<0.5 km";
@@ -247,13 +248,14 @@ export default function MapPage() {
     enabled: Boolean(query) && loadActivities,
   });
 
-  const activities = nearby.data?.activities ?? [];
+  const activities = nearby.data?.activities ?? EMPTY_ACTIVITIES;
 
+  const eventsRangeDays = dataMode === 'events' ? 21 : 14;
   const eventsWindow = useMemo(() => {
     const start = new Date();
-    const end = new Date(start.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + eventsRangeDays * 24 * 60 * 60 * 1000);
     return { from: start.toISOString(), to: end.toISOString() };
-  }, [dataMode]);
+  }, [eventsRangeDays]);
 
   const eventsQueryArgs = loadEvents && bounds
     ? {

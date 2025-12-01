@@ -26,6 +26,7 @@ import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
 import { useRuntimeTaxonomy } from "@/hooks/useRuntimeTaxonomy";
 
 const normaliseTag = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+const EMPTY_PLACES: PlaceSummary[] = [];
 
 type NormalisedPlaceTerms = {
   categories: Set<string>;
@@ -202,7 +203,7 @@ export default function PlacesPage() {
     }
   }, [placesQuery.data?.attribution]);
 
-  const rawPlaces = placesQuery.data?.places ?? [];
+  const rawPlaces = placesQuery.data?.places ?? EMPTY_PLACES;
   const places = useMemo(
     () => filterPlacesByCategories(rawPlaces, selectedCategories, cityCategoryMap, taxonomyTagMap),
     [rawPlaces, selectedCategories, cityCategoryMap, taxonomyTagMap],

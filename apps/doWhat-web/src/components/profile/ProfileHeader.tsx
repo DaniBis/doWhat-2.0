@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/browser';
 import { Reliability } from '@/types/profile';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
@@ -25,6 +25,7 @@ export function ProfileHeader({
   socials?: SocialHandles;
   onProfileUpdated?: (p: { name?: string; avatarUrl?: string; socials?: SocialHandles; bio?: string; location?: string | null }) => Promise<void> | void;
 }) {
+  void _userId;
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [pendingName, setPendingName] = useState(name);
@@ -40,7 +41,7 @@ export function ProfileHeader({
   const [locStatus, setLocStatus] = useState<'idle' | 'loading' | 'denied' | 'error'>('idle');
   const [locError, setLocError] = useState<string | null>(null);
 
-  async function uploadAvatarBlob(file: File) {
+  const uploadAvatarBlob = useCallback(async (file: File) => {
     setErrorMsg(null);
     if (!/(jpe?g|png|gif|webp|avif)$/i.test(file.name.split('.').pop() ?? '')) {
       throw new Error('Unsupported file type. Use jpg, png, gif, webp, or avif.');
@@ -64,7 +65,7 @@ export function ProfileHeader({
     const publicUrl = data?.publicUrl;
     if (!publicUrl) throw new Error('Could not generate public URL.');
     await onProfileUpdated?.({ avatarUrl: publicUrl });
-  }
+  }, [onProfileUpdated]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -124,7 +125,7 @@ export function ProfileHeader({
   // Load socials from localStorage when modal opens
   useEffect(() => { setPendingName(name); }, [name]);
   useEffect(() => { setPendingBio(bio || ''); }, [bio]);
-  useEffect(() => { setSocials(initialSocials || {}); }, [initialSocials?.instagram, initialSocials?.whatsapp]);
+  useEffect(() => { setSocials(initialSocials || {}); }, [initialSocials]);
   useEffect(() => { setPendingLocation(location || ''); }, [location]);
 
   function openEdit() {
@@ -254,7 +255,7 @@ export function ProfileHeader({
       node.removeEventListener('dragleave', handleDragLeave);
       node.removeEventListener('drop', handleDrop);
     };
-  }, []);
+  }, [uploadAvatarBlob]);
 
   return (
     <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-blue-900 text-white">
