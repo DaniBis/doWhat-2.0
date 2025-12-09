@@ -783,13 +783,13 @@ export default function AdminDashboard() {
             {auditLoading ? "Refreshing…" : "Refresh"}
           </button>
           <span className="text-xs text-gray-500">Latest {auditLogs.length} actions</span>
-          <Link
+          <a
             href="/api/admin/audit-logs?format=csv"
             className="text-xs text-brand-teal underline-offset-2 hover:underline"
-            prefetch={false}
+            rel="noopener noreferrer"
           >
             Download CSV
-          </Link>
+          </a>
         </div>
         {auditError && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{auditError}</div>}
         {auditLogs.length === 0 ? (
