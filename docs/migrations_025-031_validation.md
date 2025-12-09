@@ -1,0 +1,85 @@
+# Migrations 025–031 Validation Checklist
+
+_Last updated: 6 Dec 2025_
+
+This note captures the verification steps for the latest Supabase schema work (attendance + saved
+activities). Use it when promoting changes to staging or production so we can prove migrations ran
+in order, seed helpers completed, and rollback files are on hand.
+
+## 6 Dec 2025 migration run (feature/admin-dashboard-docs)
+
+- ✅ `pnpm run db:migrate` against `postgresql://postgres.kdviydoftmjuglaglsmm@aws-1-eu-west-2.pooler.supabase.com:6543/postgres` completed through `033_remove_event_participants.sql`.
+- ✅ `pnpm run db:migrate` (6 Dec rerun) now lands on `034_admin_audit_logs.sql`, enabling the admin dashboard audit feed.
+- ✅ `select filename from public.schema_migrations order by 1 desc limit 3;` → `034_admin_audit_logs.sql`, `033_remove_event_participants.sql`, `032_trait_policy_guard_fix.sql`.
+- Fixes applied during the run:
+   - 026 needed duplicate `seed_rows` CTE so reruns have scope for the INSERT.
+   - 027 had a stray `alter table public.profiles` duplication; removed so DDL parses.
+   - 028 previously required every `host_user_id`; added fallback that assigns missing sessions to `bisceanudaniel@gmail.com` (or the first profile) after trying attendee-derived hosts.
+   - 031 switched from `uuid_generate_v4()` → `gen_random_uuid()` (pgcrypto) and removed `v.region` from the view to match production schema.
+
+
+## How to apply
+
+```bash
+# 1. Point the runner at the target database (service-role connection string).
+export SUPABASE_DB_URL="postgres://postgres:password@host:6543/postgres"
+
+# 2. Replay every pending migration. The runner tracks applied files via
+#    public.schema_migrations so it is safe to rerun.
+pnpm run db:migrate
+# alias for: node run_migrations.js
+
+# 3. Seed helper data once the schema is in place (optional but recommended).
+pnpm seed:taxonomy
+pnpm seed:places:bangkok
+pnpm seed:events:bangkok
+```
+
+The runner emits `[migrate] Applied 031_user_saved_activities.sql` when the last migration succeeds.
+Check Supabase logs for DDL statements if you need external confirmation.
+
+## Migration matrix
+
+| #   | File | Purpose | Depends on | Rollback |
+| --- | ---- | ------- | ---------- | -------- |
+| 025 | `apps/doWhat-web/supabase/migrations/025_places_foursquare_metadata.sql` | Adds `city` + `foursquare_id` columns on `public.places`, backfills `city`, and adds a partial unique index so external IDs remain stable. | Places table from earlier migrations. | Idempotent (drops nothing). |
+| 026 | `.../026_activity_catalog.sql` | Introduces `activity_catalog`, overrides, `venue_activities`, triggers, indexes, and seeds the initial catalog rows (chess/bowling/climbing/yoga). | 025 (places) + existing `activities` table. | No rollback file (safe to rerun). |
+| 027 | `.../027_sessions_attendance.sql` | Creates/normalizes `sessions` + `session_attendees`, adds constraints, triggers, indexes, and RLS policies that power attendance parity. | 025–026 plus existing `profiles`, `venues`, `activities`. | No rollback file (forward-only change that enforces spec). |
+| 028 | `.../028_sessions_schema_spec.sql` | Aligns the same tables with the published schema spec (stronger FK behavior, host backfills). | 027 | `028_sessions_schema_spec_rollback.sql` restores pre-spec FK + nullable host field. |
+| 029 | `.../029_remove_rsvps_table.sql` | Deletes the legacy `public.rsvps` table now that all clients run on `session_attendees`. | 027/028 | `029_remove_rsvps_table_rollback.sql` recreates a minimal `rsvps` table. |
+| 030 | `.../030_attendance_views.sql` | Adds `v_session_attendance_counts`, `v_activity_attendance_summary`, `v_venue_attendance_summary` to simplify API rollups. | 027–028 (requires normalized tables). | No rollback (views can be dropped manually). |
+| 031 | `.../031_user_saved_activities.sql` | Creates `user_saved_activities`, helper views (`user_saved_activities_view`, `saved_activities_view`), indexes, triggers, and RLS. | Places + Profiles tables, attendance views optional. | Forward-only (dropping the table reverts). |
+
+## Validation checklist
+
+1. **Schema migrations**
+   - `node run_migrations.js` finishes without errors.
+   - `select filename from public.schema_migrations where filename like '03%' order by 1;` returns
+     `030_attendance_views.sql` and `031_user_saved_activities.sql`.
+2. **Attendance rollups**
+   - `select * from v_session_attendance_counts limit 5;` succeeds.
+   - `select going_count from v_activity_attendance_summary order by updated_at desc limit 5;` succeeds.
+3. **Saved activities plumbing**
+   - `select count(*) from user_saved_activities;` works.
+   - `select * from user_saved_activities_view limit 5;` returns rows (or zero with correct columns).
+4. **Rollbacks on hand**
+   - Keep `028_sessions_schema_spec_rollback.sql` and `029_remove_rsvps_table_rollback.sql` synced to prod.
+   - Document in the release note which migration would require a rollback and under what conditions.
+5. **Seed scripts** (optional but recommended on fresh environments)
+   - `pnpm seed:taxonomy` populates shared taxonomy tables.
+   - `pnpm seed:places:bangkok` + `pnpm seed:events:bangkok` hydrate demo data used by dashboards.
+
+## Troubleshooting
+
+- Runner fails before writing to `public.schema_migrations`: re-run after fixing the SQL file; partial
+  writes are rolled back because each migration runs inside a transaction.
+- Runner complains about missing Postgres extensions (e.g., `uuid-ossp`, `postgis`): enable them in the
+  Supabase project once and rerun.
+- Seeds fail with auth errors: ensure `SUPABASE_SERVICE_ROLE_KEY` is available in the environment and the
+  scripts are executed from the repo root.
+
+## Related files
+
+- `run_migrations.js` – shared migration runner.
+- `database_updates.sql` – this document’s short-form summary.
+- `docs/archive/database_updates_traits.sql` – the pre-Step-5 SQL snapshot (kept for reference).
