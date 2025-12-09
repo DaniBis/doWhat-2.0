@@ -11,9 +11,9 @@
     "baseUrl": ".",
     "allowSyntheticDefaultImports": true,
     "paths": {
-  "@dowhat/shared": ["../../packages/shared/dist/index.d.ts"],
-  "./lib/*": ["src/lib/*"],
-  "./lib": ["src/lib"]
+      "@dowhat/shared": ["../../packages/shared/src/index.ts"],
+      "./lib/*": ["src/lib/*"],
+      "./lib": ["src/lib"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

@@ -13,6 +13,15 @@ export interface ExternalVenueRecord {
   lng?: number | null;
   photos?: string[];
   reviews?: string[];
+  address?: string | null;
+  locality?: string | null;
+  region?: string | null;
+  country?: string | null;
+  postcode?: string | null;
+  timezone?: string | null;
+  hoursSummary?: string | null;
+  openNow?: boolean | null;
+  hours?: Record<string, unknown> | null;
 }
 
 export interface VenueClassificationResult {
@@ -26,6 +35,13 @@ export interface RankedVenueActivity {
   venueName: string;
   lat: number | null;
   lng: number | null;
+  displayAddress: string | null;
+  primaryCategories: string[];
+  rating: number | null;
+  priceLevel: number | null;
+  photoUrl: string | null;
+  openNow: boolean | null;
+  hoursSummary: string | null;
   activity: ActivityName;
   aiConfidence: number;
   userYesVotes: number;

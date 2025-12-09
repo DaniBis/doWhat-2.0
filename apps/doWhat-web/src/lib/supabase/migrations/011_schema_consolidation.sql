@@ -1,5 +1,5 @@
--- Migration 011: Schema consolidation (sessions/rsvps -> events/event_participants)
--- Goal: Backfill newly introduced reliability tables from legacy session / rsvp data.
+-- Migration 011: Schema consolidation (sessions/session_attendees -> events/event_participants)
+-- Goal: Backfill newly introduced reliability tables from legacy session attendance data.
 -- Safe / idempotent: uses IF NOT EXISTS guards and left joins to avoid duplicates.
 
 -- 1. Add mapping column on events to record origin session id (if not already added)
@@ -43,21 +43,21 @@ BEGIN
   END IF;
 END $$;
 
--- 3. Backfill participants from rsvps (guest role) + ensure host rows
+-- 3. Backfill participants from session_attendees (guest role) + ensure host rows
 DO $$
 DECLARE
   has_status boolean := false;
 BEGIN
   SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns WHERE table_name='rsvps' AND column_name='status'
+    SELECT 1 FROM information_schema.columns WHERE table_name='session_attendees' AND column_name='status'
   ) INTO has_status;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='rsvps') THEN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='session_attendees') THEN
     -- Participant rows for guests (map rsvp.status values into enum if possible)
     EXECUTE format(
       'INSERT INTO public.event_participants(event_id, user_id, role, rsvp_status, updated_at)
        SELECT e.id, r.user_id, ''guest'', %s, now()
-       FROM public.rsvps r
-       JOIN public.sessions s ON s.id = r.session_id OR s.id = r.activity_id -- legacy variance
+       FROM public.session_attendees r
+       JOIN public.sessions s ON s.id = r.session_id
        JOIN public.events e ON e.source_session_id = s.id
        LEFT JOIN public.event_participants ep ON ep.event_id = e.id AND ep.user_id = r.user_id
        WHERE ep.user_id IS NULL',

@@ -26,7 +26,7 @@ const onboardingSteps: OnboardingStep[] = [
     icon: 'location',
     title: 'Join Your Community',
     subtitle: 'Connect with Others',
-    description: 'Meet like-minded people in your area. RSVP to events and build meaningful connections with your neighbors.',
+    description: 'Meet like-minded people in your area. Save your spot at sessions and build meaningful connections with your neighbors.',
   },
   {
     icon: 'calendar',

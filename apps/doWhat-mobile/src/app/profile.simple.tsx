@@ -12,7 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import * as Location from 'expo-location';
-import { theme } from '@dowhat/shared';
+import { theme, getTraitOnboardingState } from '@dowhat/shared';
 import type { BadgeStatus } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
 import { createWebUrl } from '../lib/web';
@@ -36,6 +36,7 @@ type ProfileRow = {
 
 type ProfileUpdatePayload = {
   id: string;
+  user_id?: string;
   full_name: string | null;
   avatar_url: string | null;
   updated_at: string;
@@ -701,6 +702,8 @@ export default function ProfileSimple() {
   const [locFetchError, setLocFetchError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const userIdRef = useRef<string | null>(null);
+  const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+  const [traitCountLoading, setTraitCountLoading] = useState(false);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
     if (!catalogBadges.length) {
@@ -720,6 +723,8 @@ export default function ProfileSimple() {
       } satisfies MobileBadgeItem;
     });
   }, [catalogBadges, ownedBadges]);
+
+  const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
 
   const restoreProfileFromCache = useCallback(async (uid: string) => {
     try {
@@ -805,6 +810,25 @@ export default function ProfileSimple() {
       setTraitSummaryError(describeError(error, 'Traits unavailable right now.'));
     } finally {
       setTraitSummariesLoading(false);
+    }
+  }, []);
+
+  const loadBaseTraitCount = useCallback(async (uid: string) => {
+    setTraitCountLoading(true);
+    try {
+      const { count, error } = await supabase
+        .from('user_base_traits')
+        .select('trait_id', { count: 'exact', head: true })
+        .eq('user_id', uid);
+      if (error) throw error;
+      setBaseTraitCount(typeof count === 'number' ? count : 0);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[ProfileSimple] base trait count failed', error);
+      }
+      setBaseTraitCount(0);
+    } finally {
+      setTraitCountLoading(false);
     }
   }, []);
 
@@ -969,12 +993,13 @@ export default function ProfileSimple() {
           fetchProfile(uid, { fallbackBio: bio, fallbackTraits }),
           loadBadges(uid),
           loadTraitSummaries(uid),
+          loadBaseTraitCount(uid),
         ]);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [fetchProfile, loadBadges, loadTraitSummaries, bio]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, bio]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -993,10 +1018,12 @@ export default function ProfileSimple() {
           fetchProfile(uid, { fallbackBio, fallbackTraits }),
           loadBadges(uid),
           loadTraitSummaries(uid),
+          loadBaseTraitCount(uid),
         ]);
       } else {
         userIdRef.current = null;
         setSignedIn(false);
+        setBaseTraitCount(null);
       }
 
       // Listen for future sign-ins (e.g., after a logout/login cycle) and refetch
@@ -1013,6 +1040,7 @@ export default function ProfileSimple() {
             fetchProfile(signedInId, { fallbackBio: metaBio, fallbackTraits: metaTraits }),
             loadBadges(signedInId),
             loadTraitSummaries(signedInId),
+            loadBaseTraitCount(signedInId),
           ]);
         } else if (event === 'SIGNED_OUT') {
           userIdRef.current = null;
@@ -1039,12 +1067,14 @@ export default function ProfileSimple() {
           setLocationSuggestionsLoading(false);
           setLocFetchError(null);
           setLocFetchBusy(false);
+          setBaseTraitCount(null);
+          setTraitCountLoading(false);
         }
       });
       unsub = () => listener.subscription.unsubscribe();
     })();
     return () => { if (unsub) unsub(); };
-  }, [fetchProfile, loadBadges, loadTraitSummaries, restoreProfileFromCache]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, restoreProfileFromCache]);
 
   useEffect(() => {
     if (editOpen) return;
@@ -1222,6 +1252,7 @@ export default function ProfileSimple() {
 
       const basePayload: ProfileUpdatePayload = {
         id: uid,
+        user_id: uid,
         full_name: draftFullName.trim() || null,
         avatar_url: cleanAvatarUrl,
         updated_at: new Date().toISOString(),
@@ -1251,6 +1282,7 @@ export default function ProfileSimple() {
           setLocationSuggestionsLoading(false);
           const fallbackPayload: ProfileUpdatePayload = {
             id: uid,
+            user_id: uid,
             full_name: basePayload.full_name,
             avatar_url: basePayload.avatar_url,
             updated_at: basePayload.updated_at,
@@ -1875,6 +1907,24 @@ export default function ProfileSimple() {
           <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Personality traits</Text>
         </View>
         <View style={{ padding:14, gap:10 }}>
+          {needsTraitOnboarding && (
+            <View style={{
+              padding:12,
+              borderRadius:14,
+              borderWidth:1,
+              borderColor:'#a7f3d0',
+              backgroundColor:'#ecfdf5',
+              gap:6,
+            }}>
+              <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', textTransform:'uppercase', letterSpacing:0.8 }}>Finish onboarding</Text>
+              <Text style={{ fontSize:14, color:'#065f46' }}>Add {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to showcase your vibe.</Text>
+              <Link href="/onboarding-traits" asChild>
+                <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#10b981', paddingHorizontal:16, paddingVertical:8 }}>
+                  <Text style={{ color:'#fff', fontWeight:'700' }}>Choose traits</Text>
+                </Pressable>
+              </Link>
+            </View>
+          )}
           {supportsTraits ? (
             traitSummariesLoading ? (
               <Text style={{ color:'#94a3b8', fontSize:13 }}>Loading trait stats…</Text>

@@ -4,10 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { TraitSystemError, recordTraitVotes } from "@/lib/trait-system";
 import { traitVoteSchema } from "@/lib/validation/traits";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
-import type { Database } from "@/types/database";
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient<Database>();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

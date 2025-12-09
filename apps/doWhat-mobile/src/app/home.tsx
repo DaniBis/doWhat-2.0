@@ -11,27 +11,34 @@ import {
   DEFAULT_CITY_SLUG,
   getCityConfig,
   theme,
+  buildPlaceSavePayload,
+  buildActivitySavePayload,
+  buildSessionSavePayload,
   type PlaceSummary,
   type PlacesViewportQuery,
   type ActivityRow,
+  type SavePayload,
 } from "@dowhat/shared";
 import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
 const { Link, useFocusEffect, router } = ExpoRouter;
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform } from "react-native";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform, Alert } from "react-native";
+import type { StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
 import ActivityIcon from '../components/ActivityIcon';
 import { Ionicons } from '@expo/vector-icons';
-import RsvpBadges from "../components/RsvpBadges";
+import SessionAttendanceBadges from "../components/SessionAttendanceBadges";
+import SessionAttendanceQuickActions from "../components/SessionAttendanceQuickActions";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
 import type { Session } from '@supabase/supabase-js';
 import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
+import { useSavedActivities } from "../contexts/SavedActivitiesContext";
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -53,6 +60,77 @@ const activityVisuals: Record<string, { icon: string; color: string; bgColor: st
 
 const defaultVisual = { icon: '🎯', color: '#FF6B35', bgColor: '#FFF4F1' };
 
+type SaveBadgeVariant = 'dark' | 'light';
+
+type SaveBadgeProps = {
+  saved: boolean;
+  saving?: boolean;
+  disabled?: boolean;
+  variant?: SaveBadgeVariant;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+};
+
+const resolveSaveBadgePalette = (variant: SaveBadgeVariant, saved: boolean) => {
+  if (variant === 'dark') {
+    return {
+      container: {
+        borderColor: saved ? 'rgba(16,185,129,0.65)' : 'rgba(148,163,184,0.45)',
+        backgroundColor: saved ? 'rgba(16,185,129,0.18)' : 'rgba(2,6,23,0.7)',
+      },
+      labelColor: saved ? '#34D399' : '#E2E8F0',
+      iconColor: saved ? '#34D399' : '#E2E8F0',
+    } as const;
+  }
+  return {
+    container: {
+      borderColor: saved ? 'rgba(4,120,87,0.32)' : 'rgba(15,23,42,0.08)',
+      backgroundColor: saved ? 'rgba(5,150,105,0.12)' : '#FFFFFF',
+      shadowColor: 'rgba(15,23,42,0.08)',
+      shadowOpacity: 1,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    labelColor: saved ? '#047857' : '#0F172A',
+    iconColor: saved ? '#047857' : '#0F172A',
+  } as const;
+};
+
+const SaveBadge = ({ saved, saving = false, disabled = false, variant = 'light', style, onPress }: SaveBadgeProps) => {
+  const palette = resolveSaveBadgePalette(variant, saved);
+  return (
+    <Pressable
+      onPress={(event) => {
+        event.stopPropagation?.();
+        event.preventDefault?.();
+        if (disabled || saving || !onPress) return;
+        onPress();
+      }}
+      disabled={disabled || saving || !onPress}
+      style={[
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderRadius: 999,
+          borderWidth: 1,
+          paddingHorizontal: 14,
+          paddingVertical: 6,
+          gap: 6,
+          opacity: disabled || saving || !onPress ? 0.6 : 1,
+        },
+        palette.container,
+        style,
+      ]}
+    >
+      <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={14} color={palette.iconColor} />
+      <Text style={{ color: palette.labelColor, fontWeight: '700', fontSize: 12 }}>
+        {saved ? 'Saved' : 'Save'}
+      </Text>
+    </Pressable>
+  );
+};
+
 type NearbyActivity = { id: string; name: string; count: number };
 
 type ProfileLocationRow = {
@@ -69,9 +147,11 @@ type NearbyApiResponse = {
   activities?: NearbyApiActivity[];
 };
 
+
 function HomeScreen() {
   const insets = useSafeAreaInsets();
   const isAndroid = Platform.OS === 'android';
+  const { isSaved, pendingIds, toggle } = useSavedActivities();
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -386,6 +466,19 @@ function HomeScreen() {
     router.push('/filter');
   };
 
+  const handleTogglePlaceSave = useCallback(async (place: PlaceSummary) => {
+    const payload = buildPlaceSavePayload(place, defaultCity.slug ?? null);
+    try {
+      await toggle(payload);
+    } catch (err) {
+      if (__DEV__) {
+        console.error('[Home] Failed to toggle saved place', err);
+      }
+      const message = err instanceof Error ? err.message : 'Unable to update saved activities.';
+      Alert.alert('Save place', message);
+    }
+  }, [defaultCity.slug, toggle]);
+
   const activityPresence = useMemo(() => {
     const idSet = new Set<string>();
     const nameSet = new Set<string>();
@@ -447,6 +540,19 @@ function HomeScreen() {
 
   const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
   const topPlaces = useMemo(() => nearbyPlaces.slice(0, 12), [nearbyPlaces]);
+
+  const handleToggleSavePayload = useCallback(async (payload: SavePayload | null) => {
+    if (!payload) return;
+    try {
+      await toggle(payload);
+    } catch (err) {
+      if (__DEV__) {
+        console.error('[Home] Failed to toggle saved activity', err);
+      }
+      const message = err instanceof Error ? err.message : 'Unable to update saved activities.';
+      Alert.alert('Save activity', message);
+    }
+  }, [toggle]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -592,6 +698,8 @@ function HomeScreen() {
                       : 'Activity';
                   const updatedLabel = formatPlaceUpdatedLabel(place);
                   const locality = place.address ?? place.locality ?? null;
+                  const placeSaved = isSaved(place.id);
+                  const placeSaving = pendingIds.has(place.id);
                   return (
                     <Pressable
                       key={place.id}
@@ -608,6 +716,13 @@ function HomeScreen() {
                         elevation: 4,
                       }}
                     >
+                      <SaveBadge
+                        saved={placeSaved}
+                        saving={placeSaving}
+                        variant="dark"
+                        style={{ position: 'absolute', top: 12, right: 12 }}
+                        onPress={() => handleTogglePlaceSave(place)}
+                      />
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View
                           style={{
@@ -700,6 +815,12 @@ function HomeScreen() {
                   const sessionCount = getActivitySessionCount(activity);
                   const derivedCount = Math.max(sessionCount, activity.count ?? 0);
                   const visual = activityVisuals[activity.name] || defaultVisual;
+                  const activityPayload = buildActivitySavePayload(activity, rows, {
+                    source: 'mobile_home_activity_card',
+                  });
+                  const activityPayloadId = activityPayload?.id ?? null;
+                  const saved = activityPayloadId ? isSaved(activityPayloadId) : false;
+                  const saving = activityPayloadId ? pendingIds.has(activityPayloadId) : false;
                   return (
                     <Link
                       key={activity.id}
@@ -719,6 +840,18 @@ function HomeScreen() {
                         elevation: 4,
                         marginBottom: 16,
                       }}>
+                        <SaveBadge
+                          saved={saved}
+                          saving={saving}
+                          disabled={!activityPayloadId}
+                          variant="light"
+                          style={{ position: 'absolute', top: 12, right: 12 }}
+                          onPress={() => {
+                            if (activityPayload) {
+                              handleToggleSavePayload(activityPayload);
+                            }
+                          }}
+                        />
                         {/* Activity Icon Container */}
                         <View style={{
                           width: 84,
@@ -779,11 +912,31 @@ function HomeScreen() {
             ) : (
               upcomingStandaloneSessions.map((s) => (
                 <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                  {(() => {
+                    const sessionSavePayload = buildSessionSavePayload(s, {
+                      source: 'mobile_home_upcoming_sessions',
+                    });
+                    if (!sessionSavePayload) return null;
+                    const payloadId = sessionSavePayload.id;
+                    const sessionSaved = payloadId ? isSaved(payloadId) : false;
+                    const sessionSaving = payloadId ? pendingIds.has(payloadId) : false;
+                    return (
+                      <SaveBadge
+                        saved={sessionSaved}
+                        saving={sessionSaving}
+                        disabled={!payloadId}
+                        variant="light"
+                        style={{ position: 'absolute', top: 12, right: 12 }}
+                        onPress={() => handleToggleSavePayload(sessionSavePayload)}
+                      />
+                    );
+                  })()}
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
                   <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
                   <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
                   <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
-                  <RsvpBadges activityId={s.activities?.id ?? null} />
+                  <SessionAttendanceBadges sessionId={s.id ?? null} />
+                  <SessionAttendanceQuickActions sessionId={s.id ?? null} size="compact" style={{ marginTop: 8 }} />
                   <Link href={`/sessions/${s.id}`} asChild>
                     <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
                       <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>

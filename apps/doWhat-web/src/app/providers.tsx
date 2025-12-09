@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
+import { SavedActivitiesProvider } from '@/contexts/SavedActivitiesContext';
 
 export default function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -18,5 +19,9 @@ export default function Providers({ children }: { children: ReactNode }) {
       }),
   );
 
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <SavedActivitiesProvider>{children}</SavedActivitiesProvider>
+    </QueryClientProvider>
+  );
 }

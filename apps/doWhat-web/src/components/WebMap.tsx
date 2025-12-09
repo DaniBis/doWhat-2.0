@@ -28,6 +28,10 @@ import {
   type EventSummary,
 } from "@dowhat/shared";
 
+import SaveToggleButton from "./SaveToggleButton";
+import { buildMapActivitySavePayload } from "@/lib/savePayloads";
+import { describeActivityCategories } from "@/lib/activityCategoryLabels";
+
 export type ViewBounds = {
   sw: MapCoordinates;
   ne: MapCoordinates;
@@ -186,6 +190,11 @@ export default function WebMap({
   const [selectedActivity, setSelectedActivity] = useState<MapActivity | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
   const mapRef = useRef<MapRef | null>(null);
+  const selectedActivitySavePayload = useMemo(() => buildMapActivitySavePayload(selectedActivity), [selectedActivity]);
+  const selectedActivityCategories = useMemo(
+    () => describeActivityCategories(selectedActivity?.activity_types ?? []),
+    [selectedActivity?.activity_types],
+  );
 
   useEffect(() => {
     setViewState((prev) => ({ ...prev, latitude: center.lat, longitude: center.lng }));
@@ -403,11 +412,30 @@ export default function WebMap({
             <div className="space-y-2 text-sm text-slate-700">
               <div className="font-semibold text-slate-900">{selectedActivity.name}</div>
               {selectedActivity.venue && <div>📍 {selectedActivity.venue}</div>}
+              {selectedActivityCategories.length ? (
+                <div className="flex flex-wrap gap-2 text-xs text-emerald-700">
+                  {selectedActivityCategories.slice(0, 4).map((category) => (
+                    <span
+                      key={category.id}
+                      className="rounded-full bg-emerald-50 px-2 py-0.5"
+                    >
+                      {category.parent ? `${category.label} • ${category.parent}` : category.label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {selectedActivity.distance_m != null && (
                 <div className="text-xs text-slate-500">
                   ~{Math.round((selectedActivity.distance_m / 1000) * 10) / 10} km away
                 </div>
               )}
+              {selectedActivitySavePayload ? (
+                <SaveToggleButton
+                  payload={selectedActivitySavePayload}
+                  size="sm"
+                  className="w-full justify-center"
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={(event) => {

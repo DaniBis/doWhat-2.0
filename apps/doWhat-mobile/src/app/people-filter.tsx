@@ -16,13 +16,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
 	DEFAULT_PEOPLE_FILTER_PREFERENCES,
 	countActivePeopleFilters,
+	getTraitOnboardingState,
 	loadUserPreference,
 	normalisePeopleFilterPreferences,
+	PEOPLE_FILTER_AGE_RANGES,
+	PEOPLE_FILTER_GROUP_SIZES,
+	PEOPLE_FILTER_SKILL_LEVELS,
 	saveUserPreference,
 	type PeopleFilterPreferences,
 } from '@dowhat/shared';
 
 import { supabase } from '../lib/supabase';
+import { createWebUrl } from '../lib/web';
 
 type UserTrait = {
 	trait_name: string;
@@ -31,7 +36,17 @@ type UserTrait = {
 	count: number;
 };
 
-const availableTraits = [
+type PopularTraitResponse = {
+	id: string;
+	name: string;
+	color?: string | null;
+	icon?: string | null;
+	score: number;
+	voteCount: number;
+	baseCount: number;
+	popularity: number;
+};
+const FALLBACK_TRAITS: ReadonlyArray<{ trait_name: string; icon: string; color: string }> = [
 	{ trait_name: 'Early Bird', icon: '🌅', color: '#F59E0B' },
 	{ trait_name: 'Night Owl', icon: '🦉', color: '#7C3AED' },
 	{ trait_name: 'Social Butterfly', icon: '🦋', color: '#EC4899' },
@@ -43,11 +58,35 @@ const availableTraits = [
 	{ trait_name: 'Tech Geek', icon: '💻', color: '#059669' },
 ];
 
-// Removed Activity Filters (categories/timeSlots) to keep this screen focused on People filters
+const TRAIT_ICON_EMOJI_MAP: Record<string, string> = {
+	Sparkles: '✨',
+	Megaphone: '📣',
+	Users: '🤝',
+	Lotus: '🪷',
+	Compass: '🧭',
+	Target: '🎯',
+	Gamepad2: '🎮',
+	ClipboardCheck: '✅',
+	Smile: '😊',
+	Shuffle: '🔀',
+	ShieldCheck: '🛡️',
+};
 
-const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
-const ageRanges = ['18-25', '26-35', '36-45', '46-55', '55+'];
-const groupSizes = ['1-5 people', '6-15 people', '16-30 people', '30+ people'];
+const resolveTraitEmoji = (icon?: string | null): string => {
+	if (!icon) return '✨';
+	const trimmed = icon.trim();
+	return TRAIT_ICON_EMOJI_MAP[trimmed] ?? (trimmed.length === 1 ? trimmed : '✨');
+};
+
+const buildFallbackTraitCounts = (): UserTrait[] =>
+	FALLBACK_TRAITS.map((trait, index) => ({
+		trait_name: trait.trait_name,
+		icon: trait.icon,
+		color: trait.color,
+		count: Math.floor(Math.random() * 40) + 10 + index * 2,
+	}));
+
+// Removed Activity Filters (categories/timeSlots) to keep this screen focused on People filters
 
 const PEOPLE_LOCAL_KEY = 'people_filters:v1';
 
@@ -59,6 +98,8 @@ export default function PeopleFilterScreen() {
 	const [userId, setUserId] = useState<string | null>(null);
 	const [initialised, setInitialised] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
+	const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+	const [traitCountLoading, setTraitCountLoading] = useState(false);
 
 	useEffect(() => {
 		fetchNearbyTraits();
@@ -120,6 +161,41 @@ export default function PeopleFilterScreen() {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!userId) {
+			setBaseTraitCount(null);
+			return;
+		}
+		let cancelled = false;
+		setTraitCountLoading(true);
+		(async () => {
+			try {
+				const { count, error } = await supabase
+					.from('user_base_traits')
+					.select('trait_id', { count: 'exact', head: true })
+					.eq('user_id', userId);
+				if (error) throw error;
+				if (!cancelled) {
+					setBaseTraitCount(typeof count === 'number' ? count : 0);
+				}
+			} catch (error) {
+				if (__DEV__) {
+					console.warn('[people-filters] failed to load base trait count', error);
+				}
+				if (!cancelled) {
+					setBaseTraitCount(0);
+				}
+			} finally {
+				if (!cancelled) {
+					setTraitCountLoading(false);
+				}
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [userId]);
+
 	const persistPreferences = useCallback(
 		async (next: PeopleFilterPreferences) => {
 			const normalised = normalisePeopleFilterPreferences(next);
@@ -153,14 +229,30 @@ export default function PeopleFilterScreen() {
 
 	const fetchNearbyTraits = async () => {
 		try {
-			// For demo, simulate nearby trait data
-			const traitCounts = availableTraits.map(trait => ({
-				...trait,
-				count: Math.floor(Math.random() * 50) + 5,
-			}));
-			setNearbyTraits(traitCounts.sort((a, b) => b.count - a.count));
+			const url = createWebUrl('/api/traits/popular?limit=9');
+			const response = await fetch(url.toString(), { credentials: 'include' });
+			if (!response.ok) {
+				throw new Error(`Failed to load traits (${response.status})`);
+			}
+			const payload = (await response.json()) as PopularTraitResponse[];
+			if (!Array.isArray(payload) || payload.length === 0) {
+				setNearbyTraits(buildFallbackTraitCounts());
+				return;
+			}
+			const mapped = payload.map((trait, index) => {
+				const count = trait.popularity || trait.voteCount || trait.baseCount || trait.score || 1;
+				return {
+					trait_name: trait.name ?? `Trait ${index + 1}`,
+					icon: resolveTraitEmoji(trait.icon),
+					color:
+						trait.color ?? FALLBACK_TRAITS[index % FALLBACK_TRAITS.length]?.color ?? '#0EA5E9',
+					count: Math.max(1, Math.round(count)),
+				};
+			});
+			setNearbyTraits(mapped.sort((a, b) => b.count - a.count));
 		} catch (error) {
-			console.error('Error fetching nearby traits:', error);
+			console.error('[people-filters] failed to load popular traits', error);
+			setNearbyTraits(buildFallbackTraitCounts());
 		}
 	};
 
@@ -192,10 +284,27 @@ export default function PeopleFilterScreen() {
 
 	// Removed Activity Filters UI
 
+	const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
+
 	const renderPeopleFilters = () => (
 		<ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
 			{isLoading && (
 				<Text style={styles.loadingText}>Loading your saved preferences…</Text>
+			)}
+			{needsTraitOnboarding && (
+				<View style={styles.traitCtaCard}>
+					<Text style={styles.traitCtaEyebrow}>Finish onboarding</Text>
+					<Text style={styles.traitCtaTitle}>Lock in your vibe</Text>
+					<Text style={styles.traitCtaBody}>
+						Add {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} so we can personalise matches in this filter.
+					</Text>
+					<TouchableOpacity
+						style={styles.traitCtaButton}
+						onPress={() => router.push('/onboarding-traits')}
+					>
+						<Text style={styles.traitCtaButtonText}>Choose traits</Text>
+					</TouchableOpacity>
+				</View>
 			)}
 			{/* Popular Traits in Your Area */}
 			<View style={styles.filterSection}>
@@ -230,7 +339,7 @@ export default function PeopleFilterScreen() {
 			<View style={styles.filterSection}>
 				<Text style={styles.filterTitle}>Skill Level</Text>
 				<View style={styles.filterGrid}>
-					{skillLevels.map((level) => (
+					{PEOPLE_FILTER_SKILL_LEVELS.map((level) => (
 						<TouchableOpacity
 							key={level}
 							style={[
@@ -256,7 +365,7 @@ export default function PeopleFilterScreen() {
 			<View style={styles.filterSection}>
 				<Text style={styles.filterTitle}>Age Range</Text>
 				<View style={styles.filterGrid}>
-					{ageRanges.map((age) => (
+					{PEOPLE_FILTER_AGE_RANGES.map((age) => (
 						<TouchableOpacity
 							key={age}
 							style={[
@@ -282,7 +391,7 @@ export default function PeopleFilterScreen() {
 			<View style={styles.filterSection}>
 				<Text style={styles.filterTitle}>Group Size Preference</Text>
 				<View style={styles.filterGrid}>
-					{groupSizes.map((size) => (
+					{PEOPLE_FILTER_GROUP_SIZES.map((size) => (
 						<TouchableOpacity
 							key={size}
 							style={[
@@ -435,6 +544,45 @@ const styles = StyleSheet.create({
 		marginBottom: 12,
 		fontSize: 12,
 		color: '#6B7280',
+	},
+	traitCtaCard: {
+		marginHorizontal: 20,
+		marginBottom: 24,
+		padding: 20,
+		borderRadius: 20,
+		backgroundColor: '#ECFDF5',
+		borderWidth: 1,
+		borderColor: '#A7F3D0',
+	},
+	traitCtaEyebrow: {
+		fontSize: 12,
+		fontWeight: '700',
+		color: '#047857',
+		textTransform: 'uppercase',
+		marginBottom: 6,
+		letterSpacing: 1,
+	},
+	traitCtaTitle: {
+		fontSize: 18,
+		fontWeight: '700',
+		color: '#064E3B',
+		marginBottom: 6,
+	},
+	traitCtaBody: {
+		fontSize: 14,
+		color: '#065F46',
+		marginBottom: 16,
+	},
+	traitCtaButton: {
+		alignSelf: 'flex-start',
+		paddingHorizontal: 18,
+		paddingVertical: 10,
+		borderRadius: 999,
+		backgroundColor: '#10B981',
+	},
+	traitCtaButtonText: {
+		color: '#FFFFFF',
+		fontWeight: '700',
 	},
 	filterTitle: {
 		fontSize: 18,

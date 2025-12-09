@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { format } from "date-fns";
 
+import { buildActivitySavePayload, type ActivityRow } from "@dowhat/shared";
 import WebActivityIcon from "./WebActivityIcon";
-import RsvpQuickActions from "./RsvpQuickActions";
+import SessionAttendanceQuickActions from "./SessionAttendanceQuickActions";
 import SessionAttendanceList from "./SessionAttendanceList";
+import SaveToggleButton from "./SaveToggleButton";
 
 type Venue = {
   id?: string | null;
@@ -84,6 +86,42 @@ export default function ActivityCard({ activity, sessions, currentUserId }: Prop
   const primaryVenueId = primary?.venue_id ?? primaryVenueMeta.id;
   const venueLabel = primary ? primaryVenueMeta.name : "Flexible location";
 
+  const sessionRowsForSave: ActivityRow[] = sessions.map((session, index) => {
+    const venueMeta = toVenueMeta(session.venues);
+    const fallbackId = `${activityId ?? "activity"}-session-${index}`;
+    return {
+      id: session.id ?? fallbackId,
+      price_cents: session.price_cents ?? null,
+      starts_at: session.starts_at ?? null,
+      ends_at: session.ends_at ?? null,
+      activities: {
+        id: activityId ?? undefined,
+        name: title,
+      },
+      venues: {
+        name: venueMeta.name ?? null,
+      },
+    } satisfies ActivityRow;
+  });
+
+  const baseActivityPayload = buildActivitySavePayload(
+    { id: activityId ?? null, name: title },
+    sessionRowsForSave,
+    { source: "web_activity_card" },
+  );
+
+  const savePayload = baseActivityPayload
+    ? {
+        ...baseActivityPayload,
+        venueId: primaryVenueId ?? baseActivityPayload.venueId,
+        address: baseActivityPayload.address ?? venueLabel ?? undefined,
+        metadata: {
+          ...(baseActivityPayload.metadata ?? {}),
+          primarySessionId: primary?.id ?? null,
+        },
+      }
+    : null;
+
   const isHostedByUser = Boolean(
     currentUserId && sortedSessions.some((session) => session.created_by && session.created_by === currentUserId)
   );
@@ -116,13 +154,14 @@ export default function ActivityCard({ activity, sessions, currentUserId }: Prop
               )}
             </div>
           </div>
-          {primary && (
-            <div className="text-right">
+          <div className="flex flex-col items-end gap-2 text-right">
+            {primary && (
               <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700">
                 {toPriceLabel(primary.price_cents)}
               </span>
-            </div>
-          )}
+            )}
+            <SaveToggleButton payload={savePayload} className="self-end" />
+          </div>
         </div>
 
         {primary && (
@@ -134,14 +173,11 @@ export default function ActivityCard({ activity, sessions, currentUserId }: Prop
               </div>
 
               {primary.id && (
-                <SessionAttendanceList sessionId={primary.id} activityId={activityId ?? null} className="mt-1" />
+                <>
+                  <SessionAttendanceList sessionId={primary.id} className="mt-1" />
+                  <SessionAttendanceQuickActions sessionId={primary.id} className="mt-1" />
+                </>
               )}
-
-              <RsvpQuickActions
-                activityId={activityId}
-                sessionId={primary.id ?? null}
-                className="mt-1"
-              />
             </div>
           </div>
         )}
@@ -186,18 +222,18 @@ export default function ActivityCard({ activity, sessions, currentUserId }: Prop
                         )}
                       </div>
                       {session.id && (
-                        <SessionAttendanceList
-                          sessionId={session.id}
-                          activityId={activityId ?? null}
-                          className="justify-end"
-                        />
+                        <>
+                          <SessionAttendanceList
+                            sessionId={session.id}
+                            className="justify-end"
+                          />
+                          <SessionAttendanceQuickActions
+                            sessionId={session.id}
+                            size="compact"
+                            className="sm:self-end"
+                          />
+                        </>
                       )}
-                      <RsvpQuickActions
-                        activityId={activityId}
-                        sessionId={session.id ?? null}
-                        size="compact"
-                        className="sm:self-end"
-                      />
                     </div>
                   </li>
                 );

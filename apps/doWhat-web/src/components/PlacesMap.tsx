@@ -9,6 +9,9 @@ import type { LayerProps } from "react-map-gl";
 
 import { formatPlaceUpdatedLabel, type PlaceSummary } from "@dowhat/shared";
 
+import SaveToggleButton from "@/components/SaveToggleButton";
+import { buildPlaceSavePayload } from "@/lib/savePayloads";
+
 const MAPBOX_TOKEN =
   process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
   process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
@@ -249,6 +252,13 @@ export function PlacesMap({ center, places, selectedPlaceId, onMoveEnd, onSelect
                 </div>
               ) : null}
               <div className="mt-2 text-xs text-slate-500">{formatPlaceUpdatedLabel(selected)}</div>
+              <div className="mt-4 flex justify-end">
+                <SaveToggleButton
+                  size="sm"
+                  className="w-full justify-center"
+                  payload={buildPlaceSavePayload(selected)}
+                />
+              </div>
             </div>
           </Popup>
         ) : null}

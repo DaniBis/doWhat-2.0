@@ -112,6 +112,7 @@ AS $$
 DECLARE
   verified TEXT[] := ARRAY[]::TEXT[];
   needs_review BOOLEAN := FALSE;
+  rec RECORD;
 BEGIN
   PERFORM 1 FROM public.venues WHERE id = target_venue FOR UPDATE;
   IF NOT FOUND THEN

@@ -9,11 +9,11 @@ import {
 } from '@/lib/venues/constants';
 import type { ActivityName } from '@/lib/venues/constants';
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from '@/lib/venues/types';
-import type { Database, Json } from '@/types/database';
+import type { Json, VenueRow } from '@/types/database';
 
 const ACTIVITY_SET = new Set<ActivityName>(ACTIVITY_NAMES);
 
-type Supabase = SupabaseClient<Database>;
+type Supabase = SupabaseClient;
 
 type GeoBounds = {
   sw: { lat: number; lng: number };
@@ -52,9 +52,23 @@ type VoteRow = {
 type DiscoveryMetadata = {
   categories: string[];
   keywords: string[];
+  rating: number | null;
+  priceLevel: number | null;
+  photos: string[];
+  address?: {
+    formatted?: string | null;
+    locality?: string | null;
+    region?: string | null;
+    country?: string | null;
+    postcode?: string | null;
+  } | null;
+  timezone?: string | null;
+  openNow?: boolean | null;
+  hoursSummary?: string | null;
+  hours?: Record<string, unknown> | null;
 };
 
-type VenueRowLite = Database['public']['Tables']['venues']['Row'];
+type VenueRowLite = VenueRow;
 
 export interface VenueSearchDebug {
   limitApplied: number;
@@ -83,7 +97,8 @@ export async function searchVenueActivities(
   const { data: venues, error } = await query;
   if (error) throw error;
 
-  const filtered = (venues ?? []).filter((row) => venueSupportsActivity(row, params.activity));
+  const rows = (venues ?? []) as VenueRow[];
+  const filtered = rows.filter((row) => venueSupportsActivity(row, params.activity));
   const venueIds = filtered.map((row) => row.id);
   const voteMap = await fetchVoteMap(supabase, venueIds, params.activity);
 
@@ -118,6 +133,8 @@ export async function listActivitiesSummary(params: ActivitySummaryParams): Prom
   const { data: venues, error } = await query;
   if (error) throw error;
 
+  const rows = (venues ?? []) as VenueRow[];
+
   const summaryMap = new Map<ActivityName, ActivityAvailabilitySummary & { confidenceSum: number; confidenceCount: number }>();
 
   ACTIVITY_NAMES.forEach((activity) => {
@@ -133,7 +150,7 @@ export async function listActivitiesSummary(params: ActivitySummaryParams): Prom
     });
   });
 
-  (venues ?? []).forEach((venue) => {
+  rows.forEach((venue) => {
     const verifiedSet = new Set(filterActivityNames(venue.verified_activities));
     const aiTags = new Set(filterActivityNames(venue.ai_activity_tags));
 
@@ -178,11 +195,9 @@ export async function listActivitiesSummary(params: ActivitySummaryParams): Prom
   });
 }
 
-type VenueQueryBuilder = PostgrestFilterBuilder<
-  Database['public'],
-  Database['public']['Tables']['venues']['Row'],
-  Database['public']['Tables']['venues']['Row']
->;
+// Supabase's Postgrest builder exposes deeply nested generics we don't leverage here.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type VenueQueryBuilder = PostgrestFilterBuilder<any, any, any, any, any, any, any>;
 
 function applyGeoFilters<T extends VenueQueryBuilder>(query: T, filters: GeoFilters): T {
   if (filters.bounds) {
@@ -250,12 +265,20 @@ function buildRankedActivity(
     categoryMatch,
     keywordMatch,
   });
+  const displayAddress = formatVenueAddress(row, discovery);
 
   return {
     venueId: row.id,
     venueName: row.name ?? 'Unnamed venue',
     lat: row.lat,
     lng: row.lng,
+    displayAddress,
+    primaryCategories: discovery.categories.slice(0, 4),
+    rating: discovery.rating,
+    priceLevel: discovery.priceLevel,
+    photoUrl: discovery.photos[0] ?? null,
+    openNow: discovery.openNow ?? null,
+    hoursSummary: discovery.hoursSummary ?? null,
     activity,
     aiConfidence,
     userYesVotes,
@@ -297,13 +320,32 @@ export function resolveActivityConfidence(scores: Json | null, activity: Activit
 
 function extractDiscoveryMetadata(metadata: Json | null): DiscoveryMetadata {
   if (!isJsonObject(metadata)) {
-    return { categories: [], keywords: [] };
+    return {
+      categories: [],
+      keywords: [],
+      rating: null,
+      priceLevel: null,
+      photos: [],
+      address: null,
+      timezone: null,
+      openNow: null,
+      hoursSummary: null,
+      hours: null,
+    };
   }
   const container = metadata as Record<string, unknown> & { discovery?: unknown };
   const discovery = isJsonObject(container.discovery) ? container.discovery : {};
   return {
     categories: toStringArray(discovery.categories),
     keywords: toStringArray(discovery.keywords),
+    rating: toNumber(discovery.rating),
+    priceLevel: toNumber(discovery.priceLevel),
+    photos: toStringArray(discovery.photos),
+    address: parseDiscoveryAddress(discovery.address),
+    timezone: typeof discovery.timezone === 'string' ? discovery.timezone : null,
+    openNow: typeof discovery.openNow === 'boolean' ? discovery.openNow : null,
+    hoursSummary: typeof discovery.hoursSummary === 'string' ? discovery.hoursSummary : null,
+    hours: isJsonObject(discovery.hours) ? (discovery.hours as Record<string, unknown>) : null,
   };
 }
 
@@ -322,6 +364,50 @@ function toStringArray(value: unknown): string[] {
   return value
     .map((item) => (typeof item === 'string' ? item.trim() : null))
     .filter((item): item is string => Boolean(item));
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseDiscoveryAddress(value: unknown): DiscoveryMetadata['address'] {
+  if (!isJsonObject(value)) return null;
+  const address = value as Record<string, unknown>;
+  const formatted = typeof address.formatted === 'string' ? address.formatted : null;
+  const locality = typeof address.locality === 'string' ? address.locality : null;
+  const region = typeof address.region === 'string' ? address.region : null;
+  const country = typeof address.country === 'string' ? address.country : null;
+  const postcode = typeof address.postcode === 'string' ? address.postcode : null;
+  if (!formatted && !locality && !region && !country && !postcode) {
+    return null;
+  }
+  return { formatted, locality, region, country, postcode };
+}
+
+function formatVenueAddress(row: VenueRowLite, discovery: DiscoveryMetadata): string | null {
+  if (typeof row.address === 'string' && row.address.trim().length) {
+    return row.address.trim();
+  }
+  if (discovery.address?.formatted) {
+    return discovery.address.formatted;
+  }
+  return joinAddressParts([
+    discovery.address?.locality,
+    discovery.address?.region,
+    discovery.address?.country,
+  ]);
+}
+
+function joinAddressParts(parts: Array<string | null | undefined>): string | null {
+  const cleaned = parts
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+  return cleaned.length ? cleaned.join(', ') : null;
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

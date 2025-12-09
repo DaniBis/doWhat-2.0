@@ -4,19 +4,9 @@
 
 import '@testing-library/jest-native/extend-expect';
 import { jest } from '@jest/globals';
+import type { ReactNode } from 'react';
 
 // Mock expo modules
-jest.mock('expo-constants', () => ({
-  default: {
-    expoConfig: {
-      extra: {
-        supabaseUrl: 'http://localhost:54321',
-        supabaseKey: 'test-key'
-      }
-    }
-  }
-}));
-
 jest.mock('expo-router', () => {
   const router = {
     push: jest.fn(),
@@ -27,7 +17,17 @@ jest.mock('expo-router', () => {
     router,
     useRouter: () => router,
     useLocalSearchParams: () => ({}),
-    Link: ({ children }: { children: React.ReactNode }) => children,
+    Link: ({ children }: { children: ReactNode }) => children,
+  };
+});
+
+jest.mock('react-native-safe-area-context', () => {
+  const ReactActual = jest.requireActual<typeof import('react')>('react');
+  return {
+    ...jest.requireActual('react-native-safe-area-context'),
+    SafeAreaProvider: ({ children }: { children: ReactNode }) =>
+      ReactActual.createElement(ReactActual.Fragment, null, children),
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
 

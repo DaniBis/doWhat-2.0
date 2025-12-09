@@ -1,6 +1,6 @@
 # doWhat — Web + Mobile (Expo) with Supabase
 
-This monorepo contains a Next.js web app and an Expo (React Native) mobile app that share a tiny utilities package. Supabase powers auth and data (sessions, RSVPs, profiles, venues, activities) and we use Postgres RPC for nearby search.
+This monorepo contains a Next.js web app and an Expo (React Native) mobile app that share a tiny utilities package. Supabase powers auth and data (sessions, session_attendees, profiles, venues, activities) and we use Postgres RPC for nearby search.
 
 ## Structure
 
@@ -189,6 +189,16 @@ pnpm seed:events:bangkok   # runs ingest once via /api/cron/events/run
 Use these commands before demos to ensure real data for Bangkok appears in both web and mobile map listings.
 
 Additional details on the event harvester live in `docs/events-ingestion.md` (source formats, tagging rules, etc.).
+
+### Session attendance views
+
+Migration `030_attendance_views.sql` introduces helper views so both web and mobile clients can query consolidated counts without bespoke aggregation logic:
+
+- `v_session_attendance_counts` — going/interested/declined counts per session plus the last response timestamp.
+- `v_activity_attendance_summary` — roll-up of total/upcoming sessions and attendance counts per activity.
+- `v_venue_attendance_summary` — the same roll-up grouped by venue.
+
+Expose these views through Supabase RPC or REST when you need attendee totals for discovery cards, places/venue detail screens, or admin analytics.
 
 ### Places layer overview
 

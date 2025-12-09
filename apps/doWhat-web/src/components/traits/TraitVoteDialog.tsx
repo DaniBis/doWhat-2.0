@@ -287,7 +287,7 @@ function ParticipantCard({
 }) {
   const initials = React.useMemo(() => getInitials(participant.name), [participant.name]);
   return (
-    <div className="rounded-3xl border border-gray-100 p-4 shadow-sm">
+    <div className="rounded-3xl border border-gray-100 p-4 shadow-sm" data-testid={`trait-voter-${participant.id}`}>
       <div className="flex flex-wrap items-center gap-3">
         <Avatar className="h-12 w-12">
           {participant.avatarUrl ? (

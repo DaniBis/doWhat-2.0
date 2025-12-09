@@ -1,11 +1,18 @@
 import type { ActivityName } from '@/lib/venues/constants';
 
-const YOGA_ACTIVITY = 'Yoga Flow' as ActivityName;
-const PICKLEBALL_ACTIVITY = 'Pickleball' as ActivityName;
+function getMockActivities() {
+  return {
+    YOGA_ACTIVITY: 'Yoga Flow' as ActivityName,
+    PICKLEBALL_ACTIVITY: 'Pickleball' as ActivityName,
+  } as const;
+}
 
-jest.mock('@/lib/venues/constants', () => ({
-  ACTIVITY_NAMES: [YOGA_ACTIVITY, PICKLEBALL_ACTIVITY],
-}));
+jest.mock('@/lib/venues/constants', () => {
+  const { YOGA_ACTIVITY, PICKLEBALL_ACTIVITY } = getMockActivities();
+  return {
+    ACTIVITY_NAMES: [YOGA_ACTIVITY, PICKLEBALL_ACTIVITY],
+  };
+});
 
 jest.mock('@dowhat/shared', () => ({
   activityTaxonomy: [
@@ -91,10 +98,14 @@ describe('buildVenueTaxonomySupport', () => {
     expect(support.taxonomy).toHaveLength(2);
     const body = support.taxonomy[0];
     const bodyTier2 = body.children[0]!;
-    expect(bodyTier2.children).toEqual([{ id: 'tier3-yoga', label: 'Yoga Flow' }]);
+    expect(bodyTier2.children).toEqual([
+      expect.objectContaining({ id: 'tier3-yoga', label: 'Yoga Flow' }),
+    ]);
     const fun = support.taxonomy[1];
     const funTier2 = fun.children[0]!;
-    expect(funTier2.children).toEqual([{ id: 'tier3-pickleball', label: 'Pickleball' }]);
+    expect(funTier2.children).toEqual([
+      expect.objectContaining({ id: 'tier3-pickleball', label: 'Pickleball' }),
+    ]);
   });
 
   it('maps activity names and tier3 ids bidirectionally', () => {
@@ -114,3 +125,5 @@ describe('normaliseLabel', () => {
     expect(__private__.normaliseLabel('  Yoga Flow ')).toBe('yoga flow');
   });
 });
+
+const { YOGA_ACTIVITY, PICKLEBALL_ACTIVITY } = getMockActivities();

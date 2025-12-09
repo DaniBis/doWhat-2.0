@@ -328,7 +328,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
             </p>
           </div>
           <Link
-            href="/venues"
+            href={{ pathname: "/venues" }}
             className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
           >
             Open verification hub →

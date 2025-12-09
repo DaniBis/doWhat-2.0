@@ -4,7 +4,6 @@ import { createClient } from "@/lib/supabase/server";
 import { TraitSystemError, recordTraitVotes, saveOnboardingTraits } from "@/lib/trait-system";
 import { onboardingTraitsSchema, traitVoteSchema } from "@/lib/validation/traits";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
-import type { Database } from "@/types/database";
 import type { TraitOnboardingPayload, TraitVoteRequest, TraitVoteResult } from "@/types/traits";
 
 export type ActionResult<T = unknown> =
@@ -15,7 +14,7 @@ export async function completeTraitOnboardingAction(
   payload: TraitOnboardingPayload
 ): Promise<ActionResult> {
   try {
-    const supabase = createClient<Database>();
+    const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -41,7 +40,7 @@ export async function submitTraitVotesAction(
   payload: TraitVoteRequest
 ): Promise<ActionResult<TraitVoteResult>> {
   try {
-    const supabase = createClient<Database>();
+    const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();

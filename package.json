@@ -18,8 +18,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "db:migrate": "psql \"$SUPABASE_DB_URL\" -f apps/doWhat-web/src/lib/supabase/migrations/007_badges.sql && psql \"$SUPABASE_DB_URL\" -f apps/doWhat-web/src/lib/supabase/migrations/008_traits.sql && psql \"$SUPABASE_DB_URL\" -f apps/doWhat-web/src/lib/supabase/migrations/009_policies.sql && psql \"$SUPABASE_DB_URL\" -f apps/doWhat-web/src/lib/supabase/migrations/010_reliability.sql && psql \"$SUPABASE_DB_URL\" -f apps/doWhat-web/src/lib/supabase/migrations/011_schema_consolidation.sql",
-    "health": "curl -sf http://localhost:3002/api/health | jq .ok || true",
+    "db:migrate": "node run_migrations.js",
+    "health": "node scripts/health-env.mjs && node scripts/health-trait-policies.mjs && (curl -sf http://localhost:3002/api/health | jq .ok || true)",
     "ci": "pnpm install --frozen-lockfile && pnpm -w run typecheck && pnpm -w run lint && pnpm -w run test && pnpm --filter dowhat-web run build && (pnpm --filter dowhat-web run start &) && node -e \"const http=require('node:http');const url='http://localhost:3002/api/health';let i=0;const max=30;const wait=2000;function poll(){i++;http.get(url,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{try{const j=JSON.parse(d);if(j.ok){console.log('Health OK');process.exit(0)}else{console.error('Health not OK yet');if(i<max)setTimeout(poll,wait);else process.exit(1)}}catch(e){if(i<max)setTimeout(poll,wait);else{console.error('Health parse error',e);process.exit(1)}}})}).on('error',e=>{if(i<max)setTimeout(poll,wait);else{console.error('Health request error',e);process.exit(1)}})}poll();\"",
     "cron:traits:batch": "curl -s -X POST -H x-cron-secret:$CRON_SECRET 'http://localhost:3002/api/traits/recompute/all?limit=50&offset=0'",
     "events:dry-run": "node scripts/events-dry-run.cjs",
@@ -33,6 +33,7 @@
   "devDependencies": {
     "@jest/globals": "^29.3.1",
     "@next/swc-darwin-arm64": "14.2.3",
+    "@playwright/test": "^1.57.0",
     "@types/jest": "^29.5.12",
     "@types/pg": "^8.11.6",
     "@typescript-eslint/eslint-plugin": "^7.18.0",

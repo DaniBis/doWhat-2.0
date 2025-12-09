@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { format, isAfter, isBefore, parseISO } from "date-fns";
 
-import RsvpQuickActions from "./RsvpQuickActions";
+import { buildSessionSavePayload, type ActivityRow } from "@dowhat/shared";
+import SessionAttendanceQuickActions from "./SessionAttendanceQuickActions";
 import SessionAttendanceList from "./SessionAttendanceList";
 import WebActivityIcon from "./WebActivityIcon";
+import SaveToggleButton from "./SaveToggleButton";
 
 export type ScheduleActivity = {
   id: string;
@@ -330,6 +332,35 @@ export default function ActivityScheduleBoard({
                   const duration = formatDuration(start, end);
                   const venue = toVenueMeta(session);
                   const priceLabel = toPriceLabel(session.price_cents);
+                  const activityRow: ActivityRow = {
+                    id: session.id,
+                    price_cents: session.price_cents ?? null,
+                    starts_at: session.starts_at ?? null,
+                    ends_at: session.ends_at ?? null,
+                    activities: {
+                      id: activity.id,
+                      name: activity.name,
+                    },
+                    venues: {
+                      name: venue.name ?? null,
+                    },
+                  };
+                  const baseSavePayload = buildSessionSavePayload(activityRow, {
+                    source: "web_activity_schedule",
+                  });
+                  const savePayload = baseSavePayload
+                    ? {
+                        ...baseSavePayload,
+                        venueId: venue.id ?? baseSavePayload.venueId,
+                        address: baseSavePayload.address ?? venue.name ?? undefined,
+                        metadata: {
+                          ...(baseSavePayload.metadata ?? {}),
+                          venueId: venue.id ?? null,
+                          venueLat: venue.lat ?? null,
+                          venueLng: venue.lng ?? null,
+                        },
+                      }
+                    : null;
 
                   return (
                     <li key={session.id} className={sessionItemClasses}>
@@ -348,19 +379,19 @@ export default function ActivityScheduleBoard({
                       </div>
                       <div className="flex flex-col items-start gap-3 sm:items-end">
                         {session.id ? (
-                          <SessionAttendanceList
-                            sessionId={session.id}
-                            activityId={activity.id}
-                            className="justify-end"
-                          />
+                          <>
+                            <SessionAttendanceList
+                              sessionId={session.id}
+                              className="justify-end"
+                            />
+                            <SessionAttendanceQuickActions
+                              sessionId={session.id}
+                              size={density === "compact" ? "compact" : "default"}
+                              className="sm:self-end"
+                            />
+                          </>
                         ) : null}
-                        <RsvpQuickActions
-                          activityId={activity.id}
-                          sessionId={session.id ?? null}
-                          size={density === "compact" ? "compact" : "default"}
-                          className="sm:self-end"
-                        />
-                        <div className="flex flex-wrap gap-2 text-sm font-semibold text-emerald-600">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-emerald-600">
                           {session.id ? (
                             <Link
                               href={{ pathname: `/sessions/${session.id}` }}
@@ -377,6 +408,7 @@ export default function ActivityScheduleBoard({
                               Venue schedule →
                             </Link>
                           )}
+                          <SaveToggleButton payload={savePayload} />
                         </div>
                       </div>
                     </li>

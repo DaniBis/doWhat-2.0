@@ -1,6 +1,166 @@
 # Assistant Change Log
 
+## 2025-12-07
+- Landed an `/admin/new` Playwright flow test (`apps/doWhat-web/tests/e2e/admin-new-prefill.spec.ts`) that seeds Supabase auth/session state, mocks activities/venues, dismisses the geo banner, and asserts the banner/summary/warning/resets all behave when query prefills include taxonomy, coordinates, and venue metadata.
+- Rebuilt the `/admin/new` client logic (`apps/doWhat-web/src/app/admin/new/page.tsx`) so prefills regain their source label, summary list, warnings, and reset handling, normalize coordinates to six decimals, and optionally bypass the admin allowlist whenever `NEXT_PUBLIC_E2E_ADMIN_BYPASS` is paired with `?e2e=1` (used only in automation).
+- Documented the `NEXT_PUBLIC_E2E_ADMIN_BYPASS` flag usage so Playwright runs can pass `?e2e=1` and bypass the allowlist without affecting real admins, keeping the new prefills spec hermetic while leaving production rules unchanged.
+- Added an `/admin/sessions` Playwright spec (`apps/doWhat-web/tests/e2e/admin-sessions-plan.spec.ts`) that mocks Supabase auth/data, dismisses the geo banner, and verifies the “Plan another” link encodes activity, venue, taxonomy, coordinate, price, and schedule parameters before launching `/admin/new`.
+- Updated the `/admin/sessions` page to honor the `NEXT_PUBLIC_E2E_ADMIN_BYPASS` + `?e2e=1` combo so automation can reach the manage table without depending on the real allowlist while keeping production behavior unchanged.
+- Added an `/admin` dashboard Playwright spec (`apps/doWhat-web/tests/e2e/admin-dashboard-plan.spec.ts`) that seeds Supabase auth, stubs venues/sessions/profile counts, and asserts the overview table’s “Plan another” CTA emits the full clone query (activity, venue, taxonomy, coordinates, price, schedule, source).
+- Updated the admin dashboard page to respect the same `NEXT_PUBLIC_E2E_ADMIN_BYPASS` flag so test runs can skip the allowlist gate while real admins still rely on the configured email list.
+- Added an `/admin/venues` Playwright flow (`apps/doWhat-web/tests/e2e/admin-venues-manage.spec.ts`) that seeds auth, mocks Supabase venue/search/save endpoints, dismisses the geofence banner, confirms the venues table renders Save toggles, verifies the inline “Add venue” form, exercises the search empty state, and deletes a venue row end-to-end via the mocked REST API.
+- Documented the Supabase migration plan for files 025–031 by archiving the old `database_updates.sql`, replacing it with a runbook that points to `run_migrations.js`, adding `docs/migrations_025-031_validation.md`, and updating `package.json`’s `db:migrate` script so every environment replays the numbered migrations instead of bespoke SQL.
+
+## 2025-12-06
+- Extended Step 6 monitoring work: the `/api/cleanup` route now enforces the admin allowlist and records every batch delete in `admin_audit_logs`, and a new export endpoint (`apps/doWhat-web/src/app/api/admin/audit-logs/route.ts`) serves JSON or CSV downloads that the `/admin` dashboard links to via a “Download CSV” control.
+- Delivered Step 6 monitoring upgrades: added Supabase migration `034_admin_audit_logs.sql` to create `admin_allowlist` + `admin_audit_logs` with RLS, wired the `/admin` dashboard with search input, growth highlight cards, and a live audit log table, and prompt admins for optional deletion reasons before logging session/venue deletes.
+- Added the first Playwright smoke suite so `npx playwright test --project=chromium` now spins up the Next dev server and pings `/api/health`; config lives at `playwright.config.ts` and the spec (`apps/doWhat-web/tests/e2e/health.spec.ts`) asserts the health response shape without depending on seeded Supabase data.
+- Added an admin gate Playwright spec (`apps/doWhat-web/tests/e2e/admin-gate.spec.ts`) to ensure `/admin`, `/admin/sessions`, and `/admin/new` continue to block anonymous visitors, aligning with Roadmap Step 4’s host-tooling guardrails.
+- Added RTL coverage for the venue verification page (`apps/doWhat-web/src/app/venues/__tests__/page.test.tsx`) backed by `@testing-library/user-event`; the suite exercises the status filter chips plus the Save/plan CTA wiring so the new shared taxonomy/save helpers stay regression-safe.
+- Extended the same venue verification RTL suite to cover vote success + auth-error flows, ensuring the `/api/vote-activity` handler updates list counts, renders success copy, and surfaces sign-in prompts when Supabase rejects anonymous votes.
+- Added another RTL scenario for the venue verification detail drawer so selecting a new venue updates the drawer heading, the `/admin/new` plan link (with encoded venue metadata), and the Save toggle payload, keeping the host-facing drawer UI regression-safe.
+- `/admin/new` now lists coordinates in the prefill summary even when clone links only supply one of latitude/longitude, showing a placeholder for the missing value and keeping ops aware of partial data; the RTL suite (`apps/doWhat-web/src/app/admin/new/__tests__/page.test.tsx`) covers the new summary row.
+- Surfaced taxonomy badges inside the map popup so the saved-activity experience mirrors the shared presets: a new helper (`apps/doWhat-web/src/lib/activityCategoryLabels.ts`) normalizes tier3 ids (covered by `src/lib/__tests__/activityCategoryLabels.test.ts`), and `WebMap.tsx` now renders the canonical labels for each selected activity.
+- Extracted the venue verification taxonomy plumbing into `apps/doWhat-web/src/lib/venues/taxonomySupport.ts` and added focused tests (`src/lib/venues/__tests__/taxonomySupport.test.ts`) so the shared tier3 filtering stays aligned with ACTIVITY_NAMES while we iterate on the host map tooling.
+- Moved the venue Save payload builder out of the page component and into `apps/doWhat-web/src/lib/venues/savePayload.ts`, covering it with `src/lib/venues/__tests__/savePayload.test.ts` so venue verification Save toggles always emit the shared metadata expected by Saved Activities.
+
+## 2025-12-05
+- Added a venue safety warning on `/admin/new`: when clone links omit the venue address or coordinates we now surface an amber banner reminding ops to confirm the location before publishing; extended the RTL suite (`page.test.tsx`) to cover the new warnings and partial-coordinate handling.
+- `/admin/new` now renders the venue summary row even when only a `venueAddress` is supplied and treats address/coordinate-only prefills as "venue context" so the amber warning banner still appears; added RTL coverage for both the address-only summary and the coordinate-only warning path.
+- Extended the `/admin/sessions` table so every row now exposes a "Plan another" link powered by `buildSessionCloneQuery`, reusing the session’s activity, taxonomy, price, venue address, and coordinates when ops need to spin up a follow-on listing without jumping back to the main dashboard.
+- Added RTL coverage for `/admin/sessions` so the new "Plan another" links stay regression-safe and unauthorized admins remain locked out; the suite mocks Supabase rows to ensure the clone helper receives the full venue address + coordinate metadata.
+- Added a matching RTL suite for the main `/admin` dashboard so its "Plan another" links keep piping venue address/coordinate metadata into `buildSessionCloneQuery`, and to ensure the allowlist gate still blocks non-admins on the overview page.
+- Extended the host venue verification deep-links so `/admin/new` receives structured context:
+  - `apps/doWhat-web/src/app/venues/page.tsx` now passes the active taxonomy tier3 id + a `source` tag through every "Plan an event" link, points both CTA buttons at `/admin/new`, and surfaces contextual helper copy/tooltips so hosts know which filters/coordinates will be prefilled.
+  - Added `buildPrefillContextSummary` so both the list items and the detail drawer reuse the same description + aria-label text, keeping the new accessibility hints consistent.
+- Extracted and expanded the admin prefill helpers:
+  - Introduced `apps/doWhat-web/src/lib/adminPrefill.ts` with reusable helpers for building create-event query params, normalising taxonomy IDs (including multi-select support), and generating accessible summaries.
+  - `apps/doWhat-web/src/app/venues/page.tsx` now imports the shared helpers so it can emit both `categoryId` + `categoryIds` parameters for future multi-preset links.
+  - `/admin/new` parses the `categoryIds` list, hydrates all taxonomy chips, shows every preset in the banner + summary card, and keeps the reset button clearing all hydrated categories.
+- Added Jest coverage for the new helpers via `apps/doWhat-web/src/lib/__tests__/adminPrefill.test.ts`, covering query param generation, context summaries, and taxonomy normalisation edge cases.
+- Added RTL coverage for `/admin/new` via `apps/doWhat-web/src/app/admin/new/__tests__/page.test.tsx`, exercising the prefill banner/summary rendering (multi-category clones) and ensuring the "Clear prefills" control resets every hydrated field back to the default schedule.
+- `/admin/new` now reads `venueAddress` from query prefills (surfaced by venue verification + the new session clone links) and includes it inside the summary list so ops see the exact location context before publishing; the RTL suite asserts the new venue line.
+- Upgraded `/admin/new` to hydrate and explain taxonomy prefills:
+  - The prefill parser now understands `categoryId` + `source`, seeds `TaxonomyCategoryPicker` selections, and displays a status banner with source attribution + accessible announcements.
+  - Added a prefill summary card (activity, venue, coordinates, taxonomy, price/schedule) plus a "Clear prefills" control that resets all fields/schedule/coordinates to defaults.
+  - Documented the new helpers with better aria-label/title text so screen readers hear when prefills are present or cleared.
+- Centralized the activity filter knobs so both clients import the same presets/helpers:
+  - Added `packages/shared/src/preferences/activityFilterOptions.ts` (re-exported via `src/index.ts`) with shared price/distance/time option metadata, default radius/price constants, canonical time-of-day helpers, and resolver utilities for mapping UI keys ⇄ stored ranges/values.
+  - Ensures future analytics/reporting only need to reason about one set of filter constants instead of drifting per-surface copies.
+- Rebased the Activity Filter screens on the shared module:
+  - `apps/doWhat-mobile/src/app/filter.tsx` now imports the shared presets, uses the resolver helpers to hydrate/persist Supabase-backed preferences, and keeps the “free only” toggle + taxonomy picker behavior intact.
+  - `apps/doWhat-web/src/app/filter/page.tsx` now drives radius/price/time controls off the same data, adds reusable price pills, canonicalizes stored time-of-day values (covering legacy `morning` IDs), and renders summary chips with the shared metadata.
+- Extended the People Filter parity work:
+  - Added `packages/shared/src/preferences/peopleFilterOptions.ts` so both clients reference the same skill level/age range/group size strings.
+  - `apps/doWhat-mobile/src/app/people-filter.tsx` now consumes the shared arrays, keeping Supabase & UI copy in sync with web.
+  - `apps/doWhat-web/src/app/people-filter/page.tsx` now reuses the shared taxonomy picker, time-of-day presets, distance/price helpers, and people filter arrays, plus canonicalizes stored time-of-day values before persisting to Supabase/local storage.
+- Rebuilt the Admin Dashboard filters so host tooling uses the shared taxonomy/time presets:
+  - `apps/doWhat-web/src/app/admin/page.tsx` now includes a `TaxonomyCategoryPicker` + shared time-of-day pills, filters session lists/top categories against those selections, and maps Supabase activity types to canonical tier1+tier3 labels via the shared taxonomy index.
+  - Keeps ops workflows aligned with the consumer Activity Filter while preserving delete/edit actions.
+- Extended the admin session creation flow so host tooling tags new activities with the shared taxonomy:
+  - `apps/doWhat-web/src/app/admin/new/page.tsx` now embeds the `TaxonomyCategoryPicker`, hydrates selections when admins pick an existing activity, and persists the chosen tier3 ids back to Supabase for both new inserts and edits.
+  - Keeps Save/discovery filters aligned by ensuring every activity created via `/admin/new` carries the same `activity_types` metadata as consumer-facing surfaces.
+- Brought the host venue verification map onto the shared taxonomy + distance presets:
+  - `apps/doWhat-web/src/app/venues/page.tsx` now exposes the shared `TaxonomyCategoryPicker` (filtered down to supported activities) and reuses the Activity Filter distance pills so hosts review AI suggestions with the same knobs as consumers.
+  - Keeps analytics aligned by mapping taxonomy selections back to the legacy `ACTIVITY_NAMES` enum before fetching venues, while surfacing the shared UI affordances in the verification workflow.
+- Polished the `/admin/new` flow with query-prefill + validation helpers:
+  - Added URL param hydration (activity/venue IDs, coordinates, schedule, price) plus coordinate validation hints so ops can jump from host tooling links straight into a ready-to-save draft.
+  - Coordinates now warn on partial/invalid values, defaults auto-populate the schedule window, and we show a prefill banner reminding admins to confirm taxonomy tags before publishing.
+- Verified via `pnpm -w run typecheck`.
+- Added regression coverage for the shared Save payload adapters:
+  - `apps/doWhat-web/src/components/__tests__/ActivityCard.test.tsx` now ensures the card feeds its Save toggle via `buildActivitySavePayload` (with venue + primary session metadata), and `ActivityScheduleBoard.test.tsx` verifies the session-level builder wiring.
+  - `apps/doWhat-web/src/lib/__tests__/savePayloads.test.ts` checks that the venue helper decorates the shared builder with map-specific metadata, and `jest.config.js` now maps `@dowhat/shared` to the monorepo source so these suites can resolve the shared helpers.
+- Verified via `pnpm --filter dowhat-web test -- ActivityCard ActivityScheduleBoard savePayloads`.
+- Expanded the Saved Activities provider coverage:
+  - `apps/doWhat-web/src/contexts/__tests__/SavedActivitiesContext.test.tsx` now includes inline snapshots for the hydrated state plus a refresh-without-auth scenario, ensuring the provider clears items/error when users sign out.
+  - Added a serialiser helper so future shape changes break the snapshot, and wrapped the auth state change in `act()` to mirror real lifecycle updates.
+- Verified via `pnpm --filter dowhat-web test -- SavedActivitiesContext`.
+- Reworked the web Activity Filters surface to consume the shared taxonomy:
+  - `apps/doWhat-web/src/app/filter/page.tsx` now renders the shared `TaxonomyCategoryPicker` backed by `activityTaxonomy`/`defaultTier3Index`, so filter chips display the canonical tier1+tier3 labels instead of a bespoke list.
+  - Tightened the Supabase auth mock typing in `SavedActivitiesContext.test.tsx` to reflect the real callback signature, keeping the suite type-safe after the new snapshot assertions.
+- Verified via `pnpm --filter dowhat-web run typecheck`.
+- Updated `ENGINEERING_ROADMAP_2025.md` Step 4 again to mark those regression tests as complete and call out the next focus (SavedActivitiesContext snapshot coverage + gating these suites in CI).
+- Updated `ENGINEERING_ROADMAP_2025.md` Step 4 once more to reflect that the SavedActivitiesContext coverage is landed and the suites now run inside `pnpm -w run test`, setting the next focus on aligning taxonomy/filter constants and finishing the host-tooling parity audit.
+- Updated `ENGINEERING_ROADMAP_2025.md` Step 4 to record that Saved Activities parity is complete (mobile/web/admin/venues now share the `@dowhat/shared` payload builders) and to call out the next follow-up tests we need on ActivityCard, ActivityScheduleBoard, the venue helper, and the SavedActivitiesContext snapshots.
+- Finished the reliability migration to `session_attendees`: `apps/doWhat-web/src/lib/reliabilityAggregate.ts` now sources participation records and the active-user scan solely from the canonical attendance tables (dropping the legacy `event_participants` fallback) so future recomputes and analytics ignore stale RSVP data.
+- Removed the `event_participants` fallback from the reviews API: `apps/doWhat-web/src/app/api/reviews/route.ts` now requires events to expose a `source_session_id` and only authorizes reviewers who appear in `session_attendees`, returning `session_not_migrated` if the session link is missing so legacy RSVP rows can no longer bypass the new attendance model.
+- Dropped the final RSVP-era schema remnants by adding `apps/doWhat-web/supabase/migrations/033_remove_event_participants.sql`, which deletes `public.event_participants` and the `public.rsvp_status` enum now that every client/API runs exclusively on `session_attendees`; `docs/current_app_overview_2025-12-03.md` now captures the cleanup.
+- Added regression coverage for the web trait onboarding wrapper: `apps/doWhat-web/src/components/traits/__tests__/TraitOnboardingSection.test.tsx` now verifies that completing the selector pushes admins to the default profile redirect or any custom path, ensuring Step 3 onboarding work stays stable.
+- Delivered Save toggle parity on mobile session detail: `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx` now wires in `useSavedActivities`, builds a metadata-rich `SavePayload`, and surfaces a contextual Save/Saved button so the detail screen matches the web experience.
+- Added the Save toggle to the mobile Home feed’s “Popular nearby places” carousel: `apps/doWhat-mobile/src/app/home.tsx` now imports `useSavedActivities`, builds place payloads (including metadata-derived venue ids), and renders a pill button on each card so people can bookmark venues before jumping into the map.
+- Extended Saved toggle parity to the Home “Nearby Activities” grid: cards now derive a `SavePayload` from the linked session rows (plus graceful fallbacks for ad-hoc IDs) and render a Save/Saved control with optimistic pending states so browsing the grid mirrors the web discovery experience.
+- Added the Save toggle to the Home “Upcoming Sessions” list: each card now builds a metadata-rich session payload (activity id/name, schedule, price, venue) and surfaces the shared Save/Saved pill with optimistic pending states, so bookmarking upcoming events matches the rest of the home feed parity work.
+- Refreshed the mobile Saved tab to consume the shared Saved Activities provider: the screen now mirrors context state, supports pull-to-refresh, and exposes the same Save/Saved pill so people can unsave items inline without drilling into detail pages.
+- Hoisted the place/activity/session Save payload builders into `packages/shared/src/savedActivities/index.ts`, so both clients reuse the same metadata normalization when rendering Save/Saved pills (home feeds, map surfaces, saved tab, etc.).
+- Rebased the mobile map sheet Save button on the shared `buildPlaceSavePayload`, keeping the venue/address overrides but relying on the canonical helper so map saves mirror the rest of the Step 2 parity work.
+- Pointed the web `buildPlaceSavePayload` helper at the shared version (while layering in map-specific metadata) so every Places map Save toggle now benefits from the canonical venue/address handling introduced for mobile.
+- Rebased the mobile Session Detail Save button on the shared `buildSessionSavePayload`, so the metadata (schedule, price, venue names) now flows through the same helper used on the Home screen and future analytics only have one code path to reason about.
+- Rebased the web Session Detail Save button on `buildSessionSavePayload` too, mapping the hydrated session rows into the shared helper and layering in host/visibility metadata so both clients emit identical session save telemetry.
+- Extended Save toggle parity to the mobile activity detail page: `apps/doWhat-mobile/src/app/(tabs)/activities/[id].tsx` now imports `useSavedActivities`, derives a primary-session `SavePayload`, and renders the shared Save/Saved pill (with optimistic feedback) near the hero so browsing an activity catalog offers the same bookmarking flow as the web.
+- Rewired the web Activity Detail page to call `buildActivitySavePayload`, passing its fetched session list into the shared helper and then reapplying the hero’s venue metadata so activity saves are normalized across clients.
+- Updated the web Admin Activities/Sessions/Venues dashboards to invoke the shared Save payload builders (`buildActivitySavePayload`, `buildSessionSavePayload`, `buildPlaceSavePayload`) so even ops tooling emits canonical metadata (with admin-specific source tags).
+- Deleted the bespoke `buildActivityDetailSavePayload` helper (and the unused map helper file) now that every surface leans on the shared builders, preventing future divergence between consumer UI and admin dashboards.
+- Activity discovery components (`ActivityCard` and `ActivityScheduleBoard`) now build their Save payloads via the shared helpers, ensuring the home grid and schedule board emit the same activity/session metadata as mobile.
+- Venue verification lists/detail drawers now derive Save payloads from `buildPlaceSavePayload`, layering AI confidence + verification metadata so every map/list surface reuses the same canonical place normalization.
+- Added a trait onboarding CTA to the mobile Profile screen: `apps/doWhat-mobile/src/app/profile.simple.tsx` fetches the `user_base_traits` count, surfaces a "Finish onboarding" banner when people have fewer than five base vibes, and deep-links to `/onboarding-traits` so the main profile matches the new web nudges.
+- Added a trait onboarding CTA to the mobile People Filter: `apps/doWhat-mobile/src/app/people-filter.tsx` now counts `user_base_traits` rows and surfaces a banner that nudges anyone with fewer than five traits over to `/onboarding-traits`, keeping the personalization hints honest on iOS/Android too.
+- Hardened the web Session Attendance quick actions coverage:
+  - Added a third mocked fetch response inside `apps/doWhat-web/src/components/__tests__/SessionAttendanceQuickActions.test.tsx` so the post-mutation realtime refresh has data to consume, eliminating the console warning seen during Jest runs.
+  - Re-ran `pnpm --filter dowhat-web test -- SessionAttendanceQuickActions` to ensure the suite stays green after the mock update.
+- Finished moving the "My Attendance" area off the RSVP naming and route:
+  - Relocated the client page/loading skeleton to `apps/doWhat-web/src/app/my/attendance/` and renamed the component to `MyAttendancePage` so the URL and code now match the new terminology.
+  - Left a lightweight redirect in `apps/doWhat-web/src/app/my/rsvps/page.tsx` plus re-exported the loading state to keep old bookmarks working while nudging traffic to `/my/attendance`.
+  - Updated the `SessionAttendanceList` warning to say "attendance update" instead of "RSVP" to squash the last visible RSVP wording in the attendee widgets.
+- Added dedicated Jest coverage for the web Saved Activities provider:
+  - Auth + Supabase interactions inside `apps/doWhat-web/src/contexts/SavedActivitiesContext.tsx` are now exercised via `src/contexts/__tests__/SavedActivitiesContext.test.tsx`, mirroring the mobile suite.
+  - Scenarios cover initial loads, optimistic saves, legacy fallback writes, and toggle-based unsaves; validated with `pnpm --filter dowhat-web test -- SavedActivitiesContext`.
+- Finished scrubbing the legacy `My RSVPs` path:
+  - Deleted the `/my/rsvps` route files now that `/my/attendance` hosts the full experience and added a permanent redirect in `apps/doWhat-web/next.config.mjs` so old bookmarks jump to the new slug without exposing RSVP-era wording.
+- Synced documentation with the latest attendance work:
+  - Updated `docs/current_app_overview_2025-12-03.md` to explicitly call out that web session detail now runs entirely on `session_attendees`.
+  - Noted in `docs/main_commit_0ae969c_overview.md` that the feature branch completes the RSVP→attendance migration so readers comparing snapshots understand the delta.
+- Deleted the unused `RsvpBadges`, `RsvpBox`, and `RsvpQuickActions` alias files now that every surface imports the `SessionAttendance*` components directly, removing the last legacy exports from `apps/doWhat-web/src/components/`.
+- Added Jest coverage for the shared `SaveToggleButton` UI so Saved Activities parity work stays regression-safe — tests live in `apps/doWhat-web/src/components/__tests__/SaveToggleButton.test.tsx` and verify null payload handling, saved/unsaved states, and pending toggles via mocked `useSavedActivities`; run with `pnpm --filter dowhat-web test -- SaveToggleButton`.
+- Rounded out the attendance UI coverage by adding `apps/doWhat-web/src/components/__tests__/SessionAttendanceBadges.test.tsx`, exercising empty-session rendering, fetch/load wiring, and the realtime refresh path triggered by the `session-attendance-updated` event; verified via `pnpm --filter dowhat-web test -- SessionAttendanceBadges`.
+- Added a dedicated web onboarding surface at `/onboarding/traits` that checks Supabase auth, explains the Step 3 checklist, and embeds the shared `TraitSelector` via the new `TraitOnboardingSection` client wrapper so users land back on `/profile` after saving their five base vibes; captured the route in `docs/current_app_overview_2025-12-03.md`.
+- Wired the `/profile` traits tab with a CTA card that detects incomplete stacks (fewer than five traits) and links directly to `/onboarding/traits`, so members discover the new onboarding flow without leaving their profile edit screen; documented the banner in `docs/current_app_overview_2025-12-03.md`.
+- Added the same onboarding CTA to the `/people-filter` page so anyone missing base traits is prompted to finish the five-trait stack before dialing in preferences, keeping personalization hints honest; captured the change in `docs/current_app_overview_2025-12-03.md`.
+- Added Jest coverage for the `TraitVoteDialog` so post-session vibes stay regression-safe — the suite at `apps/doWhat-web/src/components/traits/__tests__/TraitVoteDialog.test.tsx` exercises catalog loading, multi-participant selections, clear-all handling, and empty rosters; green via `pnpm --filter dowhat-web test -- TraitVoteDialog`.
+
+## 2025-12-04
+- Updated `apps/doWhat-web/src/app/api/profile/[id]/kpis/route.ts` to source its metrics from `sessions` + `session_attendees`, renaming the KPIs to "Sessions Hosted / Sessions Going / Attendance Updates" so profile stats reflect the new attendance model.
+- Pointed the related profile activity timeline at the same data by moving `apps/doWhat-web/src/app/api/profile/[id]/activities/route.ts` over to `session_attendees` (pulling session start times + activity names for nicer labels) and leaving the old event participant read behind.
+- Tightened the reviews API guardrails via `apps/doWhat-web/src/app/api/reviews/route.ts`: it now validates reviewer eligibility against `session_attendees` whenever an `events.source_session_id` exists, only falling back to the legacy `event_participants` check if no session record is available.
+- Rewired the reliability aggregation job (`apps/doWhat-web/src/lib/reliabilityAggregate.ts`) to read participation history from `session_attendees`, derive punctuality heuristics from `checked_in/attended_at`, and only consult `event_participants` as a compatibility fallback; the active-user scanner now prioritizes session attendance activity as well.
+- Retired the unused `/api/events/[id]/attendance` handler by returning HTTP 410 along with guidance to use the session attendance API family, preventing any lingering writes to the legacy `event_participants` table.
+- Archived the unused `RsvpBox` implementation by turning it into a thin alias of `SessionAttendancePanel`, so no legacy Supabase logic remains even if imports linger in the wild (the other `Rsvp*` files were already pointing to the new components).
+- Kicked off Roadmap Step 2 (Saved Activities parity):
+  - Extracted the Saved Activities helper types/data sources into `packages/shared/src/savedActivities` and refactored the mobile context to use the shared utilities.
+  - Added a web `SavedActivitiesProvider` (`apps/doWhat-web/src/contexts/SavedActivitiesContext.tsx`) and wired it through `src/app/providers.tsx` so both platforms share the same save/unsave logic foundation.
+  - Added a reusable `SaveToggleButton` client component plus wired it into `apps/doWhat-web/src/components/ActivityCard.tsx` and `ActivityScheduleBoard.tsx`, giving discovery cards and activity detail schedules the same optimistic Save/Saved control backed by the shared context.
+- Extended the Save toggle coverage to the venue verification page (`apps/doWhat-web/src/app/venues/page.tsx`):
+  - Added a helper to normalize `RankedVenueActivity` rows into `SavePayload`s (including metadata about the activity + AI confidence) so every venue list item can trigger the shared save/unsave flow.
+  - Injected the reusable `SaveToggleButton` into each venue card and the detail drawer, stopping event propagation so clicks don’t change the active selection while saves happen optimistically.
+- Wired the `/map` activity list into the shared Saved Activities flow:
+  - Import the shared `SaveToggleButton` on `apps/doWhat-web/src/app/map/page.tsx`, derive `SavePayload`s from `MapActivity` rows (distance, tags, traits metadata), and show the toggle alongside each nearby activity without breaking card selection.
+  - Ensures the map list is now consistent with discovery cards, schedules, and the venue verification UI for Roadmap Step 2 parity.
+- Shared the map save payload helper and covered the map popup surface:
+  - Moved the payload builder into `apps/doWhat-web/src/lib/map/savePayload.ts` so both the list and the map component reuse the same metadata wiring.
+  - Added `SaveToggleButton` to the Mapbox popup in `apps/doWhat-web/src/components/WebMap.tsx`, letting people save/unsave directly from the on-map detail card.
+- Introduced `apps/doWhat-web/src/lib/savePayloads.ts` plus wired the activity detail page into the Saved Activities flow:
+  - Centralized the map helper and added a new `buildActivityDetailSavePayload` so server pages can emit consistent metadata.
+  - Updated `apps/doWhat-web/src/app/activities/[id]/page.tsx` to surface a Save toggle beside the hero (using the first upcoming session/venue), and expanded the sessions query to fetch `venue_id`/addresses for richer payload context.
+- Advanced Roadmap Step 3 (traits onboarding & personalization hints):
+  - Added `/api/traits/popular` to aggregate `user_trait_summary` rows into ranked hint cards that expose total score/base/vote counts per trait.
+  - Rewired the mobile (`apps/doWhat-mobile/src/app/people-filter.tsx`) and web (`apps/doWhat-web/src/app/people-filter/page.tsx`) People Filter screens to fetch those hints (with emoji/icon fallbacks) so the “Popular Personality Traits Nearby” module now reflects actual Supabase data instead of static seeds.
+  - Updated `scripts/verify-trait-policies.mjs` to seed `session_attendees` instead of the deprecated `rsvps` table, keeping the Step 3 validation script aligned with the session attendance migration.
+  - Synced the same script with the latest `sessions` schema (`host_user_id`, `max_attendees`, explicit visibility) so it can spin up disposable sessions without tripping column mismatches; `node --check scripts/verify-trait-policies.mjs` succeeds locally even though a full Supabase run still needs valid env keys.
+
 ## 2025-12-03
+- Completed Step 1 of the session attendance migration on web:
+  - Added the `/api/sessions/[sessionId]/attendance` GET route plus shared helpers to expose counts and per-user status from `session_attendees`.
+  - Replaced `RsvpQuickActions`/`RsvpBadges` with `SessionAttendanceQuickActions` and `SessionAttendanceBadges`, wiring Activity cards, schedules, and the Nearby page to the new API.
+  - Removed the legacy `session-rsvp-updated` event fallback so all UI listens to the unified `session-attendance-updated` signal.
 - Updated `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx` to better understand Supabase-linked venues:
   - Expanded `PlaceMetadata` typing and added helpers (`normaliseStringId`, `extractVenueIdFromMetadata`, `resolveVenueIdForSaving`) so the map can discover canonical venue ids embedded in metadata.
   - Track the active venue’s session counts via `v_venue_attendance_summary`, including new loading state management.
@@ -10,3 +170,7 @@
   - Gate access via `NEXT_PUBLIC_ADMIN_EMAILS` and reuse the Supabase browser client for auth & data fetching.
   - Surface analytics cards (user/session/venue counts + top categories) plus refresh controls.
   - Render full session & venue listings with inline delete actions so inappropriate content can be removed quickly.
+- Fixed the Saved Activities context type errors blocking CI (`apps/doWhat-mobile/src/contexts/SavedActivitiesContext.tsx`):
+  - Added safe helpers to coerce Supabase rows into plain records and pick trimmed string fields.
+  - Eliminated `as Record<string, unknown>` casts so `pnpm -w run typecheck` now passes across packages again.
+- Authored `ENGINEERING_ROADMAP_2025.md` to capture the next engineering milestones (session_attendees migration, SavedActivities fixes, trait onboarding, cross-platform parity, migrations hygiene, admin monitoring, and ongoing documentation updates).

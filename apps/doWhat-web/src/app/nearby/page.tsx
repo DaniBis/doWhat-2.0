@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import RsvpBadges from "@/components/RsvpBadges";
+import SessionAttendanceBadges from "@/components/SessionAttendanceBadges";
 import { supabase } from "@/lib/supabase/browser";
 
 // Client-side Supabase instance
@@ -420,7 +420,7 @@ export default function NearbyPage() {
               )}
 
               <div className="mt-2">
-                <RsvpBadges activityId={r.activity_id} />
+                <SessionAttendanceBadges sessionId={r.session_id ?? null} />
               </div>
 
               {r.venue_lat != null && r.venue_lng != null && (

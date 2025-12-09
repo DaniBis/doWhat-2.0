@@ -1,5 +1,5 @@
 declare module 'react-native-maps' {
-  import type { ForwardRefExoticComponent, ReactNode, RefAttributes } from 'react';
+  import type { ComponentType, ForwardRefExoticComponent, ReactNode, RefAttributes } from 'react';
   import type { ViewStyle } from 'react-native';
 
   export interface LatLng {
@@ -51,8 +51,15 @@ declare module 'react-native-maps' {
     identifier?: string;
     coordinate: LatLng;
     onPress?: (event: any) => void;
+    onCalloutPress?: () => void;
     tracksViewChanges?: boolean;
     children?: ReactNode;
+  }
+
+  export interface CalloutProps {
+    tooltip?: boolean;
+    children?: ReactNode;
+    onPress?: () => void;
   }
 
   export interface CircleProps {
@@ -68,5 +75,6 @@ declare module 'react-native-maps' {
 
   export const Marker: ComponentType<MarkerProps>;
   export const Circle: ComponentType<CircleProps>;
+  export const Callout: ComponentType<CalloutProps>;
   export const PROVIDER_GOOGLE: string;
 }

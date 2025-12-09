@@ -11,18 +11,18 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   try {
     const since = new Date(Date.now() - days*86400000).toISOString();
     const { data, error } = await supabase
-      .from('event_participants')
-      .select('event_id,attendance,updated_at,events(starts_at)')
-      .eq('user_id', userId)
-      .gte('updated_at', since)
-      .limit(100)
-      .returns<Array<{ event_id: string; attendance: string | null; updated_at: string; events: { starts_at?: string | null } | null }>>();
+    .from('session_attendees')
+    .select('session_id,status,updated_at,sessions(starts_at, activities(name))')
+    .eq('user_id', userId)
+    .gte('updated_at', since)
+    .limit(100)
+    .returns<Array<{ session_id: string; status: string | null; updated_at: string; sessions: { starts_at?: string | null; activities?: { name?: string | null } | null } | null }>>();
     if (error) throw error;
     const timeline: Activity[] = (data ?? []).map((r) => ({
-      id: r.event_id,
-      ts: r.events?.starts_at ?? r.updated_at,
-      kind: r.attendance ?? 'rsvp',
-      label: `Event ${r.event_id}`
+      id: r.session_id,
+      ts: r.sessions?.starts_at ?? r.updated_at,
+      kind: r.status ?? 'attendance',
+      label: r.sessions?.activities?.name ?? `Session ${r.session_id}`
     }));
     return NextResponse.json({ timeline });
   } catch {

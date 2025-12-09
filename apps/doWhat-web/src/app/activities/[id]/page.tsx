@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { format } from "date-fns";
 
-import RsvpBadges from "@/components/RsvpBadges";
-import RsvpQuickActions from "@/components/RsvpQuickActions";
+import SessionAttendanceQuickActions from "@/components/SessionAttendanceQuickActions";
 import SessionAttendanceList from "@/components/SessionAttendanceList";
+import SaveToggleButton from "@/components/SaveToggleButton";
+import { buildActivitySavePayload, type ActivityRow } from "@dowhat/shared";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function ActivityPage({ params }: { params: { id: string } }) {
@@ -55,7 +56,7 @@ export default async function ActivityPage({ params }: { params: { id: string } 
   const { data: sessions } = await supabase
     .from("sessions")
     .select(
-      "id, created_by, starts_at, ends_at, price_cents, description, venues(name, lat, lng)"
+      "id, created_by, starts_at, ends_at, price_cents, description, venue_id, venues(id, name, lat, lng, address)"
     )
     .eq("activity_id", activityId)
     .order("starts_at", { ascending: true });
@@ -71,11 +72,25 @@ export default async function ActivityPage({ params }: { params: { id: string } 
     (activity.tags?.length ? activity.tags.join(", ") : undefined) ??
     "Explore available sessions and pick the one that fits your schedule.";
 
-  const describeSession = (session: typeof upcomingSessions[number]) => {
+  type SessionRecord = NonNullable<typeof sessions>[number];
+
+  const resolveSessionVenue = (session: SessionRecord | null | undefined) => {
+    if (!session) {
+      return { id: null as string | null, name: null as string | null, address: null as string | null };
+    }
+    const rel = Array.isArray(session.venues) ? session.venues[0] : session.venues;
+    return {
+      id: session.venue_id ?? rel?.id ?? null,
+      name: rel?.name ?? null,
+      address: rel?.address ?? null,
+    };
+  };
+
+  const describeSession = (session: SessionRecord) => {
     const start = session.starts_at ? new Date(session.starts_at) : null;
     const end = session.ends_at ? new Date(session.ends_at) : null;
-    const venueRel = Array.isArray(session.venues) ? session.venues[0] : session.venues;
-    const venueLabel = venueRel?.name ?? "Flexible location";
+    const venueMeta = resolveSessionVenue(session);
+    const venueLabel = venueMeta.name ?? "Flexible location";
     const timing = start
       ? `${format(start, "EEEE, MMMM d")} • ${format(start, "p")}${end ? ` → ${format(end, "p")}` : ""}`
       : "Schedule tbd";
@@ -84,24 +99,62 @@ export default async function ActivityPage({ params }: { params: { id: string } 
     return { timing, venueLabel, priceLabel };
   };
 
+  const primarySession = upcomingSessions[0] ?? (sessions ?? [])[0] ?? null;
+  const primaryVenueMeta = resolveSessionVenue(primarySession as SessionRecord | null | undefined);
+
+  const sessionRowsForSave: ActivityRow[] = (sessions ?? []).map((session) => ({
+    id: session.id,
+    price_cents: session.price_cents ?? null,
+    starts_at: session.starts_at ?? null,
+    ends_at: session.ends_at ?? null,
+    activities: {
+      id: activity.id,
+      name: activity.name,
+    },
+    venues: {
+      name: resolveSessionVenue(session).name ?? null,
+    },
+  }));
+
+  const baseSavePayload = buildActivitySavePayload(
+    { id: activity.id, name: activity.name },
+    sessionRowsForSave,
+    { source: "web_activity_detail" },
+  );
+
+  const savePayload = baseSavePayload
+    ? {
+        ...baseSavePayload,
+        venueId: primaryVenueMeta.id ?? baseSavePayload.venueId,
+        address: primaryVenueMeta.address ?? baseSavePayload.address,
+        metadata: {
+          ...(baseSavePayload.metadata ?? {}),
+          primarySessionId: primarySession?.id ?? null,
+        },
+      }
+    : null;
+
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <div className="flex flex-col gap-6 rounded-3xl border border-gray-100 bg-white/80 p-8 shadow-sm">
-        <div className="flex flex-col gap-3">
-          <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">Activity</p>
-          <h1 className="text-3xl font-bold text-gray-900">{activity.name}</h1>
-          <p className="text-lg text-gray-700">{purpose}</p>
-          {(activity.rating ?? null) != null && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span className="text-base">⭐</span>
-              <span>
-                {activity.rating?.toFixed(1)} ({activity.rating_count ?? 0} reviews)
-              </span>
-            </div>
-          )}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex-1">
+            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">Activity</p>
+            <h1 className="text-3xl font-bold text-gray-900">{activity.name}</h1>
+            <p className="text-lg text-gray-700">{purpose}</p>
+            {(activity.rating ?? null) != null && (
+              <div className="mt-1 flex items-center gap-2 text-sm text-gray-500">
+                <span className="text-base">⭐</span>
+                <span>
+                  {activity.rating?.toFixed(1)} ({activity.rating_count ?? 0} reviews)
+                </span>
+              </div>
+            )}
+          </div>
+          {savePayload ? (
+            <SaveToggleButton payload={savePayload} size="md" className="self-start" />
+          ) : null}
         </div>
-
-        <RsvpBadges activityId={activity.id} />
 
         <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-6">
           <h2 className="text-xl font-semibold text-gray-900">Upcoming availability</h2>
@@ -138,18 +191,18 @@ export default async function ActivityPage({ params }: { params: { id: string } 
                         )}
                       </div>
                       {session.id && (
-                        <SessionAttendanceList
-                          sessionId={session.id}
-                          activityId={activity.id}
-                          className="justify-end"
-                        />
+                        <>
+                          <SessionAttendanceList
+                            sessionId={session.id}
+                            className="justify-end"
+                          />
+                          <SessionAttendanceQuickActions
+                            sessionId={session.id}
+                            size="compact"
+                            className="sm:self-end"
+                          />
+                        </>
                       )}
-                      <RsvpQuickActions
-                        activityId={activity.id}
-                        sessionId={session.id ?? null}
-                        size="compact"
-                        className="sm:self-end"
-                      />
                     </div>
                   </div>
                 );

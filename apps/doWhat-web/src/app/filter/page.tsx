@@ -5,35 +5,31 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
 import {
+  ACTIVITY_DISTANCE_OPTIONS,
+  ACTIVITY_PRICE_FILTER_OPTIONS,
+  ACTIVITY_TIME_FILTER_OPTIONS,
   DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  DEFAULT_ACTIVITY_PRICE_RANGE,
+  DEFAULT_ACTIVITY_RADIUS,
+  activityTaxonomy,
+  canonicaliseTimeOfDayValues,
   countActiveActivityFilters,
+  defaultTier3Index,
   loadUserPreference,
   normaliseActivityFilterPreferences,
+  resolvePriceKeyFromRange,
+  resolvePriceRangeForKey,
   saveUserPreference,
   type ActivityFilterPreferences,
+  type ActivityPriceFilterKey,
+  type ActivityTier3WithAncestors,
+  type ActivityTimeFilterKey,
 } from '@dowhat/shared';
 
 import { supabase } from '@/lib/supabase/browser';
+import TaxonomyCategoryPicker from '@/components/TaxonomyCategoryPicker';
 
 const LOCAL_STORAGE_KEY = 'activity_filters:v1';
-
-const categories = [
-  { id: 'fitness', name: 'Fitness', icon: '💪' },
-  { id: 'food', name: 'Food & Drink', icon: '🍽️' },
-  { id: 'arts_culture', name: 'Arts & Culture', icon: '🎨' },
-  { id: 'outdoors', name: 'Outdoor', icon: '🌲' },
-  { id: 'community', name: 'Social', icon: '👥' },
-  { id: 'education', name: 'Learning', icon: '📚' },
-  { id: 'event_space', name: 'Entertainment', icon: '🎪' },
-  { id: 'wellness', name: 'Wellness', icon: '🧘' },
-];
-
-const timeSlots = [
-  { id: 'morning', name: 'Morning (6AM - 12PM)', icon: '🌅' },
-  { id: 'afternoon', name: 'Afternoon (12PM - 6PM)', icon: '☀️' },
-  { id: 'evening', name: 'Evening (6PM - 10PM)', icon: '🌇' },
-  { id: 'night', name: 'Night (10PM - 6AM)', icon: '🌙' },
-];
 
 export default function FilterPage() {
   const searchParams = useSearchParams();
@@ -49,6 +45,16 @@ export default function FilterPage() {
     setFrom(searchParams.get('from') || '');
   }, [searchParams]);
 
+  const normaliseWithCanonicalTime = useCallback(
+    (prefs: ActivityFilterPreferences): ActivityFilterPreferences => {
+      return normaliseActivityFilterPreferences({
+        ...prefs,
+        timeOfDay: canonicaliseTimeOfDayValues(prefs.timeOfDay ?? []),
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
 
@@ -58,7 +64,7 @@ export default function FilterPage() {
         const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw) as ActivityFilterPreferences;
-        return normaliseActivityFilterPreferences(parsed);
+        return normaliseWithCanonicalTime(parsed);
       } catch (error) {
         console.warn('[activity-filters] unable to parse cached preferences', error);
         return null;
@@ -80,7 +86,7 @@ export default function FilterPage() {
               'activity_filters',
             );
             if (!cancelled && remote) {
-              setFilters(normaliseActivityFilterPreferences(remote));
+              setFilters(normaliseWithCanonicalTime(remote));
               return;
             }
           } catch (error) {
@@ -105,11 +111,11 @@ export default function FilterPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [normaliseWithCanonicalTime]);
 
   const persistPreferences = useCallback(
     async (next: ActivityFilterPreferences) => {
-      const normalised = normaliseActivityFilterPreferences(next);
+      const normalised = normaliseWithCanonicalTime(next);
       if (typeof window !== 'undefined') {
         try {
           window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalised));
@@ -125,7 +131,7 @@ export default function FilterPage() {
         }
       }
     },
-    [userId],
+    [normaliseWithCanonicalTime, userId],
   );
 
   useEffect(() => {
@@ -135,9 +141,32 @@ export default function FilterPage() {
 
   const updateFilters = useCallback(
     (updater: (prev: ActivityFilterPreferences) => ActivityFilterPreferences) => {
-      setFilters((prev) => normaliseActivityFilterPreferences(updater(prev)));
+      setFilters((prev) => normaliseWithCanonicalTime(updater(prev)));
     },
-    [],
+    [normaliseWithCanonicalTime],
+  );
+
+  const tier3Index = useMemo(() => {
+    const index = new Map<string, ActivityTier3WithAncestors>();
+    defaultTier3Index.forEach((entry) => {
+      index.set(entry.id, entry);
+    });
+    return index;
+  }, []);
+
+  const pricePresetKey = useMemo(
+    () => resolvePriceKeyFromRange(filters.priceRange),
+    [filters.priceRange],
+  );
+
+  const handlePricePreset = useCallback(
+    (preset: ActivityPriceFilterKey) => {
+      updateFilters((prev) => ({
+        ...prev,
+        priceRange: resolvePriceRangeForKey(preset),
+      }));
+    },
+    [updateFilters],
   );
 
   const toggleCategory = (categoryId: string) => {
@@ -149,13 +178,19 @@ export default function FilterPage() {
     }));
   };
 
-  const toggleTimeSlot = (timeId: string) => {
-    updateFilters((prev) => ({
-      ...prev,
-      timeOfDay: prev.timeOfDay.includes(timeId)
-        ? prev.timeOfDay.filter((id) => id !== timeId)
-        : [...prev.timeOfDay, timeId],
-    }));
+  const toggleTimeSlot = (timeKey: ActivityTimeFilterKey) => {
+    const slot = ACTIVITY_TIME_FILTER_OPTIONS.find((option) => option.key === timeKey);
+    if (!slot) return;
+    updateFilters((prev) => {
+      if (!slot.value) {
+        return { ...prev, timeOfDay: [] };
+      }
+      const exists = prev.timeOfDay.includes(slot.value);
+      const next = exists
+        ? prev.timeOfDay.filter((value) => value !== slot.value)
+        : [...prev.timeOfDay, slot.value];
+      return { ...prev, timeOfDay: next };
+    });
   };
 
   const resetFilters = () => {
@@ -197,29 +232,38 @@ export default function FilterPage() {
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {filters.radius !== 10 && (
+              {filters.radius !== DEFAULT_ACTIVITY_RADIUS && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
                   📍 {filters.radius} miles
                 </span>
               )}
-              {(filters.priceRange[0] !== 0 || filters.priceRange[1] !== 100) && (
+              {(filters.priceRange[0] !== DEFAULT_ACTIVITY_PRICE_RANGE[0] ||
+                filters.priceRange[1] !== DEFAULT_ACTIVITY_PRICE_RANGE[1]) && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
                   💰 ${filters.priceRange[0]} - ${filters.priceRange[1]}
                 </span>
               )}
               {filters.categories.map((categoryId) => {
-                const category = categories.find(c => c.id === categoryId);
-                return (
-                  <span key={categoryId} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
-                    {category?.icon} {category?.name}
+                const category = tier3Index.get(categoryId);
+                return category ? (
+                  <span
+                    key={categoryId}
+                    className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800"
+                  >
+                    {category.tier1Label} • {category.label}
                   </span>
-                );
+                ) : null;
               })}
-              {filters.timeOfDay.map((timeId) => {
-                const timeSlot = timeSlots.find(t => t.id === timeId);
+              {filters.timeOfDay.map((timeValue) => {
+                const slot = ACTIVITY_TIME_FILTER_OPTIONS.find(
+                  (option) => option.value === timeValue || option.aliases?.includes(timeValue),
+                );
                 return (
-                  <span key={timeId} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-orange-100 text-orange-800">
-                    {timeSlot?.icon} {timeSlot?.name}
+                  <span
+                    key={timeValue}
+                    className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-orange-100 text-orange-800"
+                  >
+                    {slot?.icon ?? '🕒'} {slot?.label ?? timeValue}
                   </span>
                 );
               })}
@@ -235,7 +279,7 @@ export default function FilterPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Current: {filters.radius} miles</span>
                 <div className="flex space-x-2">
-                  {[5, 10, 15, 25, 50].map((radius) => (
+                  {ACTIVITY_DISTANCE_OPTIONS.map((radius) => (
                     <button
                       key={radius}
                       onClick={() => updateFilters((prev) => ({ ...prev, radius }))}
@@ -257,6 +301,21 @@ export default function FilterPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Price Range</h3>
             <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {ACTIVITY_PRICE_FILTER_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    onClick={() => handlePricePreset(option.key)}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                      pricePresetKey === option.key
+                        ? 'border-green-500 bg-green-50 text-green-800'
+                        : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center space-x-4">
                 <div className="flex-1">
                   <label className="block text-sm text-gray-600">Min ($)</label>
@@ -298,45 +357,42 @@ export default function FilterPage() {
 
           {/* Categories */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Categories</h3>
-            <div className="grid grid-cols-2 gap-3">
-              {categories.map((category) => (
-                <button
-                  key={category.id}
-                  onClick={() => toggleCategory(category.id)}
-                  className={`p-3 rounded-lg border text-center transition-colors ${
-                    filters.categories.includes(category.id)
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 hover:border-gray-300 text-gray-700'
-                  }`}
-                >
-                  <div className="text-2xl mb-1">{category.icon}</div>
-                  <div className="text-sm font-medium">{category.name}</div>
-                </button>
-              ))}
-            </div>
+            <h3 className="text-lg font-semibold text-gray-900">Categories</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Browse the shared taxonomy so discovery filters stay consistent across web and mobile.
+            </p>
+            <TaxonomyCategoryPicker
+              taxonomy={activityTaxonomy}
+              selectedIds={filters.categories}
+              onToggle={toggleCategory}
+            />
           </div>
 
           {/* Time of Day */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Time of Day</h3>
             <div className="space-y-2">
-              {timeSlots.map((slot) => (
-                <button
-                  key={slot.id}
-                  onClick={() => toggleTimeSlot(slot.id)}
-                  className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                    filters.timeOfDay.includes(slot.id)
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 hover:border-gray-300 text-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center">
-                    <span className="text-xl mr-3">{slot.icon}</span>
-                    <span className="font-medium">{slot.name}</span>
-                  </div>
-                </button>
-              ))}
+              {ACTIVITY_TIME_FILTER_OPTIONS.map((slot) => {
+                const isActive = slot.value
+                  ? filters.timeOfDay.includes(slot.value)
+                  : filters.timeOfDay.length === 0;
+                return (
+                  <button
+                    key={slot.key}
+                    onClick={() => toggleTimeSlot(slot.key)}
+                    className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                      isActive
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center">
+                      {slot.icon && <span className="text-xl mr-3">{slot.icon}</span>}
+                      <span className="font-medium">{slot.label}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

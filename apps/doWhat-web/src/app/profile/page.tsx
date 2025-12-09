@@ -1,5 +1,8 @@
 "use client";
-import { useEffect, useState } from 'react';
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import { useCallback, useEffect, useState } from 'react';
+import { getTraitOnboardingState } from '@dowhat/shared';
 import { supabase } from '@/lib/supabase/browser';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { KPIGrid } from '@/components/profile/KPIGrid';
@@ -8,6 +11,7 @@ import { AttendanceBars } from '@/components/profile/AttendanceBars';
 import { BioCard } from '@/components/profile/BioCard';
 import { ReviewsTab } from '@/components/profile/ReviewsTab';
 import { TraitCarousel } from '@/components/traits/TraitCarousel';
+import { TraitSelector } from '@/components/traits/TraitSelector';
 import { resolveTraitIcon } from '@/components/traits/icon-utils';
 import type { TraitSummary } from '@/types/traits';
 import type { KPI, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
@@ -22,12 +26,51 @@ export default function ProfilePage() {
   const [reliability, setReliability] = useState<Reliability | null>(null);
   const [attendance, setAttendance] = useState<AttendanceMetrics | undefined>();
   const [traits, setTraits] = useState<TraitSummary[]>([]);
+  const [traitEditorOpen, setTraitEditorOpen] = useState(false);
+  const [traitsRefreshing, setTraitsRefreshing] = useState(false);
+  const [traitEditorError, setTraitEditorError] = useState<string | null>(null);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
+  const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
+  const traitCountLoading = loading || traitsRefreshing;
+  const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({
+    baseTraitCount,
+    traitCountLoading,
+  });
+
+  const refreshTraits = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setTraitsRefreshing(true);
+      const resp = await fetch(`/api/profile/${userId}/traits?top=6`);
+      if (!resp.ok) {
+        throw new Error(`Failed to refresh traits (${resp.status})`);
+      }
+      const json = await resp.json();
+      setTraits(Array.isArray(json) ? json : []);
+      setTraitEditorError(null);
+    } catch (err) {
+      console.error('Trait refresh failed', err);
+      setTraitEditorError(getErrorMessage(err));
+    } finally {
+      setTraitsRefreshing(false);
+    }
+  }, [userId]);
+
+  const handleTraitEditorCompleted = useCallback(async () => {
+    setTraitEditorOpen(false);
+    await refreshTraits();
+  }, [refreshTraits]);
+
+  useEffect(() => {
+    if (!userId) {
+      setTraitEditorOpen(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
     (async () => {
@@ -49,6 +92,10 @@ export default function ProfilePage() {
         if (traitsRes.ok) {
           const json = await traitsRes.json();
           setTraits(Array.isArray(json) ? json : []);
+          setTraitEditorError(null);
+        } else {
+          setTraits([]);
+          setTraitEditorError('Unable to load traits right now.');
         }
         if (badgesRes.ok) setBadges(await badgesRes.json());
       } catch(error) {
@@ -197,6 +244,46 @@ export default function ProfilePage() {
         )}
         {activeTab === 'traits' && (
           <div className="mt-8 space-y-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTraitEditorOpen((open) => !open)}
+                disabled={traitsRefreshing}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
+              >
+                {traitEditorOpen ? 'Close trait editor' : 'Edit base traits'}
+              </button>
+              {traitsRefreshing && <span className="text-xs text-gray-500">Refreshing…</span>}
+              {traitEditorError && !traitEditorOpen && (
+                <span className="text-xs text-red-600">{traitEditorError}</span>
+              )}
+              {!traitEditorOpen && !traitEditorError && (
+                <span className="text-xs text-gray-500">Update your starting vibes anytime.</span>
+              )}
+            </div>
+            {needsTraitOnboarding && (
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-900">
+                <div className="space-y-1">
+                  <p className="text-base font-semibold text-emerald-900">Finish your base traits</p>
+                  <p>
+                    Pick {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to lock in the full onboarding stack and unlock better people filters.
+                  </p>
+                </div>
+                <Link
+                  href="/onboarding/traits"
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
+                >
+                  Go to onboarding
+                  <ArrowRight className="h-4 w-4" aria-hidden />
+                </Link>
+              </div>
+            )}
+            {traitEditorOpen && (
+              <TraitSelector
+                className="w-full"
+                onCompleted={handleTraitEditorCompleted}
+              />
+            )}
             <TraitCarousel traits={traits} title="Trait stack" description="Scores update as people nominate you." />
             <TraitSummaryList traits={traits} />
           </div>

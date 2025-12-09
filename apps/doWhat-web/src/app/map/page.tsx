@@ -21,15 +21,44 @@ import {
   normaliseMapFilterPreferences,
   mapPreferencesToQueryFilters,
   type MapFilterPreferences,
+  loadUserPreference,
+  saveUserPreference,
 } from "@dowhat/shared";
+import SaveToggleButton from "@/components/SaveToggleButton";
 
 import type { MapMovePayload, ViewBounds } from "@/components/WebMap";
 import { supabase } from "@/lib/supabase/browser";
+import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
 
 const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
+const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
+
+const readLocalMapFilters = (): MapFilterPreferences | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MAP_FILTERS_LOCAL_KEY);
+    if (!raw) return null;
+    return normaliseMapFilterPreferences(JSON.parse(raw) as MapFilterPreferences);
+  } catch (error) {
+    console.warn("[map] unable to parse cached map filters", error);
+    return null;
+  }
+};
+
+const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      MAP_FILTERS_LOCAL_KEY,
+      JSON.stringify(normaliseMapFilterPreferences(prefs)),
+    );
+  } catch (error) {
+    console.warn("[map] unable to cache map filters locally", error);
+  }
+};
 
 const formatKilometres = (meters?: number | null) => {
   if (!meters || meters <= 0) return "<0.5 km";
@@ -57,6 +86,7 @@ export default function MapPage() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
+  const [preferencesInitialised, setPreferencesInitialised] = useState(false);
   const updateFilters = useCallback(
     (updater: (prev: MapFilterPreferences) => MapFilterPreferences) => {
       setFilters((prev) => normaliseMapFilterPreferences(updater(prev)));
@@ -91,26 +121,60 @@ export default function MapPage() {
 
   const filtersForQuery = mapPreferencesToQueryFilters(filters);
 
-  const loadPreferencesForUser = useCallback(async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('user_preferences')
-        .select('value')
-        .eq('user_id', userId)
-        .eq('key', 'map_filters')
-        .maybeSingle<{ value: unknown }>();
-      if (error) throw error;
-      if (data?.value && typeof data.value === 'object') {
-        updateFilters(() => normaliseMapFilterPreferences(data.value as MapFilterPreferences));
-      } else {
-        updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
-      }
-      setPreferencesUserId(userId);
-    } catch (error) {
-      console.warn('[map] failed to load map filter preferences', error);
-      setPreferencesUserId(userId);
-    }
+  const hydrateAnonymousPreferences = useCallback(() => {
+    const next = readLocalMapFilters() ?? DEFAULT_MAP_FILTER_PREFERENCES;
+    updateFilters(() => next);
+    setPreferencesUserId(null);
+    setPreferencesInitialised(true);
   }, [updateFilters]);
+
+  const loadPreferencesForUser = useCallback(
+    async (userId: string) => {
+      try {
+        const remote = await loadUserPreference<MapFilterPreferences>(supabase, userId, "map_filters");
+        if (remote) {
+          const normalised = normaliseMapFilterPreferences(remote);
+          updateFilters(() => normalised);
+          writeLocalMapFilters(normalised);
+        } else {
+          const fallback = readLocalMapFilters();
+          const next = fallback ?? DEFAULT_MAP_FILTER_PREFERENCES;
+          updateFilters(() => next);
+        }
+        setPreferencesUserId(userId);
+      } catch (error) {
+        console.warn("[map] failed to load map filters", error);
+        const fallback = readLocalMapFilters();
+        if (fallback) {
+          updateFilters(() => fallback);
+        }
+        setPreferencesUserId(userId);
+      } finally {
+        setPreferencesInitialised(true);
+      }
+    },
+    [updateFilters],
+  );
+
+  const persistPreferences = useCallback(
+    async (next: MapFilterPreferences) => {
+      const normalised = normaliseMapFilterPreferences(next);
+      writeLocalMapFilters(normalised);
+      if (preferencesUserId) {
+        try {
+          await saveUserPreference(supabase, preferencesUserId, "map_filters", normalised);
+        } catch (error) {
+          console.warn("[map] failed to persist map filters", error);
+        }
+      }
+    },
+    [preferencesUserId],
+  );
+
+  useEffect(() => {
+    if (!preferencesInitialised) return;
+    void persistPreferences(filters);
+  }, [filters, persistPreferences, preferencesInitialised]);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,15 +229,13 @@ export default function MapPage() {
             await loadPreferencesForUser(userId);
           }
         } else {
-          setPreferencesUserId(null);
-          updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+          hydrateAnonymousPreferences();
         }
       } catch (error) {
         console.warn('[map] unable to resolve auth session', error);
         if (mounted) {
           setIsAuthenticated(false);
-          setPreferencesUserId(null);
-          updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+          hydrateAnonymousPreferences();
         }
       }
     };
@@ -187,8 +249,7 @@ export default function MapPage() {
       if (userId) {
         await loadPreferencesForUser(userId);
       } else {
-        setPreferencesUserId(null);
-        updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+        hydrateAnonymousPreferences();
       }
     });
 
@@ -196,7 +257,7 @@ export default function MapPage() {
       listener.subscription.unsubscribe();
       mounted = false;
     };
-  }, [loadPreferencesForUser, preferencesUserId, updateFilters]);
+  }, [hydrateAnonymousPreferences, loadPreferencesForUser, preferencesUserId]);
 
   const fetcher = useMemo(
     () =>
@@ -623,6 +684,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 <ul className="flex flex-col gap-3">
                   {sortedActivities.map((activity) => {
                     const isSelected = activity.id === selectedActivityId;
+                    const savePayload = createMapActivitySavePayload(activity);
                     return (
                       <li key={activity.id}>
                         <div
@@ -659,8 +721,13 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 </div>
                               )}
                             </div>
-                            <div className="text-right text-xs text-slate-500">
+                            <div className="flex flex-col items-end gap-2 text-right text-xs text-slate-500">
                               {activity.distance_m != null ? `~${formatKilometres(activity.distance_m)}` : null}
+                              {savePayload ? (
+                                <div onClick={(event) => event.stopPropagation()}>
+                                  <SaveToggleButton payload={savePayload} size="sm" />
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                           <div className="mt-3 flex items-center justify-between text-xs">
@@ -862,3 +929,4 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     </div>
   );
 }
+

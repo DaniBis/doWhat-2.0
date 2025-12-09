@@ -14,8 +14,14 @@ export * from "./events/utils";
 export * from "./events/useEvents";
 export * from "./analytics";
 export * from "./config/cities";
+export * from "./activities/catalog";
+export * from "./activities/types";
 export * from "./preferences/activityFilters";
+export * from "./preferences/activityFilterOptions";
 export * from "./preferences/peopleFilters";
+export * from "./preferences/peopleFilterOptions";
 export * from "./preferences/mapFilters";
 export * from "./preferences/userPreferences";
+export * from "./savedActivities";
+export * from "./traits/onboardingReminder";
 // badges type definitions are TypeScript-only; skip exporting compiled .js to avoid jest resolution issues

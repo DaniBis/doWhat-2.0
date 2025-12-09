@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import LocationPickerMap from "@/components/create/LocationPickerMap";
@@ -9,17 +9,52 @@ import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Option = { id: string; name: string };
 
+type LocationStatus = 'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual';
+
+type PrefillState = {
+  activityId: string | null;
+  activityName: string | null;
+  venueId: string | null;
+  venueName: string | null;
+  lat: string | null;
+  lng: string | null;
+};
+
+const sanitizeQueryValue = (value: string | null): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const normalizeCoordinateParam = (value: string | null): string | null => {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric.toFixed(6);
+};
+
 export default function CreateEventPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefill = useMemo<PrefillState>(() => {
+    const activityId = sanitizeQueryValue(searchParams?.get('activityId'));
+    const activityName = sanitizeQueryValue(searchParams?.get('activityName'));
+    const venueId = sanitizeQueryValue(searchParams?.get('venueId'));
+    const venueName = sanitizeQueryValue(searchParams?.get('venueName'));
+    const lat = normalizeCoordinateParam(searchParams?.get('lat'));
+    const lng = normalizeCoordinateParam(searchParams?.get('lng'));
+    return { activityId, activityName, venueId, venueName, lat, lng } satisfies PrefillState;
+  }, [searchParams]);
+  const hasPrefilledCoords = Boolean(prefill.lat && prefill.lng);
   const [activities, setActivities] = useState<Option[]>([]);
   const [venues, setVenues] = useState<Option[]>([]);
 
-  const [activityId, setActivityId] = useState('');
-  const [activityName, setActivityName] = useState('');
-  const [venueId, setVenueId] = useState('');
-  const [venueName, setVenueName] = useState('');
-  const [lat, setLat] = useState('');
-  const [lng, setLng] = useState('');
+  const [activityId, setActivityId] = useState(prefill.activityId ?? '');
+  const [activityName, setActivityName] = useState(prefill.activityName ?? '');
+  const [venueId, setVenueId] = useState(prefill.venueId ?? '');
+  const [venueName, setVenueName] = useState(prefill.venueId ? '' : prefill.venueName ?? '');
+  const [lat, setLat] = useState(prefill.lat ?? '');
+  const [lng, setLng] = useState(prefill.lng ?? '');
   const [price, setPrice] = useState('');
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
@@ -28,7 +63,7 @@ export default function CreateEventPage() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual'>('idle');
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>(prefill.lat && prefill.lng ? 'success' : 'idle');
 
   const { defaultStart, defaultEnd } = useMemo(() => {
     const tomorrow = new Date();
@@ -119,12 +154,16 @@ export default function CreateEventPage() {
       }
     })();
 
-    requestLocation();
+    if (!hasPrefilledCoords) {
+      requestLocation();
+    } else {
+      setLocationStatus((prev) => (prev === 'idle' ? 'success' : prev));
+    }
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [hasPrefilledCoords]);
 
   function requestLocation() {
     if (!navigator.geolocation) {

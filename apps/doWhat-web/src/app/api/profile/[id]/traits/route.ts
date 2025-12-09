@@ -3,10 +3,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { TraitSystemError, getUserTraitSummary } from "@/lib/trait-system";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
-import type { Database } from "@/types/database";
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient<Database>();
+  const supabase = createClient();
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("top") ?? url.searchParams.get("limit") ?? "12";
   const parsedLimit = Number(limitParam);

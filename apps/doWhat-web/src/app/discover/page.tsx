@@ -5,31 +5,38 @@ import { useEffect, useState } from "react";
 
 import ActivityCard from "@/components/ActivityCard";
 import { supabase } from "@/lib/supabase/browser";
+import type { RecommendationResponse, RecommendationSession, RecommendationVenueRef } from "@/types/recommendations";
 
-// Supabase relationship selects can return either an object or array depending on FK cardinality
-interface ActivityRef {
-  id: string;
-  name: string;
-  description?: string | null;
-  activity_types?: string[] | null;
-}
-interface VenueRef { id?: string | null; name: string; lat?: number; lng?: number }
-interface BaseSession {
-  id: string;
-  created_by?: string | null;
-  price_cents: number;
-  starts_at: string;
-  ends_at: string;
-  venue_id?: string | null;
-  activities: ActivityRef[] | ActivityRef | null;
-  venues: VenueRef[] | VenueRef | null;
-}
-interface PopularSession extends BaseSession { rsvps?: { id: string }[] | null }
-interface PopularSortable extends PopularSession { rsvp_count: number }
-type Event = BaseSession;
+type Event = RecommendationSession;
+type VenueRef = RecommendationVenueRef;
+type PopularSession = Event & { session_attendees?: { status: string | null }[] | null };
+type PopularSortable = PopularSession & { attendee_count: number };
 
 interface SessionActivityRef { activity_id: string | null }
-interface RsvpSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
+interface AttendanceSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
+
+const RECOMMENDATION_SECTION_LIMIT = 6;
+
+const getEventActivityId = (event: Event): string | null => {
+  const rel = event.activities;
+  if (!rel) return null;
+  const primary = Array.isArray(rel) ? rel[0] : rel;
+  return primary?.id ?? null;
+};
+
+const selectFallbackRecommendations = (events: Event[], userActivityTypes: string[]): Event[] => {
+  if (!events.length) return [];
+  if (userActivityTypes.length) {
+    const filtered = events.filter((event) => {
+      const activityId = getEventActivityId(event);
+      return Boolean(activityId && userActivityTypes.includes(activityId));
+    });
+    if (filtered.length) {
+      return filtered.slice(0, RECOMMENDATION_SECTION_LIMIT);
+    }
+  }
+  return [...events].sort(() => Math.random() - 0.5).slice(0, RECOMMENDATION_SECTION_LIMIT);
+};
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Event[]>([]);
   const [popularEvents, setPopularEvents] = useState<Event[]>([]);
@@ -67,11 +74,12 @@ export default function RecommendationsPage() {
 
         let userActivityTypes: string[] = [];
         if (uid) {
-          const { data: userRsvps } = await supabase
-            .from("rsvps")
+          const { data: userAttendance } = await supabase
+            .from("session_attendees")
             .select("sessions(activity_id)")
-            .eq("user_id", uid);
-          const typed = (userRsvps || []) as unknown as RsvpSessionRef[];
+            .eq("user_id", uid)
+            .neq("status", "declined");
+          const typed = (userAttendance || []) as unknown as AttendanceSessionRef[];
           userActivityTypes = typed
             .map((r) => {
               const s = r.sessions;
@@ -102,7 +110,7 @@ export default function RecommendationsPage() {
           .select(`
             id, created_by, price_cents, starts_at, ends_at, venue_id,
             activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng),
-            rsvps(id)
+            session_attendees(status)
           `)
           .gte("starts_at", new Date().toISOString())
           .order("starts_at", { ascending: true })
@@ -110,39 +118,56 @@ export default function RecommendationsPage() {
 
         if (popularData && !cancelled) {
           const typedPopular = popularData as PopularSession[];
-          const sortedByRsvps: Event[] = typedPopular
-            .map<PopularSortable>((ev) => ({ ...ev, rsvp_count: ev.rsvps?.length ?? 0 }))
-            .sort((a, b) => b.rsvp_count - a.rsvp_count)
+          const sortedByAttendance: Event[] = typedPopular
+            .map<PopularSortable>((ev) => ({ ...ev, attendee_count: ev.session_attendees?.length ?? 0 }))
+            .sort((a, b) => b.attendee_count - a.attendee_count)
             .slice(0, 6)
             .map((ev) => {
-              const { rsvps, rsvp_count, ...rest } = ev;
-              void rsvps;
-              void rsvp_count;
+              const { session_attendees, attendee_count, ...rest } = ev;
+              void session_attendees;
+              void attendee_count;
               return rest;
             });
-          setPopularEvents(sortedByRsvps);
+          setPopularEvents(sortedByAttendance);
         }
 
-        let recommendedEvents = typedUpcoming;
-        if (userActivityTypes.length > 0) {
-          recommendedEvents = typedUpcoming.filter((event) => {
-            const activities = event.activities;
-            if (!activities) return false;
-            const activityId = Array.isArray(activities)
-              ? activities[0]?.id
-              : (activities as { id: string; name: string }).id;
-            return userActivityTypes.includes(activityId || "");
-          });
-        }
+        const fetchRecommendationSessions = async (): Promise<Event[] | null> => {
+          if (!uid) return null;
+          try {
+            const params = new URLSearchParams();
+            params.set("limit", "12");
+            if (userLocation?.lat != null && userLocation?.lng != null) {
+              params.set("lat", userLocation.lat.toFixed(6));
+              params.set("lng", userLocation.lng.toFixed(6));
+            }
+            const query = params.toString();
+            const endpoint = query ? `/api/recommendations?${query}` : "/api/recommendations";
+            const response = await fetch(endpoint, {
+              credentials: "include",
+              cache: "no-store",
+            });
+            if (!response.ok) {
+              if (response.status !== 401) {
+                console.warn("[discover] recommendation API error", response.status);
+              }
+              return null;
+            }
+            const payload = (await response.json()) as RecommendationResponse;
+            if (!Array.isArray(payload.recommendations)) return null;
+            return payload.recommendations.map((entry) => entry.session);
+          } catch (apiError) {
+            console.warn("[discover] failed to fetch recommendations", apiError);
+            return null;
+          }
+        };
 
-        if (recommendedEvents.length === 0) {
-          recommendedEvents = [...typedUpcoming]
-            .sort(() => Math.random() - 0.5)
-            .slice(0, 6);
+        let recommendedEvents = await fetchRecommendationSessions();
+        if (!recommendedEvents || recommendedEvents.length === 0) {
+          recommendedEvents = selectFallbackRecommendations(typedUpcoming, userActivityTypes);
         }
 
         if (!cancelled) {
-          setRecommendations(recommendedEvents.slice(0, 6));
+          setRecommendations((recommendedEvents ?? []).slice(0, RECOMMENDATION_SECTION_LIMIT));
         }
 
         if (userLocation) {

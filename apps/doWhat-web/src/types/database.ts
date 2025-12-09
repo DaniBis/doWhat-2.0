@@ -46,21 +46,76 @@ export type UserTraitSummaryRow = {
   updated_at: string;
 };
 
-export type RsvpRow = {
+export type SessionRow = {
   id: string;
+  venue_id: string | null;
   activity_id: string | null;
-  session_id: string | null;
+  host_user_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_cents: number;
+  visibility: "public" | "friends" | "private";
+  max_attendees: number;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionInsert = {
+  id?: string;
+  venue_id?: string | null;
+  activity_id?: string | null;
+  host_user_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_cents?: number;
+  visibility?: "public" | "friends" | "private";
+  max_attendees?: number;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionUpdate = {
+  id?: string;
+  venue_id?: string | null;
+  activity_id?: string | null;
+  host_user_id?: string;
+  starts_at?: string;
+  ends_at?: string;
+  price_cents?: number;
+  visibility?: "public" | "friends" | "private";
+  max_attendees?: number;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionAttendeeRow = {
+  session_id: string;
   user_id: string;
   status: "going" | "interested" | "declined";
+  checked_in: boolean;
+  attended_at: string | null;
   created_at: string;
 };
 
-export type SessionRow = {
-  id: string;
-  activity_id: string | null;
-  starts_at: string | null;
-  ends_at: string | null;
-  created_by: string | null;
+export type SessionAttendeeInsert = {
+  session_id: string;
+  user_id: string;
+  status?: "going" | "interested" | "declined";
+  checked_in?: boolean;
+  attended_at?: string | null;
+  created_at?: string;
+};
+
+export type SessionAttendeeUpdate = {
+  session_id?: string;
+  user_id?: string;
+  status?: "going" | "interested" | "declined";
+  checked_in?: boolean;
+  attended_at?: string | null;
+  created_at?: string;
 };
 
 export type ProfileRow = {
@@ -123,16 +178,16 @@ export interface Database {
         Update: Partial<UserTraitSummaryRow>;
         Relationships: [];
       };
-      rsvps: {
-        Row: RsvpRow;
-        Insert: Partial<RsvpRow> & Pick<RsvpRow, "user_id">;
-        Update: Partial<RsvpRow>;
-        Relationships: [];
-      };
       sessions: {
         Row: SessionRow;
-        Insert: Partial<SessionRow>;
-        Update: Partial<SessionRow>;
+        Insert: SessionInsert;
+        Update: SessionUpdate;
+        Relationships: [];
+      };
+      session_attendees: {
+        Row: SessionAttendeeRow;
+        Insert: SessionAttendeeInsert;
+        Update: SessionAttendeeUpdate;
         Relationships: [];
       };
       profiles: {

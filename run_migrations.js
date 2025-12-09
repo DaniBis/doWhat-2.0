@@ -90,6 +90,7 @@ const applyMigration = async (client, filename) => {
 
     console.info('[migrate] All migrations applied.');
   } catch (error) {
+    console.error('[migrate] Fatal error', error);
     process.exitCode = 1;
   } finally {
     await client.end();
