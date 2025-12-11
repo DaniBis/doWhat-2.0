@@ -53,7 +53,7 @@ Generate tokens with `pnpm --filter scripts run health-env` or Supabase dashboar
 ### 5. RPC Surface (`increment_user_trait_score` and onboarding flow)
 - [ ] Call RPC as User A for one of their base traits and assert `score`, `base_count`, `vote_count` values match deltas.
 - [ ] Attempt RPC from anonymous context -> expect `401`/auth error.
-- [ ] Run the mobile onboarding flow (new Jest test already covers UI) against a mocked Supabase client seeded with policy-success responses. For end-to-end confidence, run `apps/doWhat-mobile/src/lib/supabase.ts` against the dev Supabase instance and confirm five trait insertions followed by RPC calls succeed using the same session tokens as above.
+- [ ] Run the mobile onboarding flow (see `apps/doWhat-mobile/src/app/__tests__/onboarding-traits.test.tsx`) against a mocked Supabase client seeded with policy-success responses. For end-to-end confidence, run `apps/doWhat-mobile/src/lib/supabase.ts` against the dev Supabase instance and confirm five trait insertions followed by RPC calls succeed using the same session tokens as above.
 
 ## Automation Outline
 

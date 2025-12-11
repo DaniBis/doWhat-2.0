@@ -4,6 +4,7 @@ import { Inter } from "next/font/google";
 import React from "react";
 import dynamic from "next/dynamic";
 import Providers from "./providers";
+import { OnboardingNavLink } from "@/components/nav/OnboardingNavLink";
 
 type AuthButtonsProps = {
   variant?: "panel" | "inline";
@@ -31,9 +32,11 @@ export default async function RootLayout({
                 <a href="/venues" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Venues</a>
                 <a href="/map" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Map</a>
                 <a href="/create" className="rounded-full px-3 py-1 hover:bg-slate-100 hover:text-slate-900">Create</a>
+                <OnboardingNavLink className="ml-2" />
               </nav>
             </div>
             <div className="flex items-center gap-2">
+              <OnboardingNavLink className="md:hidden" />
               {/* Fallback link shows immediately (SSR) and is hidden once AuthButtons hydrates */}
               <a
                 id="auth-fallback-link"

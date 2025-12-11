@@ -7,6 +7,7 @@ import { fetchAttendanceSummary } from '../lib/sessionAttendance';
 export default function SessionAttendanceBadges({ sessionId }: { sessionId?: string | null }) {
   const [going, setGoing] = useState<number | null>(null);
   const [interested, setInterested] = useState<number | null>(null);
+  const [verified, setVerified] = useState<number | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -18,6 +19,7 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
         if (!mounted) return;
         setGoing(summary?.counts?.going ?? 0);
         setInterested(summary?.counts?.interested ?? 0);
+        setVerified(summary?.counts?.verified ?? 0);
       } catch (err) {
         if (__DEV__) console.error('[SessionAttendanceBadges] summary refresh', err);
       }
@@ -51,6 +53,9 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
       </Text>
       <Text style={{ fontSize: 12, color: '#374151', backgroundColor: '#f3f4f6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
         Interested: {interested ?? '—'}
+      </Text>
+      <Text style={{ fontSize: 12, color: '#4338ca', backgroundColor: '#eef2ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+        GPS verified: {verified ?? '—'}
       </Text>
     </View>
   );

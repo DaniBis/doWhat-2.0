@@ -8,6 +8,7 @@ import {
   describeError,
   isUuid,
   normaliseSavedActivityRow,
+  trackSavedActivityToggle,
   type SavedPlace,
   type SavePayload,
   shouldFallback,
@@ -30,6 +31,16 @@ interface SavedActivitiesContextValue {
 }
 
 const SavedActivitiesContext = createContext<SavedActivitiesContextValue | undefined>(undefined);
+
+const resolveMetadataSource = (metadata?: Record<string, unknown> | null) => {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const raw = (metadata as Record<string, unknown>).source;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+};
 
 export function SavedActivitiesProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<SavedPlace[]>([]);
@@ -240,10 +251,20 @@ export function SavedActivitiesProvider({ children }: { children: ReactNode }) {
     async (payload: SavePayload) => {
       if (!payload?.id) return;
       if (pendingIds.has(payload.id)) return;
-      if (items.some((item) => item.placeId === payload.id)) {
+      const existing = items.find((item) => item.placeId === payload.id) ?? null;
+      const analyticsBase = {
+        placeId: payload.id,
+        name: payload.name ?? existing?.name ?? null,
+        citySlug: payload.citySlug ?? existing?.citySlug ?? null,
+        venueId: payload.venueId ?? existing?.venueId ?? null,
+        source: resolveMetadataSource(payload.metadata as Record<string, unknown> | null) ?? resolveMetadataSource(existing?.metadata ?? null),
+      };
+      if (existing) {
         await unsave(payload.id);
+        trackSavedActivityToggle({ platform: 'web', action: 'unsave', ...analyticsBase });
       } else {
         await save(payload);
+        trackSavedActivityToggle({ platform: 'web', action: 'save', ...analyticsBase });
       }
     },
     [items, pendingIds, save, unsave],

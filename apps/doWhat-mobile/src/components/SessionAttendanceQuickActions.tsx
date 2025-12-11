@@ -10,7 +10,7 @@ import {
   type AttendanceStatus,
 } from '../lib/sessionAttendance';
 
-const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0 };
+const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
 
 type Props = {
   sessionId?: string | null;

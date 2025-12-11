@@ -2,22 +2,53 @@
 
 This roadmap reflects the current state of branch `feature/admin-dashboard-docs` and outlines the next major efforts to close remaining gaps across mobile, web, shared packages, and Supabase.
 
+## 0. Social Sweat Core Transformation (New High Priority · Est. 3–4 sprints)
+- **Objective:** Reframe doWhat into "Social Sweat" by layering sport-specific onboarding, reliability scoring, and hyperlocal discovery without regressing existing flows.
+- **Schema & Data Foundations (Sprint 1):**
+	- Ship migration `035_social_sweat_core.sql` introducing profile reliability columns, sport metadata, attendance enums, `session_open_slots`, and (per architecture review) a dedicated `user_sport_profiles` table so trait vibes remain decoupled from structured skill data.
+	- Regenerate Supabase types plus shared TypeScript enums immediately so web/mobile compile before new UI lands.
+		- ✅ 10 Dec: Centralized the Social Sweat sport/play/attendance enums + labels in `@dowhat/shared`, re-exported them via `apps/doWhat-web/src/types/database.ts`, and updated the host attendance UI to consume the shared helpers.
+	- Add seed + rollback scripts plus health checks inside `database_updates.sql` to keep deploy parity.
+- **Shared Core Modules (Sprint 1–2):**
+	- Stand up `packages/shared/src/sports`, `scoring/reliability.ts`, and `recommendations/rankSessions.ts` with exhaustive Jest coverage.
+	- Move palette/spacing tokens into `packages/shared/theme` to prevent Next.js vs Expo drift when new Sport/Skill chips land.
+- **Onboarding + Creation (Sprint 2):**
+	- Web + mobile onboarding steps for Sport & Skill use the shared taxonomy and persist into `user_sport_profiles`/profiles in lockstep.
+	- `/admin/new` gains "Looking for Players" inputs that create `session_open_slots` rows alongside sessions, guarded by feature flags until QA.
+- **Discovery & Reliability (Sprint 3):**
+	- Mobile home feed surfaces "Find a 4th Player" cards ranked via the shared scorer; map remains secondary to avoid the "ghost town" effect in new cities.
+	- ✅ Host attendance tooling (`SessionAttendancePanel`) now records definitive statuses via a host-only roster, the companion API (`/api/sessions/[id]/attendance/host`) enforces host auth + writes `session_attendees`, and a Postgres trigger (`036_attendance_reliability_trigger.sql`) clamps reliability scores immediately; the GPS verification signal now shows up in attendance badges/analytics so “verified matches” are both visible and tracked.
+- **Validation & Pilot (Sprint 4):**
+	- `scripts/seed_social_sweat.ts` populates Bucharest pilot data for E2E + ranking tests.
+	- Reliability badge components (web + RN) and Skill chips reuse shared tokens; analytics dashboards track adoption before public launch.
+	- Architecture guardrails: run telemetry on fake-session risk, ensure open-slot RLS policies are exercised via Playwright + Jest.
+
 ## 1. Complete Session Attendance Migration (High Priority · Est. 3–4 days)
 - Replace all RSVP-era APIs/components (`RsvpBox`, `RsvpQuickActions`, `/api/rsvps`, etc.) with the new `session_attendees` tables and views delivered via migrations `027–030`.
 - Ensure host actions, attendee badges, caps, and session detail pages on both platforms rely on the same data joins.
 - Add targeted integration tests for attendance toggles, capacity checks, and saved sessions to prevent regressions.
+	- ✅ Added Jest coverage for the `/attendance/join` + `/attendance/leave` routes so auth failures, capacity enforcement, and success payloads stay regression-safe while we continue iterating on the remaining Step 1 tasks.
+	- ✅ Added matching coverage for `/attendance/host` (GET + POST) so host-only roster access, verified toggles, and Supabase update flows stay locked down.
+	- ✅ Added RTL coverage for `SessionAttendancePanel` so the host roster UI, verified badge, and “Record attendance” action remain regression-safe.
+	- ✅ Added Jest coverage for the `/my/attendance` page so the saved-session list honors Supabase auth, hydrates attendee rows, optimistically toggles statuses, and surfaces query/mutation errors when the browser client fails.
 
 ## 2. Stabilize Saved Activities Context (High Priority · Est. 1–2 days)
 - Fix the TypeScript issues in `apps/doWhat-mobile/src/contexts/SavedActivitiesContext.tsx` so typecheck/CI passes.
 - Mirror the refined context logic on the web (or extract core helpers into `packages/shared`) to keep save/unsave flows in sync.
 - Add unit tests around metadata normalization, optimistic updates, and fallback handling.
 - **Update · 4 Dec:** Added a dedicated RN Jest suite (`src/contexts/__tests__/SavedActivitiesContext.test.tsx`) plus a Jest alias for `@dowhat/shared`, so the mobile provider now has coverage for optimistic saves, fallbacks, and unsave toggles.
+- **Update · 9 Dec:** Extended the web provider suite (`apps/doWhat-web/src/contexts/__tests__/SavedActivitiesContext.test.tsx`) with per-table select errors plus a fallback-read test, proving the context walks through `READ_SOURCES` and reprioritizes legacy write targets when Supabase views go missing.
+- **Update · 9 Dec (mobile):** Mirrored the fallback-read coverage in `apps/doWhat-mobile/src/contexts/__tests__/SavedActivitiesContext.test.tsx`, ensuring the RN provider also advances through `READ_SOURCES` and prefers the legacy write target when `user_saved_activities_view` errors.
+- **Update · 11 Dec:** Introduced the shared `trackSavedActivityToggle` helper in `packages/shared/src/analytics.ts`, instrumented both SavedActivities providers with platform/source-aware telemetry, and added Jest coverage on web + mobile so every save/unsave event now emits analytics with consistent metadata.
 
 ## 3. Ship Trait Onboarding & Profile Flows (High Priority · Est. 3 days)
 - Wire the existing trait APIs into real onboarding/profile experiences on both mobile and web.
 - Ensure Supabase schema (`021_user_trait_vibe_system.sql`) is exercised end-to-end with proper RLS/policies.
 	- Detailed validation plan now lives in `docs/trait_policies_test_plan.md`; run that script matrix before sign-off.
 - Document the UX flows and add regression tests covering trait creation, editing, and personalization hints.
+	- **Update · 9 Dec:** Added Jest coverage for `src/app/onboarding/traits/page.tsx`, dynamically importing the server component so mocked Supabase auth + `next/navigation.redirect` hooks apply, and asserting unauthenticated users redirect to `/auth/login` while signed-in members see the Step 3 checklist/CTA block.
+	- **Update · 9 Dec:** Landed CTA regression tests on the profile traits tab and Smart Filters page (web + mobile). The new Expo suites stub Supabase auth/count queries, mock the popular traits fetch, and wrap React Native Animated warnings so the "Finish your base traits" banner only appears when fewer than five base traits exist, regardless of platform.
+	- **Update · 9 Dec:** Hardened the mobile trait selector with RN Jest coverage (`apps/doWhat-mobile/src/app/__tests__/onboarding-traits.test.tsx`), mocking safe areas/router, enforcing the five-trait cap, validating the insert/RPC fan-out on save, and asserting the "Please sign in again" error when Supabase auth is missing.
 
 ## 4. Achieve Web/Mobile Feature Parity (Completed · 6 Dec 2025)
 - **Status (6 Dec 2025):** Parity guardrails, docs, and Playwright suites are now in place across admin new/sessions/dashboard/venues plus the venue verification tooling, so work can shift to Step 5.

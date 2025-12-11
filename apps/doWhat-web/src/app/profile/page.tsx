@@ -2,9 +2,12 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { useCallback, useEffect, useState } from 'react';
-import { getTraitOnboardingState } from '@dowhat/shared';
+import { getTraitOnboardingState, isSportType, trackOnboardingEntry, type OnboardingStep, type SportType } from '@dowhat/shared';
 import { supabase } from '@/lib/supabase/browser';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
+import { SportOnboardingBanner } from '@/components/profile/SportOnboardingBanner';
+import { ReliabilityPledgeBanner } from '@/components/profile/ReliabilityPledgeBanner';
+import { OnboardingProgressBanner } from '@/components/profile/OnboardingProgressBanner';
 import { KPIGrid } from '@/components/profile/KPIGrid';
 import { BadgesPreview } from '@/components/profile/BadgesPreview';
 import { AttendanceBars } from '@/components/profile/AttendanceBars';
@@ -35,12 +38,23 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileLoading, setSportProfileLoading] = useState(true);
+  const [reliabilityPledgeAckAt, setReliabilityPledgeAckAt] = useState<string | null>(null);
+  const [reliabilityPledgeLoading, setReliabilityPledgeLoading] = useState(true);
   const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
   const traitCountLoading = loading || traitsRefreshing;
   const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({
     baseTraitCount,
     traitCountLoading,
   });
+  const needsSportOnboarding = !sportProfileLoading && !primarySport;
+  const needsReliabilityPledge = !reliabilityPledgeLoading && !reliabilityPledgeAckAt;
+  const incompleteSteps: OnboardingStep[] = [];
+  if (needsTraitOnboarding) incompleteSteps.push('traits');
+  if (needsSportOnboarding) incompleteSteps.push('sport');
+  if (needsReliabilityPledge) incompleteSteps.push('pledge');
 
   const refreshTraits = useCallback(async () => {
     if (!userId) return;
@@ -105,6 +119,71 @@ export default function ProfilePage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadProfileMeta = async () => {
+      if (!userId) {
+        if (!cancelled) {
+          setPrimarySport(null);
+          setSportSkillLevel(null);
+          setReliabilityPledgeAckAt(null);
+          setSportProfileLoading(false);
+          setReliabilityPledgeLoading(false);
+        }
+        return;
+      }
+      setSportProfileLoading(true);
+      setReliabilityPledgeLoading(true);
+      try {
+        const { data: profileRow, error: profileError } = await supabase
+          .from('profiles')
+          .select('primary_sport, reliability_pledge_ack_at')
+          .eq('id', userId)
+          .maybeSingle<{ primary_sport: SportType | null; reliability_pledge_ack_at: string | null }>();
+        if (profileError && profileError.code !== 'PGRST116') {
+          throw profileError;
+        }
+        const normalized = profileRow && isSportType(profileRow.primary_sport) ? profileRow.primary_sport : null;
+        if (!cancelled) {
+          setPrimarySport(normalized);
+          setReliabilityPledgeAckAt(profileRow?.reliability_pledge_ack_at ?? null);
+        }
+        if (normalized) {
+          const { data: sportRow, error: sportError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', userId)
+            .eq('sport', normalized)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (sportError && sportError.code !== 'PGRST116') {
+            throw sportError;
+          }
+          if (!cancelled) {
+            setSportSkillLevel(sportRow?.skill_level ?? null);
+          }
+        } else if (!cancelled) {
+          setSportSkillLevel(null);
+        }
+      } catch (err) {
+        console.warn('[profile] failed to load sport/reliability preferences', err);
+        if (!cancelled) {
+          setPrimarySport(null);
+          setSportSkillLevel(null);
+          setReliabilityPledgeAckAt(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSportProfileLoading(false);
+          setReliabilityPledgeLoading(false);
+        }
+      }
+    };
+    void loadProfileMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // Attempt to capture geolocation & populate location if missing once profile is loaded.
   useEffect(() => {
@@ -197,7 +276,10 @@ export default function ProfilePage() {
       />
       <main className="max-w-5xl mx-auto px-6 -mt-8 relative z-10 pb-20">
         {error && <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
+        {incompleteSteps.length > 0 && <OnboardingProgressBanner steps={incompleteSteps} />}
         <div className="mb-8"><KPIGrid kpis={kpis} /></div>
+        {needsReliabilityPledge && <ReliabilityPledgeBanner lastAcknowledgedAt={reliabilityPledgeAckAt} />}
+        {needsSportOnboarding && <SportOnboardingBanner skillLevel={sportSkillLevel} />}
         {profile?.socials && (profile.socials.instagram || profile.socials.whatsapp) && (
           <div className="mb-6 flex flex-wrap gap-3 items-center text-sm">
             {profile.socials.instagram && (() => {
@@ -272,6 +354,7 @@ export default function ProfilePage() {
                 <Link
                   href="/onboarding/traits"
                   className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
+                  onClick={() => trackOnboardingEntry({ source: 'traits-banner', platform: 'web', step: 'traits' })}
                 >
                   Go to onboarding
                   <ArrowRight className="h-4 w-4" aria-hidden />

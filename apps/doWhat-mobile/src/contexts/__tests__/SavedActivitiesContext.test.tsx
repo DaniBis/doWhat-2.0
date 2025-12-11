@@ -4,6 +4,14 @@ import { act, render, waitFor } from '@testing-library/react-native';
 import type { SavePayload } from '@dowhat/shared';
 import { SavedActivitiesProvider, useSavedActivities } from '../SavedActivitiesContext';
 
+jest.mock('@dowhat/shared', () => {
+  const actual = jest.requireActual('@dowhat/shared') as typeof import('@dowhat/shared');
+  return {
+    ...actual,
+    trackSavedActivityToggle: jest.fn(),
+  } satisfies typeof import('@dowhat/shared');
+});
+
 jest.mock('../../lib/supabase', () => ({
   supabase: {
     auth: {
@@ -23,11 +31,20 @@ type MockSupabase = {
 };
 
 const { supabase: mockSupabase } = jest.requireMock('../../lib/supabase') as { supabase: MockSupabase };
+const { trackSavedActivityToggle } = jest.requireMock('@dowhat/shared') as {
+  trackSavedActivityToggle: jest.Mock;
+};
 
 const selectRowsByTable: Record<string, Array<Record<string, unknown>>> = {
   user_saved_activities_view: [],
   saved_activities_view: [],
   saved_activities: [],
+};
+
+const selectErrorsByTable: Record<string, Error | null> = {
+  user_saved_activities_view: null,
+  saved_activities_view: null,
+  saved_activities: null,
 };
 
 type SupabaseMutationResult = { error: Error | null };
@@ -51,6 +68,9 @@ describe('SavedActivitiesContext', () => {
     selectRowsByTable.user_saved_activities_view = [];
     selectRowsByTable.saved_activities_view = [];
     selectRowsByTable.saved_activities = [];
+    selectErrorsByTable.user_saved_activities_view = null;
+    selectErrorsByTable.saved_activities_view = null;
+    selectErrorsByTable.saved_activities = null;
 
     mockSupabase.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-123' } } });
     mockSupabase.auth.onAuthStateChange.mockReturnValue({
@@ -70,7 +90,13 @@ describe('SavedActivitiesContext', () => {
       if (table === 'user_saved_activities_view' || table === 'saved_activities_view') {
         return {
           select: () => ({
-            eq: () => Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null }),
+            eq: () => {
+              const error = selectErrorsByTable[table];
+              if (error) {
+                return Promise.resolve({ data: null, error });
+              }
+              return Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null });
+            },
           }),
         };
       }
@@ -85,7 +111,13 @@ describe('SavedActivitiesContext', () => {
       if (table === 'saved_activities') {
         return {
           select: () => ({
-            eq: () => Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null }),
+            eq: () => {
+              const error = selectErrorsByTable[table];
+              if (error) {
+                return Promise.resolve({ data: null, error });
+              }
+              return Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null });
+            },
           }),
           upsert: legacyUpsert,
           delete: () => ({
@@ -194,6 +226,31 @@ describe('SavedActivitiesContext', () => {
     expect(contextRef.current?.isSaved('legacy-1')).toBe(true);
   });
 
+  it('falls back to the next read source when the primary select errors with a fallback-eligible message', async () => {
+    selectErrorsByTable.user_saved_activities_view = new Error('relation user_saved_activities_view does not exist');
+    selectRowsByTable.saved_activities_view = [
+      {
+        user_id: 'user-123',
+        id: 'backup-venue',
+        name: 'Backup Venue',
+        sessions_count: 0,
+        updated_at: '2025-01-02T00:00:00.000Z',
+      },
+    ];
+
+    const contextRef = await renderContext();
+    expect(contextRef.current?.items).toHaveLength(1);
+    expect(contextRef.current?.items[0]).toMatchObject({ placeId: 'backup-venue', name: 'Backup Venue' });
+    expect(contextRef.current?.error).toBeNull();
+
+    await act(async () => {
+      await contextRef.current?.save({ id: 'backup-venue', name: 'Backup Venue' });
+    });
+
+    expect(legacyUpsert).toHaveBeenCalledTimes(1);
+    expect(userSavedUpsert).not.toHaveBeenCalled();
+  });
+
   it('unsaves existing items via toggle', async () => {
     selectRowsByTable.user_saved_activities_view = [
       {
@@ -220,5 +277,43 @@ describe('SavedActivitiesContext', () => {
     });
     expect(contextRef.current?.isSaved('alpha')).toBe(false);
     expect(contextRef.current?.items).toHaveLength(0);
+  });
+
+  it('fires analytics events when toggling saves', async () => {
+    const contextRef = await renderContext();
+    const payload: SavePayload = {
+      id: 'mobile-telemetry',
+      name: 'Telemetry Venue',
+      citySlug: 'chiang-mai',
+      metadata: { source: 'home_card' },
+    };
+
+    await act(async () => {
+      await contextRef.current?.toggle(payload);
+    });
+
+    expect(trackSavedActivityToggle).toHaveBeenLastCalledWith({
+      platform: 'mobile',
+      action: 'save',
+      placeId: 'mobile-telemetry',
+      name: 'Telemetry Venue',
+      citySlug: 'chiang-mai',
+      venueId: null,
+      source: 'home_card',
+    });
+
+    await act(async () => {
+      await contextRef.current?.toggle(payload);
+    });
+
+    expect(trackSavedActivityToggle).toHaveBeenLastCalledWith({
+      platform: 'mobile',
+      action: 'unsave',
+      placeId: 'mobile-telemetry',
+      name: 'Telemetry Venue',
+      citySlug: 'chiang-mai',
+      venueId: null,
+      source: 'home_card',
+    });
   });
 });

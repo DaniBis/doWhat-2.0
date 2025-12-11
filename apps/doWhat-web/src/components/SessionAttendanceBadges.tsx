@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { AttendanceCounts } from "@/lib/sessions/server";
 
-const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0 };
+const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
 
 type Props = { sessionId?: string | null };
 
@@ -55,11 +55,13 @@ export default function SessionAttendanceBadges({ sessionId }: Props) {
 
   const going = counts?.going ?? "—";
   const interested = counts?.interested ?? "—";
+  const verified = counts?.verified ?? "—";
 
   return (
     <div className="flex items-center gap-3 text-xs text-gray-700">
       <span className="rounded bg-gray-100 px-2 py-0.5">Going: {going}</span>
       <span className="rounded bg-gray-100 px-2 py-0.5">Interested: {interested}</span>
+      <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700">GPS verified: {verified}</span>
     </div>
   );
 }

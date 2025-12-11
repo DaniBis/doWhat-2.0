@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SessionAttendanceQuickActions from "../SessionAttendanceQuickActions";
 
 const ORIGINAL_FETCH = global.fetch;
-const DEFAULT_COUNTS = { going: 0, interested: 0, declined: 0, total: 0 };
+const DEFAULT_COUNTS = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
 
 const mockResponse = <T,>(data: T, ok = true) =>
   ({

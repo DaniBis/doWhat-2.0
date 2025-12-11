@@ -53,6 +53,7 @@ export type AttendanceCounts = {
   interested: number;
   declined: number;
   total: number;
+  verified: number;
 };
 
 export type ParsedSessionPayload = {
@@ -508,16 +509,18 @@ export async function getSessionOrThrow(service: SupabaseClient, sessionId: stri
 }
 
 export async function getAttendanceCounts(service: SupabaseClient, sessionId: string): Promise<AttendanceCounts> {
-  const [going, interested, declined] = await Promise.all([
+  const [going, interested, declined, verified] = await Promise.all([
     countByStatus(service, sessionId, 'going'),
     countByStatus(service, sessionId, 'interested'),
     countByStatus(service, sessionId, 'declined'),
+    countVerifiedMatches(service, sessionId),
   ]);
   return {
     going,
     interested,
     declined,
     total: going + interested + declined,
+    verified,
   };
 }
 
@@ -531,6 +534,17 @@ async function countByStatus(
     .select('status', { count: 'exact', head: true })
     .eq('session_id', sessionId)
     .eq('status', status);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+async function countVerifiedMatches(service: SupabaseClient, sessionId: string): Promise<number> {
+  const { count, error } = await service
+    .from('session_attendees')
+    .select('checked_in', { count: 'exact', head: true })
+    .eq('session_id', sessionId)
+    .eq('attendance_status', 'attended')
+    .eq('checked_in', true);
   if (error) throw error;
   return count ?? 0;
 }

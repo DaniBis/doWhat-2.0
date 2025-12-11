@@ -1,10 +1,14 @@
-# Migrations 025–031 Validation Checklist
+# Migrations 025–035 Validation Checklist
 
-_Last updated: 6 Dec 2025_
+_Last updated: 10 Dec 2025_
 
-This note captures the verification steps for the latest Supabase schema work (attendance + saved
-activities). Use it when promoting changes to staging or production so we can prove migrations ran
-in order, seed helpers completed, and rollback files are on hand.
+This note captures the verification steps for the recent Supabase schema work:
+
+- Attendance + saved activities (025–034)
+- Social Sweat core foundations (035)
+
+Use it when promoting changes to staging or production so we can prove migrations ran in order,
+seed helpers completed, and rollback files are on hand.
 
 ## 6 Dec 2025 migration run (feature/admin-dashboard-docs)
 
@@ -16,6 +20,16 @@ in order, seed helpers completed, and rollback files are on hand.
    - 027 had a stray `alter table public.profiles` duplication; removed so DDL parses.
    - 028 previously required every `host_user_id`; added fallback that assigns missing sessions to `bisceanudaniel@gmail.com` (or the first profile) after trying attendee-derived hosts.
    - 031 switched from `uuid_generate_v4()` → `gen_random_uuid()` (pgcrypto) and removed `v.region` from the view to match production schema.
+
+   ## 10 Dec 2025 prep (Social Sweat core)
+
+   - [ ] Run `pnpm run db:migrate` against staging to apply `035_social_sweat_core.sql` after capturing the
+      latest database snapshot/backup.
+   - [ ] Verify `select filename from public.schema_migrations order by 1 desc limit 1;` now returns
+      `035_social_sweat_core.sql`.
+   - [ ] Rerun `pnpm --filter dowhat-web run typecheck` and mobile/web test suites after regenerating
+      Supabase types so new enums/tables compile across packages.
+   - [ ] Update this checklist with production rollout notes once 035 lands.
 
 
 ## How to apply
@@ -49,23 +63,33 @@ Check Supabase logs for DDL statements if you need external confirmation.
 | 029 | `.../029_remove_rsvps_table.sql` | Deletes the legacy `public.rsvps` table now that all clients run on `session_attendees`. | 027/028 | `029_remove_rsvps_table_rollback.sql` recreates a minimal `rsvps` table. |
 | 030 | `.../030_attendance_views.sql` | Adds `v_session_attendance_counts`, `v_activity_attendance_summary`, `v_venue_attendance_summary` to simplify API rollups. | 027–028 (requires normalized tables). | No rollback (views can be dropped manually). |
 | 031 | `.../031_user_saved_activities.sql` | Creates `user_saved_activities`, helper views (`user_saved_activities_view`, `saved_activities_view`), indexes, triggers, and RLS. | Places + Profiles tables, attendance views optional. | Forward-only (dropping the table reverts). |
+| 032 | `.../032_trait_policy_guard_fix.sql` | Patches the trait policy guardrail functions and grants to match docs/trait_policies_test_plan.md. | Existing trait tables + policies. | Rerun file (idempotent updates). |
+| 033 | `.../033_remove_event_participants.sql` | Drops the deprecated `event_participants` table + enum so attendance relies solely on `session_attendees`. | Attendance migrations (027–028). | None (recreate table manually if needed). |
+| 034 | `.../034_admin_audit_logs.sql` | Adds `admin_allowlist`, `admin_audit_logs`, and associated RLS so admin tooling can log destructive actions. | Existing admin dashboards (no schema deps). | Drop the tables if rollback required. |
+| 034a | `.../034a_extend_attendance_status.sql` | Extends the `attendance_status` enum with `registered` + `late_cancel` ahead of the Social Sweat migration. | Enum created in 010 + any remaining references. | Forward-only (enum drops require manual fixes). |
+| 035 | `.../035_social_sweat_core.sql` | Adds profile reliability columns, `user_sport_profiles`, `session_open_slots`, new attendance enums, and sport metadata for the Social Sweat transformation. | Attendance + profile tables (027–034a). | Forward-only (requires manual cleanup to revert). |
 
 ## Validation checklist
 
 1. **Schema migrations**
    - `node run_migrations.js` finishes without errors.
-   - `select filename from public.schema_migrations where filename like '03%' order by 1;` returns
-     `030_attendance_views.sql` and `031_user_saved_activities.sql`.
+    - `select filename from public.schema_migrations where filename like '03%' order by 1;` returns
+       `030_attendance_views.sql` through `035_social_sweat_core.sql` (including `034a_extend_attendance_status.sql`).
 2. **Attendance rollups**
    - `select * from v_session_attendance_counts limit 5;` succeeds.
    - `select going_count from v_activity_attendance_summary order by updated_at desc limit 5;` succeeds.
 3. **Saved activities plumbing**
    - `select count(*) from user_saved_activities;` works.
    - `select * from user_saved_activities_view limit 5;` returns rows (or zero with correct columns).
-4. **Rollbacks on hand**
+4. **Social Sweat core data**
+   - `select count(*) from session_open_slots;` runs (expect zero until data entry).
+   - `select * from user_sport_profiles limit 5;` succeeds (may be empty pre-onboarding).
+   - `select enumlabel from pg_enum join pg_type on pg_type.oid = pg_enum.enumtypid where typname = 'attendance_reliability_status';` shows the new enum values.
+   - `select enumlabel from pg_enum pg join pg_type t on t.oid = pg.enumtypid where t.typname = 'attendance_status';` includes both `registered` and `late_cancel`.
+5. **Rollbacks on hand**
    - Keep `028_sessions_schema_spec_rollback.sql` and `029_remove_rsvps_table_rollback.sql` synced to prod.
    - Document in the release note which migration would require a rollback and under what conditions.
-5. **Seed scripts** (optional but recommended on fresh environments)
+6. **Seed scripts** (optional but recommended on fresh environments)
    - `pnpm seed:taxonomy` populates shared taxonomy tables.
    - `pnpm seed:places:bangkok` + `pnpm seed:events:bangkok` hydrate demo data used by dashboards.
 

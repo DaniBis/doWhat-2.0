@@ -12,7 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import * as Location from 'expo-location';
-import { theme, getTraitOnboardingState } from '@dowhat/shared';
+import { theme, getTraitOnboardingState, trackOnboardingEntry } from '@dowhat/shared';
 import type { BadgeStatus } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
 import { createWebUrl } from '../lib/web';
@@ -32,6 +32,8 @@ type ProfileRow = {
   last_lng?: number | null;
   updated_at?: string | null;
   personality_traits?: string[] | null;
+  reliability_pledge_ack_at?: string | null;
+  reliability_pledge_version?: string | null;
 };
 
 type ProfileUpdatePayload = {
@@ -134,6 +136,8 @@ type ProfileCachePayload = {
   last_lat: number | null;
   last_lng: number | null;
   updated_at?: string | null;
+  reliabilityAckAt?: string | null;
+  reliabilityVersion?: string | null;
 };
 
 type LocationSuggestion = {
@@ -148,6 +152,16 @@ const MAX_LOCATION_SUGGESTIONS = 5;
 const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
 const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
 const MAX_PROFILE_TRAITS = 5;
+
+const formatPledgeAckDate = (timestamp: string | null) => {
+  if (!timestamp) return null;
+  try {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(timestamp));
+  } catch (error) {
+    console.warn('[ProfileSimple] Failed to format pledge date', error);
+    return new Date(timestamp).toDateString();
+  }
+};
 
 const normaliseProfileTrait = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
@@ -704,6 +718,9 @@ export default function ProfileSimple() {
   const userIdRef = useRef<string | null>(null);
   const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
   const [traitCountLoading, setTraitCountLoading] = useState(false);
+  const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+  const [pledgeVersion, setPledgeVersion] = useState<string | null>(null);
+  const [pledgeHydrated, setPledgeHydrated] = useState(false);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
     if (!catalogBadges.length) {
@@ -725,6 +742,8 @@ export default function ProfileSimple() {
   }, [catalogBadges, ownedBadges]);
 
   const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
+  const formattedPledgeAck = pledgeAckAt ? formatPledgeAckDate(pledgeAckAt) : null;
+  const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
 
   const restoreProfileFromCache = useCallback(async (uid: string) => {
     try {
@@ -752,6 +771,11 @@ export default function ProfileSimple() {
       setLocationLabel(locationVal);
       setProfileLat(typeof parsed.last_lat === 'number' ? parsed.last_lat : null);
       setProfileLng(typeof parsed.last_lng === 'number' ? parsed.last_lng : null);
+      if ('reliabilityAckAt' in parsed) {
+        setPledgeAckAt(parsed.reliabilityAckAt ?? null);
+        setPledgeVersion(parsed.reliabilityVersion ?? null);
+        setPledgeHydrated(true);
+      }
     } catch (error) {
       console.warn('[ProfileSimple] Failed to restore cached profile', error);
     }
@@ -842,7 +866,7 @@ export default function ProfileSimple() {
       includeLocation: boolean,
       includeTraits: boolean,
     ) => {
-      const baseColumns = ['full_name', 'avatar_url'];
+      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version'];
       if (includeInstagram) baseColumns.push('instagram');
       if (includeWhatsapp) baseColumns.push('whatsapp');
       if (includeBio) baseColumns.push('bio');
@@ -946,6 +970,8 @@ export default function ProfileSimple() {
         last_lng: typeof row?.last_lng === 'number' ? row.last_lng : profileLng,
         updated_at: row?.updated_at ?? null,
         personalityTraits: nextSupportsTraits ? sanitizeProfileTraitList(row?.personality_traits ?? null) : fallbackTraits,
+        reliabilityAckAt: row?.reliability_pledge_ack_at ?? null,
+        reliabilityVersion: row?.reliability_pledge_version ?? null,
       };
 
       setFullName(resolved.full_name);
@@ -957,6 +983,9 @@ export default function ProfileSimple() {
       setProfileLat(resolved.last_lat ?? null);
       setProfileLng(resolved.last_lng ?? null);
       setPersonalityTraits(resolved.personalityTraits);
+      setPledgeAckAt(resolved.reliabilityAckAt ?? null);
+      setPledgeVersion(resolved.reliabilityVersion ?? null);
+      setPledgeHydrated(true);
 
       try {
         await AsyncStorage.setItem(profileCacheKey(uid), JSON.stringify(resolved));
@@ -1069,6 +1098,9 @@ export default function ProfileSimple() {
           setLocFetchBusy(false);
           setBaseTraitCount(null);
           setTraitCountLoading(false);
+          setPledgeAckAt(null);
+          setPledgeVersion(null);
+          setPledgeHydrated(false);
         }
       });
       unsub = () => listener.subscription.unsubscribe();
@@ -1902,6 +1934,37 @@ export default function ProfileSimple() {
         </View>
       </View>
 
+      {pledgeHydrated && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Reliability pledge</Text>
+          </View>
+          <View style={{ padding:14, gap:8 }}>
+            {needsReliabilityPledge ? (
+              <>
+                <Text style={{ fontSize:14, fontWeight:'700', color:'#0f172a' }}>Lock your reliability pledge</Text>
+                <Text style={{ color:'#475569', fontSize:13 }}>
+                  Confirm the four commitments so hosts know they can count on you for Step 0.
+                </Text>
+                <Link
+                  href="/onboarding/reliability-pledge"
+                  asChild
+                  onPress={() => trackOnboardingEntry({ source: 'profile-pledge-banner', platform: 'mobile', step: 'pledge' })}
+                >
+                  <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#0ea5e9', paddingHorizontal:16, paddingVertical:8 }}>
+                    <Text style={{ color:'#fff', fontWeight:'700' }}>Review pledge</Text>
+                  </Pressable>
+                </Link>
+              </>
+            ) : (
+              <Text style={{ color:'#065f46', fontSize:13 }}>
+                You accepted version {pledgeVersion ?? 'v1'} on {formattedPledgeAck ?? 'a previous date'}.
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+
       <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
         <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
           <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Personality traits</Text>
@@ -1918,7 +1981,11 @@ export default function ProfileSimple() {
             }}>
               <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', textTransform:'uppercase', letterSpacing:0.8 }}>Finish onboarding</Text>
               <Text style={{ fontSize:14, color:'#065f46' }}>Add {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to showcase your vibe.</Text>
-              <Link href="/onboarding-traits" asChild>
+              <Link
+                href="/onboarding-traits"
+                asChild
+                onPress={() => trackOnboardingEntry({ source: 'profile-traits-banner', platform: 'mobile', step: 'traits' })}
+              >
                 <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#10b981', paddingHorizontal:16, paddingVertical:8 }}>
                   <Text style={{ color:'#fff', fontWeight:'700' }}>Choose traits</Text>
                 </Pressable>

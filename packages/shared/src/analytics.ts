@@ -45,3 +45,53 @@ export const trackTaxonomyToggle = (payload: TaxonomyToggleAnalyticsPayload) =>
 
 export const trackTaxonomyFiltersApplied = (payload: TaxonomyFiltersAppliedPayload) =>
   trackAnalyticsEvent('taxonomy_filters_applied', payload);
+
+export type VerifiedMatchesRecordedPayload = {
+  sessionId: string;
+  hostUserId: string;
+  platform: 'web' | 'mobile';
+  totalUpdates: number;
+  verifiedMarked: number;
+  verifiedCleared: number;
+  verifiedTotal?: number;
+};
+
+export const trackVerifiedMatchesRecorded = (payload: VerifiedMatchesRecordedPayload) =>
+  trackAnalyticsEvent('session_verified_matches_recorded', payload);
+
+export type OnboardingStep = 'traits' | 'sport' | 'pledge';
+
+export type OnboardingEntryPayload = {
+  source:
+    | 'nav'
+    | 'profile-banner'
+    | 'profile-traits-banner'
+    | 'profile-pledge-banner'
+    | 'sport-banner'
+    | 'pledge-banner'
+    | 'traits-banner'
+    | 'people-filter-banner'
+    | 'sport-selector'
+    | 'onboarding-card'
+    | 'sports-page';
+  platform: 'web' | 'mobile';
+  step?: OnboardingStep;
+  pendingSteps?: number;
+  steps?: OnboardingStep[];
+};
+
+export const trackOnboardingEntry = (payload: OnboardingEntryPayload) =>
+  trackAnalyticsEvent('onboarding_step_entry', payload);
+
+export type SavedActivityToggleAnalyticsPayload = {
+  platform: 'web' | 'mobile';
+  action: 'save' | 'unsave';
+  placeId: string;
+  source?: string | null;
+  name?: string | null;
+  citySlug?: string | null;
+  venueId?: string | null;
+};
+
+export const trackSavedActivityToggle = (payload: SavedActivityToggleAnalyticsPayload) =>
+  trackAnalyticsEvent('saved_activity_toggle', payload);

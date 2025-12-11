@@ -33,7 +33,7 @@ type MutationResponse = {
   error?: string;
 };
 
-const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0 };
+const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
 
 export default function SessionAttendanceQuickActions({ sessionId, className, size = "default" }: Props) {
   const [status, setStatus] = useState<Status | null>(null);

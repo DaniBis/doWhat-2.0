@@ -22,7 +22,8 @@ jest.mock('next/navigation', () => ({
     toString: jest.fn()
   }),
   usePathname: () => '/',
-  notFound: jest.fn()
+  notFound: jest.fn(),
+  redirect: jest.fn()
 }));
 
 jest.mock('next/headers', () => ({

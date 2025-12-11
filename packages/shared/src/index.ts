@@ -24,4 +24,7 @@ export * from "./preferences/mapFilters";
 export * from "./preferences/userPreferences";
 export * from "./savedActivities";
 export * from "./traits/onboardingReminder";
+export * from "./scoring/reliability";
+export * from "./sports/taxonomy";
+export * from "./recommendations/rankSessions";
 // badges type definitions are TypeScript-only; skip exporting compiled .js to avoid jest resolution issues

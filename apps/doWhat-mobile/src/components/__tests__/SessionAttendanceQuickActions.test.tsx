@@ -55,7 +55,7 @@ const mockSupabase = supabase as unknown as MockSupabase;
 describe('SessionAttendanceQuickActions', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    const emptyCounts: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0 };
+    const emptyCounts: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
     mockFetchAttendanceSummary.mockResolvedValue({
       status: null,
       counts: emptyCounts,
@@ -68,7 +68,7 @@ describe('SessionAttendanceQuickActions', () => {
   it('disables the going button when the session is full', async () => {
     mockFetchAttendanceSummary.mockResolvedValueOnce({
       status: null,
-      counts: { going: 5, interested: 1, declined: 0, total: 6 },
+      counts: { going: 5, interested: 1, declined: 0, total: 6, verified: 0 },
       maxAttendees: 5,
     } as AttendanceSummary);
 

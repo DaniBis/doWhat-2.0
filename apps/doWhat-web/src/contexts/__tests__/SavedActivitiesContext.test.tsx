@@ -4,6 +4,14 @@ import type { SavePayload } from '@dowhat/shared';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { SavedActivitiesProvider, useSavedActivities } from '../SavedActivitiesContext';
 
+jest.mock('@dowhat/shared', () => {
+  const actual = jest.requireActual('@dowhat/shared');
+  return {
+    ...actual,
+    trackSavedActivityToggle: jest.fn(),
+  };
+});
+
 jest.mock('@/lib/supabase/browser', () => ({
   supabase: {
     auth: {
@@ -27,11 +35,20 @@ type MockSupabase = {
 };
 
 const { supabase: mockSupabase } = jest.requireMock('@/lib/supabase/browser') as { supabase: MockSupabase };
+const { trackSavedActivityToggle } = jest.requireMock('@dowhat/shared') as {
+  trackSavedActivityToggle: jest.Mock;
+};
 
 const selectRowsByTable: Record<string, Array<Record<string, unknown>>> = {
   user_saved_activities_view: [],
   saved_activities_view: [],
   saved_activities: [],
+};
+
+const selectErrorsByTable: Record<string, PostgrestError | null> = {
+  user_saved_activities_view: null,
+  saved_activities_view: null,
+  saved_activities: null,
 };
 
 type MutationResponse = { error: PostgrestError | null };
@@ -63,7 +80,13 @@ const serializeContext = (value: ContextValue | null) => {
 };
 
 const buildSelect = (table: string) => ({
-  eq: () => Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null }),
+  eq: () => {
+    const error = selectErrorsByTable[table];
+    if (error) {
+      return Promise.resolve({ data: null, error });
+    }
+    return Promise.resolve({ data: selectRowsByTable[table] ?? [], error: null });
+  },
 });
 
 beforeEach(() => {
@@ -71,6 +94,9 @@ beforeEach(() => {
   selectRowsByTable.user_saved_activities_view = [];
   selectRowsByTable.saved_activities_view = [];
   selectRowsByTable.saved_activities = [];
+  selectErrorsByTable.user_saved_activities_view = null;
+  selectErrorsByTable.saved_activities_view = null;
+  selectErrorsByTable.saved_activities = null;
 
   mockSupabase.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-web-1' } } });
   mockSupabase.auth.onAuthStateChange.mockReturnValue({
@@ -272,6 +298,42 @@ describe('SavedActivitiesContext (web)', () => {
     expect(contextRef.current?.isSaved('legacy-9')).toBe(true);
   });
 
+  it('falls back to the next read source when the primary select errors with a fallback-eligible message', async () => {
+    selectErrorsByTable.user_saved_activities_view = {
+      name: 'PostgrestError',
+      message: 'relation user_saved_activities_view does not exist',
+      details: '',
+      hint: '',
+      code: '42P01',
+    };
+    selectRowsByTable.saved_activities_view = [
+      {
+        user_id: 'user-web-1',
+        id: 'legacy-spot',
+        name: 'Legacy Spot',
+        sessions_count: 1,
+        updated_at: '2025-01-02T00:00:00.000Z',
+      },
+    ];
+
+    const contextRef = await renderContext();
+
+    expect(contextRef.current?.items).toHaveLength(1);
+    expect(contextRef.current?.items[0]).toMatchObject({
+      placeId: 'legacy-spot',
+      name: 'Legacy Spot',
+    });
+    expect(contextRef.current?.error).toBeNull();
+
+    const payload: SavePayload = { id: 'legacy-spot', name: 'Legacy Spot' };
+    await act(async () => {
+      await contextRef.current?.save(payload);
+    });
+
+    expect(legacyUpsert).toHaveBeenCalledTimes(1);
+    expect(userSavedUpsert).not.toHaveBeenCalled();
+  });
+
   it('unsaves items via toggle when already saved', async () => {
     selectRowsByTable.user_saved_activities_view = [
       {
@@ -298,6 +360,44 @@ describe('SavedActivitiesContext (web)', () => {
     });
     expect(contextRef.current?.isSaved('alpha')).toBe(false);
     expect(contextRef.current?.items).toHaveLength(0);
+  });
+
+  it('fires analytics when toggling save state', async () => {
+    const contextRef = await renderContext();
+    const payload: SavePayload = {
+      id: 'telemetry-1',
+      name: 'Telemetry Spot',
+      citySlug: 'bangkok',
+      metadata: { source: 'home_card' },
+    };
+
+    await act(async () => {
+      await contextRef.current?.toggle(payload);
+    });
+
+    expect(trackSavedActivityToggle).toHaveBeenLastCalledWith({
+      platform: 'web',
+      action: 'save',
+      placeId: 'telemetry-1',
+      name: 'Telemetry Spot',
+      citySlug: 'bangkok',
+      venueId: null,
+      source: 'home_card',
+    });
+
+    await act(async () => {
+      await contextRef.current?.toggle(payload);
+    });
+
+    expect(trackSavedActivityToggle).toHaveBeenLastCalledWith({
+      platform: 'web',
+      action: 'unsave',
+      placeId: 'telemetry-1',
+      name: 'Telemetry Spot',
+      citySlug: 'bangkok',
+      venueId: null,
+      source: 'home_card',
+    });
   });
 
   it('clears state when refresh runs without a signed-in user', async () => {

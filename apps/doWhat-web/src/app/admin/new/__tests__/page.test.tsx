@@ -64,6 +64,7 @@ const createQueryChain = () => {
 
 describe("AdminNewSessionPage prefills", () => {
   const originalEnv = process.env.NEXT_PUBLIC_ADMIN_EMAILS;
+  const originalLookingForPlayersFlag = process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS;
   const renderPage = async () => {
     await act(async () => {
       render(<AdminNewSessionPage />);
@@ -73,12 +74,18 @@ describe("AdminNewSessionPage prefills", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.NEXT_PUBLIC_ADMIN_EMAILS = "ops@example.com";
+    delete process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS;
     mockGetUser.mockReturnValue({ data: { user: { email: "ops@example.com" } } });
     mockFrom.mockImplementation(() => createQueryChain());
   });
 
   afterAll(() => {
     process.env.NEXT_PUBLIC_ADMIN_EMAILS = originalEnv;
+    if (originalLookingForPlayersFlag === undefined) {
+      delete process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS;
+    } else {
+      process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS = originalLookingForPlayersFlag;
+    }
   });
 
   it("shows multi-category prefills with contextual summary", async () => {
@@ -186,6 +193,15 @@ describe("AdminNewSessionPage prefills", () => {
     expect(screen.queryByText(/only supplied one coordinate value/i)).not.toBeInTheDocument();
   });
 
+  it("hides Looking for players controls when the feature flag is off", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+
+    await renderPage();
+
+    expect(screen.queryByText(/Looking for players/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Toggle Looking for players/i)).not.toBeInTheDocument();
+  });
+
   it("clears hydrated fields when clicking Clear prefills", async () => {
     const now = new Date("2025-12-05T08:00:00.000Z");
     jest.useFakeTimers().setSystemTime(now);
@@ -253,5 +269,29 @@ describe("AdminNewSessionPage prefills", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Signed in as: viewer@example.com/i)).toBeInTheDocument();
     await waitFor(() => expect(mockFrom).toHaveBeenCalled());
+  });
+
+  it("reveals Looking for players inputs and resets them when toggled", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+    process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS = "true";
+
+    await renderPage();
+
+    const toggle = await screen.findByLabelText(/Toggle Looking for players/i);
+    fireEvent.click(toggle);
+
+    const playersInput = await screen.findByLabelText(/Players needed/i);
+    fireEvent.change(playersInput, { target: { value: "0" } });
+    expect(screen.getByText(/Enter between 1 and 12 players/i)).toBeInTheDocument();
+
+    const skillInput = screen.getByLabelText(/Skill focus/i);
+    fireEvent.change(skillInput, { target: { value: "Advanced runners" } });
+
+    fireEvent.click(toggle); // turn off -> resets values
+    fireEvent.click(toggle); // turn back on
+
+    const resetPlayersInput = await screen.findByLabelText(/Players needed/i);
+    expect(resetPlayersInput).toHaveValue(1);
+    expect(screen.getByLabelText(/Skill focus/i)).toHaveValue("");
   });
 });

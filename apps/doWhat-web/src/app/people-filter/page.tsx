@@ -21,6 +21,7 @@ import {
   resolvePriceKeyFromRange,
   resolvePriceRangeForKey,
   saveUserPreference,
+  trackOnboardingEntry,
   type ActivityFilterPreferences,
   type ActivityPriceFilterKey,
   type ActivityTimeFilterKey,
@@ -107,6 +108,9 @@ export default function PeopleFilterPage() {
   const [initialised, setInitialised] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+  const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+  const [, setPledgeVersion] = useState<string | null>(null);
+  const [pledgeHydrated, setPledgeHydrated] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'activities' | 'people'>('people');
   const [nearbyTraits, setNearbyTraits] = useState<UserTrait[]>([]);
@@ -116,6 +120,7 @@ export default function PeopleFilterPage() {
     baseTraitCount,
     traitCountLoading,
   });
+  const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
 
   const normaliseWithCanonicalTime = useCallback(
     (prefs: ActivityFilterPreferences): ActivityFilterPreferences =>
@@ -236,6 +241,50 @@ export default function PeopleFilterPage() {
     }
 
     loadTraitCount(userId);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!userId) {
+      setPledgeAckAt(null);
+      setPledgeVersion(null);
+      setPledgeHydrated(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setPledgeHydrated(false);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('reliability_pledge_ack_at, reliability_pledge_version')
+          .eq('id', userId)
+          .maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null }>();
+        if (cancelled) return;
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+        setPledgeAckAt(data?.reliability_pledge_ack_at ?? null);
+        setPledgeVersion(data?.reliability_pledge_version ?? null);
+      } catch (error) {
+        console.warn('[people-filters] failed to fetch reliability pledge state', error);
+        if (!cancelled) {
+          setPledgeAckAt(null);
+          setPledgeVersion(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setPledgeHydrated(true);
+        }
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
@@ -712,9 +761,32 @@ export default function PeopleFilterPage() {
             </div>
             <Link
               href="/onboarding/traits"
+              onClick={() =>
+                trackOnboardingEntry({ source: 'people-filter-banner', platform: 'web', step: 'traits' })
+              }
               className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
             >
               Go to onboarding
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        )}
+        {needsReliabilityPledge && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/80 p-4 text-sm text-indigo-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-indigo-900">Confirm the reliability pledge</p>
+              <p>
+                Review the four Social Sweat commitments so hosts prioritize you for last-minute openings and high-reliability matches.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/reliability-pledge"
+              onClick={() =>
+                trackOnboardingEntry({ source: 'people-filter-banner', platform: 'web', step: 'pledge' })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500"
+            >
+              Review pledge
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>

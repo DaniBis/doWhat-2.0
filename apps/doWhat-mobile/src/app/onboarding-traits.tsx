@@ -386,6 +386,8 @@ const TraitSelectionScreen: React.FC = () => {
         </Text>
 
         <Pressable
+          testID="trait-onboarding-save-button"
+          accessibilityRole="button"
           style={[styles.continueButton, ready ? styles.continueEnabled : styles.continueDisabled]}
           disabled={!ready || saving}
           onPress={handleSave}

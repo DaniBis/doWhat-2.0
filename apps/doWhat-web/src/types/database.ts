@@ -1,3 +1,7 @@
+import type { AttendanceStatus, PlayStyle, SportType } from "@dowhat/shared";
+
+export type { AttendanceStatus, PlayStyle, SportType };
+
 export type Json =
   | string
   | number
@@ -98,6 +102,7 @@ export type SessionAttendeeRow = {
   checked_in: boolean;
   attended_at: string | null;
   created_at: string;
+  attendance_status: AttendanceStatus;
 };
 
 export type SessionAttendeeInsert = {
@@ -107,6 +112,7 @@ export type SessionAttendeeInsert = {
   checked_in?: boolean;
   attended_at?: string | null;
   created_at?: string;
+  attendance_status?: AttendanceStatus;
 };
 
 export type SessionAttendeeUpdate = {
@@ -116,12 +122,79 @@ export type SessionAttendeeUpdate = {
   checked_in?: boolean;
   attended_at?: string | null;
   created_at?: string;
+  attendance_status?: AttendanceStatus;
 };
 
 export type ProfileRow = {
   id: string;
   full_name: string | null;
   avatar_url: string | null;
+  reliability_score: number;
+  primary_sport: SportType | null;
+  play_style: PlayStyle | null;
+  availability_window: Json;
+  reliability_pledge_ack_at: string | null;
+  reliability_pledge_version: string | null;
+};
+
+export type SessionOpenSlotRow = {
+  id: string;
+  session_id: string;
+  required_skill_level: string | null;
+  slots_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionOpenSlotInsert = {
+  id?: string;
+  session_id: string;
+  required_skill_level?: string | null;
+  slots_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionOpenSlotUpdate = {
+  id?: string;
+  session_id?: string;
+  required_skill_level?: string | null;
+  slots_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserSportProfileRow = {
+  id: string;
+  user_id: string;
+  sport: SportType;
+  skill_level: string | null;
+  years_experience: number | null;
+  preferred_time: Json | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UserSportProfileInsert = {
+  id?: string;
+  user_id: string;
+  sport: SportType;
+  skill_level?: string | null;
+  years_experience?: number | null;
+  preferred_time?: Json | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserSportProfileUpdate = {
+  id?: string;
+  user_id?: string;
+  sport?: SportType;
+  skill_level?: string | null;
+  years_experience?: number | null;
+  preferred_time?: Json | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type VenueRow = {
@@ -190,10 +263,22 @@ export interface Database {
         Update: SessionAttendeeUpdate;
         Relationships: [];
       };
+      session_open_slots: {
+        Row: SessionOpenSlotRow;
+        Insert: SessionOpenSlotInsert;
+        Update: SessionOpenSlotUpdate;
+        Relationships: [];
+      };
       profiles: {
         Row: ProfileRow;
         Insert: Partial<ProfileRow> & Pick<ProfileRow, "id">;
         Update: Partial<ProfileRow>;
+        Relationships: [];
+      };
+      user_sport_profiles: {
+        Row: UserSportProfileRow;
+        Insert: UserSportProfileInsert;
+        Update: UserSportProfileUpdate;
         Relationships: [];
       };
       venues: {
@@ -234,6 +319,10 @@ export interface Database {
         Returns: unknown;
       };
     };
-    Enums: Record<string, never>;
+    Enums: {
+      attendance_status: AttendanceStatus;
+      play_style: PlayStyle;
+      sport_type: SportType;
+    };
   };
 }

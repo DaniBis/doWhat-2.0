@@ -6,6 +6,20 @@ import { router } from 'expo-router';
 
 type TraitRow = { id: string; name: string; color?: string | null; icon?: string | null };
 
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper');
+
+jest.mock('expo-router', () => ({
+  router: {
+    replace: jest.fn(),
+    push: jest.fn(),
+    back: jest.fn(),
+  },
+}));
+
 jest.mock('../../lib/supabase', () => {
   const supabaseState: {
     traitCatalog: TraitRow[];
@@ -109,11 +123,14 @@ const { __supabaseMock } = jest.requireMock('../../lib/supabase') as {
   };
 };
 
-const { setTraitCatalog, setBaseTraits, reset: resetSupabaseState, getLastInsertPayload, mockClient: mockSupabaseClient } =
+const { setTraitCatalog, setBaseTraits, setUserId, reset: resetSupabaseState, getLastInsertPayload, mockClient: mockSupabaseClient } =
   __supabaseMock;
 
 // Import after mocking supabase so the screen picks up the stub client
-import TraitSelectionScreen from '../onboarding-traits';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const TraitSelectionScreen = require('../onboarding-traits').default as typeof import('../onboarding-traits').default;
+
+const replaceSpy = router.replace as Mock;
 
 const buildTraits = (count: number) =>
   Array.from({ length: count }, (_, index) => ({
@@ -128,39 +145,39 @@ describe('TraitSelectionScreen', () => {
     resetSupabaseState();
     setTraitCatalog(buildTraits(6));
     setBaseTraits([]);
-    jest.clearAllMocks();
+    replaceSpy.mockReset();
   });
 
   it('enforces the five-trait selection limit before enabling save', async () => {
-    const { getByText, findByTestId } = render(<TraitSelectionScreen />);
+    const { getByText, getByTestId } = render(<TraitSelectionScreen />);
 
     await waitFor(() => expect(getByText('Choose 5 traits that describe you')).toBeTruthy());
+    await waitFor(() => expect(getByTestId('trait-card-trait-1')).toBeTruthy());
 
-    const saveButton = getByText('Save traits');
+    const saveButton = getByTestId('trait-onboarding-save-button');
     expect(saveButton).toBeDisabled();
 
     for (let i = 1; i <= 5; i += 1) {
-      const traitCard = await findByTestId(`trait-card-trait-${i}`);
-      fireEvent.press(traitCard);
+      fireEvent.press(getByTestId(`trait-card-trait-${i}`));
     }
 
     await waitFor(() => expect(saveButton).not.toBeDisabled());
     expect(getByText('All set! Save to continue.')).toBeTruthy();
 
-    const extraTrait = await findByTestId('trait-card-trait-6');
-    fireEvent.press(extraTrait);
+    fireEvent.press(getByTestId('trait-card-trait-6'));
     expect(getByText('5 / 5 selected')).toBeTruthy();
   });
 
   it('persists selections and navigates home once saved', async () => {
-    const { findByTestId, getByText } = render(<TraitSelectionScreen />);
+    const { getByTestId } = render(<TraitSelectionScreen />);
+
+    await waitFor(() => expect(getByTestId('trait-card-trait-1')).toBeTruthy());
 
     for (let i = 1; i <= 5; i += 1) {
-      const traitCard = await findByTestId(`trait-card-trait-${i}`);
-      fireEvent.press(traitCard);
+      fireEvent.press(getByTestId(`trait-card-trait-${i}`));
     }
 
-    fireEvent.press(getByText('Save traits'));
+    fireEvent.press(getByTestId('trait-onboarding-save-button'));
 
     await waitFor(() => expect(getLastInsertPayload().length).toBe(5));
 
@@ -175,6 +192,22 @@ describe('TraitSelectionScreen', () => {
     const incrementCalls = mockSupabaseClient.rpc.mock.calls.slice(1);
     incrementCalls.forEach(([fn]) => expect(fn).toBe('increment_user_trait_score'));
 
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/(tabs)'));
+    await waitFor(() => expect(replaceSpy).toHaveBeenCalledWith('/(tabs)'));
+  });
+
+  it('surfaces an auth error when no user session is present', async () => {
+    setUserId(null);
+    const { getByTestId, getByText } = render(<TraitSelectionScreen />);
+
+    await waitFor(() => expect(getByTestId('trait-card-trait-1')).toBeTruthy());
+
+    for (let i = 1; i <= 5; i += 1) {
+      fireEvent.press(getByTestId(`trait-card-trait-${i}`));
+    }
+
+    fireEvent.press(getByTestId('trait-onboarding-save-button'));
+
+    await waitFor(() => expect(getByText('Please sign in again.')).toBeTruthy());
+    expect(replaceSpy).not.toHaveBeenCalled();
   });
 });

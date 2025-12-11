@@ -8,6 +8,7 @@ export type AttendanceCounts = {
   interested: number;
   declined: number;
   total: number;
+  verified: number;
 };
 
 export type AttendanceSummary = {

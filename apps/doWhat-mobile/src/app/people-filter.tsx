@@ -17,6 +17,7 @@ import {
 	DEFAULT_PEOPLE_FILTER_PREFERENCES,
 	countActivePeopleFilters,
 	getTraitOnboardingState,
+	trackOnboardingEntry,
 	loadUserPreference,
 	normalisePeopleFilterPreferences,
 	PEOPLE_FILTER_AGE_RANGES,
@@ -100,6 +101,9 @@ export default function PeopleFilterScreen() {
 	const [isLoading, setIsLoading] = useState(true);
 	const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
 	const [traitCountLoading, setTraitCountLoading] = useState(false);
+	const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+	const [, setPledgeVersion] = useState<string | null>(null);
+	const [pledgeHydrated, setPledgeHydrated] = useState(false);
 
 	useEffect(() => {
 		fetchNearbyTraits();
@@ -120,13 +124,50 @@ export default function PeopleFilterScreen() {
 		};
 
 		const bootstrap = async () => {
+			let bootstrapUserId: string | null = null;
 			try {
 				const { data } = await supabase.auth.getUser();
 				if (cancelled) return;
 				const user = data.user ?? null;
+				bootstrapUserId = user?.id ?? null;
 				setUserId(user?.id ?? null);
 
+				if (!user?.id) {
+					setPledgeAckAt(null);
+					setPledgeVersion(null);
+					setPledgeHydrated(false);
+				}
+
 				if (user?.id) {
+					void (async () => {
+						try {
+							const { data: pledgeRow, error: pledgeError } = await supabase
+								.from('profiles')
+								.select('reliability_pledge_ack_at, reliability_pledge_version')
+								.eq('id', user.id)
+								.maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null }>();
+							if (!cancelled) {
+								if (pledgeError && pledgeError.code !== 'PGRST116') {
+									throw pledgeError;
+								}
+								setPledgeAckAt(pledgeRow?.reliability_pledge_ack_at ?? null);
+								setPledgeVersion(pledgeRow?.reliability_pledge_version ?? null);
+							}
+						} catch (error) {
+							if (__DEV__) {
+								console.warn('[people-filters] unable to load pledge state', error);
+							}
+							if (!cancelled) {
+								setPledgeAckAt(null);
+								setPledgeVersion(null);
+							}
+						} finally {
+							if (!cancelled) {
+								setPledgeHydrated(true);
+							}
+						}
+					})();
+
 					try {
 						const remote = await loadUserPreference<PeopleFilterPreferences>(
 							supabase,
@@ -150,6 +191,9 @@ export default function PeopleFilterScreen() {
 				if (!cancelled) {
 					setInitialised(true);
 					setIsLoading(false);
+					if (!bootstrapUserId) {
+						setPledgeHydrated(true);
+					}
 				}
 			}
 		};
@@ -285,6 +329,7 @@ export default function PeopleFilterScreen() {
 	// Removed Activity Filters UI
 
 	const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
+	const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
 
 	const renderPeopleFilters = () => (
 		<ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
@@ -300,9 +345,30 @@ export default function PeopleFilterScreen() {
 					</Text>
 					<TouchableOpacity
 						style={styles.traitCtaButton}
-						onPress={() => router.push('/onboarding-traits')}
+						onPress={() => {
+							trackOnboardingEntry({ source: 'people-filter-banner', platform: 'mobile', step: 'traits' });
+							router.push('/onboarding-traits');
+						}}
 					>
 						<Text style={styles.traitCtaButtonText}>Choose traits</Text>
+					</TouchableOpacity>
+				</View>
+			)}
+			{needsReliabilityPledge && (
+				<View style={styles.pledgeCtaCard}>
+					<Text style={styles.pledgeCtaEyebrow}>Don’t forget the pledge</Text>
+					<Text style={styles.pledgeCtaTitle}>Lock your reliability</Text>
+					<Text style={styles.pledgeCtaBody}>
+						Confirm the four Social Sweat commitments so hosts prioritise you for last-minute slots.
+					</Text>
+					<TouchableOpacity
+						style={styles.pledgeCtaButton}
+						onPress={() => {
+							trackOnboardingEntry({ source: 'people-filter-banner', platform: 'mobile', step: 'pledge' });
+							router.push('/onboarding/reliability-pledge');
+						}}
+					>
+						<Text style={styles.pledgeCtaButtonText}>Review pledge</Text>
 					</TouchableOpacity>
 				</View>
 			)}
@@ -581,6 +647,45 @@ const styles = StyleSheet.create({
 		backgroundColor: '#10B981',
 	},
 	traitCtaButtonText: {
+		color: '#FFFFFF',
+		fontWeight: '700',
+	},
+	pledgeCtaCard: {
+		marginHorizontal: 20,
+		marginBottom: 24,
+		padding: 20,
+		borderRadius: 20,
+		backgroundColor: '#EEF2FF',
+		borderWidth: 1,
+		borderColor: '#C7D2FE',
+	},
+	pledgeCtaEyebrow: {
+		fontSize: 12,
+		fontWeight: '700',
+		color: '#4338CA',
+		textTransform: 'uppercase',
+		marginBottom: 6,
+		letterSpacing: 1,
+	},
+	pledgeCtaTitle: {
+		fontSize: 18,
+		fontWeight: '700',
+		color: '#312E81',
+		marginBottom: 6,
+	},
+	pledgeCtaBody: {
+		fontSize: 14,
+		color: '#312E81',
+		marginBottom: 16,
+	},
+	pledgeCtaButton: {
+		alignSelf: 'flex-start',
+		paddingHorizontal: 18,
+		paddingVertical: 10,
+		borderRadius: 999,
+		backgroundColor: '#6366F1',
+	},
+	pledgeCtaButtonText: {
 		color: '#FFFFFF',
 		fontWeight: '700',
 	},

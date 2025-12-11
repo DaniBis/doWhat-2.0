@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { useSearchParams } from "next/navigation";
 
 import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
@@ -13,6 +13,9 @@ import {
 import { normaliseCategoryIds } from "@/lib/adminPrefill";
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
+
+const MIN_OPEN_SLOT_COUNT = 1;
+const MAX_OPEN_SLOT_COUNT = 12;
 
 type ActivityOption = {
   id: string;
@@ -112,6 +115,9 @@ export default function AdminNewSessionPage() {
     } satisfies PrefillState;
   }, [searchParams]);
 
+  const lookingForPlayersFeatureEnabled =
+    process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "true";
+
   const defaultSchedule = useMemo(() => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -154,6 +160,13 @@ export default function AdminNewSessionPage() {
   const [startsAt, setStartsAt] = useState<string>(prefill.startsAt ?? defaultSchedule.startValue);
   const [endsAt, setEndsAt] = useState<string>(prefill.endsAt ?? defaultSchedule.endValue);
 
+  const [lookingForPlayers, setLookingForPlayers] = useState(false);
+  const [openSlotsCount, setOpenSlotsCount] = useState("1");
+  const [requiredSkillLevel, setRequiredSkillLevel] = useState("");
+  const playersNeededInputId = useId();
+  const skillFocusInputId = useId();
+  const lookingForPlayersToggleId = useId();
+
   const [msg, setMsg] = useState<string>("");
   const [err, setErr] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
@@ -169,6 +182,9 @@ export default function AdminNewSessionPage() {
     setPrice("");
     setStartsAt(defaultSchedule.startValue);
     setEndsAt(defaultSchedule.endValue);
+    setLookingForPlayers(false);
+    setOpenSlotsCount("1");
+    setRequiredSkillLevel("");
   }, [defaultSchedule.endValue, defaultSchedule.startValue]);
 
   const tier3Lookup = useMemo(() => {
@@ -387,6 +403,30 @@ export default function AdminNewSessionPage() {
   const lngOutOfRange = lngProvided && !lngInvalid && (lngNumeric < -180 || lngNumeric > 180);
   const coordinateMismatch = (latProvided && !lngProvided) || (!latProvided && lngProvided);
 
+  const openSlotsNumber = Number(openSlotsCount);
+  const hasOpenSlotsNumber = Number.isFinite(openSlotsNumber);
+  const openSlotsBelowMin = hasOpenSlotsNumber && openSlotsNumber < MIN_OPEN_SLOT_COUNT;
+  const openSlotsAboveMax = hasOpenSlotsNumber && openSlotsNumber > MAX_OPEN_SLOT_COUNT;
+  const openSlotsInvalid =
+    lookingForPlayersFeatureEnabled &&
+    lookingForPlayers &&
+    (!hasOpenSlotsNumber || openSlotsBelowMin || openSlotsAboveMax);
+  const normalizedOpenSlotsCount = hasOpenSlotsNumber
+    ? Math.min(MAX_OPEN_SLOT_COUNT, Math.max(MIN_OPEN_SLOT_COUNT, Math.floor(openSlotsNumber)))
+    : null;
+  const openSlotsHelperText = openSlotsInvalid
+    ? `Enter between ${MIN_OPEN_SLOT_COUNT} and ${MAX_OPEN_SLOT_COUNT} players.`
+    : "We will show this CTA on discovery surfaces once QA signs off.";
+  const shouldCreateOpenSlots = lookingForPlayersFeatureEnabled && lookingForPlayers && !openSlotsInvalid;
+
+  const disableCreateButton =
+    submitting ||
+    (!activityId && !activityName) ||
+    (!venueId && !venueName) ||
+    !startsAt ||
+    !endsAt ||
+    openSlotsInvalid;
+
   const handleToggleCategory = (id: string) => {
     setSelectedCategories((prev) =>
       prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id],
@@ -451,6 +491,7 @@ export default function AdminNewSessionPage() {
   }
 
   async function onCreate() {
+    let createdSessionId: string | null = null;
     try {
       setErr("");
       setMsg("");
@@ -478,11 +519,34 @@ export default function AdminNewSessionPage() {
         .select("id")
         .single<{ id: string }>();
       if (error) throw error;
+      createdSessionId = data.id;
+
+      if (shouldCreateOpenSlots) {
+        if (!normalizedOpenSlotsCount) {
+          throw new Error("Enter how many players you're looking for.");
+        }
+        const trimmedSkillLevel = requiredSkillLevel.trim();
+        const { error: openSlotError } = await supabase
+          .from("session_open_slots")
+          .insert({
+            session_id: createdSessionId,
+            slots_count: normalizedOpenSlotsCount,
+            required_skill_level: trimmedSkillLevel ? trimmedSkillLevel : null,
+          })
+          .select("id")
+          .single<{ id: string }>();
+        if (openSlotError) {
+          await supabase.from("sessions").delete().eq("id", createdSessionId);
+          throw openSlotError;
+        }
+      }
 
       setMsg("Session created. Redirecting…");
-      const id = data.id;
+      if (!createdSessionId) {
+        throw new Error("Session created without an id. Please try again.");
+      }
       // Navigate to the new session page
-      window.location.href = `/sessions/${id}`;
+      window.location.href = `/sessions/${createdSessionId}`;
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
     } finally {
@@ -721,10 +785,78 @@ export default function AdminNewSessionPage() {
               )}
             </div>
           </div>
+          {lookingForPlayersFeatureEnabled ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">Looking for players</h3>
+                  <p className="text-sm text-slate-600">
+                    Flag remaining spots so Social Sweat can promote this session during discovery pilots.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-emerald-700" htmlFor={lookingForPlayersToggleId}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-400"
+                    id={lookingForPlayersToggleId}
+                    checked={lookingForPlayers}
+                    onChange={(event) => {
+                      setLookingForPlayers(event.target.checked);
+                      if (!event.target.checked) {
+                        setOpenSlotsCount("1");
+                        setRequiredSkillLevel("");
+                      }
+                    }}
+                    aria-label="Toggle Looking for players"
+                  />
+                  Add CTA
+                </label>
+              </div>
+              {lookingForPlayers ? (
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor={playersNeededInputId}>
+                      Players needed
+                    </label>
+                    <input
+                      type="number"
+                      min={MIN_OPEN_SLOT_COUNT}
+                      max={MAX_OPEN_SLOT_COUNT}
+                      inputMode="numeric"
+                      id={playersNeededInputId}
+                      value={openSlotsCount}
+                      onChange={(event) => setOpenSlotsCount(event.target.value)}
+                      className="w-full rounded border px-3 py-2"
+                      aria-invalid={openSlotsInvalid}
+                    />
+                    <p className={`mt-1 text-xs ${openSlotsInvalid ? "text-red-600" : "text-slate-500"}`}>
+                      {openSlotsHelperText}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor={skillFocusInputId}>
+                      Skill focus (optional)
+                    </label>
+                    <input
+                      value={requiredSkillLevel}
+                      onChange={(event) => setRequiredSkillLevel(event.target.value)}
+                      placeholder="e.g. Intermediate runners"
+                      id={skillFocusInputId}
+                      className="w-full rounded border px-3 py-2"
+                      maxLength={120}
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Helps us show this card to sport-specific members.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex gap-3">
-          <button onClick={onCreate} disabled={submitting || (!activityId && !activityName) || (!venueId && !venueName) || !startsAt || !endsAt} className="rounded bg-brand-teal px-4 py-2 text-white disabled:opacity-50">
+          <button onClick={onCreate} disabled={disableCreateButton} className="rounded bg-brand-teal px-4 py-2 text-white disabled:opacity-50">
             {submitting ? "Creating…" : "Create session"}
           </button>
         </div>
