@@ -1,5 +1,19 @@
 # Error Log
 
+## 2025-12-14 – Trait onboarding failed when duplicate `public.users` rows existed (RESOLVED)
+- **Surface**: Expo iOS simulator (onboarding traits save button).
+- **Symptom**: Console showed `[traits] user_base_traits failed due to missing users row {"code":"23503",...}` every time the save button was tapped, paired with `[ensureUserRow] ensure_public_user_row RPC failed {"code":"23505","message":"duplicate key value violates unique constraint \"users_email_key\""}`. The UI displayed “Your account needs to finish syncing. Sign out and back in, then try again.”
+- **Root cause**: The Supabase `ensure_public_user_row` function only upserted on `id`, so if the `public.users` table already contained a stale row with the same email (from a previous auth user id), the insert conflicted on `users_email_key` and aborted. The new auth user never received a mirror row, so subsequent writes to `user_base_traits` failed with the foreign-key check.
+- **Fix**: Added migration `042_public_users_duplicate_cleanup.sql`, which deletes any conflicting `public.users` row that shares the new user’s email before performing the upsert. Re-run `node run_migrations.js` (or `pnpm run db:migrate`) so the updated function ships to your database, then retry the onboarding flow.
+- **Status**: After applying the migration locally, reran `pnpm --filter doWhat-mobile test -- apps/doWhat-mobile/src/app/__tests__/onboarding-traits.test.tsx` (pass) and confirmed the onboarding save call succeeds without warnings.
+
+## 2025-12-14 – Places viewport request exploded when the web dev server was offline (RESOLVED)
+- **Surface**: Expo iOS simulator on the Home screen.
+- **Symptom**: Dev client surfaced a red box with `[Home] Places fetch failed TypeError: Network request failed` whenever `/api/places` on the Next dev server wasn’t running.
+- **Root cause**: The mobile Home screen only queried the Next.js Places API. When that server was down (or running on a different host), `fetch` threw a network error and we logged via `console.error`, which Expo promotes to a red-box alert.
+- **Fix**: Added a Supabase fallback that queries the `venues` table inside the same bounding box and hydrates lightweight `PlaceSummary` rows whenever the primary fetch fails. The log level was downgraded to `console.warn`, and the UI now shows a “limited nearby venues” banner instructing devs to start `pnpm --filter dowhat-web dev` for richer data.
+- **Status**: Verified via `pnpm --filter doWhat-mobile test -- apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx` and a manual Expo run with the web server stopped (fallback list renders, no red box).
+
 ## 2025-12-14 – Trait onboarding still missing user rows (RESOLVED)
 - **Surface**: iOS simulator (Expo) while saving base traits via `/onboarding-traits`.
 - **Symptom**: Console showed paired warnings: `ensure_public_user_row failed (users_email_key)` followed by `user_base_traits ... violates foreign key constraint "user_base_traits_user_id_fkey"`.

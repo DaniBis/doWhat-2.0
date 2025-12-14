@@ -115,6 +115,7 @@ const buildQueryBuilder = (table: string) => {
     select: () => builder,
     eq: () => builder,
     gte: () => builder,
+    lte: () => builder,
     not: () => builder,
     order: () => builder,
     limit: () => Promise.resolve({ data: supabaseTableData[table] ?? [], error: null }),

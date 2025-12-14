@@ -152,6 +152,16 @@ type NearbyApiResponse = {
   activities?: NearbyApiActivity[];
 };
 
+type VenueFallbackRow = {
+  id: string | null;
+  name: string | null;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  ai_activity_tags: string[] | null;
+  verified_activities: string[] | null;
+};
+
 const lookingForPlayersFeatureEnabled = !(
   process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false" ||
   process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false"
@@ -320,6 +330,42 @@ function HomeScreen() {
     }
   }, [fetchNearbyFromSupabase]);
 
+  const fetchPlacesFallbackFromSupabase = useCallback(
+    async (bounds: PlacesViewportQuery['bounds']): Promise<PlaceSummary[]> => {
+      const { data, error } = await supabase
+        .from('venues')
+        .select('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
+        .gte('lat', bounds.sw.lat)
+        .lte('lat', bounds.ne.lat)
+        .gte('lng', bounds.sw.lng)
+        .lte('lng', bounds.ne.lng)
+        .order('updated_at', { ascending: false })
+        .limit(30);
+      if (error) throw error;
+
+      const fallback = (data as VenueFallbackRow[] | null)
+        ?.filter((row) => typeof row.lat === 'number' && typeof row.lng === 'number' && row.id)
+        .map((row) => ({
+          id: row.id as string,
+          slug: null,
+          name: row.name ?? 'Nearby venue',
+          lat: row.lat as number,
+          lng: row.lng as number,
+          categories: row.verified_activities ?? [],
+          tags: row.ai_activity_tags ?? [],
+          address: row.address,
+          city: defaultCity.slug,
+          aggregatedFrom: ['supabase-venues'],
+          attributions: [],
+          metadata: { fallbackSource: 'supabase', venueId: row.id },
+          transient: true,
+        })) ?? [];
+
+      return fallback;
+    },
+    [defaultCity.slug],
+  );
+
   const fetchPlacesViewport = useCallback(
     async (latNow: number | null, lngNow: number | null) => {
       try {
@@ -352,13 +398,27 @@ function HomeScreen() {
       } catch (err) {
         if (__DEV__ && !placesFetchFailureLogged.current) {
           placesFetchFailureLogged.current = true;
-          console.error('[Home] Places fetch failed', err);
+          console.warn('[Home] Places fetch failed', err);
+        }
+        try {
+          const fallbackPlaces = await fetchPlacesFallbackFromSupabase(bounds);
+          if (fallbackPlaces.length) {
+            setNearbyPlaces(fallbackPlaces);
+            setPlacesError('Showing limited nearby venues while the Places API restarts.');
+            return;
+          }
+        } catch (fallbackError) {
+          if (__DEV__ && placesFetchFailureLogged.current) {
+            console.warn('[Home] Places fallback failed', fallbackError);
+          }
         }
         setNearbyPlaces([]);
-        setPlacesError(err instanceof Error ? err.message : 'Unable to load nearby places.');
+        const defaultMessage = 'Unable to load nearby places. Make sure the web dev server is running on port 3002.';
+        setPlacesError(err instanceof Error ? `${defaultMessage}
+${err.message}` : defaultMessage);
       }
     },
-    [defaultCity, placesFetcher],
+    [defaultCity, fetchPlacesFallbackFromSupabase, placesFetcher],
   );
 
   const load = useCallback(async () => {
