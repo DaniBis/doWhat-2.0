@@ -4,16 +4,29 @@
 // native module is temporarily unavailable; shows a graceful error instead.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Link } = require('expo-router');
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import type { ElementRef } from 'react';
+import * as WebBrowser from 'expo-web-browser';
 import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking, Platform, ActionSheetIOS, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import * as Location from 'expo-location';
-import { theme, getTraitOnboardingState, trackOnboardingEntry } from '@dowhat/shared';
-import type { BadgeStatus } from '@dowhat/shared';
+import {
+  theme,
+  derivePendingOnboardingSteps,
+  ONBOARDING_TRAIT_GOAL,
+  trackOnboardingEntry,
+  getSportLabel,
+  getPlayStyleLabel,
+  isSportType,
+  isPlayStyle,
+  RELIABILITY_BADGE_ORDER,
+  RELIABILITY_BADGE_TOKENS,
+  trackReliabilityAttendanceLogViewed,
+} from '@dowhat/shared';
+import type { BadgeStatus, SportType, PlayStyle, OnboardingStep } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
 import { createWebUrl } from '../lib/web';
 import { emitProfileLocationUpdated } from '../lib/events';
@@ -34,6 +47,8 @@ type ProfileRow = {
   personality_traits?: string[] | null;
   reliability_pledge_ack_at?: string | null;
   reliability_pledge_version?: string | null;
+  primary_sport?: SportType | null;
+  play_style?: PlayStyle | null;
 };
 
 type ProfileUpdatePayload = {
@@ -79,6 +94,28 @@ type TraitSummary = {
   baseCount: number;
   voteCount: number;
   updatedAt: string;
+};
+
+type ReliabilitySnapshot = {
+  score: number | null;
+  confidence: number | null;
+  components: {
+    AS30?: number | null;
+    AS90?: number | null;
+    reviewScore?: number | null;
+    hostBonus?: number | null;
+  };
+};
+
+type AttendanceSummary = {
+  attended30: number;
+  noShow30: number;
+  lateCancel30: number;
+  excused30: number;
+  attended90: number;
+  noShow90: number;
+  lateCancel90: number;
+  excused90: number;
 };
 
 const FALLBACK_TRAIT_COLOR = '#0EA5E9';
@@ -138,6 +175,9 @@ type ProfileCachePayload = {
   updated_at?: string | null;
   reliabilityAckAt?: string | null;
   reliabilityVersion?: string | null;
+  primarySport?: SportType | null;
+  playStyle?: PlayStyle | null;
+  sportSkillLevel?: string | null;
 };
 
 type LocationSuggestion = {
@@ -152,6 +192,16 @@ const MAX_LOCATION_SUGGESTIONS = 5;
 const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
 const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
 const MAX_PROFILE_TRAITS = 5;
+const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
+  traits: 'Pick 5 base traits',
+  sport: 'Set your sport & skill',
+  pledge: 'Confirm the reliability pledge',
+};
+const ONBOARDING_STEP_ROUTES: Record<OnboardingStep, string> = {
+  traits: '/onboarding-traits',
+  sport: '/onboarding/sports',
+  pledge: '/onboarding/reliability-pledge',
+};
 
 const formatPledgeAckDate = (timestamp: string | null) => {
   if (!timestamp) return null;
@@ -198,6 +248,47 @@ const coerceNumber = (value: unknown): number | null => {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const parseReliabilitySnapshot = (input: unknown): ReliabilitySnapshot | null => {
+  if (!isRecord(input)) return null;
+  const componentsRaw = isRecord(input.components) ? (input.components as Record<string, unknown>) : {};
+  const pickComponent = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = coerceNumber(componentsRaw[key]);
+      if (value != null) return value;
+    }
+    return null;
+  };
+  return {
+    score: coerceNumber(input.score),
+    confidence: coerceNumber(input.confidence),
+    components: {
+      AS30: pickComponent('AS30', 'AS_30'),
+      AS90: pickComponent('AS90', 'AS_90'),
+      reviewScore: pickComponent('reviewScore', 'RS'),
+      hostBonus: pickComponent('hostBonus', 'host_bonus'),
+    },
+  };
+};
+
+const parseAttendanceSummary = (input: unknown): AttendanceSummary | null => {
+  if (!isRecord(input)) return null;
+  const record = input as Record<string, unknown>;
+  const value = (key: string) => coerceNumber(record[key]) ?? 0;
+  return {
+    attended30: value('attended30'),
+    noShow30: value('noShow30'),
+    lateCancel30: value('lateCancel30'),
+    excused30: value('excused30'),
+    attended90: value('attended90'),
+    noShow90: value('noShow90'),
+    lateCancel90: value('lateCancel90'),
+    excused90: value('excused90'),
+  };
 };
 
 const coerceLabel = (value: unknown): string | null =>
@@ -410,9 +501,6 @@ try {
 }
 
 const BADGE_STATUS_VALUES: readonly BadgeStatus[] = ['unverified', 'verified', 'expired'] as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
 
 const describeError = (error: unknown, fallback = 'Something went wrong'): string => {
   if (error && typeof error === 'object') {
@@ -721,6 +809,15 @@ export default function ProfileSimple() {
   const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
   const [pledgeVersion, setPledgeVersion] = useState<string | null>(null);
   const [pledgeHydrated, setPledgeHydrated] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileHydrated, setSportProfileHydrated] = useState(false);
+  const [reliabilitySnapshot, setReliabilitySnapshot] = useState<ReliabilitySnapshot | null>(null);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
+  const [reliabilityLoading, setReliabilityLoading] = useState(false);
+  const [reliabilityError, setReliabilityError] = useState<string | null>(null);
+  const [reliabilityHydrated, setReliabilityHydrated] = useState(false);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
     if (!catalogBadges.length) {
@@ -741,9 +838,69 @@ export default function ProfileSimple() {
     });
   }, [catalogBadges, ownedBadges]);
 
-  const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
   const formattedPledgeAck = pledgeAckAt ? formatPledgeAckDate(pledgeAckAt) : null;
-  const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
+  const currentSportLabel = primarySport ? getSportLabel(primarySport) : null;
+  const currentPlayStyleLabel = playStyle ? getPlayStyleLabel(playStyle) : null;
+  const rawPendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      derivePendingOnboardingSteps({
+        traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        primarySport,
+        playStyle,
+        skillLevel: sportSkillLevel,
+        pledgeAckAt,
+      }),
+    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+  );
+  const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      rawPendingOnboardingSteps.filter((step) => {
+        if (step === 'traits') {
+          return !traitCountLoading && baseTraitCount != null;
+        }
+        if (step === 'sport') {
+          return sportProfileHydrated;
+        }
+        if (step === 'pledge') {
+          return pledgeHydrated;
+        }
+        return true;
+      }),
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileHydrated, pledgeHydrated],
+  );
+  const pendingOnboardingCount = pendingOnboardingSteps.length;
+  const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
+  const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding
+    ? Math.max(1, ONBOARDING_TRAIT_GOAL - (baseTraitCount ?? 0))
+    : 0;
+  const prioritizedOnboardingStep = pendingOnboardingSteps[0] ?? null;
+  const prioritizedOnboardingLabel = prioritizedOnboardingStep ? ONBOARDING_STEP_LABELS[prioritizedOnboardingStep] : null;
+  const pendingOnboardingLabel = pendingOnboardingCount === 1 ? '1 step' : `${pendingOnboardingCount} steps`;
+  const onboardingEncouragementCopy =
+    pendingOnboardingCount === 1
+      ? 'Just one more action to unlock full Social Sweat access.'
+      : `${pendingOnboardingLabel} remain — finish them so hosts prioritize you for open slots.`;
+  const nextOnboardingRoute = prioritizedOnboardingStep ? ONBOARDING_STEP_ROUTES[prioritizedOnboardingStep] : null;
+  const reliabilityScoreDisplay = reliabilitySnapshot?.score != null ? Math.round(reliabilitySnapshot.score) : null;
+  const reliabilityConfidencePercent = (() => {
+    if (reliabilitySnapshot?.confidence == null) return null;
+    const clamped = Math.max(0, Math.min(1, reliabilitySnapshot.confidence));
+    return Math.round(clamped * 100);
+  })();
+  const reliabilityDescriptionCopy =
+    reliabilityScoreDisplay == null
+      ? 'Attend a few confirmed sessions and check in so we can calculate your reliability score.'
+      : 'Show up for confirmed sessions, keep late cancellations rare, and let in-app check-ins confirm you were there to protect your score.';
+  const attended30 = attendanceSummary?.attended30 ?? 0;
+  const total30 = attended30 + (attendanceSummary?.noShow30 ?? 0) + (attendanceSummary?.lateCancel30 ?? 0) + (attendanceSummary?.excused30 ?? 0);
+  const attendanceRate30 = total30 ? Math.round((attended30 / total30) * 100) : null;
+  const noShow90 = attendanceSummary?.noShow90 ?? 0;
+  const total90 = (attendanceSummary?.attended90 ?? 0) + noShow90 + (attendanceSummary?.lateCancel90 ?? 0) + (attendanceSummary?.excused90 ?? 0);
+  const noShowRate90 = total90 ? Math.round((noShow90 / total90) * 100) : null;
+  const attended30Summary = total30 ? `${attended30} / ${total30}${attendanceRate30 != null ? ` · ${attendanceRate30}%` : ''}` : `${attended30}`;
+  const noShow90Summary = total90 ? `${noShow90}${noShowRate90 != null ? ` · ${noShowRate90}%` : ''}` : `${noShow90}`;
 
   const restoreProfileFromCache = useCallback(async (uid: string) => {
     try {
@@ -775,6 +932,12 @@ export default function ProfileSimple() {
         setPledgeAckAt(parsed.reliabilityAckAt ?? null);
         setPledgeVersion(parsed.reliabilityVersion ?? null);
         setPledgeHydrated(true);
+      }
+      if ('primarySport' in parsed || 'playStyle' in parsed || 'sportSkillLevel' in parsed) {
+        setPrimarySport(isSportType(parsed.primarySport) ? parsed.primarySport : null);
+        setPlayStyle(isPlayStyle(parsed.playStyle) ? parsed.playStyle : null);
+        setSportSkillLevel(typeof parsed.sportSkillLevel === 'string' ? parsed.sportSkillLevel : null);
+        setSportProfileHydrated(true);
       }
     } catch (error) {
       console.warn('[ProfileSimple] Failed to restore cached profile', error);
@@ -856,6 +1019,30 @@ export default function ProfileSimple() {
     }
   }, []);
 
+  const loadReliabilityMetrics = useCallback(async (uid: string) => {
+    setReliabilityLoading(true);
+    setReliabilityError(null);
+    try {
+      const url = createWebUrl(`/api/profile/${uid}/reliability`);
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Failed to load reliability (${response.status})`);
+      }
+      const payload: unknown = await response.json();
+      const reliability = isRecord(payload) ? parseReliabilitySnapshot(payload.reliability) : null;
+      const attendance = isRecord(payload) ? parseAttendanceSummary(payload.attendance) : null;
+      setReliabilitySnapshot(reliability);
+      setAttendanceSummary(attendance);
+    } catch (error) {
+      setReliabilitySnapshot(null);
+      setAttendanceSummary(null);
+      setReliabilityError(describeError(error, 'Unable to load reliability right now.'));
+    } finally {
+      setReliabilityHydrated(true);
+      setReliabilityLoading(false);
+    }
+  }, []);
+
   // Centralized profile fetch so we can reuse after mutations & auth events
   const fetchProfile = useCallback(async (uid: string, options?: { fallbackBio?: string | null; fallbackTraits?: string[] }) => {
     const fallbackBio = typeof options?.fallbackBio === 'string' ? options.fallbackBio : '';
@@ -866,7 +1053,7 @@ export default function ProfileSimple() {
       includeLocation: boolean,
       includeTraits: boolean,
     ) => {
-      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version'];
+      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version', 'primary_sport', 'play_style'];
       if (includeInstagram) baseColumns.push('instagram');
       if (includeWhatsapp) baseColumns.push('whatsapp');
       if (includeBio) baseColumns.push('bio');
@@ -953,6 +1140,33 @@ export default function ProfileSimple() {
       }
       if (nextSupportsTraits !== supportsTraits) setSupportsTraits(nextSupportsTraits);
 
+      const normalizedSport = isSportType(row?.primary_sport) ? row?.primary_sport ?? null : null;
+      const normalizedPlayStyle = isPlayStyle(row?.play_style) ? row?.play_style ?? null : null;
+      let computedSkillLevel: string | null = null;
+
+      if (normalizedSport) {
+        try {
+          const { data: sportProfile, error: sportProfileError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', uid)
+            .eq('sport', normalizedSport)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (!sportProfileError || sportProfileError.code === 'PGRST116') {
+            computedSkillLevel = sportProfile?.skill_level ?? null;
+          } else {
+            throw sportProfileError;
+          }
+        } catch (sportError) {
+          if (__DEV__) {
+            console.warn('[ProfileSimple] sport skill lookup failed', sportError);
+          }
+          computedSkillLevel = null;
+        }
+      } else {
+        computedSkillLevel = null;
+      }
+
       const resolved: ProfileCachePayload = {
         id: uid,
         full_name: row?.full_name ?? '',
@@ -972,6 +1186,9 @@ export default function ProfileSimple() {
         personalityTraits: nextSupportsTraits ? sanitizeProfileTraitList(row?.personality_traits ?? null) : fallbackTraits,
         reliabilityAckAt: row?.reliability_pledge_ack_at ?? null,
         reliabilityVersion: row?.reliability_pledge_version ?? null,
+        primarySport: normalizedSport,
+        playStyle: normalizedPlayStyle,
+        sportSkillLevel: computedSkillLevel,
       };
 
       setFullName(resolved.full_name);
@@ -986,6 +1203,10 @@ export default function ProfileSimple() {
       setPledgeAckAt(resolved.reliabilityAckAt ?? null);
       setPledgeVersion(resolved.reliabilityVersion ?? null);
       setPledgeHydrated(true);
+      setPrimarySport(resolved.primarySport ?? null);
+      setPlayStyle(resolved.playStyle ?? null);
+      setSportSkillLevel(resolved.sportSkillLevel ?? null);
+      setSportProfileHydrated(true);
 
       try {
         await AsyncStorage.setItem(profileCacheKey(uid), JSON.stringify(resolved));
@@ -1003,10 +1224,12 @@ export default function ProfileSimple() {
         if (/profiles\.whatsapp/i.test(message)) setSupportsWhatsapp(false);
         if (/profiles\.location/i.test(message)) setSupportsLocation(false);
         setErr(null);
+        setSportProfileHydrated(true);
         return null;
       }
       console.warn('[ProfileSimple] fetchProfile failed', error);
       setErr(message);
+      setSportProfileHydrated(true);
       return null;
     }
   }, [supportsInstagram, supportsWhatsapp, supportsBio, supportsLocation, supportsTraits, instagram, whatsapp, bio, locationLabel, profileLat, profileLng]);
@@ -1023,12 +1246,13 @@ export default function ProfileSimple() {
           loadBadges(uid),
           loadTraitSummaries(uid),
           loadBaseTraitCount(uid),
+          loadReliabilityMetrics(uid),
         ]);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, bio]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, loadReliabilityMetrics, bio]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -1048,6 +1272,7 @@ export default function ProfileSimple() {
           loadBadges(uid),
           loadTraitSummaries(uid),
           loadBaseTraitCount(uid),
+          loadReliabilityMetrics(uid),
         ]);
       } else {
         userIdRef.current = null;
@@ -1070,6 +1295,7 @@ export default function ProfileSimple() {
             loadBadges(signedInId),
             loadTraitSummaries(signedInId),
             loadBaseTraitCount(signedInId),
+            loadReliabilityMetrics(signedInId),
           ]);
         } else if (event === 'SIGNED_OUT') {
           userIdRef.current = null;
@@ -1101,12 +1327,17 @@ export default function ProfileSimple() {
           setPledgeAckAt(null);
           setPledgeVersion(null);
           setPledgeHydrated(false);
+          setReliabilitySnapshot(null);
+          setAttendanceSummary(null);
+          setReliabilityError(null);
+          setReliabilityHydrated(false);
+          setReliabilityLoading(false);
         }
       });
       unsub = () => listener.subscription.unsubscribe();
     })();
     return () => { if (unsub) unsub(); };
-  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, restoreProfileFromCache]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, loadReliabilityMetrics, restoreProfileFromCache]);
 
   useEffect(() => {
     if (editOpen) return;
@@ -1178,6 +1409,19 @@ export default function ProfileSimple() {
       },
     ]);
   }, [performSignOut, signingOut]);
+
+  const handleOpenAttendanceLog = useCallback(async () => {
+    try {
+      trackReliabilityAttendanceLogViewed({
+        platform: 'mobile',
+        surface: 'profile-reliability-card',
+      });
+      const url = createWebUrl('/my/attendance');
+      await WebBrowser.openBrowserAsync(url.toString());
+    } catch (error) {
+      Alert.alert('Unable to open log', describeError(error, 'Please try again in a moment.'));
+    }
+  }, []);
 
   function applyDraftsToState() {
     setFullName(draftFullName);
@@ -1920,6 +2164,88 @@ export default function ProfileSimple() {
         {err && <Text style={{ marginTop:8, color:'#b91c1c' }}>{err}</Text>}
       </View>
 
+      {pendingOnboardingSteps.length > 0 && (
+        <View
+          style={{
+            marginTop:12,
+            marginHorizontal:16,
+            backgroundColor:'#ecfdf5',
+            borderRadius:18,
+            borderWidth:1,
+            borderColor:'#a7f3d0',
+            padding:16,
+            gap:10,
+          }}
+        >
+          <View
+            style={{
+              alignSelf:'flex-start',
+              borderRadius:999,
+              borderWidth:1,
+              borderColor:'#a7f3d0',
+              backgroundColor:'#fff',
+              paddingHorizontal:12,
+              paddingVertical:4,
+            }}
+          >
+            <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', letterSpacing:0.5 }}>Step 0 progress</Text>
+          </View>
+          <Text style={{ fontSize:16, fontWeight:'700', color:'#065f46' }}>Finish your Social Sweat onboarding</Text>
+          <Text style={{ color:'#065f46', fontSize:14 }}>{onboardingEncouragementCopy}</Text>
+          {prioritizedOnboardingLabel && (
+            <Text style={{ color:'#065f46', fontWeight:'600' }}>Next up: {prioritizedOnboardingLabel}</Text>
+          )}
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+            {pendingOnboardingSteps.map((step) => (
+              <View
+                key={step}
+                style={{
+                  borderRadius:999,
+                  borderWidth:1,
+                  borderColor:'#a7f3d0',
+                  backgroundColor:'#fff',
+                  paddingHorizontal:12,
+                  paddingVertical:6,
+                }}
+              >
+                <Text style={{ color:'#064e3b', fontWeight:'600', fontSize:12 }}>{ONBOARDING_STEP_LABELS[step]}</Text>
+              </View>
+            ))}
+          </View>
+          {nextOnboardingRoute && prioritizedOnboardingStep && (
+            <Link
+              href={nextOnboardingRoute}
+              asChild
+              onPress={() =>
+                trackOnboardingEntry({
+                  source: 'profile-progress-banner',
+                  platform: 'mobile',
+                  step: prioritizedOnboardingStep,
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: nextOnboardingRoute,
+                })
+              }
+            >
+              <Pressable
+                style={{
+                  alignSelf:'flex-start',
+                  borderRadius:999,
+                  backgroundColor:'#059669',
+                  paddingHorizontal:18,
+                  paddingVertical:10,
+                  shadowColor:'#059669',
+                  shadowOpacity:0.2,
+                  shadowRadius:6,
+                }}
+              >
+                <Text style={{ color:'#fff', fontWeight:'700' }}>Go to next step</Text>
+              </Pressable>
+            </Link>
+          )}
+        </View>
+      )}
+
       <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
         <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
           <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Location</Text>
@@ -1933,6 +2259,197 @@ export default function ProfileSimple() {
           </Text>
         </View>
       </View>
+
+        {sportProfileHydrated && needsSportOnboarding && (
+          <View
+            style={{
+              marginTop:12,
+              marginHorizontal:16,
+              backgroundColor:'rgba(22,179,163,0.08)',
+              borderRadius:18,
+              borderWidth:1,
+              borderColor:'rgba(22,179,163,0.35)',
+              padding:16,
+              gap:10,
+            }}
+          >
+            <View
+              style={{
+                alignSelf:'flex-start',
+                borderRadius:999,
+                borderWidth:1,
+                borderColor:'rgba(22,179,163,0.3)',
+                backgroundColor:'#fff',
+                paddingHorizontal:12,
+                paddingVertical:4,
+              }}
+            >
+              <Text style={{ fontSize:12, fontWeight:'700', color: theme.colors.brandTeal, letterSpacing:0.5 }}>Sport onboarding</Text>
+            </View>
+            <Text style={{ fontSize:16, fontWeight:'700', color: theme.colors.brandInk }}>Set your sport & skill</Text>
+            <Text style={{ color: theme.colors.ink60, lineHeight:20 }}>
+              Choose your primary sport, play style, and level so we can match you with the right sessions.
+            </Text>
+            {(currentSportLabel || currentPlayStyleLabel || sportSkillLevel) && (
+              <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                {currentSportLabel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Sport: {currentSportLabel}</Text>
+                  </View>
+                )}
+                {currentPlayStyleLabel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Play style: {currentPlayStyleLabel}</Text>
+                  </View>
+                )}
+                {sportSkillLevel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Skill: {sportSkillLevel}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+            <Link
+              href="/onboarding/sports"
+              asChild
+              onPress={() =>
+                trackOnboardingEntry({
+                  source: 'sport-banner',
+                  platform: 'mobile',
+                  step: 'sport',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/sports',
+                })
+              }
+            >
+              <Pressable
+                style={{
+                  alignSelf:'flex-start',
+                  borderRadius:999,
+                  backgroundColor: theme.colors.brandTeal,
+                  paddingHorizontal:18,
+                  paddingVertical:10,
+                }}
+              >
+                <Text style={{ color:'#fff', fontWeight:'700' }}>Go to sport onboarding</Text>
+              </Pressable>
+            </Link>
+          </View>
+        )}
+
+      {(reliabilityHydrated || reliabilityLoading) && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Reliability & trust</Text>
+            <Pressable
+              testID="profile-attendance-log-button"
+              accessibilityRole="button"
+              accessibilityLabel="View attendance log"
+              onPress={handleOpenAttendanceLog}
+              disabled={reliabilityLoading}
+              style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:999, borderWidth:1, borderColor:'#0f766e', opacity: reliabilityLoading ? 0.6 : 1 }}
+            >
+              <Text style={{ color:'#0f766e', fontWeight:'600', fontSize:12 }}>
+                {reliabilityLoading ? 'Loading…' : 'View attendance log'}
+              </Text>
+            </Pressable>
+          </View>
+          <View style={{ padding:14, gap:10 }}>
+            {reliabilityLoading ? (
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                <ActivityIndicator size="small" color={theme.colors.brandTeal} />
+                <Text style={{ color:'#475569', fontSize:13 }}>Loading reliability…</Text>
+              </View>
+            ) : reliabilityError ? (
+              <Text style={{ color:'#b91c1c', fontSize:13 }}>{reliabilityError}</Text>
+            ) : (
+              <>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'flex-end' }}>
+                  <View>
+                    <Text style={{ fontSize:12, fontWeight:'700', color:'#475569', textTransform:'uppercase', letterSpacing:0.8 }}>Reliability index</Text>
+                    <View style={{ flexDirection:'row', alignItems:'baseline', gap:6 }}>
+                      <Text style={{ fontSize:32, fontWeight:'700', color: theme.colors.brandInk }}>{reliabilityScoreDisplay ?? '—'}</Text>
+                      <Text style={{ fontSize:12, color:'#94a3b8' }}>score</Text>
+                    </View>
+                  </View>
+                  <View style={{ alignItems:'flex-end' }}>
+                    <Text style={{ fontSize:12, fontWeight:'700', color:'#475569', textTransform:'uppercase', letterSpacing:0.8 }}>Confidence</Text>
+                    <Text style={{ fontSize:16, fontWeight:'600', color: theme.colors.brandTeal }}>
+                      {reliabilityConfidencePercent != null ? `${reliabilityConfidencePercent}%` : '—'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color:'#475569', fontSize:13 }}>{reliabilityDescriptionCopy}</Text>
+                <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                  {RELIABILITY_BADGE_ORDER.map((key) => {
+                    const token = RELIABILITY_BADGE_TOKENS[key];
+                    return (
+                      <View
+                        key={key}
+                        style={{
+                          flexDirection:'row',
+                          alignItems:'center',
+                          gap:4,
+                          borderRadius:999,
+                          borderWidth:1,
+                          borderColor: token.borderColor,
+                          backgroundColor: token.backgroundColor,
+                          paddingHorizontal:12,
+                          paddingVertical:6,
+                        }}
+                      >
+                        {token.icon ? <Text style={{ color: token.textColor }}>{token.icon}</Text> : null}
+                        <Text style={{ color: token.textColor, fontWeight:'600', fontSize:12 }}>{token.label}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', gap:12 }}>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ fontSize:11, fontWeight:'700', color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.8 }}>Attended (30d)</Text>
+                    <Text style={{ marginTop:4, fontSize:16, fontWeight:'600', color: theme.colors.brandInk }}>{attended30Summary}</Text>
+                  </View>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ fontSize:11, fontWeight:'700', color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.8 }}>No-shows (90d)</Text>
+                    <Text style={{ marginTop:4, fontSize:16, fontWeight:'600', color: theme.colors.brandInk }}>{noShow90Summary}</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize:12, color:'#6b7280' }}>
+                  Need to contest a mark? Open the session once it ends and use the “Contest reliability” button to send details.
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      )}
 
       {pledgeHydrated && (
         <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
@@ -1949,7 +2466,16 @@ export default function ProfileSimple() {
                 <Link
                   href="/onboarding/reliability-pledge"
                   asChild
-                  onPress={() => trackOnboardingEntry({ source: 'profile-pledge-banner', platform: 'mobile', step: 'pledge' })}
+                  onPress={() =>
+                    trackOnboardingEntry({
+                      source: 'profile-pledge-banner',
+                      platform: 'mobile',
+                      step: 'pledge',
+                      steps: pendingOnboardingSteps,
+                      pendingSteps: pendingOnboardingCount,
+                      nextStep: '/onboarding/reliability-pledge',
+                    })
+                  }
                 >
                   <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#0ea5e9', paddingHorizontal:16, paddingVertical:8 }}>
                     <Text style={{ color:'#fff', fontWeight:'700' }}>Review pledge</Text>
@@ -1984,7 +2510,16 @@ export default function ProfileSimple() {
               <Link
                 href="/onboarding-traits"
                 asChild
-                onPress={() => trackOnboardingEntry({ source: 'profile-traits-banner', platform: 'mobile', step: 'traits' })}
+                onPress={() =>
+                  trackOnboardingEntry({
+                    source: 'profile-traits-banner',
+                    platform: 'mobile',
+                    step: 'traits',
+                    steps: pendingOnboardingSteps,
+                    pendingSteps: pendingOnboardingCount,
+                    nextStep: '/onboarding-traits',
+                  })
+                }
               >
                 <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#10b981', paddingHorizontal:16, paddingVertical:8 }}>
                   <Text style={{ color:'#fff', fontWeight:'700' }}>Choose traits</Text>

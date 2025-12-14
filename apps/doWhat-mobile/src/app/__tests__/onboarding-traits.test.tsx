@@ -25,11 +25,13 @@ jest.mock('../../lib/supabase', () => {
     traitCatalog: TraitRow[];
     baseTraits: string[];
     userId: string;
+    userEmail: string;
     lastInsertPayload: Array<{ user_id: string; trait_id: string }>;
   } = {
     traitCatalog: [],
     baseTraits: [],
     userId: 'user-123',
+    userEmail: 'user@example.com',
     lastInsertPayload: [],
   };
 
@@ -54,6 +56,8 @@ jest.mock('../../lib/supabase', () => {
     eq: jest.fn(async () => ({ error: null })),
   });
 
+  const usersUpsert = jest.fn(async () => ({ error: null }));
+
   const mockSupabaseClient = {
     from: jest.fn((table: string) => {
       if (table === 'traits') {
@@ -71,10 +75,27 @@ jest.mock('../../lib/supabase', () => {
           }),
         };
       }
+      if (table === 'users') {
+        return {
+          upsert: usersUpsert,
+        };
+      }
       throw new Error(`Unexpected table ${table}`);
     }),
     auth: {
-      getUser: jest.fn(() => Promise.resolve({ data: { user: supabaseState.userId ? { id: supabaseState.userId } : null } })),
+      getUser: jest.fn(() =>
+        Promise.resolve({
+          data: {
+            user: supabaseState.userId
+              ? {
+                  id: supabaseState.userId,
+                  email: supabaseState.userEmail,
+                  user_metadata: {},
+                }
+              : null,
+          },
+        }),
+      ),
     },
     rpc: jest.fn(() => Promise.resolve({ error: null })),
   };
@@ -89,16 +110,22 @@ jest.mock('../../lib/supabase', () => {
     setUserId: (userId: string | null) => {
       supabaseState.userId = userId ?? '';
     },
+    setUserEmail: (email: string) => {
+      supabaseState.userEmail = email;
+    },
     reset: () => {
       supabaseState.traitCatalog = [];
       supabaseState.baseTraits = [];
       supabaseState.userId = 'user-123';
+      supabaseState.userEmail = 'user@example.com';
       supabaseState.lastInsertPayload = [];
       mockSupabaseClient.from.mockClear();
       mockSupabaseClient.auth.getUser.mockClear();
       mockSupabaseClient.rpc.mockClear();
+      usersUpsert.mockClear();
     },
     getLastInsertPayload: () => supabaseState.lastInsertPayload,
+    getUsersUpsertCalls: () => usersUpsert.mock.calls,
     mockClient: mockSupabaseClient,
   };
 
@@ -113,8 +140,10 @@ const { __supabaseMock } = jest.requireMock('../../lib/supabase') as {
     setTraitCatalog: (traits: TraitRow[]) => void;
     setBaseTraits: (traits: string[]) => void;
     setUserId: (userId: string | null) => void;
+    setUserEmail: (email: string) => void;
     reset: () => void;
     getLastInsertPayload: () => Array<{ user_id: string; trait_id: string }>;
+    getUsersUpsertCalls: () => unknown[][];
     mockClient: {
       from: Mock;
       auth: { getUser: Mock };
@@ -123,7 +152,7 @@ const { __supabaseMock } = jest.requireMock('../../lib/supabase') as {
   };
 };
 
-const { setTraitCatalog, setBaseTraits, setUserId, reset: resetSupabaseState, getLastInsertPayload, mockClient: mockSupabaseClient } =
+const { setTraitCatalog, setBaseTraits, setUserId, reset: resetSupabaseState, getLastInsertPayload, getUsersUpsertCalls, mockClient: mockSupabaseClient } =
   __supabaseMock;
 
 // Import after mocking supabase so the screen picks up the stub client
@@ -187,10 +216,13 @@ describe('TraitSelectionScreen', () => {
     }));
     expect(getLastInsertPayload()).toEqual(expectedPayload);
 
-    expect(mockSupabaseClient.rpc).toHaveBeenCalledTimes(6);
-    expect(mockSupabaseClient.rpc.mock.calls[0]?.[0]).toBe('ensure_public_user_row');
-    const incrementCalls = mockSupabaseClient.rpc.mock.calls.slice(1);
-    incrementCalls.forEach(([fn]) => expect(fn).toBe('increment_user_trait_score'));
+    const incrementCalls = mockSupabaseClient.rpc.mock.calls.filter(([fn]) => fn === 'increment_user_trait_score');
+    expect(incrementCalls).toHaveLength(5);
+    mockSupabaseClient.rpc.mock.calls.forEach(([fn]) => expect(fn).toBe('increment_user_trait_score'));
+
+    const upsertCalls = getUsersUpsertCalls();
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0]?.[0]).toMatchObject({ id: 'user-123', email: 'user@example.com' });
 
     await waitFor(() => expect(replaceSpy).toHaveBeenCalledWith('/(tabs)'));
   });

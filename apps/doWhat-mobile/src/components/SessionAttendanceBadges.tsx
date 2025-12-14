@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { View, Text } from 'react-native';
+import { useEffect, useState, useMemo } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { RELIABILITY_BADGE_ORDER, RELIABILITY_BADGE_TOKENS, type ReliabilityBadgeKey } from '@dowhat/shared';
 
 import { supabase } from '../lib/supabase';
 import { fetchAttendanceSummary } from '../lib/sessionAttendance';
@@ -46,17 +47,47 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
 
   if (!sessionId) return null;
 
+  const badgeValues = useMemo<Record<ReliabilityBadgeKey, number | null>>(() => ({ going, interested, verified }), [going, interested, verified]);
+
   return (
-    <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-      <Text style={{ fontSize: 12, color: '#374151', backgroundColor: '#f3f4f6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-        Going: {going ?? '—'}
-      </Text>
-      <Text style={{ fontSize: 12, color: '#374151', backgroundColor: '#f3f4f6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-        Interested: {interested ?? '—'}
-      </Text>
-      <Text style={{ fontSize: 12, color: '#4338ca', backgroundColor: '#eef2ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-        GPS verified: {verified ?? '—'}
-      </Text>
+    <View style={styles.container}>
+      {RELIABILITY_BADGE_ORDER.map((key) => {
+        const token = RELIABILITY_BADGE_TOKENS[key];
+        const value = badgeValues[key];
+        return (
+          <View
+            key={key}
+            style={[styles.badge, { backgroundColor: token.backgroundColor, borderColor: token.borderColor }]}
+            accessibilityRole="text"
+            accessibilityLabel={`${token.label} ${typeof value === 'number' ? value : 'not available yet'}`}
+          >
+            <Text style={[styles.badgeText, { color: token.textColor }]}>
+              {token.icon ? `${token.icon} ` : ''}
+              {token.label}: {typeof value === 'number' ? value : '—'}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 6,
+  },
+  badge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 8,
+    marginBottom: 6,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+});

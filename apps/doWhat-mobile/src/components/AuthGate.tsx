@@ -5,6 +5,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { maybeResetInvalidSession } from '../lib/auth';
+import { ensureUserRow } from '../lib/ensureUserRow';
 import { REQUIRED_BASE_TRAITS } from '@dowhat/shared';
 import AuthButtons from './AuthButtons';
 
@@ -88,63 +90,6 @@ const isForeignKeyMissingUser = (error: unknown): boolean => {
   const details = typeof record.details === 'string' ? record.details : '';
   if (code !== '23503') return false;
   return /profiles?_id_fkey/i.test(message) || /profiles?_id_fkey/i.test(details) || /table "users"/i.test(details);
-};
-
-const isRowLevelSecurityError = (error: unknown): boolean => {
-  if (!error || typeof error !== 'object') return false;
-  const record = error as { code?: unknown; message?: unknown; details?: unknown };
-  const code = typeof record.code === 'string' ? record.code : null;
-  const message = typeof record.message === 'string' ? record.message : '';
-  const details = typeof record.details === 'string' ? record.details : '';
-  if (code && code !== '42501') return false;
-  return /row[- ]level security/i.test(message) || /row[- ]level security/i.test(details) || code === '42501';
-};
-
-const ensurePublicUserRowViaRpc = async (session: Session, email: string | undefined, name: string | null) => {
-  const { error } = await supabase.rpc('ensure_public_user_row', {
-    p_user: session.user.id,
-    p_email: email ?? null,
-    p_full_name: name ?? null,
-  });
-  if (error) {
-    if (__DEV__) console.warn('[AuthGate] ensure_public_user_row RPC failed', error);
-    return false;
-  }
-  return true;
-};
-
-const ensureAppUserRow = async (session: Session, fallbackEmail?: string): Promise<boolean> => {
-  const metadata = session.user.user_metadata ?? {};
-  const resolvedEmail = session.user.email || fallbackEmail?.trim();
-  if (!resolvedEmail) {
-    return false;
-  }
-  const resolvedName =
-    getMetadataString(metadata, ['full_name', 'name', 'given_name']) ||
-    (typeof session.user.user_metadata?.preferred_username === 'string' ? session.user.user_metadata.preferred_username : null);
-
-  const { error } = await supabase
-    .from('users')
-    .upsert(
-      {
-        id: session.user.id,
-        email: resolvedEmail,
-        full_name: resolvedName,
-      },
-      { onConflict: 'id' },
-    );
-
-  if (error) {
-    if (isRowLevelSecurityError(error)) {
-      const ensured = await ensurePublicUserRowViaRpc(session, resolvedEmail, resolvedName);
-      if (ensured) {
-        return true;
-      }
-    }
-    if (__DEV__) console.warn('[AuthGate] ensureAppUserRow failed', error);
-    return false;
-  }
-  return true;
 };
 
 const hasCompletedBaseTraits = async (userId: string): Promise<boolean> => {
@@ -268,12 +213,24 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
     setBusy(true);
     setError(null);
     try {
-      await ensureAppUserRow(session, contactEmail);
+      const metadata = session.user.user_metadata ?? {};
+      const resolvedName =
+        getMetadataString(metadata, ['full_name', 'name', 'given_name']) ||
+        (typeof session.user.user_metadata?.preferred_username === 'string' ? session.user.user_metadata.preferred_username : null);
+      const trimmedContactEmail = contactEmail.trim();
+      const ensurePayload = {
+        id: session.user.id,
+        email: session.user.email ?? (trimmedContactEmail || undefined),
+        fullName: resolvedName,
+      } as const;
+
+      await ensureUserRow(ensurePayload);
       const basePayload = {
         id: session.user.id,
+        user_id: session.user.id,
         username: cleanUsername,
         birthday: cleanBirthday,
-        contact_email: contactEmail.trim() ? contactEmail.trim() : null,
+        contact_email: trimmedContactEmail ? trimmedContactEmail : null,
         social_handle: socialHandle.trim() ? socialHandle.trim() : null,
         is_public: isPublic,
         bio: cleanBio,
@@ -284,7 +241,7 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
       let { error: upsertError } = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
 
       if (upsertError && isForeignKeyMissingUser(upsertError)) {
-        const ensured = await ensureAppUserRow(session, contactEmail);
+        const ensured = await ensureUserRow(ensurePayload);
         if (ensured) {
           const retry = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
           upsertError = retry.error ?? null;
@@ -496,6 +453,10 @@ export default function AuthGate({ children }: AuthGateProps) {
         applySession(data.session ?? null);
       } catch (error) {
         if (__DEV__) console.warn('[AuthGate] getSession failed', error);
+        const reset = await maybeResetInvalidSession(error);
+        if (reset) {
+          sessionTokenRef.current = null;
+        }
         if (!active) return;
         applySession(null);
       } finally {
@@ -521,6 +482,11 @@ export default function AuthGate({ children }: AuthGateProps) {
         }
       } catch (error) {
         if (__DEV__) console.warn('[AuthGate] foreground session refresh failed', error);
+        const reset = await maybeResetInvalidSession(error);
+        if (reset && !cancelled) {
+          sessionTokenRef.current = null;
+          applySession(null);
+        }
       }
     };
 

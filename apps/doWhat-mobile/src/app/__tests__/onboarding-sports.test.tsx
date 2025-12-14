@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, beforeEach, it, expect, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import SportsOnboardingScreen from '../onboarding/sports';
 
@@ -109,7 +109,9 @@ describe('SportsOnboardingScreen', () => {
   });
 
   it('tracks analytics when sport onboarding saves successfully', async () => {
-    const { findByText, getByText } = render(<SportsOnboardingScreen />);
+    const screen = render(<SportsOnboardingScreen />);
+    await act(async () => {});
+    const { findByText, getByText } = screen;
 
     fireEvent.press(await findByText('Padel'));
     fireEvent.press(await findByText(DEFAULT_PADEL_SKILL));
@@ -118,6 +120,31 @@ describe('SportsOnboardingScreen', () => {
     fireEvent.press(getByText('Save and continue'));
 
     await waitFor(() => expect(replaceSpy).toHaveBeenCalledWith('/onboarding/reliability-pledge'));
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: 'sport-selector', platform: 'mobile', step: 'pledge' });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: 'sport-selector',
+      platform: 'mobile',
+      step: 'pledge',
+      steps: ['pledge'],
+      pendingSteps: 1,
+      nextStep: '/onboarding/reliability-pledge',
+    });
+  });
+
+  it('keeps the save CTA disabled until sport, skill, and play style are selected', async () => {
+    const screen = render(<SportsOnboardingScreen />);
+    await act(async () => {});
+    const { findByText, getByTestId } = screen;
+    const getCta = () => getByTestId('sport-onboarding-save');
+
+    expect(getCta().props.accessibilityState?.disabled).toBe(true);
+
+    fireEvent.press(await findByText('Padel'));
+    expect(getCta().props.accessibilityState?.disabled).toBe(true);
+
+    fireEvent.press(await findByText(DEFAULT_PADEL_SKILL));
+    expect(getCta().props.accessibilityState?.disabled).toBe(true);
+
+    fireEvent.press(await findByText(COMPETITIVE_LABEL));
+    expect(getCta().props.accessibilityState?.disabled).toBe(false);
   });
 });

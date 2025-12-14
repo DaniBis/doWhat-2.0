@@ -47,3 +47,37 @@ export async function startGoogleSignIn() {
     await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
   }
 }
+
+const invalidRefreshPatterns = [/invalid refresh token/i, /refresh token not found/i, /refresh token has been revoked/i];
+
+const extractErrorMeta = (error: unknown): { message: string; code: string | null } => {
+  if (!error || typeof error !== 'object') {
+    if (typeof error === 'string') return { message: error, code: null };
+    return { message: '', code: null };
+  }
+  const record = error as { message?: unknown; code?: unknown };
+  const message = typeof record.message === 'string' ? record.message : '';
+  const code = typeof record.code === 'string' ? record.code : null;
+  return { message, code };
+};
+
+export const isInvalidRefreshTokenError = (error: unknown): boolean => {
+  const { message, code } = extractErrorMeta(error);
+  if (!message && !code) return false;
+  if (code === '400' || code === '401') {
+    if (invalidRefreshPatterns.some((pattern) => pattern.test(message))) {
+      return true;
+    }
+  }
+  return invalidRefreshPatterns.some((pattern) => pattern.test(message));
+};
+
+export const maybeResetInvalidSession = async (error: unknown): Promise<boolean> => {
+  if (!isInvalidRefreshTokenError(error)) return false;
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch (signOutError) {
+    if (__DEV__) console.warn('[auth] local session reset failed', signOutError);
+  }
+  return true;
+};

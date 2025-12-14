@@ -5,6 +5,20 @@
 import '@testing-library/jest-native/extend-expect';
 import { jest } from '@jest/globals';
 import type { ReactNode } from 'react';
+import type { Console } from 'node:console';
+
+const originalConsoleError = console.error;
+const suppressedConsoleErrors = ['not wrapped in act'];
+
+console.error = ((message?: unknown, ...rest: unknown[]) => {
+  const rendered = [message, ...rest]
+    .map((entry) => String(entry ?? ''))
+    .join(' ');
+  if (suppressedConsoleErrors.some((text) => rendered.includes(text))) {
+    return;
+  }
+  originalConsoleError(message, ...rest);
+}) as Console['error'];
 
 // Mock expo modules
 jest.mock('expo-router', () => {
@@ -23,8 +37,9 @@ jest.mock('expo-router', () => {
 
 jest.mock('react-native-safe-area-context', () => {
   const ReactActual = jest.requireActual<typeof import('react')>('react');
+  const safeAreaActual = jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context');
   return {
-    ...jest.requireActual('react-native-safe-area-context'),
+    ...safeAreaActual,
     SafeAreaProvider: ({ children }: { children: ReactNode }) =>
       ReactActual.createElement(ReactActual.Fragment, null, children),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -39,6 +54,13 @@ jest.mock('expo-location', () => ({
       longitude: -122.4194
     }
   }))
+}));
+
+// Keep auth helpers test-friendly by stubbing the WebBrowser bridge
+jest.mock('expo-web-browser', () => ({
+  openAuthSessionAsync: jest.fn(() => Promise.resolve({ type: 'dismiss' })),
+  warmUpAsync: jest.fn(() => Promise.resolve()),
+  coolDownAsync: jest.fn(() => Promise.resolve()),
 }));
 
 // Light-touch mocks only when directly imported in unit tests; avoid overriding react-native.

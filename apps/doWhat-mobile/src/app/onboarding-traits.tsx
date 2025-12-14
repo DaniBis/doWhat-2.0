@@ -15,6 +15,7 @@ import { router } from 'expo-router';
 import type { User } from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase';
+import { ensureUserRow } from '../lib/ensureUserRow';
 
 const MAX_TRAITS = 5;
 
@@ -103,17 +104,12 @@ const resolveUserFullName = (user: User | null): string | null => {
   );
 };
 
-const ensurePublicUserRow = async (user: User): Promise<boolean> => {
-  const { error } = await supabase.rpc('ensure_public_user_row', {
-    p_user: user.id,
-    p_email: user.email ?? null,
-    p_full_name: resolveUserFullName(user),
-  });
-  if (error) {
-    if (__DEV__) console.warn('[traits] ensure_public_user_row failed', error);
-    return false;
+const resolveUserEmail = (user: User | null): string | null => {
+  if (!user) return null;
+  if (typeof user.email === 'string' && user.email.trim()) {
+    return user.email.trim();
   }
-  return true;
+  return pickMetadataString(user.user_metadata, ['contact_email', 'email']);
 };
 
 const isForeignKeyMissingUser = (error: unknown): boolean => {
@@ -267,14 +263,20 @@ const TraitSelectionScreen: React.FC = () => {
         router.replace('/(tabs)');
       };
 
-      await ensurePublicUserRow(user);
+      const ensurePayload = {
+        id: user.id,
+        email: resolveUserEmail(user) ?? undefined,
+        fullName: resolveUserFullName(user),
+      } as const;
+
+      await ensureUserRow(ensurePayload);
 
       try {
         await saveAndNavigate();
         return;
       } catch (primaryError) {
         if (isForeignKeyMissingUser(primaryError)) {
-          const ensured = await ensurePublicUserRow(user);
+          const ensured = await ensureUserRow(ensurePayload);
           if (ensured) {
             await saveAndNavigate();
             return;

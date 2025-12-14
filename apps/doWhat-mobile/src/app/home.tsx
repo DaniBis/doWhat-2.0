@@ -14,11 +14,8 @@ import {
   buildPlaceSavePayload,
   buildActivitySavePayload,
   buildSessionSavePayload,
-  rankSessionsForUser,
-  type RankableProfile,
-  type RankedSession,
-  type SessionWithSlots,
-  type SportType,
+  trackFindA4thCardTap,
+  trackFindA4thImpression,
   type PlaceSummary,
   type PlacesViewportQuery,
   type ActivityRow,
@@ -41,9 +38,12 @@ import SessionAttendanceBadges from "../components/SessionAttendanceBadges";
 import SessionAttendanceQuickActions from "../components/SessionAttendanceQuickActions";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
+import OnboardingNavPrompt from "../components/OnboardingNavPrompt";
+import FindA4thHero, { type FindA4thHeroSession } from "../components/FindA4thHero";
 import type { Session } from '@supabase/supabase-js';
 import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
 import { useSavedActivities } from "../contexts/SavedActivitiesContext";
+import { useRankedOpenSessions } from '../hooks/useRankedOpenSessions';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -152,95 +152,12 @@ type NearbyApiResponse = {
   activities?: NearbyApiActivity[];
 };
 
-type SportProfileRow = {
-  sport: SportType | null;
-  skill_level: string | null;
-};
+const lookingForPlayersFeatureEnabled = !(
+  process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false" ||
+  process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false"
+);
 
-type SessionRelation = {
-  id: string;
-  starts_at: string | null;
-  ends_at: string | null;
-  price_cents: number | null;
-  activity_id: string | null;
-  activities:
-    | {
-        id?: string | null;
-        name?: string | null;
-        sport_type?: SportType | null;
-      }
-    | Array<{
-        id?: string | null;
-        name?: string | null;
-        sport_type?: SportType | null;
-      }>
-    | null;
-  venues:
-    | {
-        id?: string | null;
-        name?: string | null;
-        lat?: number | null;
-        lng?: number | null;
-      }
-    | Array<{
-        id?: string | null;
-        name?: string | null;
-        lat?: number | null;
-        lng?: number | null;
-      }>
-    | null;
-};
-
-type SessionOpenSlotRow = {
-  id: string;
-  slots_count: number;
-  required_skill_level: string | null;
-  sessions: SessionRelation | SessionRelation[] | null;
-};
-
-type RankedLookingForPlayersSession = RankedSession & {
-  session: SessionWithSlots & {
-    activityName?: string | null;
-    activityId?: string | null;
-    venueName?: string | null;
-    priceCents?: number | null;
-    endsAt?: string | null;
-    openSlotMeta?: {
-      slotId: string;
-      slotsCount: number;
-      requiredSkillLevel: string | null;
-    };
-  };
-};
-
-const formatDistanceLabel = (meters: number | null): string | null => {
-  if (!Number.isFinite(meters || NaN) || meters == null) return null;
-  if (meters >= 1000) {
-    const km = meters / 1000;
-    return `${km.toFixed(km >= 10 ? 0 : 1)} km away`;
-  }
-  return `${Math.max(1, Math.round(meters))} m away`;
-};
-
-const formatStartsInLabel = (value: string | Date): string => {
-  const startsAt = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(startsAt.getTime())) return "Soon";
-  const diffMs = startsAt.getTime() - Date.now();
-  if (diffMs <= 0) return "Starting now";
-  const diffMinutes = Math.round(diffMs / (1000 * 60));
-  if (diffMinutes < 60) return `Starts in ${diffMinutes} min`;
-  const diffHours = Math.round(diffMinutes / 60);
-  if (diffHours < 24) return `Starts in ${diffHours} h`;
-  return startsAt.toLocaleDateString(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-};
-
-const lookingForPlayersFeatureEnabled =
-  process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "true" ||
-  process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "true";
+const FIND_A_FOURTH_SURFACE = 'home_find_fourth';
 
 
 function HomeScreen() {
@@ -260,10 +177,13 @@ function HomeScreen() {
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
   const [placesError, setPlacesError] = useState<string | null>(null);
   const placesFetchFailureLogged = useRef(false);
-  const [recruitingSessions, setRecruitingSessions] = useState<RankedLookingForPlayersSession[]>([]);
-  const [recruitingError, setRecruitingError] = useState<string | null>(null);
-  const [recruitingLoading, setRecruitingLoading] = useState(false);
-  const [userCoords, setUserCoords] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+  const findA4thImpressionLogged = useRef(false);
+  const {
+    sessions: recruitingSessions,
+    isLoading: recruitingLoading,
+    error: recruitingError,
+    refresh: refreshRankedOpenSessions,
+  } = useRankedOpenSessions({ enabled: lookingForPlayersFeatureEnabled, autoRefresh: false });
   const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
   const placesFetcher = useMemo(
     () =>
@@ -441,152 +361,12 @@ function HomeScreen() {
     [defaultCity, placesFetcher],
   );
 
-  const loadOpenSlotRecommendations = useCallback(
-    async (
-      params: {
-        lat: number | null;
-        lng: number | null;
-        profile: (ProfileLocationRow & { id?: string; primary_sport?: SportType | null }) | null;
-        sportRows: SportProfileRow[];
-        userId: string | null;
-      } | null,
-    ) => {
-      if (!lookingForPlayersFeatureEnabled) {
-        setRecruitingSessions([]);
-        setRecruitingError(null);
-        return;
-      }
-      const effectiveParams = params ?? {
-        lat: null,
-        lng: null,
-        profile: null,
-        sportRows: [],
-        userId: null,
-      };
-      setRecruitingLoading(true);
-      setRecruitingError(null);
-      try {
-        const { data, error } = await supabase
-          .from("session_open_slots")
-          .select(
-            `id, slots_count, required_skill_level,
-             sessions!inner (
-               id,
-               starts_at,
-               ends_at,
-               price_cents,
-               activity_id,
-               activities ( id, name, sport_type ),
-               venues ( id, name, lat, lng )
-             )`,
-          )
-          .gte("sessions.starts_at", new Date().toISOString())
-          .limit(24);
-        if (error) throw error;
-
-        const mappedSessions: Array<SessionWithSlots & {
-          activityName?: string | null;
-          activityId?: string | null;
-          venueName?: string | null;
-          priceCents?: number | null;
-          endsAt?: string | null;
-          openSlotMeta: { slotId: string; slotsCount: number; requiredSkillLevel: string | null };
-        }> = [];
-
-        const rows = Array.isArray(data) ? (data as unknown as SessionOpenSlotRow[]) : [];
-        rows.forEach((row) => {
-          const sessionRelation = Array.isArray(row.sessions) ? row.sessions[0] : row.sessions;
-          if (!sessionRelation) return;
-          const activityRelation = Array.isArray(sessionRelation.activities)
-            ? sessionRelation.activities[0]
-            : sessionRelation.activities;
-          const venueRelation = Array.isArray(sessionRelation.venues)
-            ? sessionRelation.venues[0]
-            : sessionRelation.venues;
-          mappedSessions.push({
-            id: sessionRelation.id,
-            sport: (activityRelation?.sport_type as SportType) ?? null,
-            startsAt: sessionRelation.starts_at ?? new Date().toISOString(),
-            requiredSkillLevel: row.required_skill_level ?? null,
-            latitude: venueRelation?.lat ?? null,
-            longitude: venueRelation?.lng ?? null,
-            openSlots: {
-              slotsTotal: row.slots_count,
-              slotsTaken: 0,
-            },
-            activityName: activityRelation?.name ?? null,
-            activityId: activityRelation?.id ?? sessionRelation.activity_id ?? null,
-            venueName: venueRelation?.name ?? null,
-            priceCents: sessionRelation.price_cents ?? null,
-            endsAt: sessionRelation.ends_at ?? null,
-            openSlotMeta: {
-              slotId: row.id,
-              slotsCount: row.slots_count,
-              requiredSkillLevel: row.required_skill_level ?? null,
-            },
-          });
-        });
-
-        if (!mappedSessions.length) {
-          setRecruitingSessions([]);
-          return;
-        }
-
-        const rankableProfile: RankableProfile = {
-          id: effectiveParams.userId ?? effectiveParams.profile?.id ?? "anonymous",
-          latitude: effectiveParams.lat ?? effectiveParams.profile?.last_lat ?? null,
-          longitude: effectiveParams.lng ?? effectiveParams.profile?.last_lng ?? null,
-          primarySport: effectiveParams.profile?.primary_sport ?? null,
-          defaultSkillLevel: null,
-          sportProfiles: effectiveParams.sportRows.map((row) => ({
-            sport: row.sport,
-            skillLevel: row.skill_level ?? null,
-          })),
-        };
-
-        const ranked = rankSessionsForUser(rankableProfile, mappedSessions) as RankedLookingForPlayersSession[];
-        setRecruitingSessions(ranked);
-      } catch (err) {
-        if (__DEV__) {
-          console.error("[Home] Failed to load open slots", err);
-        }
-        setRecruitingSessions([]);
-        setRecruitingError(err instanceof Error ? err.message : "Unable to load available slots");
-      } finally {
-        setRecruitingLoading(false);
-      }
-    },
-    [],
-  );
-
   const load = useCallback(async () => {
     setError(null);
     try {
       const { data: auth } = await supabase.auth.getSession();
       setSession(auth.session ?? null);
       const userId = auth.session?.user?.id ?? null;
-
-      let profileRow: (ProfileLocationRow & { id?: string; primary_sport?: SportType | null }) | null = null;
-      let sportRows: SportProfileRow[] = [];
-      if (userId) {
-        const [profileResult, sportResult] = await Promise.all([
-          supabase
-            .from('profiles')
-            .select('id, primary_sport, last_lat, last_lng')
-            .eq('id', userId)
-            .maybeSingle<ProfileLocationRow & { id: string; primary_sport: SportType | null }>(),
-          supabase
-            .from('user_sport_profiles')
-            .select('sport, skill_level')
-            .eq('user_id', userId),
-        ]);
-        if (!profileResult.error) {
-          profileRow = profileResult.data ?? null;
-        }
-        if (!sportResult.error && Array.isArray(sportResult.data)) {
-          sportRows = sportResult.data as SportProfileRow[];
-        }
-      }
 
       let latNow: number | null = null;
       let lngNow: number | null = null;
@@ -610,10 +390,7 @@ function HomeScreen() {
           }
         } catch {}
       }
-      if ((latNow == null || lngNow == null) && profileRow?.last_lat != null && profileRow?.last_lng != null) {
-        latNow = profileRow.last_lat;
-        lngNow = profileRow.last_lng;
-      } else if (latNow == null || lngNow == null) {
+      if (latNow == null || lngNow == null) {
         try {
           if (userId) {
             const { data } = await supabase
@@ -631,10 +408,9 @@ function HomeScreen() {
         } catch {}
       }
 
-      setUserCoords({ lat: latNow, lng: lngNow });
       await fetchNearbyActivities(latNow, lngNow);
       await fetchPlacesViewport(latNow, lngNow);
-      await loadOpenSlotRecommendations({ lat: latNow, lng: lngNow, profile: profileRow, sportRows, userId });
+  await refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } });
       
       // Get current sessions with future start times
       const now = new Date().toISOString();
@@ -652,7 +428,7 @@ function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [fetchNearbyActivities, fetchPlacesViewport, loadOpenSlotRecommendations]);
+  }, [fetchNearbyActivities, fetchPlacesViewport, refreshRankedOpenSessions]);
 
   useEffect(() => {
     ensureBackgroundLocation().catch(() => {});
@@ -785,8 +561,21 @@ function HomeScreen() {
 
   const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
   const topPlaces = useMemo(() => nearbyPlaces.slice(0, 12), [nearbyPlaces]);
-  const recruitingCards = useMemo(() => recruitingSessions.slice(0, 6), [recruitingSessions]);
-  const showRecruitingSection = lookingForPlayersFeatureEnabled && (recruitingLoading || recruitingCards.length > 0);
+  const heroSessions: FindA4thHeroSession[] = useMemo(
+    () =>
+      recruitingSessions
+        .filter((item) => Boolean(item.session?.id))
+        .map((item) => ({
+          id: item.session.id,
+          sportLabel: item.session.activityName ?? null,
+          venueLabel: item.session.venueName ?? null,
+          startsAt: item.session.startsAt ?? null,
+          openSlots: item.session.openSlotMeta?.slotsCount ?? item.session.openSlots?.slotsTotal ?? null,
+        })),
+    [recruitingSessions],
+  );
+  const showRecruitingSection = lookingForPlayersFeatureEnabled && (recruitingLoading || heroSessions.length > 0);
+  const showFindA4thHero = !recruitingLoading && heroSessions.length > 0;
 
   const handleToggleSavePayload = useCallback(async (payload: SavePayload | null) => {
     if (!payload) return;
@@ -800,6 +589,38 @@ function HomeScreen() {
       Alert.alert('Save activity', message);
     }
   }, [toggle]);
+
+  const handleFindA4thHeroPress = useCallback(
+    (session: FindA4thHeroSession) => {
+      trackFindA4thCardTap({
+        platform: 'mobile',
+        surface: FIND_A_FOURTH_SURFACE,
+        sessionId: session.id,
+        sport: session.sportLabel ?? null,
+        venue: session.venueLabel ?? null,
+      });
+      router.push(`/(tabs)/sessions/${session.id}`);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (showFindA4thHero && heroSessions.length > 0 && !findA4thImpressionLogged.current) {
+      trackFindA4thImpression({
+        platform: 'mobile',
+        surface: FIND_A_FOURTH_SURFACE,
+        sessions: heroSessions.map((session) => ({
+          sessionId: session.id,
+          sport: session.sportLabel ?? null,
+          venue: session.venueLabel ?? null,
+        })),
+      });
+      findA4thImpressionLogged.current = true;
+    } else if (!showFindA4thHero) {
+      findA4thImpressionLogged.current = false;
+    }
+  }, [heroSessions, showFindA4thHero]);
+
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -916,6 +737,10 @@ function HomeScreen() {
           </View>
         </View>
 
+        <View style={{ paddingHorizontal: 20, marginTop: 18 }}>
+          <OnboardingNavPrompt />
+        </View>
+
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -1013,11 +838,14 @@ function HomeScreen() {
 
           {showRecruitingSection ? (
             <View style={{ marginTop: 28 }}>
-              <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
-                <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827' }}>Find a 4th player</Text>
-                <Text style={{ color: '#6B7280', marginTop: 4 }}>Sessions asking for teammates, sorted for you.</Text>
-              </View>
-              {recruitingLoading && recruitingCards.length === 0 ? (
+              {showFindA4thHero ? (
+                <FindA4thHero
+                  sessions={heroSessions}
+                  onPress={handleFindA4thHeroPress}
+                  title="Find a 4th player"
+                  subtitle="Sessions asking for teammates, sorted for you."
+                />
+              ) : recruitingLoading ? (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -1045,85 +873,6 @@ function HomeScreen() {
                       <View style={{ height: 36, backgroundColor: '#F1F5F9', borderRadius: 999 }} />
                     </View>
                   ))}
-                </ScrollView>
-              ) : recruitingCards.length ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, columnGap: 16 }}
-                >
-                  {recruitingCards.map((item) => {
-                    const session = item.session;
-                    const slotsNeeded = session.openSlotMeta?.slotsCount ?? 1;
-                    const slotsLabel = slotsNeeded === 1 ? 'Needs 1 player' : `Needs ${slotsNeeded} players`;
-                    const skillLabel = session.openSlotMeta?.requiredSkillLevel ?? 'All skill levels';
-                    const distanceMeters =
-                      userCoords.lat != null && userCoords.lng != null && session.latitude != null && session.longitude != null
-                        ? haversineMeters(userCoords.lat, userCoords.lng, session.latitude, session.longitude)
-                        : null;
-                    const distanceLabel = formatDistanceLabel(distanceMeters);
-                    const sessionRow: ActivityRow = {
-                      id: session.id,
-                      price_cents: session.priceCents ?? null,
-                      starts_at: session.startsAt,
-                      ends_at: session.endsAt ?? null,
-                      activities: { id: session.activityId ?? undefined, name: session.activityName ?? null },
-                      venues: { name: session.venueName ?? null },
-                    };
-                    const payload = buildSessionSavePayload(sessionRow, { source: 'home_open_slots' });
-                    const payloadId = payload?.id ?? session.id;
-                    const saved = payloadId ? isSaved(payloadId) : false;
-                    const saving = payloadId ? pendingIds.has(payloadId) : false;
-                    const handleSavePress = () => handleToggleSavePayload(payload);
-                    const matchScore = Math.round(item.score);
-                    const startsIn = formatStartsInLabel(session.startsAt);
-
-                    return (
-                      <Pressable
-                        key={session.id}
-                        onPress={() => router.push(`/(tabs)/sessions/${session.id}`)}
-                        style={{
-                          width: 260,
-                          borderRadius: 20,
-                          backgroundColor: '#FFFFFF',
-                          padding: 18,
-                          shadowColor: '#000',
-                          shadowOpacity: 0.09,
-                          shadowRadius: 12,
-                          shadowOffset: { width: 0, height: 5 },
-                          elevation: 3,
-                          gap: 12,
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <View>
-                            <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
-                              {session.activityName ?? 'Open session'}
-                            </Text>
-                            <Text style={{ color: '#475569', fontSize: 13, marginTop: 2 }} numberOfLines={1}>
-                              {session.venueName ?? 'Venue TBD'}
-                            </Text>
-                          </View>
-                          <View style={{ borderRadius: 999, backgroundColor: '#ECFDF5', paddingHorizontal: 10, paddingVertical: 4 }}>
-                            <Text style={{ color: '#059669', fontSize: 11, fontWeight: '700' }}>{matchScore}% match</Text>
-                          </View>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <Text style={{ color: '#111827', fontWeight: '600' }}>{slotsLabel}</Text>
-                          <Text style={{ color: '#6B7280' }}>• {skillLabel}</Text>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ color: '#0F172A', fontWeight: '600' }}>{startsIn}</Text>
-                            {distanceLabel ? <Text style={{ color: '#64748B', marginTop: 2 }}>{distanceLabel}</Text> : null}
-                          </View>
-                          <SaveBadge saved={saved} saving={saving} onPress={handleSavePress} />
-                        </View>
-                      </Pressable>
-                    );
-                  })}
                 </ScrollView>
               ) : recruitingError ? (
                 <View style={{ paddingHorizontal: 20 }}>

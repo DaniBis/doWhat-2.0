@@ -41,6 +41,10 @@ jest.mock('../lib/supabase', () => ({
 // Stub expo-linear-gradient for JSDOM tests
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: require('react-native').View }));
+jest.mock('expo-web-browser', () => ({
+  openBrowserAsync: jest.fn(),
+  WebBrowserResultType: { DISMISS: 'dismiss' },
+}));
 // Stub expo-router Link to a passthrough
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,

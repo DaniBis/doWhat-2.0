@@ -19,6 +19,7 @@ import {
   getSkillLabels,
   isPlayStyle,
   isSportType,
+  theme,
   trackOnboardingEntry,
 } from "@dowhat/shared";
 
@@ -35,6 +36,8 @@ const PLAY_STYLE_NOTES: Record<PlayStyle, string> = {
   competitive: "Score-driven, fast paced, rankings-focused sessions.",
   fun: "Easygoing runs, socials, and vibe-first sessions.",
 };
+
+const { colors, spacing, radius, border, shadow } = theme;
 
 const SportsOnboardingScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
@@ -163,7 +166,14 @@ const SportsOnboardingScreen: React.FC = () => {
       if (sportProfileError) throw sportProfileError;
 
       setSuccess("Saved! Let’s set your reliability next.");
-      trackOnboardingEntry({ source: "sport-selector", platform: "mobile", step: "pledge" });
+      trackOnboardingEntry({
+        source: "sport-selector",
+        platform: "mobile",
+        step: "pledge",
+        steps: ["pledge"],
+        pendingSteps: 1,
+        nextStep: "/onboarding/reliability-pledge",
+      });
       router.replace("/onboarding/reliability-pledge");
     } catch (err) {
       console.error("[sports-onboarding] save failed", err);
@@ -185,7 +195,7 @@ const SportsOnboardingScreen: React.FC = () => {
 
         {loading ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator color="#0EA5E9" />
+            <ActivityIndicator color={colors.accentSky} />
             <Text style={styles.loadingText}>Loading your sport profile…</Text>
           </View>
         ) : (
@@ -262,6 +272,9 @@ const SportsOnboardingScreen: React.FC = () => {
         <Pressable
           onPress={handleSave}
           disabled={!ready}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !ready }}
+          testID="sport-onboarding-save"
           style={[styles.saveButton, ready ? styles.saveButtonReady : styles.saveButtonDisabled]}
         >
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>Save and continue</Text>}
@@ -274,162 +287,167 @@ const SportsOnboardingScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#0f172a",
+    backgroundColor: colors.night,
   },
   container: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    gap: 20,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl + spacing.sm,
+    gap: spacing.lg,
   },
   heading: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#f8fafc",
+    color: colors.surface,
   },
   description: {
     fontSize: 15,
-    color: "#cbd5f5",
+    color: colors.slateText,
   },
   loadingBox: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    padding: 20,
+    borderRadius: radius.lg,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    padding: spacing.md,
     alignItems: "center",
-    gap: 8,
+    gap: spacing.xs,
+    backgroundColor: colors.nightAlt,
   },
   loadingText: {
-    color: "#94a3b8",
+    color: colors.slateMuted,
   },
   sportGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.sm,
   },
   sportCard: {
     width: "48%",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    padding: 16,
-    backgroundColor: "#0f172a",
+    borderRadius: radius.lg,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    padding: spacing.md,
+    backgroundColor: colors.nightAlt,
   },
   sportCardSelected: {
-    borderColor: "#34d399",
-    backgroundColor: "#052e16",
+    borderColor: colors.success,
+    backgroundColor: colors.emeraldSurface,
   },
   sportEmoji: {
     fontSize: 32,
-    marginBottom: 12,
+    marginBottom: spacing.sm,
   },
   sportTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#f1f5f9",
+    color: colors.surface,
   },
   sportSummary: {
     fontSize: 13,
-    color: "#cbd5f5",
-    marginTop: 6,
+    color: colors.slateText,
+    marginTop: spacing.xs,
   },
   skillBlock: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    padding: 16,
+    borderRadius: radius.lg,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    padding: spacing.md,
+    backgroundColor: colors.nightAlt,
+    gap: spacing.xs,
   },
   skillHeading: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#f8fafc",
-    marginBottom: 12,
+    color: colors.surface,
   },
   skillPlaceholder: {
-    color: "#94a3b8",
+    color: colors.slateMuted,
   },
   skillChipsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.xs,
   },
   skillChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: "transparent",
   },
   skillChipActive: {
-    backgroundColor: "#10b981",
-    borderColor: "#10b981",
+    backgroundColor: colors.success,
+    borderColor: colors.success,
   },
   skillChipText: {
-    color: "#cbd5f5",
+    color: colors.slateText,
     fontSize: 13,
   },
   skillChipTextActive: {
-    color: "#022c22",
-    fontWeight: "600",
+    color: colors.emeraldInk,
+    fontWeight: "700",
   },
   errorText: {
-    color: "#f87171",
+    color: colors.danger,
   },
   successText: {
-    color: "#34d399",
+    color: colors.success,
   },
   saveButton: {
-    borderRadius: 999,
-    paddingVertical: 16,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.md,
     alignItems: "center",
+    ...shadow.card,
   },
   playStyleBlock: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    padding: 16,
-    gap: 12,
+    borderRadius: radius.lg,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    padding: spacing.md,
+    gap: spacing.sm,
+    backgroundColor: colors.nightAlt,
   },
   playStyleHeading: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#f8fafc",
+    color: colors.surface,
   },
   playStyleGrid: {
-    gap: 12,
+    gap: spacing.sm,
   },
   playStyleCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#1e293b",
-    padding: 16,
-    backgroundColor: "#0f172a",
+    borderRadius: radius.md,
+    borderWidth: border.hairline,
+    borderColor: colors.slateBorder,
+    padding: spacing.md,
+    backgroundColor: colors.nightAlt,
   },
   playStyleCardActive: {
-    borderColor: "#6366f1",
-    backgroundColor: "#312e81",
+    borderColor: colors.success,
+    backgroundColor: colors.emeraldSurface,
   },
   playStyleTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#cbd5f5",
+    color: colors.slateText,
   },
   playStyleTitleActive: {
-    color: "#eef2ff",
+    color: colors.surface,
   },
   playStyleNote: {
-    marginTop: 6,
+    marginTop: spacing.xs,
     fontSize: 13,
-    color: "#94a3b8",
+    color: colors.slateMuted,
   },
   saveButtonReady: {
-    backgroundColor: "#10b981",
+    backgroundColor: colors.success,
   },
   saveButtonDisabled: {
-    backgroundColor: "#1e293b",
+    backgroundColor: colors.ink80,
   },
   saveButtonText: {
-    color: "#022c22",
+    color: colors.emeraldInk,
     fontWeight: "700",
     fontSize: 16,
   },

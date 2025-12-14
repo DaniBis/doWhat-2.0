@@ -2,13 +2,16 @@ import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
 import { useEffect } from 'react';
 
+import OnboardingNavPill from '../../components/OnboardingNavPill';
+
 export default function TabsLayout() {
   useEffect(() => {
     console.log('TabsLayout mounted');
   }, []);
 
   return (
-    <Tabs
+    <>
+      <Tabs
       initialRouteName="home"
       screenOptions={{
         tabBarActiveTintColor: '#2C7BF6',
@@ -53,6 +56,8 @@ export default function TabsLayout() {
           tabBarIcon: () => <Text>👤</Text>,
         }}
       />
-    </Tabs>
+      </Tabs>
+      <OnboardingNavPill />
+    </>
   );
 }

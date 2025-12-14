@@ -16,7 +16,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
 	DEFAULT_PEOPLE_FILTER_PREFERENCES,
 	countActivePeopleFilters,
-	getTraitOnboardingState,
+	derivePendingOnboardingSteps,
+	isPlayStyle,
+	isSportType,
+	ONBOARDING_TRAIT_GOAL,
 	trackOnboardingEntry,
 	loadUserPreference,
 	normalisePeopleFilterPreferences,
@@ -25,6 +28,9 @@ import {
 	PEOPLE_FILTER_SKILL_LEVELS,
 	saveUserPreference,
 	type PeopleFilterPreferences,
+	type PlayStyle,
+	type SportType,
+	type OnboardingStep,
 } from '@dowhat/shared';
 
 import { supabase } from '../lib/supabase';
@@ -104,6 +110,10 @@ export default function PeopleFilterScreen() {
 	const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
 	const [, setPledgeVersion] = useState<string | null>(null);
 	const [pledgeHydrated, setPledgeHydrated] = useState(false);
+	const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+	const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+	const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+	const [sportProfileLoading, setSportProfileLoading] = useState(false);
 
 	useEffect(() => {
 		fetchNearbyTraits();
@@ -240,6 +250,70 @@ export default function PeopleFilterScreen() {
 		};
 	}, [userId]);
 
+	useEffect(() => {
+		if (!userId) {
+			setPrimarySport(null);
+			setPlayStyle(null);
+			setSportSkillLevel(null);
+			setSportProfileLoading(false);
+			return;
+		}
+		let cancelled = false;
+		setSportProfileLoading(true);
+		(async () => {
+			try {
+				const { data, error } = await supabase
+					.from('profiles')
+					.select('primary_sport, play_style')
+					.eq('id', userId)
+					.maybeSingle<{ primary_sport: string | null; play_style: string | null }>();
+				if (error && error.code !== 'PGRST116') {
+					throw error;
+				}
+				const normalizedSport = data?.primary_sport && isSportType(data.primary_sport)
+					? data.primary_sport
+					: null;
+				const normalizedPlayStyle = data?.play_style && isPlayStyle(data.play_style)
+					? data.play_style
+					: null;
+				let skillLevel: string | null = null;
+				if (normalizedSport) {
+					const { data: sportRow, error: sportError } = await supabase
+						.from('user_sport_profiles')
+						.select('skill_level')
+						.eq('user_id', userId)
+						.eq('sport', normalizedSport)
+						.maybeSingle<{ skill_level: string | null }>();
+					if (sportError && sportError.code !== 'PGRST116') {
+						throw sportError;
+					}
+					skillLevel = sportRow?.skill_level ?? null;
+				}
+				if (!cancelled) {
+					setPrimarySport(normalizedSport);
+					setPlayStyle(normalizedPlayStyle);
+					setSportSkillLevel(skillLevel);
+				}
+			} catch (error) {
+				if (__DEV__) {
+					console.warn('[people-filters] failed to load sport profile', error);
+				}
+				if (!cancelled) {
+					setPrimarySport(null);
+					setPlayStyle(null);
+					setSportSkillLevel(null);
+				}
+			} finally {
+				if (!cancelled) {
+					setSportProfileLoading(false);
+				}
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [userId]);
+
 	const persistPreferences = useCallback(
 		async (next: PeopleFilterPreferences) => {
 			const normalised = normalisePeopleFilterPreferences(next);
@@ -328,13 +402,70 @@ export default function PeopleFilterScreen() {
 
 	// Removed Activity Filters UI
 
-	const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({ baseTraitCount, traitCountLoading });
-	const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
+	const rawPendingOnboardingSteps = useMemo<OnboardingStep[]>(
+		() =>
+			derivePendingOnboardingSteps({
+				traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+				primarySport,
+				playStyle,
+				skillLevel: sportSkillLevel,
+				pledgeAckAt,
+			}),
+		[baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+	);
+	const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
+		() =>
+			rawPendingOnboardingSteps.filter((step) => {
+				if (step === 'traits') {
+					return !traitCountLoading && baseTraitCount != null;
+				}
+				if (step === 'sport') {
+					return !sportProfileLoading;
+				}
+				if (step === 'pledge') {
+					return pledgeHydrated;
+				}
+				return true;
+			}),
+		[rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, pledgeHydrated],
+	);
+	const pendingOnboardingCount = pendingOnboardingSteps.length;
+	const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+	const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
+	const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
+	const traitShortfall = needsTraitOnboarding
+		? Math.max(1, ONBOARDING_TRAIT_GOAL - (baseTraitCount ?? 0))
+		: 0;
 
 	const renderPeopleFilters = () => (
 		<ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
 			{isLoading && (
 				<Text style={styles.loadingText}>Loading your saved preferences…</Text>
+			)}
+			{needsSportOnboarding && (
+				<View style={styles.sportCtaCard}>
+					<Text style={styles.sportCtaEyebrow}>Dial in your sport</Text>
+					<Text style={styles.sportCtaTitle}>Set sport, play style, and level</Text>
+					<Text style={styles.sportCtaBody}>
+						Choose your primary sport so people filters prioritise the right matches.
+					</Text>
+					<TouchableOpacity
+						style={styles.sportCtaButton}
+						onPress={() => {
+							trackOnboardingEntry({
+								source: 'people-filter-banner',
+								platform: 'mobile',
+								step: 'sport',
+								steps: pendingOnboardingSteps,
+								pendingSteps: pendingOnboardingCount,
+								nextStep: '/onboarding/sports',
+							});
+							router.push('/onboarding/sports');
+						}}
+					>
+						<Text style={styles.sportCtaButtonText}>Update sport profile</Text>
+					</TouchableOpacity>
+				</View>
 			)}
 			{needsTraitOnboarding && (
 				<View style={styles.traitCtaCard}>
@@ -346,7 +477,14 @@ export default function PeopleFilterScreen() {
 					<TouchableOpacity
 						style={styles.traitCtaButton}
 						onPress={() => {
-							trackOnboardingEntry({ source: 'people-filter-banner', platform: 'mobile', step: 'traits' });
+							trackOnboardingEntry({
+								source: 'people-filter-banner',
+								platform: 'mobile',
+								step: 'traits',
+								steps: pendingOnboardingSteps,
+								pendingSteps: pendingOnboardingCount,
+								nextStep: '/onboarding-traits',
+							});
 							router.push('/onboarding-traits');
 						}}
 					>
@@ -364,7 +502,14 @@ export default function PeopleFilterScreen() {
 					<TouchableOpacity
 						style={styles.pledgeCtaButton}
 						onPress={() => {
-							trackOnboardingEntry({ source: 'people-filter-banner', platform: 'mobile', step: 'pledge' });
+							trackOnboardingEntry({
+								source: 'people-filter-banner',
+								platform: 'mobile',
+								step: 'pledge',
+								steps: pendingOnboardingSteps,
+								pendingSteps: pendingOnboardingCount,
+								nextStep: '/onboarding/reliability-pledge',
+							});
 							router.push('/onboarding/reliability-pledge');
 						}}
 					>
@@ -610,6 +755,45 @@ const styles = StyleSheet.create({
 		marginBottom: 12,
 		fontSize: 12,
 		color: '#6B7280',
+	},
+	sportCtaCard: {
+		marginHorizontal: 20,
+		marginBottom: 24,
+		padding: 20,
+		borderRadius: 20,
+		backgroundColor: '#F0FDFA',
+		borderWidth: 1,
+		borderColor: '#99F6E4',
+	},
+	sportCtaEyebrow: {
+		fontSize: 12,
+		fontWeight: '700',
+		color: '#0F766E',
+		textTransform: 'uppercase',
+		marginBottom: 6,
+		letterSpacing: 1,
+	},
+	sportCtaTitle: {
+		fontSize: 18,
+		fontWeight: '700',
+		color: '#115E59',
+		marginBottom: 6,
+	},
+	sportCtaBody: {
+		fontSize: 14,
+		color: '#134E4A',
+		marginBottom: 16,
+	},
+	sportCtaButton: {
+		alignSelf: 'flex-start',
+		paddingHorizontal: 18,
+		paddingVertical: 10,
+		borderRadius: 999,
+		backgroundColor: '#14B8A6',
+	},
+	sportCtaButtonText: {
+		color: '#FFFFFF',
+		fontWeight: '700',
 	},
 	traitCtaCard: {
 		marginHorizontal: 20,

@@ -5,6 +5,7 @@ import { View, Text, Pressable, TextInput, ActivityIndicator, Linking, Platform 
 
 import { supabase } from '../lib/supabase';
 import { getDeepLinkParam } from '../lib/deepLinking';
+import { maybeResetInvalidSession } from '../lib/auth';
 
 type AuthSessionLike = {
   makeRedirectUri: (options?: { useProxy?: boolean; path?: string; scheme?: string }) => string;
@@ -172,8 +173,16 @@ export default function AuthButtons() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (mounted) setUserEmail(data.user?.email ?? null);
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (mounted) setUserEmail(data.user?.email ?? null);
+      } catch (error) {
+        if (__DEV__) console.warn('[auth] getUser failed', error);
+        const reset = await maybeResetInvalidSession(error);
+        if (reset && mounted) {
+          setUserEmail(null);
+        }
+      }
     })();
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUserEmail(session?.user?.email ?? null);

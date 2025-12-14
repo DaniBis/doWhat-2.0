@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { PlayStyle, SportType } from '@dowhat/shared';
 
 jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper');
 
@@ -26,6 +27,9 @@ const supabaseState = {
   baseTraitCount: 0,
   reliabilityPledgeAckAt: null as string | null,
   reliabilityPledgeVersion: null as string | null,
+  primarySport: null as SportType | null,
+  playStyle: null as PlayStyle | null,
+  sportSkillLevel: null as string | null,
 };
 
 const createUserBaseTraitsBuilder = () => {
@@ -43,7 +47,20 @@ const createProfilesBuilder = () => {
     data: {
       reliability_pledge_ack_at: supabaseState.reliabilityPledgeAckAt,
       reliability_pledge_version: supabaseState.reliabilityPledgeVersion,
+      primary_sport: supabaseState.primarySport,
+      play_style: supabaseState.playStyle,
     },
+    error: null,
+  }));
+  return builder;
+};
+
+const createUserSportProfileBuilder = () => {
+  const builder: any = {};
+  builder.select = jest.fn(() => builder);
+  builder.eq = jest.fn(() => builder);
+  builder.maybeSingle = jest.fn(async () => ({
+    data: { skill_level: supabaseState.sportSkillLevel },
     error: null,
   }));
   return builder;
@@ -63,6 +80,9 @@ jest.mock('../../lib/supabase', () => {
       if (table === 'profiles') {
         return createProfilesBuilder();
       }
+      if (table === 'user_sport_profiles') {
+        return createUserSportProfileBuilder();
+      }
       throw new Error(`Unexpected table ${table}`);
     }),
   };
@@ -76,6 +96,11 @@ jest.mock('../../lib/supabase', () => {
       setPledgeState: ({ ackAt, version }: { ackAt: string | null; version?: string | null }) => {
         supabaseState.reliabilityPledgeAckAt = ackAt;
         supabaseState.reliabilityPledgeVersion = version ?? null;
+      },
+      setSportProfile: ({ primarySport, playStyle, skillLevel }: { primarySport: SportType | null; playStyle: PlayStyle | null; skillLevel: string | null }) => {
+        supabaseState.primarySport = primarySport;
+        supabaseState.playStyle = playStyle;
+        supabaseState.sportSkillLevel = skillLevel;
       },
     },
   };
@@ -95,6 +120,7 @@ const { __supabaseMock } = jest.requireMock('../../lib/supabase') as {
   __supabaseMock: {
     setBaseTraitCount: (count: number) => void;
     setPledgeState: (state: { ackAt: string | null; version?: string | null }) => void;
+    setSportProfile: (state: { primarySport: SportType | null; playStyle: PlayStyle | null; skillLevel: string | null }) => void;
   };
 };
 
@@ -149,6 +175,11 @@ describe('PeopleFilterScreen trait onboarding banner', () => {
     trackOnboardingEntry.mockClear();
     router.push.mockClear();
     __supabaseMock.setPledgeState({ ackAt: '2024-01-01T00:00:00.000Z', version: 'v1' });
+    __supabaseMock.setSportProfile({
+      primarySport: 'padel',
+      playStyle: 'competitive',
+      skillLevel: '3.5 - Consistent rallies',
+    });
   });
 
   it('shows the CTA when fewer than five base traits exist', async () => {
@@ -181,12 +212,32 @@ describe('PeopleFilterScreen trait onboarding banner', () => {
     const cta = await waitFor(() => screen.getByText('Choose traits'));
     fireEvent.press(cta);
 
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: 'people-filter-banner', platform: 'mobile', step: 'traits' });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: 'people-filter-banner',
+      platform: 'mobile',
+      step: 'traits',
+      steps: ['traits'],
+      pendingSteps: 1,
+      nextStep: '/onboarding-traits',
+    });
     expect(router.push).toHaveBeenCalledWith('/onboarding-traits');
   });
 });
 
 describe('PeopleFilterScreen reliability pledge banner', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    installFetchMock();
+    trackOnboardingEntry.mockClear();
+    router.push.mockClear();
+    __supabaseMock.setSportProfile({
+      primarySport: 'padel',
+      playStyle: 'competitive',
+      skillLevel: '3.5 - Consistent rallies',
+    });
+    __supabaseMock.setPledgeState({ ackAt: '2024-01-01T00:00:00.000Z', version: 'v1' });
+  });
+
   it('shows the CTA when the pledge has not been acknowledged', async () => {
     __supabaseMock.setBaseTraitCount(5);
     __supabaseMock.setPledgeState({ ackAt: null, version: null });
@@ -219,7 +270,55 @@ describe('PeopleFilterScreen reliability pledge banner', () => {
     const cta = await waitFor(() => screen.getByText('Review pledge'));
     fireEvent.press(cta);
 
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: 'people-filter-banner', platform: 'mobile', step: 'pledge' });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: 'people-filter-banner',
+      platform: 'mobile',
+      step: 'pledge',
+      steps: ['pledge'],
+      pendingSteps: 1,
+      nextStep: '/onboarding/reliability-pledge',
+    });
     expect(router.push).toHaveBeenCalledWith('/onboarding/reliability-pledge');
+  });
+});
+
+describe('PeopleFilterScreen sport onboarding banner', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    installFetchMock();
+    trackOnboardingEntry.mockClear();
+    router.push.mockClear();
+    __supabaseMock.setPledgeState({ ackAt: '2024-01-01T00:00:00.000Z', version: 'v1' });
+    __supabaseMock.setBaseTraitCount(5);
+  });
+
+  it('shows the CTA when sport data is incomplete', async () => {
+    __supabaseMock.setSportProfile({ primarySport: null, playStyle: null, skillLevel: null });
+
+    render(<PeopleFilterScreen />);
+    await act(async () => {});
+
+    await waitFor(() => expect(screen.getByText('Set sport, play style, and level')).toBeTruthy());
+    expect(screen.getByText('Update sport profile')).toBeTruthy();
+  });
+
+  it('tracks analytics when the CTA is tapped', async () => {
+    __supabaseMock.setSportProfile({ primarySport: null, playStyle: null, skillLevel: null });
+
+    render(<PeopleFilterScreen />);
+    await act(async () => {});
+
+    const cta = await waitFor(() => screen.getByText('Update sport profile'));
+    fireEvent.press(cta);
+
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: 'people-filter-banner',
+      platform: 'mobile',
+      step: 'sport',
+      steps: ['sport'],
+      pendingSteps: 1,
+      nextStep: '/onboarding/sports',
+    });
+    expect(router.push).toHaveBeenCalledWith('/onboarding/sports');
   });
 });
