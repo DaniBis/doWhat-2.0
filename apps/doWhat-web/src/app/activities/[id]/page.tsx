@@ -50,13 +50,13 @@ export default async function ActivityPage({ params }: { params: { id: string } 
   }
 
   if (!activity) {
-    return <div className="p-6">Activity not found.</div>;
+    return <div className="p-xl">Activity not found.</div>;
   }
 
   const { data: sessions } = await supabase
     .from("sessions")
     .select(
-      "id, created_by, starts_at, ends_at, price_cents, description, venue_id, venues(id, name, lat, lng, address)"
+      "id, host_user_id, starts_at, ends_at, price_cents, description, venue_id, venues(id, name, lat, lng, address)"
     )
     .eq("activity_id", activityId)
     .order("starts_at", { ascending: true });
@@ -135,15 +135,15 @@ export default async function ActivityPage({ params }: { params: { id: string } 
     : null;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
-      <div className="flex flex-col gap-6 rounded-3xl border border-gray-100 bg-white/80 p-8 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="mx-auto max-w-4xl px-xl py-xxxl">
+      <div className="flex flex-col gap-xl rounded-3xl border border-midnight-border/30 bg-surface/80 p-xxl shadow-sm">
+        <div className="flex flex-col gap-md lg:flex-row lg:items-start lg:justify-between">
           <div className="flex-1">
             <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">Activity</p>
-            <h1 className="text-3xl font-bold text-gray-900">{activity.name}</h1>
-            <p className="text-lg text-gray-700">{purpose}</p>
+            <h1 className="text-3xl font-bold text-ink">{activity.name}</h1>
+            <p className="text-lg text-ink-strong">{purpose}</p>
             {(activity.rating ?? null) != null && (
-              <div className="mt-1 flex items-center gap-2 text-sm text-gray-500">
+              <div className="mt-xxs flex items-center gap-xs text-sm text-ink-muted">
                 <span className="text-base">⭐</span>
                 <span>
                   {activity.rating?.toFixed(1)} ({activity.rating_count ?? 0} reviews)
@@ -156,35 +156,35 @@ export default async function ActivityPage({ params }: { params: { id: string } 
           ) : null}
         </div>
 
-        <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-6">
-          <h2 className="text-xl font-semibold text-gray-900">Upcoming availability</h2>
+        <div className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 p-xl">
+          <h2 className="text-xl font-semibold text-ink">Upcoming availability</h2>
           {upcomingSessions.length === 0 ? (
-            <p className="mt-2 text-sm text-gray-600">No scheduled sessions yet. Check back soon!</p>
+            <p className="mt-xs text-sm text-ink-medium">No scheduled sessions yet. Check back soon!</p>
           ) : (
-            <div className="mt-4 space-y-4">
+            <div className="mt-md space-y-md">
               {upcomingSessions.map((session) => {
                 const { timing, venueLabel, priceLabel } = describeSession(session);
                 return (
                   <div
                     key={session.id}
-                    className="flex flex-col gap-3 rounded-2xl bg-white/90 p-5 shadow-sm transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-sm rounded-2xl bg-surface/90 p-lg shadow-sm transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div>
-                      <p className="text-base font-semibold text-gray-900">{timing}</p>
-                      <p className="text-sm text-gray-500">📍 {venueLabel}</p>
+                      <p className="text-base font-semibold text-ink">{timing}</p>
+                      <p className="text-sm text-ink-muted">📍 {venueLabel}</p>
                       {session.description && (
-                        <p className="mt-2 text-sm text-gray-600">{session.description}</p>
+                        <p className="mt-xs text-sm text-ink-medium">{session.description}</p>
                       )}
                     </div>
-                    <div className="flex flex-col items-start gap-3 sm:items-end">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700">
+                    <div className="flex flex-col items-start gap-sm sm:items-end">
+                      <div className="flex flex-wrap items-center gap-sm">
+                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-sm py-xxs text-sm font-semibold text-emerald-700">
                           {priceLabel}
                         </span>
                         {session.id && (
                           <Link
                             href={{ pathname: `/sessions/${session.id}` }}
-                            className="inline-flex items-center rounded-full border border-transparent px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-200 hover:bg-emerald-50"
+                            className="inline-flex items-center rounded-full border border-transparent px-md py-xs text-sm font-semibold text-emerald-600 transition hover:border-emerald-200 hover:bg-emerald-50"
                           >
                             View session →
                           </Link>
@@ -212,11 +212,11 @@ export default async function ActivityPage({ params }: { params: { id: string } 
         </div>
 
         {activity.tags?.length ? (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-xs">
             {activity.tags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700"
+                className="inline-flex items-center rounded-full bg-emerald-50 px-sm py-xxs text-xs font-semibold uppercase tracking-wide text-emerald-700"
               >
                 {tag}
               </span>

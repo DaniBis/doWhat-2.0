@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import SignInButton from '../components/SignInButton';

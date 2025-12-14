@@ -52,13 +52,13 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
-      <div className="mb-4 flex flex-wrap gap-2">
+    <div className="rounded-2xl border border-midnight-border/40 bg-surface/90 p-lg shadow-sm">
+      <div className="mb-md flex flex-wrap gap-xs">
         <button
-          className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+          className={`rounded-full px-md py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
             mode === "signin"
-              ? "bg-emerald-600 text-white shadow-sm"
-              : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              ? "bg-brand-teal text-white shadow-sm"
+              : "border border-midnight-border/40 bg-surface text-ink-medium hover:border-midnight-border/60"
           }`}
           onClick={() => setMode("signin")}
           type="button"
@@ -66,10 +66,10 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
           Email sign in
         </button>
         <button
-          className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+          className={`rounded-full px-md py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
             mode === "signup"
-              ? "bg-emerald-600 text-white shadow-sm"
-              : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              ? "bg-brand-teal text-white shadow-sm"
+              : "border border-midnight-border/40 bg-surface text-ink-medium hover:border-midnight-border/60"
           }`}
           onClick={() => setMode("signup")}
           type="button"
@@ -77,10 +77,10 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
           Create account
         </button>
         <button
-          className={`rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+          className={`rounded-full px-md py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
             mode === "magic"
-              ? "bg-emerald-600 text-white shadow-sm"
-              : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              ? "bg-brand-teal text-white shadow-sm"
+              : "border border-midnight-border/40 bg-surface text-ink-medium hover:border-midnight-border/60"
           }`}
           onClick={() => setMode("magic")}
           type="button"
@@ -89,40 +89,40 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
         </button>
       </div>
 
-      <form onSubmit={submit} className="space-y-4">
-        <div className="space-y-1">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Email</label>
+      <form onSubmit={submit} className="space-y-md">
+        <div className="space-y-xxs">
+          <label className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Email</label>
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 outline-none ring-emerald-200 transition focus:border-emerald-300 focus:ring-2"
+            className="w-full rounded-xl border border-midnight-border/40 bg-surface px-md py-xs text-sm text-ink-strong outline-none ring-brand-teal/30 transition focus:border-brand-teal focus:ring-2 focus:ring-brand-teal/60"
             placeholder="you@example.com"
           />
         </div>
         {mode !== "magic" && (
-          <div className="space-y-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Password</label>
+          <div className="space-y-xxs">
+            <label className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Password</label>
             <input
               type="password"
               required
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 outline-none ring-emerald-200 transition focus:border-emerald-300 focus:ring-2"
+              className="w-full rounded-xl border border-midnight-border/40 bg-surface px-md py-xs text-sm text-ink-strong outline-none ring-brand-teal/30 transition focus:border-brand-teal focus:ring-2 focus:ring-brand-teal/60"
               placeholder="••••••••"
             />
           </div>
         )}
 
         {err && (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-xl border border-red-100 bg-red-50 px-sm py-xs text-sm text-red-700">
             {err}
           </div>
         )}
         {msg && (
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <div className="rounded-xl border border-brand-teal/25 bg-brand-teal/10 px-sm py-xs text-sm text-brand-dark">
             {msg}
           </div>
         )}
@@ -130,7 +130,7 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-400"
+          className="w-full rounded-xl bg-brand-teal px-md py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-brand-teal/60"
         >
           {busy ? "Working…" : mode === "signup" ? "Create account" : mode === "magic" ? "Send magic link" : "Sign in"}
         </button>

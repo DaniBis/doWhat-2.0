@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ATTENDANCE_STATUSES, getAttendanceStatusLabel, trackVerifiedMatchesRecorded } from "@dowhat/shared";
+import {
+  ATTENDANCE_STATUSES,
+  getAttendanceStatusLabel,
+  trackVerifiedMatchesRecorded,
+  RELIABILITY_BADGE_ORDER,
+  RELIABILITY_BADGE_TOKENS,
+} from "@dowhat/shared";
 import type { AttendanceCounts } from "@/lib/sessions/server";
 import { cn } from "@/lib/utils/cn";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
@@ -92,17 +98,31 @@ export function SessionAttendancePanel({
   const verifiedCount = counts.verified ?? 0;
 
   const summaryBadges = (
-    <div className="flex flex-wrap items-center gap-3 text-sm text-gray-700">
-      <span className="rounded-full bg-emerald-50 px-3 py-1 font-semibold text-emerald-700">
-        Going {counts.going}/{maxAttendees}
-      </span>
-      <span className="rounded-full bg-amber-50 px-3 py-1 font-semibold text-amber-700">
-        Interested {counts.interested}
-      </span>
-      <span className="rounded-full bg-indigo-50 px-3 py-1 font-semibold text-indigo-700">
-        GPS verified {verifiedCount}
-      </span>
-      {isHost && <span className="rounded-full bg-sky-50 px-3 py-1 font-semibold text-sky-700">You’re hosting</span>}
+    <div className="flex flex-wrap items-center gap-sm text-sm font-semibold">
+      {RELIABILITY_BADGE_ORDER.map((key) => {
+        const token = RELIABILITY_BADGE_TOKENS[key];
+        const value =
+          key === "going"
+            ? `${counts.going}/${maxAttendees}`
+            : key === "interested"
+              ? counts.interested
+              : verifiedCount;
+        return (
+          <span
+            key={key}
+            className="inline-flex items-center gap-xxs rounded-full border px-sm py-xxs"
+            style={{ backgroundColor: token.backgroundColor, borderColor: token.borderColor, color: token.textColor }}
+          >
+            {token.icon && (
+              <span aria-hidden="true" className="text-sm">
+                {token.icon}
+              </span>
+            )}
+            {token.label} {value}
+          </span>
+        );
+      })}
+      {isHost && <span className="rounded-full bg-sky-50 px-sm py-xxs text-sky-700 font-semibold">You’re hosting</span>}
     </div>
   );
 
@@ -319,23 +339,23 @@ export function SessionAttendancePanel({
 
   if (isHost) {
     return (
-      <section className="rounded-3xl border border-emerald-100 bg-white/80 p-6 shadow-sm">
-        <div className="flex flex-col gap-4">
+      <section className="rounded-3xl border border-brand-teal/20 bg-surface/80 p-xl shadow-sm">
+        <div className="flex flex-col gap-md">
           <div>
-            <p className="text-sm font-semibold text-emerald-700">Attendance log</p>
-            <p className="text-sm text-gray-600">Record who actually showed up so reliability stays accurate.</p>
+            <p className="text-sm font-semibold text-brand-dark">Attendance log</p>
+            <p className="text-sm text-ink-medium">Record who actually showed up so reliability stays accurate.</p>
           </div>
           {summaryBadges}
-          <div className="space-y-3">
-            {hostRosterLoading && <p className="text-sm text-gray-500">Loading roster…</p>}
-            {hostRosterError && <p className="text-sm text-red-600">{hostRosterError}</p>}
+          <div className="space-y-sm">
+            {hostRosterLoading && <p className="text-sm text-ink-muted">Loading roster…</p>}
+            {hostRosterError && <p className="text-sm text-feedback-danger">{hostRosterError}</p>}
             {!hostRosterLoading && !hostRosterError && hostRoster.length === 0 && (
-              <p className="rounded-2xl border border-dashed px-4 py-3 text-sm text-gray-500">
+              <p className="rounded-2xl border border-dashed px-md py-sm text-sm text-ink-muted">
                 No attendees to review yet.
               </p>
             )}
             {!hostRosterLoading && !hostRosterError && hostRoster.length > 0 && (
-              <ul className="flex flex-col gap-3">
+              <ul className="flex flex-col gap-sm">
                 {hostRoster.map((row) => {
                   const hasDraftStatus = Object.prototype.hasOwnProperty.call(hostDraftStatus, row.userId);
                   const hasDraftVerified = Object.prototype.hasOwnProperty.call(hostDraftVerified, row.userId);
@@ -345,21 +365,21 @@ export function SessionAttendancePanel({
                   return (
                     <li
                       key={row.userId}
-                      className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                      className="rounded-2xl border border-midnight-border/30 bg-surface px-md py-sm shadow-sm"
                     >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-col gap-sm sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-gray-900">{row.fullName || row.username || "Member"}</p>
-                          <p className="text-xs text-gray-500">{formatRsvpStatus(row.status)}</p>
+                          <p className="truncate text-sm font-semibold text-ink">{row.fullName || row.username || "Member"}</p>
+                          <p className="text-xs text-ink-muted">{formatRsvpStatus(row.status)}</p>
                         </div>
-                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
                           {formatAttendanceStatus(currentStatus)}
                         </span>
                       </div>
-                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-                        <label className="text-xs font-semibold text-gray-600">Final status</label>
+                      <div className="mt-sm flex flex-col gap-sm sm:flex-row sm:items-center">
+                        <label className="text-xs font-semibold text-ink-medium">Final status</label>
                         <select
-                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                          className="flex-1 rounded-xl border border-midnight-border/40 bg-surface px-sm py-xs text-sm"
                           value={currentStatus}
                           onChange={(event) => handleHostStatusChange(row.userId, event.target.value as AttendanceStatus)}
                         >
@@ -371,13 +391,13 @@ export function SessionAttendancePanel({
                         </select>
                         <label
                           className={cn(
-                            "inline-flex items-center gap-2 text-xs font-semibold",
-                            verifiedDisabled ? "text-gray-400" : "text-emerald-700",
+                            "inline-flex items-center gap-xs text-xs font-semibold",
+                            verifiedDisabled ? "text-ink-muted" : "text-brand-teal",
                           )}
                         >
                           <input
                             type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                            className="h-4 w-4 rounded border-midnight-border/60 text-brand-teal focus:ring-brand-teal"
                             checked={currentVerified && !verifiedDisabled}
                             disabled={verifiedDisabled}
                             onChange={(event) => handleHostVerifiedToggle(row.userId, event.target.checked)}
@@ -391,14 +411,14 @@ export function SessionAttendancePanel({
               </ul>
             )}
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-gray-600">
+          <div className="flex flex-col gap-xs sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-ink-medium">
               {hostPendingChanges.length ? `${hostPendingChanges.length} pending change(s)` : "No pending changes"}
             </p>
             <button
               type="button"
               className={cn(
-                "rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow-sm transition",
+                "rounded-full bg-brand-teal px-lg py-xs text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark",
                 hostPendingChanges.length === 0 && "cursor-not-allowed opacity-50",
               )}
               disabled={hostPendingChanges.length === 0 || hostSubmitting}
@@ -408,7 +428,7 @@ export function SessionAttendancePanel({
             </button>
           </div>
           {hostToast && (
-            <p className={cn("text-sm", hostToast.type === "error" ? "text-red-600" : "text-emerald-600")}>
+            <p className={cn("text-sm", hostToast.type === "error" ? "text-feedback-danger" : "text-feedback-success")}>
               {hostToast.message}
             </p>
           )}
@@ -418,19 +438,19 @@ export function SessionAttendancePanel({
   }
 
   return (
-    <section className="rounded-3xl border border-emerald-100 bg-white/70 p-6 shadow-sm">
-      <div className="flex flex-col gap-2">
+    <section className="rounded-3xl border border-brand-teal/20 bg-surface/70 p-xl shadow-sm">
+      <div className="flex flex-col gap-xs">
         <div>
-          <p className="text-sm font-semibold text-emerald-700">Attendance</p>
-          <p className="text-sm text-gray-600">{helperText}</p>
+          <p className="text-sm font-semibold text-brand-dark">Attendance</p>
+          <p className="text-sm text-ink-medium">{helperText}</p>
         </div>
         {summaryBadges}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-xs">
           <button
             type="button"
             className={cn(
-              "rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow-sm transition",
-              "hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2",
+              "rounded-full bg-brand-teal px-lg py-xs text-sm font-semibold text-white shadow-sm transition",
+              "hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:ring-offset-2",
               disableGoing && "cursor-not-allowed opacity-50",
             )}
             disabled={disableGoing}
@@ -441,8 +461,8 @@ export function SessionAttendancePanel({
           <button
             type="button"
             className={cn(
-              "rounded-full border border-emerald-200 px-5 py-2 text-sm font-semibold text-emerald-600 transition",
-              "hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2",
+              "rounded-full border border-brand-teal/30 px-lg py-xs text-sm font-semibold text-brand-teal transition",
+              "hover:bg-brand-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:ring-offset-2",
               disableInterested && "cursor-not-allowed opacity-60",
             )}
             disabled={disableInterested}
@@ -453,7 +473,7 @@ export function SessionAttendancePanel({
           {showLeave && (
             <button
               type="button"
-              className="rounded-full border border-gray-200 px-5 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
+              className="rounded-full border border-midnight-border/40 px-lg py-xs text-sm font-semibold text-ink-medium transition hover:bg-surface-alt"
               onClick={leave}
               disabled={loading}
             >
@@ -462,7 +482,7 @@ export function SessionAttendancePanel({
           )}
         </div>
         {toast && (
-          <p className={cn("text-sm", toast.type === "error" ? "text-red-600" : "text-emerald-600")}>{toast.message}</p>
+          <p className={cn("text-sm", toast.type === "error" ? "text-feedback-danger" : "text-feedback-success")}>{toast.message}</p>
         )}
       </div>
     </section>

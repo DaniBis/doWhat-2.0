@@ -116,12 +116,12 @@ export default function SessionAttendanceQuickActions({ sessionId, className, si
   }
 
   const baseButtonClasses =
-    "rounded-full px-4 py-1.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2";
-  const compactClasses = size === "compact" ? "px-3 py-1 text-xs" : "";
+    "rounded-full px-md py-1.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2";
+  const compactClasses = size === "compact" ? "px-sm py-xxs text-xs" : "";
 
   return (
     <div className={className}>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-xs">
         <button
           type="button"
           onClick={() => mutate("going")}
@@ -140,7 +140,7 @@ export default function SessionAttendanceQuickActions({ sessionId, className, si
         </button>
       </div>
       {toast && (
-        <p className={`mt-2 text-sm ${toast.type === "success" ? "text-emerald-600" : "text-red-600"}`}>
+        <p className={`mt-xs text-sm ${toast.type === "success" ? "text-emerald-600" : "text-red-600"}`}>
           {toast.message}
         </p>
       )}

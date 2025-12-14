@@ -17,8 +17,8 @@ export default function ActivitySelect({
   size = 8,
 }: Props) {
   return (
-    <div className="mt-3">
-      <label className="mb-1 block text-sm font-medium">{label}</label>
+    <div className="mt-sm">
+      <label className="mb-xxs block text-sm font-medium">{label}</label>
       <select
         multiple
         size={size}
@@ -26,7 +26,7 @@ export default function ActivitySelect({
         onChange={(e) =>
           onChange(Array.from(e.target.selectedOptions, (o) => o.value))
         }
-        className="w-full rounded border px-2 py-1"
+        className="w-full rounded border px-xs py-xxs"
       >
         {options.map((name) => (
           <option key={name} value={name}>

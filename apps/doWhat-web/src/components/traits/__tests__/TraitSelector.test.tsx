@@ -101,4 +101,22 @@ describe('TraitSelector', () => {
     await waitFor(() => expect(handleCompleted).toHaveBeenCalled());
     expect(screen.getByText(/traits saved/i)).toBeInTheDocument();
   });
+
+  it('lets members deselect traits to edit their stack', async () => {
+    render(<TraitSelector />);
+
+    const saveButton = screen.getByRole('button', { name: /save traits/i });
+
+    await clickTraitCard('Trait 1');
+    await clickTraitCard('Trait 2');
+    await clickTraitCard('Trait 3');
+
+    expect(screen.getByText('Select 2 more traits.')).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+
+    await clickTraitCard('Trait 2');
+
+    expect(screen.getByText('Select 3 more traits.')).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+  });
 });

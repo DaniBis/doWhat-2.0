@@ -41,7 +41,8 @@
     "next-env.d.ts",
     ".next/types/**/*.ts",
     "src/lib/__tests__/**/*.ts",
-    "./.next/types/**/*.ts"
+    "./.next/types/**/*.ts",
+    "../../types/**/*.d.ts"
   ],
   "exclude": [
     "node_modules"

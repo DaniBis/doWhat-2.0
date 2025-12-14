@@ -46,7 +46,7 @@ describe("ActivityCard", () => {
     const sessions = [
       {
         id: "session-primary",
-        created_by: "host-1",
+        host_user_id: "host-1",
         starts_at: "2025-12-10T10:00:00.000Z",
         ends_at: "2025-12-10T11:00:00.000Z",
         price_cents: 0,
@@ -55,7 +55,7 @@ describe("ActivityCard", () => {
       },
       {
         id: "session-extra",
-        created_by: "host-2",
+        host_user_id: "host-2",
         starts_at: "2025-12-11T10:00:00.000Z",
         ends_at: "2025-12-11T11:00:00.000Z",
         price_cents: 1000,

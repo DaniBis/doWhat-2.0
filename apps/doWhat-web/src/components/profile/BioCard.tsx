@@ -21,22 +21,22 @@ export function BioCard({ bio: initialBio, editable, onSave }: { bio?: string; e
     finally { setSaving(false); }
   }
   return (
-    <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-sm flex flex-col">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-800">About</h3>
+    <div className="rounded-xl bg-surface border border-midnight-border/40 p-lg shadow-sm flex flex-col">
+      <div className="flex items-center justify-between mb-sm">
+        <h3 className="font-semibold text-ink-strong">About</h3>
         {editable && (
-          <button onClick={()=> setEditing(e=>!e)} className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50">{editing ? 'Cancel' : 'Edit'}</button>
+          <button onClick={()=> setEditing(e=>!e)} className="text-xs px-xs py-xxs rounded border border-midnight-border/60 hover:bg-surface-alt">{editing ? 'Cancel' : 'Edit'}</button>
         )}
       </div>
       {!editing && (
-        <p className="text-sm text-gray-700 whitespace-pre-wrap min-h-[48px]">{bio || 'No bio yet.'}</p>
+        <p className="text-sm text-ink-strong whitespace-pre-wrap min-h-[48px]">{bio || 'No bio yet.'}</p>
       )}
       {editing && (
-        <div className="space-y-2">
-          <textarea value={bio} onChange={e=>setBio(e.target.value)} rows={4} className="w-full rounded border border-gray-300 p-2 text-sm" placeholder="Write something about yourself" />
-          <div className="flex items-center gap-2">
-            <button disabled={saving} onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white disabled:opacity-50">{saving?'Saving…':'Save'}</button>
-            {msg && <span className="text-xs text-gray-500">{msg}</span>}
+        <div className="space-y-xs">
+          <textarea value={bio} onChange={e=>setBio(e.target.value)} rows={4} className="w-full rounded border border-midnight-border/60 p-xs text-sm" placeholder="Write something about yourself" />
+          <div className="flex items-center gap-xs">
+            <button disabled={saving} onClick={handleSave} className="px-sm py-1.5 text-xs rounded bg-blue-600 text-white disabled:opacity-50">{saving?'Saving…':'Save'}</button>
+            {msg && <span className="text-xs text-ink-muted">{msg}</span>}
           </div>
         </div>
       )}

@@ -193,7 +193,7 @@ export function TraitVoteDialog({
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-hidden">
         <DialogHeader>
-          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-600">
+          <div className="flex items-center gap-xs text-sm font-semibold text-emerald-600">
             <Sparkles className="h-4 w-4" />
             <span>Post-session vibes</span>
           </div>
@@ -208,9 +208,9 @@ export function TraitVoteDialog({
         )}
 
         {participants.length > 0 && (
-          <div className="space-y-4">
+          <div className="space-y-md">
             {catalogError && (
-              <Card className="border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <Card className="border-red-200 bg-red-50 p-sm text-sm text-red-700">
                 <div className="flex items-center justify-between">
                   <span>{catalogError}</span>
                   <Button variant="outline" size="sm" onClick={loadTraits} disabled={loadingTraits}>
@@ -221,21 +221,21 @@ export function TraitVoteDialog({
             )}
 
             {traits.length === 0 && !catalogError && (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
+              <div className="flex items-center gap-xs text-sm text-ink-muted">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading traits…
               </div>
             )}
 
             {traits.length > 0 && (
               <>
-                <div className="flex items-center justify-between text-sm text-gray-600">
+                <div className="flex items-center justify-between text-sm text-ink-medium">
                   <span>{totalTraitsSelected} trait{totalTraitsSelected === 1 ? "" : "s"} selected</span>
-                  <button type="button" className="text-gray-500 underline-offset-4 hover:underline" onClick={clearAll}>
+                  <button type="button" className="text-ink-muted underline-offset-4 hover:underline" onClick={clearAll}>
                     Clear all
                   </button>
                 </div>
-                <ScrollArea className="max-h-[55vh] pr-2">
-                  <div className="space-y-4">
+                <ScrollArea className="max-h-[55vh] pr-xs">
+                  <div className="space-y-md">
                     <TooltipProvider>
                       {sortedParticipants.map((participant) => (
                         <ParticipantCard
@@ -255,10 +255,10 @@ export function TraitVoteDialog({
           </div>
         )}
 
-        <div className="mt-6 flex flex-col gap-2">
+        <div className="mt-xl flex flex-col gap-xs">
           {submitError && <p className="text-sm text-red-600">{submitError}</p>}
           {submitSuccess && <p className="text-sm text-emerald-600">{submitSuccess}</p>}
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-sm">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
               Cancel
             </Button>
@@ -287,8 +287,8 @@ function ParticipantCard({
 }) {
   const initials = React.useMemo(() => getInitials(participant.name), [participant.name]);
   return (
-    <div className="rounded-3xl border border-gray-100 p-4 shadow-sm" data-testid={`trait-voter-${participant.id}`}>
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="rounded-3xl border border-midnight-border/30 p-md shadow-sm" data-testid={`trait-voter-${participant.id}`}>
+      <div className="flex flex-wrap items-center gap-sm">
         <Avatar className="h-12 w-12">
           {participant.avatarUrl ? (
             <AvatarImage src={participant.avatarUrl} alt={participant.name} />
@@ -297,19 +297,19 @@ function ParticipantCard({
           )}
         </Avatar>
         <div className="min-w-[180px] flex-1">
-          <p className="text-sm font-semibold text-gray-900">{participant.name}</p>
-          {participant.subtitle && <p className="text-xs text-gray-500">{participant.subtitle}</p>}
+          <p className="text-sm font-semibold text-ink">{participant.name}</p>
+          {participant.subtitle && <p className="text-xs text-ink-muted">{participant.subtitle}</p>}
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="flex items-center gap-xs text-xs text-ink-muted">
           <span>
             {selection.length}/{MAX_VOTE_TRAITS_PER_USER}
           </span>
-          <button type="button" onClick={onClear} className="text-gray-500 underline-offset-4 hover:underline">
+          <button type="button" onClick={onClear} className="text-ink-muted underline-offset-4 hover:underline">
             Clear
           </button>
         </div>
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-md grid gap-xs sm:grid-cols-2">
         {traits.map((trait) => (
           <TraitToggle
             key={trait.id}
@@ -346,17 +346,17 @@ function TraitToggle({
           onClick={onClick}
           disabled={disabled && !active}
           className={cn(
-            "flex items-center justify-between rounded-2xl border px-3 py-2 text-left transition",
+            "flex items-center justify-between rounded-2xl border px-sm py-xs text-left transition",
             active
-              ? "border-transparent bg-gray-900 text-white"
-              : "border-gray-100 bg-white text-gray-800 hover:border-gray-200",
+              ? "border-transparent bg-midnight text-white"
+              : "border-midnight-border/30 bg-surface text-ink-strong hover:border-midnight-border/40",
             disabled && !active && "opacity-50"
           )}
           style={active ? undefined : { borderColor: accent }}
         >
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-xs">
             <span className="flex h-8 w-8 items-center justify-center rounded-2xl" style={{ backgroundColor: active ? "rgba(255,255,255,0.12)" : chipBg }}>
-              <Icon className={cn("h-4 w-4", active ? "text-white" : "text-gray-700")} />
+              <Icon className={cn("h-4 w-4", active ? "text-white" : "text-ink-strong")} />
             </span>
             <span className="text-sm font-medium">{trait.name}</span>
           </span>
@@ -370,7 +370,7 @@ function TraitToggle({
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <Card className="border-gray-100 bg-gray-50 p-6 text-center text-sm text-gray-600">
+    <Card className="border-midnight-border/30 bg-surface-alt p-xl text-center text-sm text-ink-medium">
       {message}
     </Card>
   );

@@ -67,7 +67,7 @@ const TaxonomyCategoryPicker: React.FC<Props> = ({ selectedIds, onToggle, taxono
   };
 
   return (
-    <div className={classNames("space-y-4", className)}>
+    <div className={classNames("space-y-md", className)}>
       {taxonomy.map((tier1) => {
         const tier1SelectionCount = tier1.children.reduce((sum, tier2) => {
           const tier2Count = tier2.children.filter((tier3) => selection.has(tier3.id)).length;
@@ -78,30 +78,30 @@ const TaxonomyCategoryPicker: React.FC<Props> = ({ selectedIds, onToggle, taxono
         const iconSymbol = ICON_MAP[tier1.iconKey as IonIconKey] ?? "🎯";
 
         return (
-          <div key={tier1.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div key={tier1.id} className="rounded-2xl border border-midnight-border/40 bg-surface shadow-sm">
             <button
               type="button"
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+              className="flex w-full items-center justify-between gap-md px-lg py-md text-left"
               onClick={() => toggleSection(tier1.id)}
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-md">
                 <span className={classNames("flex h-12 w-12 items-center justify-center rounded-full border text-xl", iconBg, iconFg, iconBorder)}>
                   {iconSymbol}
                 </span>
                 <div>
-                  <p className="text-base font-semibold text-slate-900">{tier1.label}</p>
-                  <p className="text-sm text-slate-500">{tier1.description}</p>
+                  <p className="text-base font-semibold text-ink">{tier1.label}</p>
+                  <p className="text-sm text-ink-muted">{tier1.description}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-sm">
                 {tier1SelectionCount ? (
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                  <span className="rounded-full bg-surface-alt px-sm py-xxs text-xs font-semibold text-ink-strong">
                     {tier1SelectionCount} selected
                   </span>
                 ) : null}
                 <svg
                   className={classNames(
-                    "h-5 w-5 text-slate-500 transition",
+                    "h-5 w-5 text-ink-muted transition",
                     isExpanded ? "rotate-180" : "rotate-0",
                   )}
                   viewBox="0 0 20 20"
@@ -116,15 +116,15 @@ const TaxonomyCategoryPicker: React.FC<Props> = ({ selectedIds, onToggle, taxono
               </div>
             </button>
             {isExpanded ? (
-              <div className="border-t border-slate-100 px-5 pb-5 pt-4">
-                <div className="space-y-5">
+              <div className="border-t border-midnight-border/30 px-lg pb-lg pt-md">
+                <div className="space-y-lg">
                   {tier1.children.map((tier2) => (
-                    <div key={tier2.id} className="space-y-2">
+                    <div key={tier2.id} className="space-y-xs">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">{tier2.label}</p>
-                        <p className="text-sm text-slate-500">{tier2.description}</p>
+                        <p className="text-sm font-semibold text-ink">{tier2.label}</p>
+                        <p className="text-sm text-ink-muted">{tier2.description}</p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-xs">
                         {tier2.children.map((tier3) => {
                           const active = selection.has(tier3.id);
                           return (
@@ -133,10 +133,10 @@ const TaxonomyCategoryPicker: React.FC<Props> = ({ selectedIds, onToggle, taxono
                               type="button"
                               onClick={() => onToggle(tier3.id)}
                               className={classNames(
-                                "rounded-full border px-3 py-1 text-sm font-medium transition",
+                                "rounded-full border px-sm py-xxs text-sm font-medium transition",
                                 active
                                   ? "border-emerald-500 bg-emerald-50 text-emerald-800 shadow-sm"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                                  : "border-midnight-border/40 bg-surface text-ink-strong hover:border-midnight-border/60",
                               )}
                             >
                               {tier3.label}

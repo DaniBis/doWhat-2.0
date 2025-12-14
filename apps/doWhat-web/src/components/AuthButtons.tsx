@@ -87,7 +87,7 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
   if (isInline) {
     if (loading) {
       return (
-        <div className="text-xs font-medium text-slate-500">Loading…</div>
+        <div className="text-xs font-medium text-ink-muted">Loading…</div>
       );
     }
 
@@ -97,10 +97,10 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
           type="button"
           onClick={handleSignIn}
           disabled={signingIn}
-          className="inline-flex items-center gap-2 rounded-full border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+          className="inline-flex items-center gap-xs rounded-full border border-brand-teal/40 px-md py-xs text-sm font-semibold text-brand-teal transition hover:bg-brand-teal/10 disabled:cursor-not-allowed disabled:border-midnight-border/60 disabled:text-ink-muted"
         >
           {signingIn ? (
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-xxs">
               <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                 <circle className="opacity-20" cx="12" cy="12" r="10" />
                 <path d="M22 12a10 10 0 0 0-10-10" />
@@ -115,10 +115,10 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
     }
 
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-xs">
         <Link
           href="/profile"
-          className="inline-flex items-center gap-2 rounded-full border border-emerald-400 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-100"
+          className="inline-flex items-center gap-xs rounded-full border border-brand-teal/30 px-md py-xs text-sm font-semibold text-brand-teal transition hover:bg-brand-teal/10"
         >
           <span className="text-base">🙂</span>
           Profile
@@ -126,7 +126,7 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
         <form action="/auth/signout" method="post">
           <button
             type="submit"
-            className="inline-flex items-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-white"
+            className="inline-flex items-center rounded-full border border-midnight-border/40 px-md py-xs text-sm font-semibold text-ink-medium transition hover:bg-surface"
           >
             Sign out
           </button>
@@ -137,8 +137,8 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-        <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+      <div className="flex items-center justify-center gap-xs text-sm text-ink-muted">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-brand-teal" />
         Checking your session…
       </div>
     );
@@ -146,15 +146,15 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
 
   if (!user) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-md">
         <button
           type="button"
           onClick={handleSignIn}
           disabled={signingIn}
-          className="relative flex w-full items-center justify-center gap-3 rounded-xl bg-slate-900 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-slate-900/10 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-600"
+          className="relative flex w-full items-center justify-center gap-sm rounded-xl bg-midnight px-xl py-sm text-base font-semibold text-white shadow-lg shadow-slate-900/10 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-600"
         >
           {signingIn ? (
-            <span className="flex items-center gap-3">
+            <span className="flex items-center gap-sm">
               <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                 <circle className="opacity-20" cx="12" cy="12" r="10" />
                 <path d="M22 12a10 10 0 0 0-10-10" />
@@ -162,8 +162,8 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
               Signing you in…
             </span>
           ) : (
-            <span className="flex items-center gap-3">
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-white text-[18px] font-bold text-slate-900">G</span>
+            <span className="flex items-center gap-sm">
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-surface text-[18px] font-bold text-ink">G</span>
               Continue with Google
             </span>
           )}
@@ -172,14 +172,14 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
         <button
           type="button"
           onClick={() => setShowEmail((state) => !state)}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-6 py-3 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+          className="flex w-full items-center justify-center gap-xs rounded-xl border border-midnight-border/40 px-xl py-sm text-sm font-medium text-ink-medium transition hover:border-midnight-border/60 hover:bg-surface-alt"
           aria-expanded={showEmail}
         >
           {showEmail ? "Hide email sign-in" : "Use email instead"}
         </button>
 
         {showEmail && (
-          <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 p-md">
             <EmailAuth onDone={() => setShowEmail(false)} />
           </div>
         )}
@@ -188,22 +188,22 @@ export default function AuthButtons({ variant = "panel" }: AuthButtonsProps) {
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 px-5 py-4 text-sm text-emerald-900">
+    <div className="flex items-center justify-between gap-sm rounded-2xl border border-brand-teal/25 bg-brand-teal/5 px-lg py-md text-sm text-brand-dark">
       <div className="flex flex-col">
-        <span className="text-xs uppercase tracking-wide text-emerald-500">Signed in</span>
+        <span className="text-xs uppercase tracking-wide text-brand-teal">Signed in</span>
         <span className="font-semibold">{user.email ?? "Your account"}</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-xs">
         <Link
           href="/profile"
-          className="rounded-full border border-emerald-400 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-600 transition hover:bg-emerald-100"
+          className="rounded-full border border-brand-teal/30 px-md py-xs text-xs font-semibold uppercase tracking-wide text-brand-teal transition hover:bg-brand-teal/10"
         >
           Go to profile
         </Link>
         <form action="/auth/signout" method="post">
           <button
             type="submit"
-            className="rounded-full border border-emerald-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-500 transition hover:bg-white"
+            className="rounded-full border border-brand-teal/20 px-sm py-xs text-xs font-semibold uppercase tracking-wide text-brand-teal transition hover:bg-surface"
           >
             Sign out
           </button>

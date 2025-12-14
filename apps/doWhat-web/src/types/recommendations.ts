@@ -27,7 +27,6 @@ export interface RecommendationSessionAttendee {
 export interface RecommendationSession {
   id: string;
   activity_id?: string | null;
-  created_by?: string | null;
   host_user_id?: string | null;
   price_cents: number;
   starts_at: string;

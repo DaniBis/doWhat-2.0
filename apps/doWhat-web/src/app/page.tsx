@@ -132,7 +132,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
   let query = supabase
     .from("sessions")
     .select(
-      "id, created_by, price_cents, starts_at, ends_at, venue_id, " +
+      "id, host_user_id, price_cents, starts_at, ends_at, venue_id, " +
         "activities!inner(id,name,description,activity_types,tags), " +
         "venues(id,name,lat:lat,lng:lng)"
     )
@@ -152,7 +152,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
 
   type SessionRow = {
     id: string;
-    created_by?: string | null;
+    host_user_id?: string | null;
     price_cents?: number | null;
     starts_at?: string | null;
     ends_at?: string | null;
@@ -201,7 +201,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
     displayCategories: Set<string>;
     sessions: Array<{
       id?: string;
-      created_by?: string | null;
+      host_user_id?: string | null;
       price_cents?: number | null;
       starts_at?: string | null;
       ends_at?: string | null;
@@ -259,7 +259,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
 
     bucket.sessions.push({
       id: session.id,
-      created_by: session.created_by ?? null,
+      host_user_id: session.host_user_id ?? null,
       price_cents: session.price_cents ?? null,
       starts_at: session.starts_at ?? null,
       ends_at: session.ends_at ?? null,
@@ -310,26 +310,26 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
             <p className="text-gray-600">Created events and nearby results</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link 
-              href="/filter?from=home" 
-              className="inline-flex items-center gap-2 rounded-lg border border-purple-500 px-4 py-2 text-purple-500 hover:bg-purple-50 font-medium transition-colors"
+            <Link
+              href="/filter?from=home"
+              className="inline-flex items-center gap-2 rounded-full border border-brand-teal/40 px-4 py-2 text-sm font-semibold text-brand-teal transition hover:bg-brand-teal/10"
             >
               ⚙️ Filters
             </Link>
           </div>
         </div>
 
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-emerald-100 bg-emerald-50/80 px-5 py-4">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-brand-teal/25 bg-brand-teal/5 px-5 py-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">New</p>
-            <h3 className="text-xl font-semibold text-emerald-900">Verify where activities really happen</h3>
-            <p className="text-sm text-emerald-700">
+            <p className="text-xs font-semibold uppercase tracking-widest text-brand-teal">New</p>
+            <h3 className="text-xl font-semibold text-brand-dark">Verify where activities really happen</h3>
+            <p className="text-sm text-ink-medium">
               Help confirm AI suggestions, upvote the best venues, and keep the discovery map accurate for everyone.
             </p>
           </div>
           <Link
             href={{ pathname: "/venues" }}
-            className="inline-flex items-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+            className="inline-flex items-center rounded-full bg-brand-teal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark"
           >
             Open verification hub →
           </Link>
@@ -340,9 +340,9 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
             <div className="text-6xl mb-4">🎯</div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No events yet</h3>
             <p className="text-gray-600 mb-6">Be the first to create an event in your area!</p>
-            <Link 
-              href="/create" 
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-6 py-3 text-white font-semibold hover:bg-emerald-600 transition-colors"
+            <Link
+              href="/create"
+              className="inline-flex items-center gap-2 rounded-full bg-brand-teal px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-dark"
             >
               <span>✨</span>
               Create First Event

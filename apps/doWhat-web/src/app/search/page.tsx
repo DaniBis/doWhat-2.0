@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase/browser";
 
 type Event = {
   id: string;
-  created_by?: string | null;
+  host_user_id?: string | null;
   price_cents: number;
   starts_at: string;
   ends_at: string;
@@ -79,7 +79,7 @@ export default function SearchPage() {
       let queryBuilder = supabase
         .from('sessions')
         .select(`
-          id, created_by, price_cents, starts_at, ends_at, description,
+          id, host_user_id, price_cents, starts_at, ends_at, description,
           activities(id, name, description, activity_types),
           venues(id, name, lat, lng)
         `)
@@ -361,7 +361,7 @@ export default function SearchPage() {
                     };
                     sessions: Array<{
                       id?: string;
-                      created_by?: string | null;
+                      host_user_id?: string | null;
                       price_cents?: number | null;
                       starts_at?: string | null;
                       ends_at?: string | null;
@@ -389,7 +389,7 @@ export default function SearchPage() {
                   }
                   grouped.get(key)!.sessions.push({
                     id: event.id,
-                    created_by: event.created_by ?? null,
+                    host_user_id: event.host_user_id ?? null,
                     price_cents: event.price_cents ?? null,
                     starts_at: event.starts_at,
                     ends_at: event.ends_at,

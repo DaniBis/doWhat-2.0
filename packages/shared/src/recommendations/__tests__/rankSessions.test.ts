@@ -1,7 +1,9 @@
 import {
+  MAX_RANKING_SCORE,
   RankableProfile,
-  rankSessionsForUser,
   SessionWithSlots,
+  normalizeRankingScore,
+  rankSessionsForUser,
 } from "../rankSessions";
 
 describe("rankSessionsForUser", () => {
@@ -68,5 +70,18 @@ describe("rankSessionsForUser", () => {
 
   it("returns an empty array when there are no sessions", () => {
     expect(rankSessionsForUser(baseProfile, [])).toEqual([]);
+  });
+
+  describe("normalizeRankingScore", () => {
+    it("converts raw scores into a 0-100 range", () => {
+      expect(normalizeRankingScore(MAX_RANKING_SCORE)).toBe(100);
+      expect(normalizeRankingScore(MAX_RANKING_SCORE / 2)).toBe(50);
+    });
+
+    it("guards against invalid or out-of-range values", () => {
+      expect(normalizeRankingScore(Number.NaN)).toBe(0);
+      expect(normalizeRankingScore(-10)).toBe(0);
+      expect(normalizeRankingScore(MAX_RANKING_SCORE * 2)).toBe(100);
+    });
   });
 });

@@ -93,7 +93,7 @@ export default function RecommendationsPage() {
         const { data: upcomingEvents } = await supabase
           .from("sessions")
           .select(
-            "id, created_by, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
+            "id, host_user_id, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
           )
           .gte("starts_at", new Date().toISOString())
           .order("starts_at", { ascending: true })
@@ -108,7 +108,7 @@ export default function RecommendationsPage() {
         const { data: popularData } = await supabase
           .from("sessions")
           .select(`
-            id, created_by, price_cents, starts_at, ends_at, venue_id,
+            id, host_user_id, price_cents, starts_at, ends_at, venue_id,
             activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng),
             session_attendees(status)
           `)
@@ -174,7 +174,7 @@ export default function RecommendationsPage() {
           const { data: nearbyData } = await supabase
             .from("sessions")
             .select(`
-              id, created_by, price_cents, starts_at, ends_at, venue_id,
+              id, host_user_id, price_cents, starts_at, ends_at, venue_id,
               activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)
             `)
             .gte("starts_at", new Date().toISOString())
@@ -257,12 +257,12 @@ export default function RecommendationsPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-7xl px-4 py-8">
+      <main className="mx-auto max-w-7xl px-md py-xxl">
         <div className="animate-pulse">
-          <div className="h-8 w-64 bg-gray-200 rounded mb-6"></div>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="h-8 w-64 rounded bg-ink-subtle mb-xl"></div>
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-48 bg-gray-200 rounded-lg"></div>
+              <div key={i} className="h-48 rounded-lg bg-ink-subtle"></div>
             ))}
           </div>
         </div>
@@ -282,7 +282,7 @@ export default function RecommendationsPage() {
         };
         sessions: Array<{
           id?: string;
-          created_by?: string | null;
+          host_user_id?: string | null;
           price_cents?: number | null;
           starts_at?: string | null;
           ends_at?: string | null;
@@ -309,7 +309,7 @@ export default function RecommendationsPage() {
       }
       grouped.get(key)!.sessions.push({
         id: event.id,
-        created_by: event.created_by ?? null,
+        host_user_id: event.host_user_id ?? null,
         price_cents: event.price_cents ?? null,
         starts_at: event.starts_at,
         ends_at: event.ends_at,
@@ -351,9 +351,9 @@ export default function RecommendationsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Discover Events</h1>
+    <main className="mx-auto max-w-7xl px-md py-xxl">
+      <div className="mb-xl flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-ink-strong">Discover Events</h1>
         <Link href="/" className="text-brand-teal hover:underline">
           ← Back to Home
         </Link>
@@ -361,11 +361,11 @@ export default function RecommendationsPage() {
 
       {/* Recommendations */}
       {recommendations.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             🎯 Recommended for You
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(recommendations)}
           </div>
         </section>
@@ -373,11 +373,11 @@ export default function RecommendationsPage() {
 
       {/* Popular Events */}
       {popularEvents.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             🔥 Trending Events
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(popularEvents)}
           </div>
         </section>
@@ -385,25 +385,25 @@ export default function RecommendationsPage() {
 
       {/* Nearby Events */}
       {nearbyEvents.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             📍 Near You
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(nearbyEvents)}
           </div>
         </section>
       )}
 
       {recommendations.length === 0 && popularEvents.length === 0 && nearbyEvents.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center">
-          <h3 className="mb-2 text-lg font-semibold text-gray-800">No events found</h3>
-          <p className="text-gray-600 mb-4">
+        <div className="rounded-lg border border-ink-subtle bg-surface-alt p-gutter text-center">
+          <h3 className="mb-xs text-lg font-semibold text-ink-strong">No events found</h3>
+          <p className="mb-sm text-ink-medium">
             There are no upcoming events to recommend right now.
           </p>
           <Link 
             href="/create"
-            className="inline-block rounded-lg bg-brand-teal px-6 py-3 text-white hover:bg-teal-700"
+            className="inline-block rounded-lg bg-brand-teal px-xxl py-sm text-white transition hover:bg-brand-dark"
           >
             Create the First Event
           </Link>

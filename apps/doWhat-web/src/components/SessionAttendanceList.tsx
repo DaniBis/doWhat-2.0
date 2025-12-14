@@ -67,7 +67,7 @@ function AvatarBubble({ row }: { row: Row }) {
   const title = profile?.full_name || profile?.username || "View profile";
 
   const displayInitials = initials(profile);
-  const fallbackAvatarUrl = `https://ui-avatars.com/api/?background=ECFEFF&color=047857&name=${encodeURIComponent(
+  const fallbackAvatarUrl = `https://ui-avatars.com/api/?background=E2FBF7&color=0E8E81&name=${encodeURIComponent(
     displayInitials,
   )}`;
   const avatarUrl = profile?.avatar_url || fallbackAvatarUrl;
@@ -83,8 +83,8 @@ function AvatarBubble({ row }: { row: Row }) {
   );
 
   const baseClasses =
-    "relative flex h-8 w-8 items-center justify-center rounded-full border border-white bg-emerald-100 text-xs font-semibold text-emerald-700 shadow-sm ring-1 ring-emerald-200";
-  const interactiveClasses = `${baseClasses} transition hover:-translate-y-0.5 hover:ring-emerald-400`;
+    "relative flex h-8 w-8 items-center justify-center rounded-full border border-white bg-brand-teal/10 text-xs font-semibold text-brand-teal shadow-sm ring-1 ring-brand-teal/30";
+  const interactiveClasses = `${baseClasses} transition hover:-translate-y-0.5 hover:ring-brand-teal/60`;
 
   if (!userId) {
     return (
@@ -246,7 +246,7 @@ export default function SessionAttendanceList({
     if (!sorted.length) {
       return (
         <div className={className}>
-          <p className="rounded-2xl border border-dashed px-4 py-3 text-sm text-gray-500">
+          <p className="rounded-2xl border border-dashed px-md py-sm text-sm text-ink-muted">
             No attendees yet. Invite friends to get the momentum going.
           </p>
         </div>
@@ -256,29 +256,29 @@ export default function SessionAttendanceList({
     const statusLabel = (status: Status) => (status === "going" ? "Going" : "Interested");
     const badgeClass = (status: Status) =>
       status === "going"
-        ? "bg-emerald-100 text-emerald-700"
-        : "bg-amber-100 text-amber-700";
+        ? "bg-brand-teal/15 text-brand-teal"
+        : "bg-feedback-warning/15 text-feedback-warning";
 
     const displayName = (row: Row) =>
       row.profiles?.full_name || row.profiles?.username || "Explorer";
 
     return (
-      <ul className={cn("flex flex-col gap-3", className)}>
+      <ul className={cn("flex flex-col gap-sm", className)}>
         {sorted.map((row) => (
           <li
             key={row.user_id}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+            className="flex items-center justify-between gap-sm rounded-2xl border border-midnight-border/30 bg-surface px-md py-sm shadow-sm"
           >
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center gap-sm">
               <AvatarBubble row={row} />
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-gray-900">{displayName(row)}</p>
+                <p className="truncate text-sm font-semibold text-ink">{displayName(row)}</p>
                 {row.profiles?.username && (
-                  <p className="truncate text-xs text-gray-500">@{row.profiles.username}</p>
+                  <p className="truncate text-xs text-ink-muted">@{row.profiles.username}</p>
                 )}
               </div>
             </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(row.status)}`}>
+            <span className={`rounded-full px-sm py-xxs text-xs font-semibold ${badgeClass(row.status)}`}>
               {statusLabel(row.status)}
             </span>
           </li>
@@ -299,7 +299,7 @@ export default function SessionAttendanceList({
   const renderGroup = (label: string, people: Row[], accent: string) => {
     if (!people.length) {
       return (
-        <div className="flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-500">
+        <div className="flex items-center gap-xs rounded-full bg-surface-alt px-sm py-xxs text-xs text-ink-muted">
           <span>{label}: 0</span>
         </div>
       );
@@ -309,14 +309,14 @@ export default function SessionAttendanceList({
     const remaining = people.length - avatars.length;
 
     return (
-      <div className="flex items-center gap-2">
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${accent}`}>{`${label}: ${people.length}`}</span>
-        <div className="flex -space-x-2">
+      <div className="flex items-center gap-xs">
+        <span className={`rounded-full px-sm py-xxs text-xs font-semibold ${accent}`}>{`${label}: ${people.length}`}</span>
+        <div className="flex -space-x-xs">
           {avatars.map((row) => (
             <AvatarBubble key={row.user_id} row={row} />
           ))}
           {remaining > 0 && (
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ink-subtle text-xs font-semibold text-ink-medium">
               +{remaining}
             </span>
           )}
@@ -326,9 +326,9 @@ export default function SessionAttendanceList({
   };
 
   return (
-    <div className={`flex flex-wrap items-center gap-3 ${className ?? ""}`}>
-      {renderGroup("Going", going, "bg-emerald-100 text-emerald-700")}
-      {showInterested && renderGroup("Interested", interested, "bg-amber-100 text-amber-700")}
+    <div className={`flex flex-wrap items-center gap-sm ${className ?? ""}`}>
+      {renderGroup("Going", going, "bg-brand-teal/15 text-brand-teal")}
+      {showInterested && renderGroup("Interested", interested, "bg-feedback-warning/15 text-feedback-warning")}
     </div>
   );
 }

@@ -37,7 +37,7 @@ export default async function ActivitySchedulePage({ params }: { params: { id: s
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-10">
+    <div className="mx-auto max-w-5xl px-md py-xxxl">
       <ActivityScheduleBoard
         activity={activity}
         sessions={sessions ?? []}

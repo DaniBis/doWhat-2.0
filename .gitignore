@@ -25,6 +25,8 @@ packages/**/node_modules/
 packages/**/dist/
 .expo/
 apps/**/.expo/
+apps/doWhat-mobile/ios/
+apps/doWhat-mobile/android/
 
 # production
 /build

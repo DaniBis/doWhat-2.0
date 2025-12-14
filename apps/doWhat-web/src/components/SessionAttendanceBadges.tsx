@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { RELIABILITY_BADGE_ORDER, RELIABILITY_BADGE_TOKENS, type ReliabilityBadgeKey } from "@dowhat/shared";
 
 import type { AttendanceCounts } from "@/lib/sessions/server";
 
@@ -53,15 +55,35 @@ export default function SessionAttendanceBadges({ sessionId }: Props) {
 
   if (!sessionId) return null;
 
-  const going = counts?.going ?? "—";
-  const interested = counts?.interested ?? "—";
-  const verified = counts?.verified ?? "—";
+  const badgeValues = useMemo<Record<ReliabilityBadgeKey, number | string>>(
+    () => ({
+      going: typeof counts?.going === "number" ? counts.going : "—",
+      interested: typeof counts?.interested === "number" ? counts.interested : "—",
+      verified: typeof counts?.verified === "number" ? counts.verified : "—",
+    }),
+    [counts?.going, counts?.interested, counts?.verified],
+  );
 
   return (
-    <div className="flex items-center gap-3 text-xs text-gray-700">
-      <span className="rounded bg-gray-100 px-2 py-0.5">Going: {going}</span>
-      <span className="rounded bg-gray-100 px-2 py-0.5">Interested: {interested}</span>
-      <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700">GPS verified: {verified}</span>
+    <div className="flex flex-wrap items-center gap-xs text-xs font-semibold">
+      {RELIABILITY_BADGE_ORDER.map((key) => {
+        const token = RELIABILITY_BADGE_TOKENS[key];
+        const value = badgeValues[key];
+        return (
+          <span
+            key={key}
+            className="inline-flex items-center gap-xxs rounded-full border px-xs py-hairline"
+            style={{ backgroundColor: token.backgroundColor, borderColor: token.borderColor, color: token.textColor }}
+          >
+            {token.icon && (
+              <span aria-hidden="true" className="text-xs">
+                {token.icon}
+              </span>
+            )}
+            {token.label}: {value}
+          </span>
+        );
+      })}
     </div>
   );
 }

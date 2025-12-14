@@ -197,6 +197,16 @@ export type UserSportProfileUpdate = {
   updated_at?: string;
 };
 
+export type SocialSweatAdoptionMetricsRow = {
+  total_profiles: number;
+  sport_step_complete_count: number;
+  sport_skill_member_count: number;
+  trait_goal_count: number;
+  pledge_ack_count: number;
+  fully_ready_count: number;
+  user_sport_profile_rows: number;
+};
+
 export type VenueRow = {
   id: string;
   name: string | null;
@@ -224,7 +234,7 @@ export type VenueActivityVoteRow = {
   updated_at: string;
 };
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       traits: {
@@ -293,6 +303,18 @@ export interface Database {
         Update: Partial<VenueActivityVoteRow>;
         Relationships: [];
       };
+      social_sweat_adoption_metrics: {
+        Row: SocialSweatAdoptionMetricsRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      attendance_disputes: {
+        Row: AttendanceDisputeRow;
+        Insert: AttendanceDisputeInsert;
+        Update: AttendanceDisputeUpdate;
+        Relationships: [];
+      };
     } & {
       [key: string]: GenericTable;
     };
@@ -325,4 +347,43 @@ export interface Database {
       sport_type: SportType;
     };
   };
-}
+};
+
+export type AttendanceDisputeRow = {
+    id: string;
+    session_id: string;
+    reporter_id: string;
+    status: "open" | "reviewing" | "resolved" | "dismissed";
+    reason: string;
+    details: string | null;
+    resolution_notes: string | null;
+    resolved_at: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+export type AttendanceDisputeInsert = {
+    id?: string;
+    session_id: string;
+    reporter_id: string;
+    status?: AttendanceDisputeRow["status"];
+    reason: string;
+    details?: string | null;
+    resolution_notes?: string | null;
+    resolved_at?: string | null;
+    created_at?: string;
+    updated_at?: string;
+  };
+
+export type AttendanceDisputeUpdate = {
+    id?: string;
+    session_id?: string;
+    reporter_id?: string;
+    status?: AttendanceDisputeRow["status"];
+    reason?: string;
+    details?: string | null;
+    resolution_notes?: string | null;
+    resolved_at?: string | null;
+    created_at?: string;
+    updated_at?: string;
+  };

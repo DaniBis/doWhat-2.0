@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,6 +13,12 @@
     "typeRoots": [
       "./node_modules/@types"
     ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "apps/doWhat-web/src/*"
+      ]
+    },
     "noEmit": true
   },
   "include": [],

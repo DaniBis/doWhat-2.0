@@ -49,8 +49,8 @@ export default function GeoRequirementBanner() {
 
   return (
     <div className="border-b bg-amber-50 text-amber-900">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2 text-sm">
-        <div className="flex items-center gap-2">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-sm px-md py-xs text-sm">
+        <div className="flex items-center gap-xs">
           <span>📍</span>
           {state === "denied" ? (
             <span>
@@ -62,9 +62,9 @@ export default function GeoRequirementBanner() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-xs">
           {state !== "denied" && (
-            <button onClick={requestNow} className="rounded border border-amber-300 bg-white px-3 py-1 text-amber-900 hover:bg-amber-100">
+            <button onClick={requestNow} className="rounded border border-amber-300 bg-surface px-sm py-xxs text-amber-900 hover:bg-amber-100">
               Use my location
             </button>
           )}

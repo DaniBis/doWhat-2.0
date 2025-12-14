@@ -22,7 +22,7 @@ export function TraitCarousel({
   title = "Top vibes",
   description = "Stack settles as peers nominate you after sessions.",
   className,
-  emptyState = <p className="text-sm text-gray-500">No traits tracked yet.</p>,
+  emptyState = <p className="text-sm text-ink-muted">No traits tracked yet.</p>,
 }: TraitCarouselProps) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = React.useState(false);
@@ -63,12 +63,12 @@ export function TraitCarousel({
   if (!traits || traits.length === 0) {
     return (
       <Card className={className}>
-        <CardHeader className="space-y-1">
-          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-600">
+        <CardHeader className="space-y-xxs">
+          <div className="flex items-center gap-xs text-sm font-semibold text-emerald-600">
             <Sparkles className="h-4 w-4" />
             <span>{title}</span>
           </div>
-          <p className="text-sm text-gray-600">{description}</p>
+          <p className="text-sm text-ink-medium">{description}</p>
         </CardHeader>
         <CardContent>{emptyState}</CardContent>
       </Card>
@@ -77,18 +77,18 @@ export function TraitCarousel({
 
   return (
     <Card className={cn("w-full", className)}>
-      <CardHeader className="space-y-1">
-        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-600">
+      <CardHeader className="space-y-xxs">
+        <div className="flex items-center gap-xs text-sm font-semibold text-emerald-600">
           <Sparkles className="h-4 w-4" />
           <span>{title}</span>
         </div>
-        <p className="text-sm text-gray-600">{description}</p>
+        <p className="text-sm text-ink-medium">{description}</p>
       </CardHeader>
       <CardContent>
         <div className="relative">
           <div
             ref={scrollRef}
-            className="flex gap-3 overflow-x-auto pb-4 pr-4 scroll-smooth"
+            className="flex gap-sm overflow-x-auto pb-md pr-md scroll-smooth"
             style={{ scrollbarWidth: "none" }}
           >
             <TooltipProvider>
@@ -113,24 +113,24 @@ function TraitSummaryCard({ trait }: { trait: TraitSummary }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="min-w-[220px] rounded-3xl border border-gray-100 bg-white p-4 shadow-sm"
+          className="min-w-[220px] rounded-3xl border border-midnight-border/30 bg-surface p-md shadow-sm"
           style={{ borderColor: accent }}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-sm">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ backgroundColor: chipFill }}>
-              <Icon className="h-5 w-5 text-gray-700" />
+              <Icon className="h-5 w-5 text-ink-strong" />
             </span>
             <div>
-              <p className="text-sm font-semibold text-gray-900">{trait.name}</p>
-              <p className="text-xs text-gray-500">Updated {new Date(trait.updatedAt).toLocaleDateString()}</p>
+              <p className="text-sm font-semibold text-ink">{trait.name}</p>
+              <p className="text-xs text-ink-muted">Updated {new Date(trait.updatedAt).toLocaleDateString()}</p>
             </div>
           </div>
-          <div className="mt-4 flex items-end justify-between">
+          <div className="mt-md flex items-end justify-between">
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500">Score</p>
-              <p className="text-2xl font-bold text-gray-900">{trait.score}</p>
+              <p className="text-xs uppercase tracking-wide text-ink-muted">Score</p>
+              <p className="text-2xl font-bold text-ink">{trait.score}</p>
             </div>
-            <div className="text-right text-xs text-gray-500">
+            <div className="text-right text-xs text-ink-muted">
               <p>Base picks: {trait.baseCount}</p>
               <p>Votes: {trait.voteCount}</p>
             </div>
@@ -158,7 +158,7 @@ function CarouselControl({
     <button
       type="button"
       className={cn(
-        "absolute top-1/2 -translate-y-1/2 rounded-full border border-gray-200 bg-white/90 p-2 shadow-md transition",
+        "absolute top-xxs/2 -translate-y-1/2 rounded-full border border-midnight-border/40 bg-surface/90 p-xs shadow-md transition",
         direction === "left" ? "-left-3" : "-right-3",
         disabled && "pointer-events-none opacity-40"
       )}

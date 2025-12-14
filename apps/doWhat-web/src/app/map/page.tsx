@@ -568,7 +568,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   if (!center) {
     return (
-      <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-slate-500">
+      <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
         {locationErrored ? "Location unavailable. Using default city…" : "Locating you…"}
       </div>
     );
@@ -576,31 +576,31 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   return (
     <div className="flex h-[calc(100dvh-64px)] flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 text-sm">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-sm border-b border-midnight-border/40 bg-surface/95 px-md py-sm text-sm">
+        <div className="flex flex-wrap items-center gap-xs">
           <button
             type="button"
             onClick={() => changeViewMode("map")}
-            className={`rounded-full px-3 py-1 font-medium ${viewMode === "map" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"} lg:hidden`}
+            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "map" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
           >
             Map
           </button>
           <button
             type="button"
             onClick={() => changeViewMode("list")}
-            className={`rounded-full px-3 py-1 font-medium ${viewMode === "list" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"} lg:hidden`}
+            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "list" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
           >
             List
           </button>
-          <div className="hidden text-sm font-semibold text-slate-700 lg:block">{headerTitle}</div>
-          <div className="flex items-center gap-2">
+          <div className="hidden text-sm font-semibold text-ink-strong lg:block">{headerTitle}</div>
+          <div className="flex items-center gap-xs">
             {(['activities', 'events', 'both'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => changeDataMode(mode)}
-                className={`rounded-full px-3 py-1 text-sm font-medium ${
-                  dataMode === mode ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                className={`rounded-full px-sm py-xxs text-sm font-medium ${
+                    dataMode === mode ? 'bg-brand-teal text-white' : 'bg-surface-alt text-ink-strong hover:bg-ink-subtle'
                 }`}
               >
                 {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Events' : 'Both'}
@@ -608,8 +608,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="hidden text-xs text-slate-500 lg:block">{headerSummary}</div>
+        <div className="flex items-center gap-sm">
+          <div className="hidden text-xs text-ink-muted lg:block">{headerSummary}</div>
           <button
             type="button"
             onClick={() => {
@@ -618,11 +618,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               track('map_filters_opened');
             }}
             disabled={!loadActivities}
-            className="inline-flex items-center gap-2 rounded-full border border-emerald-600 px-3 py-1 text-sm font-medium text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center gap-xs rounded-full border border-brand-teal px-sm py-xxs text-sm font-medium text-brand-teal hover:bg-brand-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Filters
             {activeFiltersCount > 0 && (
-              <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-600 px-1 text-xs font-semibold text-white">
+              <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-brand-teal px-xxs text-xs font-semibold text-white">
                 {activeFiltersCount}
               </span>
             )}
@@ -631,7 +631,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       </div>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div
-          className={`${viewMode === "map" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-1 bg-slate-100 lg:flex lg:h-auto`}
+          className={`${viewMode === "map" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-1 bg-surface-alt lg:flex lg:h-auto`}
         >
           <WebMap
             center={center}
@@ -650,9 +650,9 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           />
         </div>
         <aside
-          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-slate-200 bg-white lg:flex lg:h-auto lg:w-[420px] lg:border-l`}
+          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-midnight-border/40 bg-surface lg:flex lg:h-auto lg:w-[420px] lg:border-l`}
         >
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 text-xs text-slate-500">
+          <div className="flex items-center justify-between border-b border-midnight-border/40 px-md py-sm text-xs text-ink-muted">
             <span>
               {dataMode === 'events'
                 ? `${events.length} events`
@@ -662,26 +662,26 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             </span>
             <span>Radius ~{radiusLabel}</span>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-6">
+          <div className="flex-1 overflow-y-auto px-md py-sm space-y-xl">
             {loadActivities && (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">Activities</h3>
+                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Activities</h3>
                 {nearby.isLoading && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading nearby activities…
                   </div>
                 )}
                 {nearby.isError && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+                  <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
                     {(nearby.error?.message ?? "Failed to load activities")}
                   </div>
                 )}
                 {activityListEmpty && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
                     No activities match those filters yet. Try widening your search.
                   </div>
                 )}
-                <ul className="flex flex-col gap-3">
+                <ul className="flex flex-col gap-sm">
                   {sortedActivities.map((activity) => {
                     const isSelected = activity.id === selectedActivityId;
                     const savePayload = createMapActivitySavePayload(activity);
@@ -697,31 +697,31 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               handleFocusActivity(activity);
                             }
                           }}
-                          className={`cursor-pointer rounded-2xl border px-4 py-4 transition ${isSelected ? "border-emerald-500 bg-emerald-50 shadow" : "border-slate-200 bg-white hover:border-emerald-400"}`}
+                          className={`cursor-pointer rounded-2xl border px-md py-md transition ${isSelected ? "border-brand-teal bg-brand-teal/10 shadow" : "border-midnight-border/40 bg-surface hover:border-brand-teal/60"}`}
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-md">
                             <div>
-                              <div className="text-base font-semibold text-slate-900">{activity.name}</div>
-                              {activity.venue && <div className="mt-1 text-xs text-slate-500">📍 {activity.venue}</div>}
+                              <div className="text-base font-semibold text-ink">{activity.name}</div>
+                              {activity.venue && <div className="mt-xxs text-xs text-ink-muted">📍 {activity.venue}</div>}
                               {activity.activity_types && activity.activity_types.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-1">
+                                <div className="mt-xs flex flex-wrap gap-xxs">
                                   {activity.activity_types.slice(0, 3).map((type) => (
                                     <span
                                       key={type}
-                                      className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700"
+                                      className="inline-flex items-center rounded-full bg-brand-teal/15 px-xs py-hairline text-[11px] font-semibold text-brand-teal"
                                     >
                                       {type}
                                     </span>
                                   ))}
                                   {activity.activity_types.length > 3 && (
-                                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
+                                    <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-xs py-hairline text-[11px] text-brand-teal">
                                       +{activity.activity_types.length - 3}
                                     </span>
                                   )}
                                 </div>
                               )}
                             </div>
-                            <div className="flex flex-col items-end gap-2 text-right text-xs text-slate-500">
+                            <div className="flex flex-col items-end gap-xs text-right text-xs text-ink-muted">
                               {activity.distance_m != null ? `~${formatKilometres(activity.distance_m)}` : null}
                               {savePayload ? (
                                 <div onClick={(event) => event.stopPropagation()}>
@@ -730,20 +730,20 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               ) : null}
                             </div>
                           </div>
-                          <div className="mt-3 flex items-center justify-between text-xs">
+                          <div className="mt-sm flex items-center justify-between text-xs">
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleRequireAuth(activity.id);
                               }}
-                              className="text-emerald-600 hover:text-emerald-700"
+                              className="text-brand-teal hover:text-brand-dark"
                             >
                               View details →
                             </button>
                             <button
                               type="button"
-                              className="rounded-full border border-slate-200 px-3 py-1 text-[11px] font-medium text-slate-600 hover:border-emerald-400 hover:text-emerald-600"
+                              className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleFocusActivity(activity);
@@ -762,23 +762,23 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
             {loadEvents && (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">Events</h3>
+                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Events</h3>
                 {eventsQuery.isLoading && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading events…
                   </div>
                 )}
                 {eventsQuery.isError && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+                  <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
                     {(eventsQuery.error?.message ?? "Failed to load events")}
                   </div>
                 )}
                 {eventListEmpty && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
                     No public events found for the next two weeks. Try moving the map or change filters.
                   </div>
                 )}
-                <ul className="flex flex-col gap-3">
+                <ul className="flex flex-col gap-sm">
                   {events.map((eventSummary) => {
                     const isSelected = eventSummary.id === selectedEventId;
                     const { start, end } = formatEventTimeRange(eventSummary);
@@ -794,20 +794,24 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               handleFocusEvent(eventSummary);
                             }
                           }}
-                          className={`cursor-pointer rounded-2xl border px-4 py-4 transition ${isSelected ? 'border-amber-500 bg-amber-50 shadow' : 'border-slate-200 bg-white hover:border-amber-300'}`}
+                          className={`cursor-pointer rounded-2xl border px-md py-md transition ${
+                            isSelected
+                              ? 'border-feedback-warning bg-feedback-warning/10 shadow'
+                              : 'border-midnight-border/40 bg-surface hover:border-feedback-warning/60'
+                          }`}
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-md">
                             <div>
-                              <div className="text-base font-semibold text-slate-900">{eventSummary.title}</div>
-                              <div className="mt-1 text-xs text-slate-500">
+                              <div className="text-base font-semibold text-ink">{eventSummary.title}</div>
+                              <div className="mt-xxs text-xs text-ink-muted">
                                 {eventTimeFormatter.format(start)}{end ? ` — ${eventTimeFormatter.format(end)}` : ''}
                               </div>
                               {eventSummary.venue_name && (
-                                <div className="mt-1 text-xs text-slate-500">📍 {eventSummary.venue_name}</div>
+                                <div className="mt-xxs text-xs text-ink-muted">📍 {eventSummary.venue_name}</div>
                               )}
-                              <div className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide text-amber-600">
+                              <div className="mt-xs flex flex-wrap gap-xxs text-[10px] uppercase tracking-wide text-feedback-warning">
                                 {eventSummary.tags?.slice(0, 3).map((tag) => (
-                                  <span key={tag} className="rounded bg-amber-100 px-1 py-0.5">
+                                  <span key={tag} className="rounded bg-feedback-warning/20 px-xxs py-hairline">
                                     #{tag}
                                   </span>
                                 ))}
@@ -815,14 +819,14 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                             </div>
                           </div>
                           {eventSummary.url && (
-                            <div className="mt-3 flex justify-end">
+                            <div className="mt-sm flex justify-end">
                               <button
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   handleEventDetails(eventSummary);
                                 }}
-                                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                                className="text-xs font-semibold text-brand-teal hover:text-brand-dark"
                               >
                                 View details →
                               </button>
@@ -840,12 +844,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       </div>
 
       {filtersOpen && (
-        <div className="fixed inset-0 z-40 flex bg-slate-900/40">
-          <div className="ml-auto flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div className="fixed inset-0 z-40 flex bg-midnight/40">
+          <div className="ml-auto flex h-full w-full max-w-md flex-col bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-midnight-border/40 px-lg py-md">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Filters</h2>
-                <p className="text-xs text-slate-500">Refine by activity and people preferences.</p>
+                <h2 className="text-base font-semibold text-ink">Filters</h2>
+                <p className="text-xs text-ink-muted">Refine by activity and people preferences.</p>
               </div>
               <button
                 type="button"
@@ -853,17 +857,17 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   setFiltersOpen(false);
                   track('map_filters_closed', { via: 'header' });
                 }}
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:border-slate-300"
+                className="rounded-full border border-midnight-border/40 px-sm py-xxs text-xs text-ink-medium hover:border-midnight-border/60"
               >
                 Close
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="flex-1 overflow-y-auto px-lg py-md">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Activity types</div>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activity types</div>
+                <div className="mt-sm flex flex-wrap gap-xs">
                   {availableActivityTypes.length === 0 && (
-                    <p className="text-xs text-slate-400">We will populate suggestions as soon as activities load.</p>
+                    <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
                   )}
                   {availableActivityTypes.map((type) => {
                     const active = selectedActivityTypes.includes(type);
@@ -872,7 +876,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         key={type}
                         type="button"
                         onClick={() => toggleActivityType(type)}
-                        className={`rounded-full border px-3 py-1 text-sm ${active ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:border-emerald-400"}`}
+                        className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
                       >
                         {type}
                       </button>
@@ -880,11 +884,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   })}
                 </div>
               </div>
-              <div className="mt-6">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">People traits</div>
-                <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-xl">
+                <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
+                <div className="mt-sm flex flex-wrap gap-xs">
                   {availableTraits.length === 0 && (
-                    <p className="text-xs text-slate-400">Traits appear when activities provide preferences.</p>
+                    <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
                   )}
                   {availableTraits.map((trait) => {
                     const active = selectedTraits.includes(trait);
@@ -893,7 +897,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         key={trait}
                         type="button"
                         onClick={() => toggleTrait(trait)}
-                        className={`rounded-full border px-3 py-1 text-sm ${active ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:border-emerald-400"}`}
+                        className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
                       >
                         {trait}
                       </button>
@@ -902,12 +906,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 </div>
               </div>
             </div>
-            <div className="border-t border-slate-200 px-5 py-4 text-sm">
+            <div className="border-t border-midnight-border/40 px-lg py-md text-sm">
               <div className="flex items-center justify-between">
                 <button
                   type="button"
                   onClick={resetFilters}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                  className="text-xs font-medium text-ink-muted hover:text-ink-strong"
                 >
                   Clear all
                 </button>
@@ -917,7 +921,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     setFiltersOpen(false);
                     track('map_filters_closed', { via: 'apply' });
                   }}
-                  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                  className="rounded-full bg-brand-teal px-md py-xs text-sm font-semibold text-ink-contrast hover:bg-brand-dark"
                 >
                   Apply filters
                 </button>

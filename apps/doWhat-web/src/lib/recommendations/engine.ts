@@ -179,7 +179,6 @@ const fetchCandidateSessions = async (supabase: SupabaseClient): Promise<Recomme
     .select(`
       id,
       activity_id,
-      created_by,
       host_user_id,
       price_cents,
       starts_at,
@@ -384,7 +383,7 @@ export const buildActivityRecommendations = async ({
   const scored: RecommendationRecord[] = [];
   for (const session of candidates) {
     if (!session) continue;
-    if (session.created_by === userId || session.host_user_id === userId) continue;
+    if (session.host_user_id === userId) continue;
     const activity = extractActivity(session.activities);
     if (!activity || hasSeedMarker(activity)) continue;
     const traitScore = scoreTraitMatch(traitSignals, activity);

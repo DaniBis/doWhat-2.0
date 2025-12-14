@@ -343,7 +343,7 @@ export default function WebMap({
 
   if (!MAPBOX_TOKEN) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-rose-500 bg-rose-50 p-6 text-sm text-rose-700">
+      <div className="flex h-full flex-col items-center justify-center gap-xs rounded-xl border border-dashed border-rose-500 bg-rose-50 p-xl text-sm text-rose-700">
         <span className="font-semibold">Map unavailable</span>
         <span>Set NEXT_PUBLIC_MAPBOX_TOKEN (or NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN) to render the map experience.</span>
       </div>
@@ -409,15 +409,15 @@ export default function WebMap({
             latitude={selectedActivity.lat}
             onClose={() => setSelectedActivity(null)}
           >
-            <div className="space-y-2 text-sm text-slate-700">
-              <div className="font-semibold text-slate-900">{selectedActivity.name}</div>
+            <div className="space-y-xs text-sm text-ink-strong">
+              <div className="font-semibold text-ink">{selectedActivity.name}</div>
               {selectedActivity.venue && <div>📍 {selectedActivity.venue}</div>}
               {selectedActivityCategories.length ? (
-                <div className="flex flex-wrap gap-2 text-xs text-emerald-700">
+                <div className="flex flex-wrap gap-xs text-xs text-emerald-700">
                   {selectedActivityCategories.slice(0, 4).map((category) => (
                     <span
                       key={category.id}
-                      className="rounded-full bg-emerald-50 px-2 py-0.5"
+                      className="rounded-full bg-emerald-50 px-xs py-hairline"
                     >
                       {category.parent ? `${category.label} • ${category.parent}` : category.label}
                     </span>
@@ -425,7 +425,7 @@ export default function WebMap({
                 </div>
               ) : null}
               {selectedActivity.distance_m != null && (
-                <div className="text-xs text-slate-500">
+                <div className="text-xs text-ink-muted">
                   ~{Math.round((selectedActivity.distance_m / 1000) * 10) / 10} km away
                 </div>
               )}
@@ -442,7 +442,7 @@ export default function WebMap({
                   event.preventDefault();
                   onRequestDetails?.(selectedActivity);
                 }}
-                className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
               >
                 View details →
               </button>
@@ -460,13 +460,13 @@ export default function WebMap({
             latitude={selectedEvent.lat ?? 0}
             onClose={() => setSelectedEvent(null)}
           >
-            <div className="space-y-2 text-sm text-slate-700">
-              <div className="font-semibold text-slate-900">{selectedEvent.title}</div>
+            <div className="space-y-xs text-sm text-ink-strong">
+              <div className="font-semibold text-ink">{selectedEvent.title}</div>
               {selectedEvent.venue_name && <div>📍 {selectedEvent.venue_name}</div>}
               <EventTimeDisplay event={selectedEvent} />
-              <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+              <div className="flex flex-wrap gap-xs text-xs text-ink-muted">
                 {selectedEvent.tags?.slice(0, 3).map((tag) => (
-                  <span key={tag} className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                  <span key={tag} className="rounded-full bg-amber-100 px-xs py-hairline text-amber-700">
                     #{tag}
                   </span>
                 ))}
@@ -474,7 +474,7 @@ export default function WebMap({
               <button
                 type="button"
                 onClick={() => onRequestEventDetails?.(selectedEvent)}
-                className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
               >
                 View details →
               </button>
@@ -483,7 +483,7 @@ export default function WebMap({
                   href={selectedEvent.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                  className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
                 >
                   View source →
                 </a>
@@ -492,12 +492,12 @@ export default function WebMap({
           </Popup>
         )}
         {isLoading && (
-          <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full bg-white/90 px-4 py-2 text-xs font-medium text-slate-600 shadow">
+          <div className="pointer-events-none absolute left-1/2 top-md -translate-x-1/2 rounded-full bg-surface/90 px-md py-xs text-xs font-medium text-ink-medium shadow">
             Loading nearby activities…
           </div>
         )}
       </Map>
-      <div className="pointer-events-none absolute bottom-4 left-4 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-slate-600 shadow">
+      <div className="pointer-events-none absolute bottom-md left-4 rounded-full bg-surface/90 px-sm py-xxs text-xs font-medium text-ink-medium shadow">
         Radius ≈ {Math.round(radiusMeters / 100) / 10} km
       </div>
     </div>
@@ -518,7 +518,7 @@ function EventTimeDisplay({ event }: { event: EventSummary }) {
   );
 
   return (
-    <div className="text-xs text-slate-500">
+    <div className="text-xs text-ink-muted">
       {formatter.format(start)}
       {end ? ` — ${formatter.format(end)}` : ''}
     </div>

@@ -60,7 +60,7 @@ export function SessionHostActions(props: SessionHostActionsProps) {
 
   return (
     <div className={className}>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-sm">
         <Button asChild variant="outline">
           <Link href={editHref}>
             Edit Session
@@ -70,9 +70,9 @@ export function SessionHostActions(props: SessionHostActionsProps) {
           {deleting ? "Deleting…" : "Delete Session"}
         </Button>
       </div>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {success && <p className="mt-2 text-sm text-emerald-600">{success}</p>}
-      <p className="mt-2 text-xs text-gray-500">
+      {error && <p className="mt-xs text-sm text-red-600">{error}</p>}
+      {success && <p className="mt-xs text-sm text-emerald-600">{success}</p>}
+      <p className="mt-xs text-xs text-ink-muted">
         Only hosts can manage a session. API routes already enforce this, and this UI matches those rules.
       </p>
     </div>

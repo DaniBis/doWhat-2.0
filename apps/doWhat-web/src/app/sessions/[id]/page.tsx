@@ -1,4 +1,6 @@
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import SaveToggleButton from "@/components/SaveToggleButton";
@@ -11,10 +13,67 @@ import { getAttendanceCounts, hydrateSessions, type HydratedSession } from "@/li
 import { buildSessionSavePayload, type ActivityRow } from "@dowhat/shared";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, ProfileRow, SessionAttendeeRow, SessionRow } from "@/types/database";
+import { fetchSessionOgContext, formatSessionOgDate, type SessionOgContext } from "./og-data";
 
 type AttendanceStatus = SessionAttendeeRow["status"];
 
-export default async function SessionDetails({ params }: { params: { id: string } }) {
+type SessionPageProps = { params: { id: string } };
+
+const FALLBACK_METADATA_TITLE = "Session – Social Sweat";
+
+export async function generateMetadata({ params }: SessionPageProps): Promise<Metadata> {
+  const context = await fetchSessionOgContext(params.id);
+  if (!context) {
+    return {
+      title: FALLBACK_METADATA_TITLE,
+    };
+  }
+
+  const baseUrl = getBaseUrl();
+  const description = buildSessionShareDescription(context);
+  const title = `${context.title} – Social Sweat`;
+  const imageUrl = `${baseUrl}/sessions/${context.id}/opengraph-image`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "article",
+      url: `${baseUrl}/sessions/${context.id}`,
+      images: [{ url: imageUrl, width: 1200, height: 630 }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [imageUrl],
+    },
+  };
+}
+
+function getBaseUrl(): string {
+  const hdrs = headers();
+  const protocol = hdrs.get("x-forwarded-proto") ?? "http";
+  const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
+  if (!host) {
+    throw new Error("Unable to determine base URL");
+  }
+  return `${protocol}://${host}`;
+}
+
+function buildSessionShareDescription(context: SessionOgContext): string {
+  const slotDescriptor = context.openSlots > 0
+    ? `Need ${context.openSlots} player${context.openSlots === 1 ? "" : "s"}`
+    : "Bring your crew";
+  const skillDescriptor = context.skillLabel ?? "All levels welcome";
+  const { dateLabel, timeLabel } = formatSessionOgDate(context.startsAt);
+  const timing = timeLabel ? `${dateLabel} · ${timeLabel}` : dateLabel;
+  return `${slotDescriptor} • ${skillDescriptor} • ${timing} @ ${context.venue}`;
+}
+
+export default async function SessionDetails({ params }: SessionPageProps) {
   const supabase = createClient();
   const [{ data: auth }, { data: sessionRow, error }] = await Promise.all([
     supabase.auth.getUser(),

@@ -1,7 +1,7 @@
 // e.g. src/components/SignInButton.tsx
 "use client";
 
-import { supabase } from "@/lib/supabase/browser";
+import { supabase } from "../lib/supabase/browser";
 
 
 export default function SignInButton() {

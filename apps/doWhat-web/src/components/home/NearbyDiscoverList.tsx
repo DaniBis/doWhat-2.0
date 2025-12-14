@@ -46,14 +46,14 @@ export default function NearbyDiscoverList() {
 
   return (
     <div>
-      <h3 className="mb-4 text-xl font-semibold text-gray-900">Discovered Nearby</h3>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <h3 className="mb-md text-xl font-semibold text-ink">Discovered Nearby</h3>
+      <div className="grid gap-md sm:grid-cols-2 xl:grid-cols-3">
         {items.map((it) => (
-          <div key={it.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="mb-1 text-base font-semibold">{it.name}</div>
-            {it.venue && <div className="mb-2 text-sm text-gray-600">{it.venue}</div>}
+          <div key={it.id} className="rounded-lg border border-midnight-border/40 bg-surface p-md shadow-sm">
+            <div className="mb-xxs text-base font-semibold">{it.name}</div>
+            {it.venue && <div className="mb-xs text-sm text-ink-medium">{it.venue}</div>}
             {typeof it.distance_m === 'number' && (
-              <div className="mb-2 text-xs text-gray-500">~{Math.round(it.distance_m / 10) / 100} km away</div>
+              <div className="mb-xs text-xs text-ink-muted">~{Math.round(it.distance_m / 10) / 100} km away</div>
             )}
             <Link
               href={{ pathname: `/activities/${it.id}` }}

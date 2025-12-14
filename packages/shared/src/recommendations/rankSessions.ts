@@ -41,6 +41,11 @@ export type RankedSession = {
 
 const EARTH_RADIUS_KM = 6371;
 const DEGREE_TO_RAD = Math.PI / 180;
+const DISTANCE_SCORE_MAX = 40;
+const SKILL_SCORE_MAX = 35;
+const URGENCY_SCORE_MAX = 30;
+
+export const MAX_RANKING_SCORE = DISTANCE_SCORE_MAX + SKILL_SCORE_MAX + URGENCY_SCORE_MAX;
 
 function toRadians(value: number): number {
   return value * DEGREE_TO_RAD;
@@ -84,7 +89,7 @@ function distanceScore(
     session.longitude,
   );
 
-  if (distanceKm <= 1) return 40;
+  if (distanceKm <= 1) return DISTANCE_SCORE_MAX;
   if (distanceKm <= 3) return 30;
   if (distanceKm <= 5) return 20;
   if (distanceKm <= 10) return 10;
@@ -110,7 +115,7 @@ function skillScore(
 
   if (!requiredSkill) return userSkill ? 15 : 10;
   if (!userSkill) return 5;
-  if (userSkill === requiredSkill) return 35;
+  if (userSkill === requiredSkill) return SKILL_SCORE_MAX;
   return 15;
 }
 
@@ -121,10 +126,18 @@ function urgencyScore(session: SessionWithSlots): number {
   const hoursUntil = (startsAt.getTime() - Date.now()) / (1000 * 60 * 60);
 
   if (hoursUntil <= 0) return 0;
-  if (hoursUntil <= 6) return 30;
+  if (hoursUntil <= 6) return URGENCY_SCORE_MAX;
   if (hoursUntil <= 24) return 20;
   if (hoursUntil <= 48) return 10;
   return 0;
+}
+
+export function normalizeRankingScore(score: number): number {
+  if (!Number.isFinite(score) || score <= 0) {
+    return 0;
+  }
+  const percent = (score / MAX_RANKING_SCORE) * 100;
+  return Math.max(0, Math.min(100, Math.round(percent)));
 }
 
 export function rankSessionsForUser(
