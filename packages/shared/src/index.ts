@@ -2,8 +2,6 @@ export * from "./format";
 export * from "./types";
 export * from "./theme";
 export * from "./icons";
-export * from "./theme";
-export * from "./icons";
 export * from "./badges";
 export * from "./taxonomy";
 export * from "./map";
@@ -27,4 +25,6 @@ export * from "./traits/onboardingReminder";
 export * from "./scoring/reliability";
 export * from "./sports/taxonomy";
 export * from "./recommendations/rankSessions";
+export * from "./reliability/badges";
+export * from "./onboarding/progress";
 // badges type definitions are TypeScript-only; skip exporting compiled .js to avoid jest resolution issues
