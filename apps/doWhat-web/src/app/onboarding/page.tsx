@@ -5,7 +5,16 @@ import { ArrowRight, CheckCircle2, Circle, Sparkles } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils/cn";
-import { isSportType, trackOnboardingEntry, type OnboardingStep } from "@dowhat/shared";
+import {
+  derivePendingOnboardingSteps,
+  getSportLabel,
+  hasCompletedSportStep,
+  isPlayStyle,
+  isSportType,
+  ONBOARDING_TRAIT_GOAL,
+  trackOnboardingEntry,
+  type OnboardingStep,
+} from "@dowhat/shared";
 
 type OnboardingStepDefinition = {
   id: OnboardingStep;
@@ -71,9 +80,9 @@ export default async function OnboardingHomePage() {
   const [{ data: profileRow, error: profileError }, traitsCountResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("primary_sport, reliability_pledge_ack_at")
+      .select("primary_sport, play_style, reliability_pledge_ack_at")
       .eq("id", user.id)
-      .maybeSingle<{ primary_sport: string | null; reliability_pledge_ack_at: string | null }>(),
+      .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>(),
     supabase
       .from("user_base_traits")
       .select("id", { count: "exact", head: true })
@@ -89,12 +98,39 @@ export default async function OnboardingHomePage() {
   }
 
   const baseTraitCount = traitsCountResult.count ?? 0;
-  const hasTraits = baseTraitCount >= 5;
+  const normalizedTraitCount = Math.min(baseTraitCount, ONBOARDING_TRAIT_GOAL);
+  const hasTraits = normalizedTraitCount >= ONBOARDING_TRAIT_GOAL;
   const normalizedSport = profileRow?.primary_sport && isSportType(profileRow.primary_sport) ? profileRow.primary_sport : null;
-  const hasSport = Boolean(normalizedSport);
+  const normalizedPlayStyle = profileRow?.play_style && isPlayStyle(profileRow.play_style) ? profileRow.play_style : null;
+  let sportSkillLevel: string | null = null;
+  if (normalizedSport) {
+    const { data: sportProfileRow, error: sportProfileError } = await supabase
+      .from("user_sport_profiles")
+      .select("skill_level")
+      .eq("user_id", user.id)
+      .eq("sport", normalizedSport)
+      .maybeSingle<{ skill_level: string | null }>();
+    if (sportProfileError && sportProfileError.code !== "PGRST116") {
+      throw sportProfileError;
+    }
+    sportSkillLevel = sportProfileRow?.skill_level ?? null;
+  }
+  const sportComplete = hasCompletedSportStep({
+    primarySport: normalizedSport,
+    playStyle: normalizedPlayStyle,
+    skillLevel: sportSkillLevel,
+  });
   const pledgeAckAt = profileRow?.reliability_pledge_ack_at ?? null;
   const hasPledge = Boolean(pledgeAckAt);
   const formattedAck = formatAckDate(pledgeAckAt);
+  const pendingStepIds = derivePendingOnboardingSteps({
+    traitCount: baseTraitCount,
+    primarySport: normalizedSport,
+    playStyle: normalizedPlayStyle,
+    skillLevel: sportSkillLevel,
+    pledgeAckAt,
+  });
+  const pendingStepCount = pendingStepIds.length;
 
   const steps: EnrichedOnboardingStep[] = STEP_ORDER.map((step) => {
     switch (step.id) {
@@ -102,14 +138,16 @@ export default async function OnboardingHomePage() {
         return {
           ...step,
           complete: hasTraits,
-          statusNote: hasTraits ? `Completed (${baseTraitCount} vibes)` : `${baseTraitCount}/5 vibes saved`,
+          statusNote: hasTraits ? `Completed (${normalizedTraitCount} vibes)` : `${normalizedTraitCount}/${ONBOARDING_TRAIT_GOAL} vibes saved`,
         };
-      case "sport":
+      case "sport": {
+        const sportLabel = normalizedSport ? getSportLabel(normalizedSport) : null;
         return {
           ...step,
-          complete: hasSport,
-          statusNote: hasSport ? `Primary sport: ${normalizedSport}` : "Sport not set",
+          complete: sportComplete,
+          statusNote: sportComplete && sportLabel ? `Primary sport: ${sportLabel}` : "Sport or skill missing",
         };
+      }
       case "pledge":
         return {
           ...step,
@@ -156,7 +194,16 @@ export default async function OnboardingHomePage() {
               <Link
                 href={step.href}
                 className="mt-6 inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-200"
-                onClick={() => trackOnboardingEntry({ source: "onboarding-card", platform: "web", step: step.id })}
+                onClick={() =>
+                  trackOnboardingEntry({
+                    source: "onboarding-card",
+                    platform: "web",
+                    step: step.id,
+                    steps: pendingStepCount > 0 ? pendingStepIds : [step.id],
+                    pendingSteps: pendingStepCount,
+                    nextStep: step.href,
+                  })
+                }
               >
                 {step.complete ? "Review step" : step.actionLabel}
                 <ArrowRight className="h-4 w-4" aria-hidden />

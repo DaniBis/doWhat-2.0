@@ -1,6 +1,5 @@
 "use client";
 
-import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -17,8 +16,11 @@ import {
   getSkillLabels,
   isPlayStyle,
   isSportType,
+  theme,
   trackOnboardingEntry,
 } from "@dowhat/shared";
+
+const { colors, spacing, radius, border } = theme;
 
 const SPORT_DETAILS: Record<SportType, { label: string; description: string; emoji: string }> = {
   padel: {
@@ -113,7 +115,7 @@ export function SportSelector({ className }: SportSelectorProps) {
         setUserId(user.id);
         const { data: profileRow, error: profileError } = await supabase
           .from("profiles")
-          .select("primary_sport")
+          .select("primary_sport, play_style")
           .eq("id", user.id)
           .maybeSingle<ProfileRow>();
         if (!isMounted) return;
@@ -165,10 +167,10 @@ export function SportSelector({ className }: SportSelectorProps) {
     setSelectedSport(sport);
   }, []);
 
-  const handleSkillChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+  const handleSkillChipSelect = useCallback((label: string) => {
     setError(null);
     setSuccess(null);
-    setSkillLevel(event.target.value);
+    setSkillLevel(label);
   }, []);
 
   const handlePlayStyleSelect = useCallback((style: PlayStyle) => {
@@ -214,7 +216,14 @@ export function SportSelector({ className }: SportSelectorProps) {
         throw sportProfileError;
       }
       setSuccess("Preferences saved! Redirecting to reliability pledge…");
-        trackOnboardingEntry({ source: "sport-selector", platform: "web", step: "pledge" });
+      trackOnboardingEntry({
+        source: "sport-selector",
+        platform: "web",
+        step: "pledge",
+        steps: ["pledge"],
+        pendingSteps: 1,
+        nextStep: "/onboarding/reliability-pledge",
+      });
       router.push("/onboarding/reliability-pledge");
     } catch (err) {
       console.error("Failed to save sport preferences", err);
@@ -228,23 +237,23 @@ export function SportSelector({ className }: SportSelectorProps) {
 
   return (
     <Card className={cn("w-full", className)}>
-      <CardHeader className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-500">Sport & Skill</p>
-        <h2 className="text-2xl font-semibold text-gray-900">Pick your primary sport</h2>
-        <p className="text-sm text-gray-600">
+      <CardHeader className="space-y-xs">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">Sport & Skill</p>
+        <h2 className="text-2xl font-semibold text-ink">Pick your primary sport</h2>
+        <p className="text-sm text-ink-medium">
           This helps us personalize upcoming sessions, partner suggestions, and reliability nudges.
         </p>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-xl">
         {loading && (
-          <div className="flex items-center gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-3 text-sm text-gray-500">
+          <div className="flex items-center gap-xs rounded-xl border border-dashed border-midnight-border/40 px-md py-sm text-sm text-ink-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Preparing your sport profile…
           </div>
         )}
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+          <div className="rounded-xl border border-red-200 bg-red-50 px-md py-sm text-sm text-red-700">{error}</div>
         )}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-sm sm:grid-cols-3">
           {SPORT_TYPES.map((sport) => {
             const { label, description, emoji } = SPORT_DETAILS[sport];
             const selected = selectedSport === sport;
@@ -255,46 +264,59 @@ export function SportSelector({ className }: SportSelectorProps) {
                 onClick={() => handleSelect(sport)}
                 disabled={saving}
                 className={cn(
-                  "flex flex-col rounded-2xl border px-4 py-4 text-left transition",
+                  "flex flex-col rounded-2xl border px-md py-md text-left transition",
                   selected
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                    : "border-gray-200 bg-white text-gray-800 hover:border-gray-300",
+                    ? "border-brand-teal bg-brand-teal/10 text-brand-dark"
+                    : "border-midnight-border/40 bg-surface text-ink-strong hover:border-brand-teal/30",
                 )}
                 aria-pressed={selected}
               >
                 <span className="text-3xl" aria-hidden>
                   {emoji}
                 </span>
-                <span className="mt-3 text-lg font-semibold">{label}</span>
-                <span className="text-sm text-gray-500">{description}</span>
+                <span className="mt-sm text-lg font-semibold">{label}</span>
+                <span className="text-sm text-ink-muted">{description}</span>
               </button>
             );
           })}
         </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-700" htmlFor="skill-level">
-            Skill level
-          </label>
-          <select
-            id="skill-level"
-            className="w-full rounded-2xl border border-gray-200 px-4 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-            value={skillLevel}
-            onChange={handleSkillChange}
-            disabled={!selectedSport || saving}
-          >
-            {!selectedSport && <option value="">Select a sport above</option>}
-            {selectedSport &&
-              skillOptions.map((label) => (
-                <option key={label} value={label}>
-                  {label}
-                </option>
-              ))}
-          </select>
-          {!selectedSport && <p className="text-xs text-gray-500">Choose a primary sport first.</p>}
+        <div className="space-y-xs">
+          <p className="text-sm font-medium text-ink-strong">Skill level</p>
+          {selectedSport ? (
+            <div className="flex flex-wrap gap-xs" role="group" aria-label="Skill level options">
+              {skillOptions.map((label) => {
+                const active = skillLevel === label;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => handleSkillChipSelect(label)}
+                    disabled={saving}
+                    aria-pressed={active}
+                    className="text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal"
+                    style={{
+                      borderRadius: radius.pill,
+                      borderWidth: border.hairline,
+                      borderStyle: "solid",
+                      borderColor: active ? colors.brandTeal : colors.ink20,
+                      backgroundColor: active ? colors.brandTeal : "transparent",
+                      color: active ? colors.surface : colors.ink60,
+                      padding: `${spacing.xs}px ${spacing.sm}px`,
+                      boxShadow: active ? "0 2px 6px rgba(0,0,0,0.08)" : "none",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-ink-muted">Choose a primary sport first.</p>
+          )}
         </div>
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-gray-700">Play style</p>
-          <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-xs">
+          <p className="text-sm font-medium text-ink-strong">Play style</p>
+          <div className="grid gap-sm sm:grid-cols-2">
             {PLAY_STYLES.map((style) => {
               const selected = playStyle === style;
               return (
@@ -304,28 +326,28 @@ export function SportSelector({ className }: SportSelectorProps) {
                   onClick={() => handlePlayStyleSelect(style)}
                   disabled={saving}
                   className={cn(
-                    "rounded-2xl border px-4 py-3 text-left text-sm transition",
+                    "rounded-2xl border px-md py-sm text-left text-sm transition",
                     selected
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-900"
-                      : "border-gray-200 bg-white text-gray-800 hover:border-gray-300",
+                      ? "border-brand-teal bg-brand-teal/10 text-brand-dark"
+                      : "border-midnight-border/40 bg-surface text-ink-strong hover:border-brand-teal/30",
                   )}
                   aria-pressed={selected}
                 >
                   <span className="text-base font-semibold">{PLAY_STYLE_LABELS[style]}</span>
-                  <span className="mt-1 block text-xs text-gray-500">{PLAY_STYLE_DESCRIPTIONS[style]}</span>
+                  <span className="mt-xxs block text-xs text-ink-muted">{PLAY_STYLE_DESCRIPTIONS[style]}</span>
                 </button>
               );
             })}
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-sm text-sm">
           {success && (
-            <span className="inline-flex items-center gap-2 text-emerald-600">
+            <span className="inline-flex items-center gap-xs text-brand-teal">
               <CheckCircle2 className="h-4 w-4" aria-hidden />
               {success}
             </span>
           )}
-          <Button onClick={handleSave} disabled={!canSave} className="ml-auto flex min-w-[180px] items-center justify-center gap-2">
+          <Button onClick={handleSave} disabled={!canSave} className="ml-auto flex min-w-[180px] items-center justify-center gap-xs">
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />

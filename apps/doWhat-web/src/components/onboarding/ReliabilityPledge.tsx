@@ -158,20 +158,20 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
 
   return (
     <Card className={cn("w-full", className)}>
-      <CardHeader className="space-y-2">
-        <div className="inline-flex items-center gap-2 rounded-full border border-amber-300/60 bg-amber-100/40 px-2 py-0.5 text-xs font-semibold text-amber-700">
+      <CardHeader className="space-y-xs">
+        <div className="inline-flex items-center gap-xs rounded-full border border-amber-300/60 bg-amber-100/40 px-xs py-hairline text-xs font-semibold text-amber-700">
           <ShieldCheck className="h-4 w-4" aria-hidden /> Reliability pledge
         </div>
-        <h2 className="text-2xl font-semibold text-slate-900">Keep every session trustworthy</h2>
-        <p className="text-sm text-slate-600">
+        <h2 className="text-2xl font-semibold text-ink">Keep every session trustworthy</h2>
+        <p className="text-sm text-ink-medium">
           Social Sweat only works when everyone follows through. Review the commitments below and lock the pledge so hosts know they can count on you.
         </p>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-xl">
         {loading ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500">Preparing your pledge…</div>
+          <div className="rounded-2xl border border-dashed border-midnight-border/40 px-md py-sm text-sm text-ink-muted">Preparing your pledge…</div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-sm">
             {COMMITMENTS.map((commitment) => {
               const selected = commitments[commitment.id];
               return (
@@ -181,21 +181,21 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
                   onClick={() => toggleCommitment(commitment.id)}
                   disabled={saving}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
+                    "flex w-full items-start gap-sm rounded-2xl border px-md py-sm text-left transition",
                     selected
                       ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-900 hover:border-slate-300",
+                      : "border-midnight-border/40 bg-surface text-ink hover:border-midnight-border/60",
                   )}
                   aria-pressed={selected}
                 >
-                  <span className={cn("mt-1 inline-flex h-6 w-6 items-center justify-center rounded-full border", selected ? "border-emerald-500 bg-emerald-100 text-emerald-700" : "border-slate-200 text-slate-400")}
+                  <span className={cn("mt-xxs inline-flex h-6 w-6 items-center justify-center rounded-full border", selected ? "border-emerald-500 bg-emerald-100 text-emerald-700" : "border-midnight-border/40 text-ink-muted")}
                     aria-hidden
                   >
                     {selected ? <Sparkles className="h-3.5 w-3.5" /> : commitment.title[0]}
                   </span>
                   <span>
                     <span className="text-base font-semibold leading-tight">{commitment.title}</span>
-                    <span className="mt-1 block text-sm text-slate-600">{commitment.description}</span>
+                    <span className="mt-xxs block text-sm text-ink-medium">{commitment.description}</span>
                   </span>
                 </button>
               );
@@ -208,13 +208,13 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
             You accepted version {ackVersion ?? PLEDGE_VERSION} on {formattedAck}. Feel free to review or update it anytime.
           </p>
         ) : (
-          <p className="text-sm text-slate-500">Select each commitment to enable the pledge button.</p>
+          <p className="text-sm text-ink-muted">Select each commitment to enable the pledge button.</p>
         )}
 
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-        {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>}
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 px-md py-sm text-sm text-red-700">{error}</div>}
+        {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-md py-sm text-sm text-emerald-700">{success}</div>}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-sm text-sm">
           <Button onClick={handleSave} disabled={!ready} className="ml-auto min-w-[180px]">
             {saving ? "Saving…" : ackTimestamp ? "Update pledge" : "Lock the pledge"}
           </Button>

@@ -50,12 +50,35 @@ describe("ReliabilityPledgeBanner", () => {
     expect(screen.getByText(/You last confirmed the pledge on/i)).toBeInTheDocument();
   });
 
-  it("tracks onboarding entry when the CTA is clicked", async () => {
+  it("tracks onboarding entry with default steps when CTA is clicked", async () => {
     const user = userEvent.setup();
     render(<ReliabilityPledgeBanner />);
 
     await user.click(screen.getByRole("link", { name: /Review pledge/i }));
 
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: "pledge-banner", platform: "web", step: "pledge" });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: "pledge-banner",
+      platform: "web",
+      step: "pledge",
+      steps: ["pledge"],
+      pendingSteps: 1,
+      nextStep: "/onboarding/reliability-pledge",
+    });
+  });
+
+  it("passes through provided onboarding steps", async () => {
+    const user = userEvent.setup();
+    render(<ReliabilityPledgeBanner steps={["pledge", "sport"]} />);
+
+    await user.click(screen.getByRole("link", { name: /Review pledge/i }));
+
+    expect(trackOnboardingEntry).toHaveBeenLastCalledWith({
+      source: "pledge-banner",
+      platform: "web",
+      step: "pledge",
+      steps: ["pledge", "sport"],
+      pendingSteps: 2,
+      nextStep: "/onboarding/reliability-pledge",
+    });
   });
 });

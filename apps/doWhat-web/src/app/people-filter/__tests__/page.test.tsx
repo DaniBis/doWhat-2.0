@@ -127,11 +127,28 @@ const respondWith = (data: unknown, ok = true) =>
     json: async () => data,
   } as Response);
 
-const mountPeopleFilterPage = async () => {
+type MountOptions = {
+  popularTraits?: Array<{
+    name?: string | null;
+    icon?: string | null;
+    color?: string | null;
+    popularity?: number;
+    voteCount?: number;
+    baseCount?: number;
+    score?: number;
+  }>;
+  traitsResponseOk?: boolean;
+  traitsShouldReject?: boolean;
+};
+
+const mountPeopleFilterPage = async (options: MountOptions = {}) => {
   const fetchMock = jest.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.startsWith('/api/traits/popular')) {
-      return respondWith([]);
+      if (options.traitsShouldReject) {
+        return Promise.reject(new Error('traits request failed'));
+      }
+      return respondWith(options.popularTraits ?? [], options.traitsResponseOk ?? true);
     }
     return respondWith({});
   });
@@ -183,6 +200,9 @@ describe('PeopleFilterPage trait onboarding banner', () => {
       source: 'people-filter-banner',
       platform: 'web',
       step: 'traits',
+      steps: ['traits', 'sport'],
+      pendingSteps: 2,
+      nextStep: '/onboarding/traits',
     });
   });
 });
@@ -228,6 +248,41 @@ describe('PeopleFilterPage reliability pledge banner', () => {
       source: 'people-filter-banner',
       platform: 'web',
       step: 'pledge',
+      steps: ['sport', 'pledge'],
+      pendingSteps: 2,
+      nextStep: '/onboarding/reliability-pledge',
     });
+  });
+});
+
+describe('PeopleFilterPage personalization hints', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetSupabaseState();
+    installSupabaseTables();
+    window.localStorage.clear();
+  });
+
+  it('renders API-provided nearby traits when the endpoint succeeds', async () => {
+    setTraitCount(5);
+    await mountPeopleFilterPage({
+      popularTraits: [
+        { name: 'Connector', icon: 'Sparkles', color: '#222', popularity: 42 },
+        { name: 'Hype Squad', icon: 'Megaphone', color: '#ff0', voteCount: 18 },
+      ],
+    });
+
+    expect(await screen.findByRole('button', { name: /Connector/i })).toBeInTheDocument();
+    expect(screen.getByText(/42 people/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Hype Squad/i })).toBeInTheDocument();
+  });
+
+  it('falls back to the canned trait list when the endpoint fails', async () => {
+    setTraitCount(4);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    await mountPeopleFilterPage({ traitsShouldReject: true });
+
+    expect(await screen.findByText('Early Bird')).toBeInTheDocument();
+    errorSpy.mockRestore();
   });
 });

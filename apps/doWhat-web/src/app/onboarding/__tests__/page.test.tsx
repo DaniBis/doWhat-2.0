@@ -52,19 +52,26 @@ type BuildClientOptions = {
   user: { id: string } | null;
   traitCount?: number;
   primarySport?: string | null;
+  playStyle?: string | null;
+  skillLevel?: string | null;
   pledgeAck?: string | null;
 };
 
-const buildMockClient = ({ user, traitCount = 0, primarySport = null, pledgeAck = null }: BuildClientOptions): MockSupabaseClient => {
+const buildMockClient = ({ user, traitCount = 0, primarySport = null, playStyle = null, skillLevel = null, pledgeAck = null }: BuildClientOptions): MockSupabaseClient => {
   const profileQuery = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
-    maybeSingle: jest.fn().mockResolvedValue({ data: { primary_sport: primarySport, reliability_pledge_ack_at: pledgeAck }, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: { primary_sport: primarySport, play_style: playStyle, reliability_pledge_ack_at: pledgeAck }, error: null }),
   };
   const traitQuery = {
     select: jest.fn().mockReturnValue({
       eq: jest.fn().mockResolvedValue({ data: null, count: traitCount, error: null }),
     }),
+  };
+  const sportProfileQuery = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockResolvedValue({ data: { skill_level: skillLevel }, error: null }),
   };
   return {
     auth: {
@@ -73,6 +80,7 @@ const buildMockClient = ({ user, traitCount = 0, primarySport = null, pledgeAck 
     from: jest.fn((table: string) => {
       if (table === "profiles") return profileQuery;
       if (table === "user_base_traits") return traitQuery;
+      if (table === "user_sport_profiles") return sportProfileQuery;
       throw new Error(`Unexpected table ${table}`);
     }),
   };
@@ -105,6 +113,8 @@ describe("OnboardingHomePage", () => {
       user: { id: "user-123" },
       traitCount: 5,
       primarySport: "padel",
+      playStyle: "competitive",
+      skillLevel: "3.0 - Consistent drives",
       pledgeAck: "2025-12-01T00:00:00.000Z",
     });
     createClientMock.mockReturnValue(mockClient as unknown as SupabaseClient);
@@ -137,6 +147,13 @@ describe("OnboardingHomePage", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("link", { name: /Go to trait onboarding/i }));
 
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: "onboarding-card", platform: "web", step: "traits" });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: "onboarding-card",
+      platform: "web",
+      step: "traits",
+      steps: ["traits", "sport", "pledge"],
+      pendingSteps: 3,
+      nextStep: "/onboarding/traits",
+    });
   });
 });

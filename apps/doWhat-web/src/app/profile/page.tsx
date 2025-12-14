@@ -1,8 +1,17 @@
 "use client";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { useCallback, useEffect, useState } from 'react';
-import { getTraitOnboardingState, isSportType, trackOnboardingEntry, type OnboardingStep, type SportType } from '@dowhat/shared';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  derivePendingOnboardingSteps,
+  isPlayStyle,
+  isSportType,
+  ONBOARDING_TRAIT_GOAL,
+  trackOnboardingEntry,
+  type OnboardingStep,
+  type PlayStyle,
+  type SportType,
+} from '@dowhat/shared';
 import { supabase } from '@/lib/supabase/browser';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { SportOnboardingBanner } from '@/components/profile/SportOnboardingBanner';
@@ -11,6 +20,7 @@ import { OnboardingProgressBanner } from '@/components/profile/OnboardingProgres
 import { KPIGrid } from '@/components/profile/KPIGrid';
 import { BadgesPreview } from '@/components/profile/BadgesPreview';
 import { AttendanceBars } from '@/components/profile/AttendanceBars';
+import { ReliabilityExplainer } from '@/components/profile/ReliabilityExplainer';
 import { BioCard } from '@/components/profile/BioCard';
 import { ReviewsTab } from '@/components/profile/ReviewsTab';
 import { TraitCarousel } from '@/components/traits/TraitCarousel';
@@ -39,22 +49,35 @@ export default function ProfilePage() {
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
   const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
   const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
   const [sportProfileLoading, setSportProfileLoading] = useState(true);
   const [reliabilityPledgeAckAt, setReliabilityPledgeAckAt] = useState<string | null>(null);
   const [reliabilityPledgeLoading, setReliabilityPledgeLoading] = useState(true);
   const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
   const traitCountLoading = loading || traitsRefreshing;
-  const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({
+  const onboardingProgressReady = !traitCountLoading && !sportProfileLoading && !reliabilityPledgeLoading;
+  const incompleteSteps = useMemo<OnboardingStep[]>(() => {
+    if (!onboardingProgressReady) return [];
+    return derivePendingOnboardingSteps({
+      traitCount: baseTraitCount,
+      primarySport,
+      playStyle,
+      skillLevel: sportSkillLevel,
+      pledgeAckAt: reliabilityPledgeAckAt,
+    });
+  }, [
+    onboardingProgressReady,
     baseTraitCount,
-    traitCountLoading,
-  });
-  const needsSportOnboarding = !sportProfileLoading && !primarySport;
-  const needsReliabilityPledge = !reliabilityPledgeLoading && !reliabilityPledgeAckAt;
-  const incompleteSteps: OnboardingStep[] = [];
-  if (needsTraitOnboarding) incompleteSteps.push('traits');
-  if (needsSportOnboarding) incompleteSteps.push('sport');
-  if (needsReliabilityPledge) incompleteSteps.push('pledge');
+    playStyle,
+    primarySport,
+    reliabilityPledgeAckAt,
+    sportSkillLevel,
+  ]);
+  const needsTraitOnboarding = incompleteSteps.includes('traits');
+  const needsSportOnboarding = incompleteSteps.includes('sport');
+  const needsReliabilityPledge = incompleteSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding ? Math.max(1, ONBOARDING_TRAIT_GOAL - baseTraitCount) : 0;
 
   const refreshTraits = useCallback(async () => {
     if (!userId) return;
@@ -128,6 +151,7 @@ export default function ProfilePage() {
           setPrimarySport(null);
           setSportSkillLevel(null);
           setReliabilityPledgeAckAt(null);
+          setPlayStyle(null);
           setSportProfileLoading(false);
           setReliabilityPledgeLoading(false);
         }
@@ -138,15 +162,19 @@ export default function ProfilePage() {
       try {
         const { data: profileRow, error: profileError } = await supabase
           .from('profiles')
-          .select('primary_sport, reliability_pledge_ack_at')
+          .select('primary_sport, play_style, reliability_pledge_ack_at')
           .eq('id', userId)
-          .maybeSingle<{ primary_sport: SportType | null; reliability_pledge_ack_at: string | null }>();
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>();
         if (profileError && profileError.code !== 'PGRST116') {
           throw profileError;
         }
         const normalized = profileRow && isSportType(profileRow.primary_sport) ? profileRow.primary_sport : null;
+        const normalizedPlayStyle: PlayStyle | null = profileRow && profileRow.play_style && isPlayStyle(profileRow.play_style)
+          ? profileRow.play_style
+          : null;
         if (!cancelled) {
           setPrimarySport(normalized);
+          setPlayStyle(normalizedPlayStyle);
           setReliabilityPledgeAckAt(profileRow?.reliability_pledge_ack_at ?? null);
         }
         if (normalized) {
@@ -171,6 +199,7 @@ export default function ProfilePage() {
           setPrimarySport(null);
           setSportSkillLevel(null);
           setReliabilityPledgeAckAt(null);
+          setPlayStyle(null);
         }
       } finally {
         if (!cancelled) {
@@ -278,8 +307,10 @@ export default function ProfilePage() {
         {error && <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
         {incompleteSteps.length > 0 && <OnboardingProgressBanner steps={incompleteSteps} />}
         <div className="mb-8"><KPIGrid kpis={kpis} /></div>
-        {needsReliabilityPledge && <ReliabilityPledgeBanner lastAcknowledgedAt={reliabilityPledgeAckAt} />}
-        {needsSportOnboarding && <SportOnboardingBanner skillLevel={sportSkillLevel} />}
+        {needsReliabilityPledge && (
+          <ReliabilityPledgeBanner lastAcknowledgedAt={reliabilityPledgeAckAt} steps={incompleteSteps} />
+        )}
+        {needsSportOnboarding && <SportOnboardingBanner skillLevel={sportSkillLevel} steps={incompleteSteps} />}
         {profile?.socials && (profile.socials.instagram || profile.socials.whatsapp) && (
           <div className="mb-6 flex flex-wrap gap-3 items-center text-sm">
             {profile.socials.instagram && (() => {
@@ -321,6 +352,9 @@ export default function ProfilePage() {
             </div>
             <div className="md:col-span-2 lg:col-span-2"><BadgesPreview badges={badges.slice(0,4)} /></div>
             <div className="md:col-span-2 lg:col-span-2"><AttendanceBars metrics={attendance} /></div>
+            <div className="md:col-span-2 lg:col-span-2">
+              <ReliabilityExplainer reliability={reliability} attendance={attendance} />
+            </div>
             <div className="md:col-span-2 lg:col-span-2"><BioCard bio={profile?.bio} editable onSave={saveBio} /></div>
           </div>
         )}
@@ -344,17 +378,26 @@ export default function ProfilePage() {
               )}
             </div>
             {needsTraitOnboarding && (
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-900">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-teal/25 bg-brand-teal/5 p-4 text-sm text-brand-dark">
                 <div className="space-y-1">
-                  <p className="text-base font-semibold text-emerald-900">Finish your base traits</p>
+                  <p className="text-base font-semibold text-brand-dark">Finish your base traits</p>
                   <p>
                     Pick {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to lock in the full onboarding stack and unlock better people filters.
                   </p>
                 </div>
                 <Link
                   href="/onboarding/traits"
-                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
-                  onClick={() => trackOnboardingEntry({ source: 'traits-banner', platform: 'web', step: 'traits' })}
+                  className="inline-flex items-center gap-2 rounded-full bg-brand-teal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark"
+                  onClick={() =>
+                    trackOnboardingEntry({
+                      source: 'traits-banner',
+                      platform: 'web',
+                      step: 'traits',
+                      steps: incompleteSteps.length > 0 ? incompleteSteps : ['traits'],
+                      pendingSteps: Math.max(incompleteSteps.length, 1),
+                      nextStep: '/onboarding/traits',
+                    })
+                  }
                 >
                   Go to onboarding
                   <ArrowRight className="h-4 w-4" aria-hidden />
@@ -377,7 +420,17 @@ export default function ProfilePage() {
               <div key={b.id} className="rounded-lg bg-white border border-gray-200 p-4 flex flex-col gap-1">
                 <div className="flex items-center justify-between">
                   <div className="font-medium text-sm text-gray-800 truncate">{b.name}</div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${b.status==='verified'?'bg-emerald-100 text-emerald-700 border-emerald-200': b.status==='expired'?'bg-red-100 text-red-600 border-red-200':'bg-gray-100 text-gray-600 border-gray-200'}`}>{b.status}</span>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                      b.status === 'verified'
+                        ? 'bg-brand-teal/15 text-brand-teal border-brand-teal/30'
+                        : b.status === 'expired'
+                          ? 'bg-feedback-danger/10 text-feedback-danger border-feedback-danger/30'
+                          : 'bg-ink-subtle text-ink-medium border-midnight-border/20'
+                    }`}
+                  >
+                    {b.status}
+                  </span>
                 </div>
                 <div className="text-xs text-gray-600 flex items-center gap-2">
                   {b.level && <span className="font-mono bg-gray-100 px-1 rounded border border-gray-200">L{b.level}</span>}

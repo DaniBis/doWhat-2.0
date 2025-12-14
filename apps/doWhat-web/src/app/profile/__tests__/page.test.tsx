@@ -96,12 +96,15 @@ const mockSupabase = supabase as unknown as {
 const mockAuthGetUser = () =>
   mockSupabase.auth.getUser as jest.MockedFunction<typeof mockSupabase.auth.getUser>;
 
-type ProfileRowData = { primary_sport: string | null; reliability_pledge_ack_at: string | null };
-let profileRowData: ProfileRowData = { primary_sport: null, reliability_pledge_ack_at: null };
+type ProfileRowData = { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null };
+let profileRowData: ProfileRowData = { primary_sport: null, play_style: null, reliability_pledge_ack_at: null };
+
+let sportProfileSkill: string | null = null;
 
 const setupSupabaseProfileQueries = (overrides: Partial<ProfileRowData> = {}) => {
   profileRowData = {
     primary_sport: overrides.primary_sport ?? null,
+    play_style: overrides.play_style ?? null,
     reliability_pledge_ack_at: overrides.reliability_pledge_ack_at ?? null,
   };
   mockSupabase.from.mockImplementation((table: string) => {
@@ -116,7 +119,7 @@ const setupSupabaseProfileQueries = (overrides: Partial<ProfileRowData> = {}) =>
       const builder: any = {};
       builder.select = jest.fn(() => builder);
       builder.eq = jest.fn(() => builder);
-      builder.maybeSingle = jest.fn(async () => ({ data: { skill_level: null }, error: null }));
+      builder.maybeSingle = jest.fn(async () => ({ data: { skill_level: sportProfileSkill }, error: null }));
       return builder;
     }
     throw new Error(`Unexpected table ${table}`);
@@ -143,6 +146,8 @@ const buildTrait = (id: string, baseCount: number) => ({
 
 type MountOptions = {
   primarySport?: string | null;
+  playStyle?: string | null;
+  sportSkillLevel?: string | null;
   pledgeAck?: string | null;
 };
 
@@ -171,8 +176,10 @@ const mountProfilePage = async (traits: Array<ReturnType<typeof buildTrait>>, op
   mockAuthGetUser().mockResolvedValue({ data: { user: { id: 'user-123' } } });
   setupSupabaseProfileQueries({
     primary_sport: options.primarySport ?? null,
+    play_style: options.playStyle ?? null,
     reliability_pledge_ack_at: options.pledgeAck ?? null,
   });
+  sportProfileSkill = options.sportSkillLevel ?? null;
 
   render(<ProfilePage />);
 
@@ -225,7 +232,14 @@ describe('ProfilePage trait onboarding banner', () => {
 
     await user.click(screen.getByRole('link', { name: /Go to onboarding/i }));
 
-    expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: 'traits-banner', platform: 'web', step: 'traits' });
+    expect(trackOnboardingEntry).toHaveBeenCalledWith({
+      source: 'traits-banner',
+      platform: 'web',
+      step: 'traits',
+      steps: ['traits', 'sport', 'pledge'],
+      pendingSteps: 3,
+      nextStep: '/onboarding/traits',
+    });
   });
 });
 
@@ -255,7 +269,12 @@ describe('ProfilePage onboarding progress banner', () => {
         buildTrait('t4', 1),
         buildTrait('t5', 1),
       ],
-      { primarySport: 'padel', pledgeAck: '2025-12-01T00:00:00.000Z' }
+      {
+        primarySport: 'padel',
+        playStyle: 'competitive',
+        sportSkillLevel: '3.0 - Consistent drives',
+        pledgeAck: '2025-12-01T00:00:00.000Z',
+      }
     );
 
     await waitFor(() => {

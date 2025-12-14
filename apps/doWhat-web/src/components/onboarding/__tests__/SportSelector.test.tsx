@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import React from "react";
 
 import { SportSelector } from "../SportSelector";
+import { getSkillLabels } from "@dowhat/shared";
 
 const mockGetUser = jest.fn();
 const mockFrom = jest.fn();
@@ -54,6 +55,10 @@ let profileQuery: QueryBuilder;
 let sportProfileQuery: QueryBuilder;
 
 describe("SportSelector", () => {
+  const padelSkills = getSkillLabels("padel");
+  const firstPadelSkill = padelSkills[0] ?? "1.0 - New to the sport";
+  const secondPadelSkill = padelSkills[1] ?? firstPadelSkill;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouterPrefetch.mockResolvedValue(undefined);
@@ -69,7 +74,7 @@ describe("SportSelector", () => {
     sportProfileQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
   });
 
-  it("renders sport choices and disables skill select until a sport is picked", async () => {
+  it("renders sport choices and hides skill chips until a sport is picked", async () => {
     const user = userEvent.setup();
     render(<SportSelector />);
 
@@ -77,12 +82,10 @@ describe("SportSelector", () => {
 
     const padelButton = screen.getByRole("button", { name: /Padel/i });
     expect(padelButton).toBeInTheDocument();
-
-    const skillSelect = screen.getByLabelText(/Skill level/i) as HTMLSelectElement;
-    expect(skillSelect).toBeDisabled();
+    expect(screen.getByText(/Choose a primary sport first/i)).toBeInTheDocument();
 
     await user.click(padelButton);
-    await waitFor(() => expect(skillSelect.disabled).toBe(false));
+    await waitFor(() => expect(screen.getByRole("button", { name: firstPadelSkill })).toBeInTheDocument());
   });
 
   it("saves the selected sport, skill level, and play style", async () => {
@@ -92,9 +95,9 @@ describe("SportSelector", () => {
 
     await waitFor(() => expect(profileQuery.select).toHaveBeenCalled());
     await user.click(screen.getByRole("button", { name: /Padel/i }));
-    const skillSelect = screen.getByLabelText(/Skill level/i) as HTMLSelectElement;
-    await waitFor(() => expect(skillSelect.disabled).toBe(false));
-    await user.selectOptions(skillSelect, "3.5 - Consistent rallies");
+    const skillChip = await screen.findByRole("button", { name: secondPadelSkill });
+    await user.click(skillChip);
+    await waitFor(() => expect(skillChip).toHaveAttribute("aria-pressed", "true"));
     const funButton = screen.getByRole("button", { name: /^Fun/i });
     await user.click(funButton);
     await waitFor(() => expect(funButton).toHaveAttribute("aria-pressed", "true"));
@@ -113,7 +116,14 @@ describe("SportSelector", () => {
         { onConflict: "user_id,sport" }
       );
       expect(mockRouterPush).toHaveBeenCalledWith("/onboarding/reliability-pledge");
-      expect(trackOnboardingEntry).toHaveBeenCalledWith({ source: "sport-selector", platform: "web", step: "pledge" });
+      expect(trackOnboardingEntry).toHaveBeenCalledWith({
+        source: "sport-selector",
+        platform: "web",
+        step: "pledge",
+        steps: ["pledge"],
+        pendingSteps: 1,
+        nextStep: "/onboarding/reliability-pledge",
+      });
     });
   });
 });

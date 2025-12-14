@@ -14,7 +14,10 @@ import {
   canonicaliseTimeOfDayValues,
   countActiveActivityFilters,
   countActivePeopleFilters,
-  getTraitOnboardingState,
+  derivePendingOnboardingSteps,
+  isPlayStyle,
+  isSportType,
+  ONBOARDING_TRAIT_GOAL,
   loadUserPreference,
   normaliseActivityFilterPreferences,
   normalisePeopleFilterPreferences,
@@ -26,6 +29,9 @@ import {
   type ActivityPriceFilterKey,
   type ActivityTimeFilterKey,
   type PeopleFilterPreferences,
+  type PlayStyle,
+  type SportType,
+  type OnboardingStep,
   PEOPLE_FILTER_AGE_RANGES,
   PEOPLE_FILTER_GROUP_SIZES,
   PEOPLE_FILTER_SKILL_LEVELS,
@@ -111,16 +117,49 @@ export default function PeopleFilterPage() {
   const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
   const [, setPledgeVersion] = useState<string | null>(null);
   const [pledgeHydrated, setPledgeHydrated] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileLoading, setSportProfileLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'activities' | 'people'>('people');
   const [nearbyTraits, setNearbyTraits] = useState<UserTrait[]>([]);
 
   const traitCountLoading = baseTraitCount === null;
-  const { needsTraitOnboarding, traitShortfall } = getTraitOnboardingState({
-    baseTraitCount,
-    traitCountLoading,
-  });
-  const needsReliabilityPledge = pledgeHydrated && !pledgeAckAt;
+  const rawPendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      derivePendingOnboardingSteps({
+        traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        primarySport,
+        playStyle,
+        skillLevel: sportSkillLevel,
+        pledgeAckAt,
+      }),
+    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+  );
+  const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      rawPendingOnboardingSteps.filter((step) => {
+        if (step === 'traits') {
+          return !traitCountLoading && baseTraitCount != null;
+        }
+        if (step === 'sport') {
+          return !sportProfileLoading;
+        }
+        if (step === 'pledge') {
+          return pledgeHydrated;
+        }
+        return true;
+      }),
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, pledgeHydrated],
+  );
+  const pendingOnboardingCount = pendingOnboardingSteps.length;
+  const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
+  const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding
+    ? Math.max(1, ONBOARDING_TRAIT_GOAL - (baseTraitCount ?? 0))
+    : 0;
 
   const normaliseWithCanonicalTime = useCallback(
     (prefs: ActivityFilterPreferences): ActivityFilterPreferences =>
@@ -241,6 +280,71 @@ export default function PeopleFilterPage() {
     }
 
     loadTraitCount(userId);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setPrimarySport(null);
+      setPlayStyle(null);
+      setSportSkillLevel(null);
+      setSportProfileLoading(false);
+      return () => {
+        /* noop */
+      };
+    }
+    let cancelled = false;
+    setSportProfileLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('primary_sport, play_style')
+          .eq('id', userId)
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null }>();
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+        const normalizedSport = data?.primary_sport && isSportType(data.primary_sport)
+          ? data.primary_sport
+          : null;
+        const normalizedPlayStyle = data?.play_style && isPlayStyle(data.play_style)
+          ? data.play_style
+          : null;
+        let skillLevel: string | null = null;
+        if (normalizedSport) {
+          const { data: sportRow, error: sportError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', userId)
+            .eq('sport', normalizedSport)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (sportError && sportError.code !== 'PGRST116') {
+            throw sportError;
+          }
+          skillLevel = sportRow?.skill_level ?? null;
+        }
+        if (!cancelled) {
+          setPrimarySport(normalizedSport);
+          setPlayStyle(normalizedPlayStyle);
+          setSportSkillLevel(skillLevel);
+        }
+      } catch (error) {
+        console.warn('[people-filters] failed to load sport profile', error);
+        if (!cancelled) {
+          setPrimarySport(null);
+          setPlayStyle(null);
+          setSportSkillLevel(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSportProfileLoading(false);
+        }
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
@@ -751,6 +855,33 @@ export default function PeopleFilterPage() {
         {isLoading && (
           <div className="mb-6 text-sm text-gray-500">Loading your saved preferences…</div>
         )}
+        {needsSportOnboarding && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50/80 p-4 text-sm text-teal-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-teal-900">Set your sport & skill</p>
+              <p>
+                Choose your primary sport, play style, and level so people filters can surface better matches.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/sports"
+              onClick={() =>
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'sport',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/sports',
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-teal-500"
+            >
+              Go to sport onboarding
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        )}
         {needsTraitOnboarding && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-900">
             <div className="space-y-1">
@@ -762,7 +893,14 @@ export default function PeopleFilterPage() {
             <Link
               href="/onboarding/traits"
               onClick={() =>
-                trackOnboardingEntry({ source: 'people-filter-banner', platform: 'web', step: 'traits' })
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'traits',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/traits',
+                })
               }
               className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
             >
@@ -782,7 +920,14 @@ export default function PeopleFilterPage() {
             <Link
               href="/onboarding/reliability-pledge"
               onClick={() =>
-                trackOnboardingEntry({ source: 'people-filter-banner', platform: 'web', step: 'pledge' })
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'pledge',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/reliability-pledge',
+                })
               }
               className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500"
             >
