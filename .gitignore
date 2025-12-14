@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+apps/**/coverage/
 
 # next.js
 /.next/
@@ -34,6 +35,9 @@ apps/doWhat-mobile/android/
 # misc
 .DS_Store
 *.pem
+.eslintcache
+lint.log
+lint-report.json
 
 # debug
 npm-debug.log*
