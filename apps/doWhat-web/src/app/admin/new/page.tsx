@@ -8,6 +8,7 @@ import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
 import {
   activityTaxonomy,
   defaultTier3Index,
+  trackSessionOpenSlotsPublished,
   type ActivityTier3WithAncestors,
 } from "@dowhat/shared";
 import { normaliseCategoryIds } from "@/lib/adminPrefill";
@@ -116,7 +117,7 @@ export default function AdminNewSessionPage() {
   }, [searchParams]);
 
   const lookingForPlayersFeatureEnabled =
-    process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "true";
+    process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS !== "false";
 
   const defaultSchedule = useMemo(() => {
     const tomorrow = new Date();
@@ -403,6 +404,23 @@ export default function AdminNewSessionPage() {
   const lngOutOfRange = lngProvided && !lngInvalid && (lngNumeric < -180 || lngNumeric > 180);
   const coordinateMismatch = (latProvided && !lngProvided) || (!latProvided && lngProvided);
 
+  const hasPrefilledActivity = Boolean(prefill.activityId || prefill.activityName);
+  const hasPrefilledVenue = Boolean(
+    prefill.venueId ||
+      prefill.venueName ||
+      prefill.venueAddress ||
+      prefill.lat ||
+      prefill.lng,
+  );
+  const manualActivityEntry = Boolean(!activityId && activityName.trim());
+  const manualVenueEntry = Boolean(!venueId && venueName.trim());
+  const coordinatesProvided = latProvided && lngProvided;
+  const fakeSessionRisk: "low" | "medium" | "high" = manualActivityEntry && manualVenueEntry && !coordinatesProvided
+    ? "high"
+    : manualActivityEntry || manualVenueEntry
+      ? "medium"
+      : "low";
+
   const openSlotsNumber = Number(openSlotsCount);
   const hasOpenSlotsNumber = Number.isFinite(openSlotsNumber);
   const openSlotsBelowMin = hasOpenSlotsNumber && openSlotsNumber < MIN_OPEN_SLOT_COUNT;
@@ -539,6 +557,21 @@ export default function AdminNewSessionPage() {
           await supabase.from("sessions").delete().eq("id", createdSessionId);
           throw openSlotError;
         }
+        trackSessionOpenSlotsPublished({
+          sessionId: createdSessionId,
+          slotsCount: normalizedOpenSlotsCount,
+          platform: "web",
+          surface: "admin/new",
+          requiredSkillLevel: trimmedSkillLevel ? trimmedSkillLevel : null,
+          prefillSource: prefill.source,
+          categoryCount: sanitizedCategoryIds.length,
+          activityPrefilled: hasPrefilledActivity,
+          venuePrefilled: hasPrefilledVenue,
+          manualActivityEntry,
+          manualVenueEntry,
+          fakeSessionRisk,
+          coordinatesProvided,
+        });
       }
 
       setMsg("Session created. Redirecting…");
@@ -556,38 +589,41 @@ export default function AdminNewSessionPage() {
 
   if (isAdmin === false) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-6">
-        <div className="mb-3 flex items-center gap-2">
+      <main className="mx-auto max-w-4xl px-md py-xxl text-ink-strong">
+        <div className="mb-md flex items-center gap-xs text-sm">
           <Link href="/" className="text-brand-teal">&larr; Back</Link>
-          <h1 className="text-lg font-semibold">Create Session</h1>
+          <h1 className="text-lg font-semibold text-ink-strong">Create Session</h1>
         </div>
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-red-700">
-          You don’t have access to this page. Ask an admin to add your email to NEXT_PUBLIC_ADMIN_EMAILS.
-          <div className="mt-2 text-sm text-red-600">Signed in as: {userEmail ?? "(not signed in)"}</div>
+        <div className="rounded-xl border border-feedback-danger/30 bg-surface p-md text-sm text-feedback-danger shadow-card">
+          <p className="font-semibold">You don’t have access to this page.</p>
+          <p className="mt-xxs text-xs text-feedback-danger/80">
+            Ask an admin to add your email to NEXT_PUBLIC_ADMIN_EMAILS.
+          </p>
+          <div className="mt-xs text-xs text-feedback-danger/80">Signed in as: {userEmail ?? "(not signed in)"}</div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-6">
-      <div className="mb-3 flex items-center gap-2">
+    <main className="mx-auto max-w-4xl px-md py-xxl text-ink-strong">
+      <div className="mb-md flex flex-wrap items-center gap-xs text-sm">
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
-        <h1 className="text-lg font-semibold">Create Session</h1>
+        <h1 className="text-lg font-semibold text-ink-strong">Create Session</h1>
       </div>
 
       {hasPrefillNotice ? (
         <div
-          className="mb-3 rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          className="mb-sm rounded-xl border border-brand-teal/30 bg-brand-teal/5 px-md py-sm text-sm text-brand-teal shadow-card"
           role="status"
           aria-live="polite"
         >
           <p className="font-semibold">
             Prefilled {prefillSourceLabel ? `via ${prefillSourceLabel}` : "from query parameters"}.
           </p>
-          <p className="text-xs text-emerald-900">Confirm taxonomy tags and coordinates before publishing.</p>
+          <p className="text-xs text-brand-teal/80">Confirm taxonomy tags and coordinates before publishing.</p>
           {prefilledCategorySummaryList.length ? (
-            <p className="mt-1 text-xs text-emerald-900">
+            <p className="mt-xxs text-xs text-brand-teal/80">
               Taxonomy preset: <span className="font-semibold">{prefilledCategorySummaryList.join(", ")}</span>
             </p>
           ) : null}
@@ -595,25 +631,25 @@ export default function AdminNewSessionPage() {
       ) : null}
 
       {prefillSummary.length ? (
-        <div className="mb-4 rounded-2xl border border-emerald-100 bg-white/80 p-4 text-sm text-slate-700">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Prefill summary</p>
+        <div className="mb-md rounded-xl border border-midnight-border bg-surface p-md text-sm text-ink-strong shadow-card">
+          <div className="mb-xs flex items-center justify-between gap-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Prefill summary</p>
             <button
               type="button"
               onClick={handleResetPrefills}
-              className="rounded-full border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-300"
+              className="rounded-full border border-brand-teal/40 px-sm py-xxs text-xs font-semibold text-brand-teal transition hover:border-brand-teal"
               aria-label="Clear all prefilled values"
             >
               Clear prefills
             </button>
           </div>
-          <ul className="space-y-1">
+          <ul className="space-y-xxs">
             {prefillSummary.map((item) => (
-              <li key={item.label} className="flex items-start gap-2">
-                <span className="w-24 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <li key={item.label} className="flex items-start gap-xs">
+                <span className="w-24 shrink-0 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                   {item.label}
                 </span>
-                <span className="flex-1 text-sm text-slate-800">{item.value}</span>
+                <span className="flex-1 text-sm text-ink-strong">{item.value}</span>
               </li>
             ))}
           </ul>
@@ -621,9 +657,13 @@ export default function AdminNewSessionPage() {
       ) : null}
 
       {prefillWarnings.length ? (
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status" aria-live="polite">
+        <div
+          className="mb-md rounded-xl border border-feedback-warning/40 bg-feedback-warning/10 px-md py-sm text-sm text-feedback-warning shadow-card"
+          role="status"
+          aria-live="polite"
+        >
           <p className="font-semibold">Check venue details before publishing</p>
-          <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-amber-900">
+          <ul className="mt-xxs list-disc space-y-xxs pl-lg text-xs text-feedback-warning/90">
             {prefillWarnings.map((warning, index) => (
               <li key={`${warning}-${index}`}>{warning}</li>
             ))}
@@ -631,16 +671,25 @@ export default function AdminNewSessionPage() {
         </div>
       ) : null}
 
-      {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
-      {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
+      {err ? (
+        <div className="mb-sm rounded-xl border border-feedback-danger/30 bg-feedback-danger/5 px-sm py-xs text-sm text-feedback-danger">
+          {err}
+        </div>
+      ) : null}
+      {msg ? (
+        <div className="mb-sm rounded-xl border border-feedback-success/30 bg-feedback-success/5 px-sm py-xs text-sm text-feedback-success">
+          {msg}
+        </div>
+      ) : null}
 
-      <section className="grid gap-4">
-        <div className="rounded border p-4">
-          <h2 className="font-semibold">Activity</h2>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <section className="grid gap-lg">
+        <div className="rounded-xl border border-midnight-border bg-surface p-lg shadow-card">
+          <h2 className="text-base font-semibold text-ink-strong">Activity</h2>
+          <div className="mt-sm grid grid-cols-1 gap-sm sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm">Select existing</label>
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Select existing</label>
               <select
+                data-testid="admin-new-activity-select"
                 value={activityId}
                 onChange={(e) => {
                   const value = e.target.value;
@@ -653,7 +702,7 @@ export default function AdminNewSessionPage() {
                     setSelectedCategories([]);
                   }
                 }}
-                className="w-full rounded border px-3 py-2"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
               >
                 <option value="">-- none --</option>
                 {activities.map((a) => (
@@ -662,7 +711,7 @@ export default function AdminNewSessionPage() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm">Or new name</label>
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Or new name</label>
               <input
                 value={activityName}
                 onChange={(e) => {
@@ -673,53 +722,58 @@ export default function AdminNewSessionPage() {
                   }
                 }}
                 placeholder="e.g. Running"
-                className="w-full rounded border px-3 py-2"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
               />
             </div>
           </div>
-          <p className="mt-1 text-xs text-gray-500">Chosen: {chosenActivityName || "—"}</p>
+          <p className="mt-xs text-xs text-ink-muted">Chosen: {chosenActivityName || "—"}</p>
           {!activityId && !activityName && (
-            <p className="mt-1 text-xs text-red-600">Select an activity or type a new one.</p>
+            <p className="mt-xxs text-xs text-feedback-danger">Select an activity or type a new one.</p>
           )}
-          <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="mt-md rounded-xl border border-midnight-border bg-surface p-md shadow-card">
+            <div className="flex flex-wrap items-center justify-between gap-sm">
               <div>
-                <h3 className="text-base font-semibold text-gray-900">Activity categories</h3>
-                <p className="text-sm text-gray-500">Tag the activity with tier 3 taxonomy entries so admin tools stay in sync with discovery filters.</p>
+                <h3 className="text-base font-semibold text-ink-strong">Activity categories</h3>
+                <p className="text-sm text-ink-muted">Tag the activity with tier 3 taxonomy entries so admin tools stay in sync with discovery filters.</p>
               </div>
-              <span className="text-xs text-gray-500">{sanitizedCategoryIds.length} selected</span>
+              <span className="text-xs text-ink-muted">{sanitizedCategoryIds.length} selected</span>
             </div>
             <TaxonomyCategoryPicker
               selectedIds={selectedCategories}
               onToggle={handleToggleCategory}
               taxonomy={activityTaxonomy}
-              className="mt-4"
+              className="mt-md"
             />
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-600">
+            <div className="mt-sm flex flex-wrap gap-xs text-xs text-ink-muted">
               {selectedCategoryLabels.length ? (
                 selectedCategoryLabels.map((item) => (
                   <span
                     key={item.id}
-                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-800"
+                    className="rounded-full border border-brand-teal/40 bg-brand-teal/10 px-sm py-xxs font-semibold text-brand-teal"
                   >
                     {item.label}
                     {item.parent ? ` • ${item.parent}` : ""}
                   </span>
                 ))
               ) : (
-                <span className="text-gray-500">No categories selected yet.</span>
+                <span className="text-ink-muted">No categories selected yet.</span>
               )}
             </div>
-            <p className="mt-2 text-xs text-gray-500">Selected categories are saved back to the activity so hosts and discovery filters stay aligned.</p>
+            <p className="mt-xs text-xs text-ink-muted">Selected categories are saved back to the activity so hosts and discovery filters stay aligned.</p>
           </div>
         </div>
 
-        <div className="rounded border p-4">
-          <h2 className="font-semibold">Venue</h2>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-xl border border-midnight-border bg-surface p-lg shadow-card">
+          <h2 className="text-base font-semibold text-ink-strong">Venue</h2>
+          <div className="mt-sm grid grid-cols-1 gap-sm sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm">Select existing</label>
-              <select value={venueId} onChange={(e) => setVenueId(e.target.value)} className="w-full rounded border px-3 py-2">
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Select existing</label>
+              <select
+                data-testid="admin-new-venue-select"
+                value={venueId}
+                onChange={(e) => setVenueId(e.target.value)}
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              >
                 <option value="">-- none --</option>
                 {venues.map((v) => (
                   <option key={v.id} value={v.id}>{v.name}</option>
@@ -727,77 +781,110 @@ export default function AdminNewSessionPage() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm">Or new name</label>
-              <input value={venueName} onChange={(e) => setVenueName(e.target.value)} placeholder="e.g. City Park" className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Or new name</label>
+              <input
+                value={venueName}
+                onChange={(e) => setVenueName(e.target.value)}
+                placeholder="e.g. City Park"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
             </div>
           </div>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="mt-sm grid grid-cols-1 gap-sm sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm">Latitude (optional)</label>
-              <input value={venueLat} onChange={(e) => setVenueLat(e.target.value)} inputMode="decimal" placeholder="51.5074" className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Latitude (optional)</label>
+              <input
+                value={venueLat}
+                onChange={(e) => setVenueLat(e.target.value)}
+                inputMode="decimal"
+                placeholder="51.5074"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
               {latInvalid ? (
-                <p className="mt-1 text-xs text-red-600">Enter a numeric latitude between -90 and 90.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">Enter a numeric latitude between -90 and 90.</p>
               ) : null}
               {!latInvalid && latOutOfRange ? (
-                <p className="mt-1 text-xs text-red-600">Latitude must be between -90° and 90°.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">Latitude must be between -90° and 90°.</p>
               ) : null}
             </div>
             <div>
-              <label className="mb-1 block text-sm">Longitude (optional)</label>
-              <input value={venueLng} onChange={(e) => setVenueLng(e.target.value)} inputMode="decimal" placeholder="-0.1278" className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Longitude (optional)</label>
+              <input
+                value={venueLng}
+                onChange={(e) => setVenueLng(e.target.value)}
+                inputMode="decimal"
+                placeholder="-0.1278"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
               {lngInvalid ? (
-                <p className="mt-1 text-xs text-red-600">Enter a numeric longitude between -180 and 180.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">Enter a numeric longitude between -180 and 180.</p>
               ) : null}
               {!lngInvalid && lngOutOfRange ? (
-                <p className="mt-1 text-xs text-red-600">Longitude must be between -180° and 180°.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">Longitude must be between -180° and 180°.</p>
               ) : null}
             </div>
           </div>
           {coordinateMismatch ? (
-            <p className="mt-1 text-xs text-amber-600">Add both latitude and longitude to pin a new venue.</p>
+            <p className="mt-xs text-xs text-feedback-warning">Add both latitude and longitude to pin a new venue.</p>
           ) : null}
-          <p className="mt-1 text-xs text-gray-500">Chosen: {chosenVenueName || "—"}</p>
+          <p className="mt-xs text-xs text-ink-muted">Chosen: {chosenVenueName || "—"}</p>
           {!venueId && !venueName && (
-            <p className="mt-1 text-xs text-red-600">Select a venue or type a new one.</p>
+            <p className="mt-xxs text-xs text-feedback-danger">Select a venue or type a new one.</p>
           )}
         </div>
 
-        <div className="rounded border p-4">
-          <h2 className="font-semibold">Session</h2>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-xl border border-midnight-border bg-surface p-lg shadow-card">
+          <h2 className="text-base font-semibold text-ink-strong">Session</h2>
+          <div className="mt-sm grid grid-cols-1 gap-sm sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm">Price (EUR)</label>
-              <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="15" className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Price (EUR)</label>
+              <input
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                inputMode="decimal"
+                placeholder="15"
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
               {price !== "" && Number(price) < 0 && (
-                <p className="mt-1 text-xs text-red-600">Price cannot be negative.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">Price cannot be negative.</p>
               )}
             </div>
             <div />
             <div>
-              <label className="mb-1 block text-sm">Starts at</label>
-              <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Starts at</label>
+              <input
+                type="datetime-local"
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
             </div>
             <div>
-              <label className="mb-1 block text-sm">Ends at</label>
-              <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className="w-full rounded border px-3 py-2" />
+              <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted">Ends at</label>
+              <input
+                type="datetime-local"
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
+                className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+              />
               {startsAt && endsAt && +new Date(endsAt) <= +new Date(startsAt) && (
-                <p className="mt-1 text-xs text-red-600">End time must be after start.</p>
+                <p className="mt-xxs text-xs text-feedback-danger">End time must be after start.</p>
               )}
             </div>
           </div>
           {lookingForPlayersFeatureEnabled ? (
-            <div className="mt-4 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/60 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="mt-md rounded-xl border border-dashed border-brand-teal/50 bg-brand-teal/5 p-md">
+              <div className="flex flex-wrap items-start justify-between gap-sm">
                 <div>
-                  <h3 className="text-base font-semibold text-slate-900">Looking for players</h3>
-                  <p className="text-sm text-slate-600">
+                  <h3 className="text-base font-semibold text-ink-strong">Looking for players</h3>
+                  <p className="text-sm text-ink-muted">
                     Flag remaining spots so Social Sweat can promote this session during discovery pilots.
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-emerald-700" htmlFor={lookingForPlayersToggleId}>
+                <label className="flex items-center gap-xs text-sm font-semibold text-brand-teal" htmlFor={lookingForPlayersToggleId}>
                   <input
                     type="checkbox"
-                    className="h-4 w-4 rounded border-slate-400"
+                    className="h-4 w-4 rounded border-midnight-border text-brand-teal focus:ring-brand-teal"
                     id={lookingForPlayersToggleId}
                     checked={lookingForPlayers}
                     onChange={(event) => {
@@ -813,9 +900,9 @@ export default function AdminNewSessionPage() {
                 </label>
               </div>
               {lookingForPlayers ? (
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="mt-md grid grid-cols-1 gap-sm sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor={playersNeededInputId}>
+                    <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted" htmlFor={playersNeededInputId}>
                       Players needed
                     </label>
                     <input
@@ -826,15 +913,15 @@ export default function AdminNewSessionPage() {
                       id={playersNeededInputId}
                       value={openSlotsCount}
                       onChange={(event) => setOpenSlotsCount(event.target.value)}
-                      className="w-full rounded border px-3 py-2"
+                      className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
                       aria-invalid={openSlotsInvalid}
                     />
-                    <p className={`mt-1 text-xs ${openSlotsInvalid ? "text-red-600" : "text-slate-500"}`}>
+                    <p className={`mt-xxs text-xs ${openSlotsInvalid ? "text-feedback-danger" : "text-ink-muted"}`}>
                       {openSlotsHelperText}
                     </p>
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor={skillFocusInputId}>
+                    <label className="mb-xxs block text-xs font-semibold uppercase tracking-wide text-ink-muted" htmlFor={skillFocusInputId}>
                       Skill focus (optional)
                     </label>
                     <input
@@ -842,12 +929,10 @@ export default function AdminNewSessionPage() {
                       onChange={(event) => setRequiredSkillLevel(event.target.value)}
                       placeholder="e.g. Intermediate runners"
                       id={skillFocusInputId}
-                      className="w-full rounded border px-3 py-2"
+                      className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
                       maxLength={120}
                     />
-                    <p className="mt-1 text-xs text-slate-500">
-                      Helps us show this card to sport-specific members.
-                    </p>
+                    <p className="mt-xxs text-xs text-ink-muted">Helps us show this card to sport-specific members.</p>
                   </div>
                 </div>
               ) : null}
@@ -855,8 +940,12 @@ export default function AdminNewSessionPage() {
           ) : null}
         </div>
 
-        <div className="flex gap-3">
-          <button onClick={onCreate} disabled={disableCreateButton} className="rounded bg-brand-teal px-4 py-2 text-white disabled:opacity-50">
+        <div className="flex flex-wrap gap-sm">
+          <button
+            onClick={onCreate}
+            disabled={disableCreateButton}
+            className="rounded-full bg-brand-teal px-lg py-xs text-sm font-semibold text-white shadow-card transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-teal disabled:cursor-not-allowed disabled:opacity-60"
+          >
             {submitting ? "Creating…" : "Create session"}
           </button>
         </div>

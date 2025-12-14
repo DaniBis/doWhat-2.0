@@ -1,5 +1,7 @@
 import { expect, Page, Route, test } from '@playwright/test';
 
+import { fulfillJson, handleCorsPreflight } from './support/supabaseMocks';
+
 const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? 'admin@example.com')
   .split(/[\s,]+/)
   .filter(Boolean)[0] ?? 'admin@example.com';
@@ -71,44 +73,51 @@ test.describe('/admin/venues management', () => {
   test('lists venues, exposes Save toggle, and allows adding a new venue', async ({ page }) => {
     await page.goto('/admin/venues?e2e=1');
     await dismissGeoBanner(page);
+    const centralHubRow = page.getByRole('listitem').filter({ hasText: 'Central Hub' });
 
     await expect(page.getByRole('heading', { name: /Manage Venues/i })).toBeVisible();
-    await expect(page.getByText('Central Hub (40, -74)')).toBeVisible();
+    await expect(centralHubRow).toBeVisible();
+    await expect(centralHubRow.getByText('40, -74')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
 
-    await page.getByPlaceholder('New venue name').fill('Skyline Roof');
-    await page.getByPlaceholder('lat').fill('40.75');
-    await page.getByPlaceholder('lng').fill('-73.97');
-    await page.getByRole('button', { name: 'Add' }).click();
+      await page.getByPlaceholder('New venue name').fill('Skyline Roof');
+      await page.getByPlaceholder('lat').fill('40.75');
+      await page.getByPlaceholder('lng').fill('-73.97');
+      await page.getByRole('button', { name: 'Add' }).click();
 
-    await expect(page.getByText('Skyline Roof (40.75, -73.97)')).toBeVisible();
+      const skylineRow = page.getByRole('listitem').filter({ hasText: 'Skyline Roof' });
+      await expect(skylineRow).toBeVisible();
+      await expect(skylineRow.getByText('40.75, -73.97')).toBeVisible();
   });
 
   test('filters venues and deletes a row', async ({ page }) => {
     await page.goto('/admin/venues?e2e=1');
     await dismissGeoBanner(page);
+    const centralHubRow = page.getByRole('listitem').filter({ hasText: 'Central Hub' });
 
     const searchInput = page.getByPlaceholder('Search venues by name, id, or coordinates');
     await searchInput.fill('central');
-    await expect(page.getByText('Central Hub (40, -74)')).toBeVisible();
+    await expect(centralHubRow).toBeVisible();
 
     await searchInput.fill('zzz');
     await expect(page.getByText(/No venues match/i)).toBeVisible();
 
     await searchInput.fill('');
     await expect(page.getByText(/No venues match/i)).toHaveCount(0);
-    await expect(page.getByText('Central Hub (40, -74)')).toBeVisible();
+    await expect(centralHubRow).toBeVisible();
 
     await page.getByPlaceholder('New venue name').fill('Skyline Roof');
     await page.getByPlaceholder('lat').fill('40.75');
     await page.getByPlaceholder('lng').fill('-73.97');
     await page.getByRole('button', { name: 'Add' }).click();
-    await expect(page.getByText('Skyline Roof (40.75, -73.97)')).toBeVisible();
+      const skylineRow = page.getByRole('listitem').filter({ hasText: 'Skyline Roof' });
+      await expect(skylineRow).toBeVisible();
+      await expect(skylineRow.getByText('40.75, -73.97')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Delete' }).first().click();
+    await centralHubRow.getByRole('button', { name: 'Delete' }).click();
     await expect(page.getByText('Deleted.')).toBeVisible();
-    await expect(page.getByText('Central Hub (40, -74)')).toHaveCount(0);
-    await expect(page.getByText('Skyline Roof (40.75, -73.97)')).toBeVisible();
+    await expect(page.getByRole('listitem').filter({ hasText: 'Central Hub' })).toHaveCount(0);
+      await expect(skylineRow).toBeVisible();
   });
 
 });
@@ -117,14 +126,16 @@ async function mockSupabase(page: Page, email: string) {
   const venues = [...INITIAL_VENUES];
 
   const respondJson = (route: Route, body: unknown) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    fulfillJson(route, body);
   };
 
   await page.route('**/auth/v1/user', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, { user: { id: 'test-user', email }, session: null });
   });
 
   await page.route('**/rest/v1/venues*', (route) => {
+    if (handleCorsPreflight(route)) return;
     const method = route.request().method();
     if (method === 'GET') {
       respondJson(route, venues);
@@ -160,6 +171,7 @@ async function mockSupabase(page: Page, email: string) {
 
   for (const table of SAVED_TABLES) {
     await page.route(`**/rest/v1/${table}*`, (route) => {
+      if (handleCorsPreflight(route)) return;
       respondJson(route, []);
     });
   }

@@ -18,7 +18,7 @@ export async function GET() {
   const tables: Record<string, boolean> = {};
   await Promise.all(tablesToCheck.map(async (t) => {
     try {
-      const { error } = await supabase.from(t).select("id", { head: true, count: 'exact' }).limit(1);
+      const { error } = await supabase.from(t).select("*", { head: true, count: 'exact' }).limit(1);
       tables[t] = !error;
     } catch {
       tables[t] = false;

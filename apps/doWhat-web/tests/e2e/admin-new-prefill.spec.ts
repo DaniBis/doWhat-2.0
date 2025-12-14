@@ -1,5 +1,7 @@
 import { expect, Page, Route, test } from '@playwright/test';
 
+import { fulfillJson, handleCorsPreflight } from './support/supabaseMocks';
+
 const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? 'bisceanudaniel@gmail.com')
   .split(/[\s,]+/)
   .filter(Boolean)[0] ?? 'bisceanudaniel@gmail.com';
@@ -101,18 +103,21 @@ test.describe('/admin/new prefills', () => {
 
 async function mockSupabase(page: Page, email: string) {
   const respondJson = (route: Route, body: unknown) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    fulfillJson(route, body);
   };
 
   await page.route('**/auth/v1/user', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, { user: { id: 'test-user', email }, session: null });
   });
 
   await page.route('**/rest/v1/activities**', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, ACTIVITY_FIXTURE);
   });
 
   await page.route('**/rest/v1/venues**', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, VENUE_FIXTURE);
   });
 }

@@ -36,7 +36,12 @@ jest.mock("@dowhat/shared", () => ({
     { id: "tier3-climb", label: "Bouldering", tier1Label: "Movement" },
     { id: "tier3-dance", label: "Dance Flow", tier2Label: "Creative" },
   ],
+  trackSessionOpenSlotsPublished: jest.fn(),
 }));
+
+const { trackSessionOpenSlotsPublished } = jest.requireMock("@dowhat/shared") as {
+  trackSessionOpenSlotsPublished: jest.Mock;
+};
 
 const buildSearchParams = (entries: Record<string, string | string[]>) => {
   const params = new URLSearchParams();
@@ -57,6 +62,7 @@ const createQueryChain = () => {
   chain.insert = jest.fn().mockReturnValue(chain);
   chain.update = jest.fn().mockReturnValue(chain);
   chain.eq = jest.fn().mockReturnValue(chain);
+  chain.delete = jest.fn().mockReturnValue(chain);
   chain.returns = jest.fn().mockReturnValue({ data: [], error: null });
   chain.single = jest.fn().mockReturnValue({ data: { id: "session-123" }, error: null });
   return chain;
@@ -194,12 +200,22 @@ describe("AdminNewSessionPage prefills", () => {
   });
 
   it("hides Looking for players controls when the feature flag is off", async () => {
+    process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS = "false";
     mockUseSearchParams.mockReturnValue(new URLSearchParams());
 
     await renderPage();
 
     expect(screen.queryByText(/Looking for players/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Toggle Looking for players/i)).not.toBeInTheDocument();
+  });
+
+  it("shows Looking for players controls by default", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+
+    await renderPage();
+
+    expect(await screen.findByText(/Looking for players/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Toggle Looking for players/i)).toBeInTheDocument();
   });
 
   it("clears hydrated fields when clicking Clear prefills", async () => {
@@ -293,5 +309,197 @@ describe("AdminNewSessionPage prefills", () => {
     const resetPlayersInput = await screen.findByLabelText(/Players needed/i);
     expect(resetPlayersInput).toHaveValue(1);
     expect(screen.getByLabelText(/Skill focus/i)).toHaveValue("");
+  });
+
+  it("creates open slots and emits telemetry when Looking for players is enabled", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+
+    const activitiesChain = createQueryChain();
+    activitiesChain.single.mockReturnValue({ data: { id: "activity-new" }, error: null });
+    const venuesChain = createQueryChain();
+    venuesChain.single.mockReturnValue({ data: { id: "venue-new" }, error: null });
+    const sessionsChain = createQueryChain();
+    sessionsChain.single.mockReturnValue({ data: { id: "session-open-42" }, error: null });
+    const openSlotsChain = createQueryChain();
+    openSlotsChain.single.mockReturnValue({ data: { id: "open-slot-9" }, error: null });
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "activities") return activitiesChain;
+      if (table === "venues") return venuesChain;
+      if (table === "sessions") return sessionsChain;
+      if (table === "session_open_slots") return openSlotsChain;
+      return createQueryChain();
+    });
+
+    const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    let assignedHref = "";
+    const locationMock = {
+      get href() {
+        return assignedHref;
+      },
+      set href(value: string) {
+        assignedHref = value;
+      },
+    } as Location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: locationMock,
+    });
+
+    try {
+      await renderPage();
+
+      fireEvent.change(screen.getByPlaceholderText("e.g. Running"), {
+        target: { value: "Weekend Run" },
+      });
+      fireEvent.change(screen.getByPlaceholderText("e.g. City Park"), {
+        target: { value: "North Field" },
+      });
+
+      const toggle = await screen.findByLabelText(/Toggle Looking for players/i);
+      fireEvent.click(toggle);
+
+      const playersInput = await screen.findByLabelText(/Players needed/i);
+      fireEvent.change(playersInput, { target: { value: "3" } });
+      fireEvent.change(screen.getByLabelText(/Skill focus/i), {
+        target: { value: "Intermediate crew" },
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /Create session/i }));
+      });
+
+      await waitFor(() => expect(openSlotsChain.insert).toHaveBeenCalled());
+      expect(openSlotsChain.insert).toHaveBeenLastCalledWith({
+        session_id: "session-open-42",
+        slots_count: 3,
+        required_skill_level: "Intermediate crew",
+      });
+      expect(trackSessionOpenSlotsPublished).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "session-open-42",
+          slotsCount: 3,
+          platform: "web",
+          surface: "admin/new",
+          requiredSkillLevel: "Intermediate crew",
+          prefillSource: null,
+          categoryCount: 0,
+          activityPrefilled: false,
+          venuePrefilled: false,
+          manualActivityEntry: true,
+          manualVenueEntry: true,
+          fakeSessionRisk: "high",
+          coordinatesProvided: false,
+        }),
+      );
+      expect(assignedHref).toBe("/sessions/session-open-42");
+    } finally {
+      if (originalLocationDescriptor) {
+        Object.defineProperty(window, "location", originalLocationDescriptor);
+      }
+    }
+  });
+
+  it("skips open-slot inserts when CTA stays off", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+
+    const activitiesChain = createQueryChain();
+    activitiesChain.single.mockReturnValue({ data: { id: "activity-off" }, error: null });
+    const venuesChain = createQueryChain();
+    venuesChain.single.mockReturnValue({ data: { id: "venue-off" }, error: null });
+    const sessionsChain = createQueryChain();
+    sessionsChain.single.mockReturnValue({ data: { id: "session-no-open" }, error: null });
+    const openSlotsChain = createQueryChain();
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "activities") return activitiesChain;
+      if (table === "venues") return venuesChain;
+      if (table === "sessions") return sessionsChain;
+      if (table === "session_open_slots") return openSlotsChain;
+      return createQueryChain();
+    });
+
+    const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    let assignedHref = "";
+    const locationMock = {
+      get href() {
+        return assignedHref;
+      },
+      set href(value: string) {
+        assignedHref = value;
+      },
+    } as Location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: locationMock,
+    });
+
+    try {
+      await renderPage();
+
+      fireEvent.change(screen.getByPlaceholderText("e.g. Running"), {
+        target: { value: "No CTA Run" },
+      });
+      fireEvent.change(screen.getByPlaceholderText("e.g. City Park"), {
+        target: { value: "No CTA Venue" },
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /Create session/i }));
+      });
+
+      await waitFor(() => expect(sessionsChain.insert).toHaveBeenCalled());
+      expect(openSlotsChain.insert).not.toHaveBeenCalled();
+      expect(trackSessionOpenSlotsPublished).not.toHaveBeenCalled();
+      expect(assignedHref).toBe("/sessions/session-no-open");
+    } finally {
+      if (originalLocationDescriptor) {
+        Object.defineProperty(window, "location", originalLocationDescriptor);
+      }
+    }
+  });
+
+  it("rolls back the session and surfaces errors when open-slot inserts fail", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
+
+    const activitiesChain = createQueryChain();
+    activitiesChain.single.mockReturnValue({ data: { id: "activity-risk" }, error: null });
+    const venuesChain = createQueryChain();
+    venuesChain.single.mockReturnValue({ data: { id: "venue-risk" }, error: null });
+    const sessionsChain = createQueryChain();
+    sessionsChain.single.mockReturnValue({ data: { id: "session-risk" }, error: null });
+    const openSlotsChain = createQueryChain();
+    openSlotsChain.single.mockReturnValue({ data: null, error: new Error("RLS blocked: session_open_slots") });
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "activities") return activitiesChain;
+      if (table === "venues") return venuesChain;
+      if (table === "sessions") return sessionsChain;
+      if (table === "session_open_slots") return openSlotsChain;
+      return createQueryChain();
+    });
+
+    await renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Running"), {
+      target: { value: "Risk Run" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("e.g. City Park"), {
+      target: { value: "Risk Venue" },
+    });
+
+    const toggle = await screen.findByLabelText(/Toggle Looking for players/i);
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText(/Players needed/i), { target: { value: "5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Create session/i }));
+    });
+
+    await waitFor(() => expect(openSlotsChain.insert).toHaveBeenCalled());
+    await waitFor(() => expect(sessionsChain.delete).toHaveBeenCalled());
+    expect(sessionsChain.eq).toHaveBeenCalledWith("id", "session-risk");
+    expect(trackSessionOpenSlotsPublished).not.toHaveBeenCalled();
+    expect(await screen.findByText(/RLS blocked/i)).toBeInTheDocument();
   });
 });

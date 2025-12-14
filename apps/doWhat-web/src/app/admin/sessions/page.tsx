@@ -30,7 +30,10 @@ type EditableFields = {
 export default function AdminSessions() {
   const searchParams = useSearchParams();
   const e2eBypass = useMemo(() => {
-    return process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === "true" && searchParams?.get("e2e") === "1";
+    const hasParam = searchParams?.get("e2e") === "1";
+    const envEnabled = process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === "true";
+    const devMode = process.env.NODE_ENV !== "production";
+    return hasParam && (envEnabled || devMode);
   }, [searchParams]);
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -118,14 +121,14 @@ export default function AdminSessions() {
 
   if (isAdmin === false) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-6">
-        <div className="mb-3 flex items-center gap-2">
+      <main className="mx-auto max-w-5xl px-md py-xxl text-ink-strong">
+        <div className="mb-md flex items-center gap-xs text-sm">
           <Link href="/" className="text-brand-teal">&larr; Back</Link>
-          <h1 className="text-lg font-semibold">Manage Sessions</h1>
+          <h1 className="text-lg font-semibold text-ink-strong">Manage Sessions</h1>
         </div>
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-red-700">
-          You don’t have access to this page.
-          <div className="mt-2 text-sm text-red-600">Signed in as: {email ?? "(not signed in)"}</div>
+        <div className="rounded-xl border border-feedback-danger/30 bg-surface p-md text-sm text-feedback-danger shadow-card">
+          <p className="font-medium">You don’t have access to this page.</p>
+          <div className="mt-xs text-xs text-feedback-danger/80">Signed in as: {email ?? "(not signed in)"}</div>
         </div>
       </main>
     );
@@ -151,54 +154,61 @@ export default function AdminSessions() {
   const noMatches = !loading && hasRows && visibleRows.length === 0;
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-6">
-      <div className="mb-3 flex items-center gap-2">
+    <main className="mx-auto max-w-5xl px-md py-xxl text-ink-strong">
+      <div className="mb-md flex items-center gap-xs text-sm">
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
-        <h1 className="text-lg font-semibold">Manage Sessions</h1>
+        <h1 className="text-xl font-semibold text-ink-strong">Manage Sessions</h1>
       </div>
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-1">
+      <div className="mb-lg flex flex-col gap-sm rounded-xl border border-midnight-border bg-surface p-md shadow-card sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full flex-col gap-xxs">
           <input
             type="search"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Search by activity, venue, or id"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-200"
+            className="w-full rounded-lg border border-midnight-border px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
             aria-label="Search sessions"
           />
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-ink-muted">
             Showing {visibleRows.length} of {rows.length} sessions
           </span>
         </div>
-        <p className="text-xs text-gray-500">
-          Filter by host context before editing or deleting.
-        </p>
+        <p className="text-xs text-ink-muted">Filter by host context before editing or deleting.</p>
       </div>
-      {err && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{err}</div>}
-      {msg && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{msg}</div>}
+      {err ? (
+        <div className="mb-sm rounded-xl border border-feedback-danger/30 bg-feedback-danger/5 px-sm py-xs text-sm text-feedback-danger">
+          {err}
+        </div>
+      ) : null}
+      {msg ? (
+        <div className="mb-sm rounded-xl border border-feedback-success/30 bg-feedback-success/5 px-sm py-xs text-sm text-feedback-success">
+          {msg}
+        </div>
+      ) : null}
       {loading ? (
-        <p>Loading…</p>
+        <p className="text-sm text-ink-muted">Loading…</p>
       ) : noRowsYet ? (
-        <div className="rounded border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
+        <div className="rounded-xl border border-dashed border-midnight-border/60 bg-surface p-xl text-center text-sm text-ink-muted">
           No sessions available yet.
         </div>
       ) : noMatches ? (
-        <div className="rounded border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
+        <div className="rounded-xl border border-dashed border-midnight-border/60 bg-surface p-xl text-center text-sm text-ink-muted">
           No sessions match “{searchTerm.trim()}”.
         </div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-600">
-              <th className="p-2">Activity</th>
-              <th className="p-2">Venue</th>
-              <th className="p-2">Starts</th>
-              <th className="p-2">Ends</th>
-              <th className="p-2">Price</th>
-              <th className="p-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+        <div className="overflow-hidden rounded-xl border border-midnight-border bg-surface shadow-card">
+          <table className="w-full text-sm">
+            <thead className="bg-surface-alt text-left text-xs font-semibold uppercase text-ink-muted">
+              <tr>
+                <th className="p-sm">Activity</th>
+                <th className="p-sm">Venue</th>
+                <th className="p-sm">Starts</th>
+                <th className="p-sm">Ends</th>
+                <th className="p-sm">Price</th>
+                <th className="p-sm">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
             {visibleRows.map((r) => {
               const currentEdit = editing[r.id] || {};
               const startsDisplay = currentEdit.starts_at ?? r.starts_at?.slice(0,16) ?? "";
@@ -249,10 +259,10 @@ export default function AdminSessions() {
                 { source: "admin_sessions_table" },
               );
               return (
-                <tr key={r.id} className="border-t">
-                  <td className="p-2">{r.activities?.name ?? "Activity"}</td>
-                  <td className="p-2">{r.venues?.name ?? "Venue"}</td>
-                  <td className="p-2">
+                <tr key={r.id} className="border-t border-midnight-border/40">
+                  <td className="p-sm text-ink-strong">{r.activities?.name ?? "Activity"}</td>
+                  <td className="p-sm text-ink-medium">{r.venues?.name ?? "Venue"}</td>
+                  <td className="p-sm">
                     <input
                       type="datetime-local"
                       value={startsDisplay}
@@ -262,10 +272,10 @@ export default function AdminSessions() {
                           [r.id]: { ...(state[r.id] || {}), starts_at: event.target.value },
                         }))
                       }
-                      className="rounded border px-2 py-1"
+                      className="w-full rounded-lg border border-midnight-border px-xs py-xxs text-sm focus:border-brand-teal focus:outline-none"
                     />
                   </td>
-                  <td className="p-2">
+                  <td className="p-sm">
                     <input
                       type="datetime-local"
                       value={endsDisplay}
@@ -275,10 +285,10 @@ export default function AdminSessions() {
                           [r.id]: { ...(state[r.id] || {}), ends_at: event.target.value },
                         }))
                       }
-                      className="rounded border px-2 py-1"
+                      className="w-full rounded-lg border border-midnight-border px-xs py-xxs text-sm focus:border-brand-teal focus:outline-none"
                     />
                   </td>
-                  <td className="p-2">
+                  <td className="p-sm">
                     <input
                       value={priceDisplay}
                       onChange={(event) =>
@@ -290,28 +300,39 @@ export default function AdminSessions() {
                           },
                         }))
                       }
-                      className="w-24 rounded border px-2 py-1"
+                      className="w-24 rounded-lg border border-midnight-border px-xs py-xxs text-sm focus:border-brand-teal focus:outline-none"
                     />
                   </td>
-                  <td className="p-2">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <td className="p-sm">
+                    <div className="flex flex-wrap items-center gap-xs">
                       {savePayload ? <SaveToggleButton size="sm" payload={savePayload} /> : null}
                       <Link
                         href={{ pathname: "/admin/new", query: cloneQuery }}
-                        className="rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-400"
+                        className="rounded-full border border-brand-teal/40 px-sm py-xxs text-xs font-semibold text-brand-teal hover:border-brand-teal"
                         aria-label={`Plan another session using ${r.activities?.name ?? "this activity"}`}
                       >
                         Plan another
                       </Link>
-                      <button onClick={() => save(r.id)} className="rounded border px-2 py-1">Save</button>
-                      <button onClick={() => del(r.id)} className="rounded border border-red-300 px-2 py-1 text-red-700">Delete</button>
+                      <button
+                        onClick={() => save(r.id)}
+                        className="rounded-full border border-midnight-border px-sm py-xxs text-xs font-semibold text-ink-strong hover:border-brand-teal"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => del(r.id)}
+                        className="rounded-full border border-feedback-danger/40 px-sm py-xxs text-xs font-semibold text-feedback-danger hover:border-feedback-danger"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
               );
             })}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       )}
     </main>
   );

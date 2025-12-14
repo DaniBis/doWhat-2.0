@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import {
   ACTIVITY_TIME_FILTER_OPTIONS,
+  ONBOARDING_TRAIT_GOAL,
   activityTaxonomy,
   defaultTier3Index,
   type ActivityTier3WithAncestors,
@@ -13,10 +15,12 @@ import {
 } from "@dowhat/shared";
 
 import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
+import { DISPUTE_STATUS_TOKENS, type DisputeStatus } from "@/lib/disputes/statusTokens";
 import { buildSessionCloneQuery } from "@/lib/adminPrefill";
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 import { cn } from "@/lib/utils/cn";
+import type { SocialSweatAdoptionMetricsRow } from "@/types/database";
 
 type VenueRow = {
   id: string;
@@ -54,6 +58,15 @@ type Metrics = {
   venues: MetricTrend;
 };
 
+type AdoptionMetrics = {
+  totalProfiles: number;
+  sportStepCompleteCount: number;
+  skillLevelMemberCount: number;
+  traitGoalCount: number;
+  pledgeAckCount: number;
+  fullyReadyCount: number;
+};
+
 type AuditLogRow = {
   id: string;
   actor_email: string;
@@ -67,11 +80,24 @@ type AuditLogRow = {
 
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const AUDIT_LOG_LIMIT = 25;
+const DISPUTE_STATUS_ORDER: DisputeStatus[] = ["open", "reviewing", "resolved", "dismissed"];
+const DISPUTE_STATUS_COLOR_MAP: Record<DisputeStatus, string> = {
+  open: "bg-amber-400",
+  reviewing: "bg-violet-400",
+  resolved: "bg-brand-teal",
+  dismissed: "bg-feedback-danger",
+};
+const ADMIN_DISPUTES_ROUTE = "/admin/disputes" as Route;
 
 type MetricCardProps = {
   label: string;
   metric: MetricTrend;
   loading: boolean;
+};
+
+const isValidStatusCounts = (input: unknown): input is Record<DisputeStatus, number> => {
+  if (!input || typeof input !== "object") return false;
+  return Object.values(input).every((value) => typeof value === "number" && Number.isFinite(value));
 };
 
 const formatDateTime = (value: string | null) => {
@@ -149,7 +175,10 @@ const formatAuditDetails = (details?: Record<string, unknown> | null) => {
 export default function AdminDashboard() {
   const searchParams = useSearchParams();
   const e2eBypass = useMemo(() => {
-    return process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === "true" && searchParams?.get("e2e") === "1";
+    const hasParam = searchParams?.get("e2e") === "1";
+    const envEnabled = process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === "true";
+    const devMode = process.env.NODE_ENV !== "production";
+    return hasParam && (envEnabled || devMode);
   }, [searchParams]);
   const [email, setEmail] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -163,6 +192,7 @@ export default function AdminDashboard() {
     sessions: { total: 0, recent: 0, previous: 0, delta: 0 },
     venues: { total: 0, recent: 0, previous: 0, delta: 0 },
   });
+  const [adoptionMetrics, setAdoptionMetrics] = useState<AdoptionMetrics | null>(null);
   const tier3Lookup = useMemo(() => buildTier3Lookup(), []);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [timeFilter, setTimeFilter] = useState<ActivityTimeFilterKey>("any");
@@ -171,6 +201,11 @@ export default function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [disputeSummary, setDisputeSummary] = useState<{ total: number | null; statusCounts: Partial<Record<DisputeStatus, number>> }>({
+    total: null,
+    statusCounts: {},
+  });
+  const [disputeSummaryLoading, setDisputeSummaryLoading] = useState(false);
 
   const computeWeekTrend = useCallback(<T,>(rows: T[], getCreatedAt: (row: T) => string | null | undefined) => {
     const now = Date.now();
@@ -236,7 +271,14 @@ export default function AdminDashboard() {
       const currentWindowStartIso = new Date(now - ONE_WEEK_MS).toISOString();
       const previousWindowStartIso = new Date(now - ONE_WEEK_MS * 2).toISOString();
 
-      const [venuesRes, sessionsRes, profilesRes, profilesRecentRes, profilesPreviousRes] = await Promise.all([
+      const [
+        venuesRes,
+        sessionsRes,
+        profilesRes,
+        profilesRecentRes,
+        profilesPreviousRes,
+        adoptionRes,
+      ] = await Promise.all([
         supabase.from("venues").select("id,name,city_slug,lat,lng,created_at").order("name"),
         supabase
           .from("sessions")
@@ -254,6 +296,11 @@ export default function AdminDashboard() {
           .select("id", { count: "exact", head: true })
           .gte("created_at", previousWindowStartIso)
           .lt("created_at", currentWindowStartIso),
+        supabase
+          .from("social_sweat_adoption_metrics")
+          .select("*")
+          .limit(1)
+          .maybeSingle<SocialSweatAdoptionMetricsRow>(),
       ]);
 
       if (venuesRes.error) throw venuesRes.error;
@@ -261,6 +308,7 @@ export default function AdminDashboard() {
       if (profilesRes.error) throw profilesRes.error;
       if (profilesRecentRes.error) throw profilesRecentRes.error;
       if (profilesPreviousRes.error) throw profilesPreviousRes.error;
+      if (adoptionRes.error) throw adoptionRes.error;
 
       const nextVenues = (venuesRes.data ?? []) as VenueRow[];
       const nextSessions = (sessionsRes.data ?? []) as SessionRow[];
@@ -288,6 +336,20 @@ export default function AdminDashboard() {
           ...venueTrend,
         },
       });
+
+      const adoptionRow = adoptionRes.data ?? null;
+      setAdoptionMetrics(
+        adoptionRow
+          ? {
+              totalProfiles: adoptionRow.total_profiles ?? 0,
+              sportStepCompleteCount: adoptionRow.sport_step_complete_count ?? 0,
+              skillLevelMemberCount: adoptionRow.sport_skill_member_count ?? 0,
+              traitGoalCount: adoptionRow.trait_goal_count ?? 0,
+              pledgeAckCount: adoptionRow.pledge_ack_count ?? 0,
+              fullyReadyCount: adoptionRow.fully_ready_count ?? 0,
+            }
+          : null,
+      );
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to load dashboard data.");
     } finally {
@@ -351,6 +413,32 @@ export default function AdminDashboard() {
 
   const activeFiltersCount = selectedCategories.length + (timeFilter !== "any" ? 1 : 0);
 
+  const refreshDisputeSummary = useCallback(async () => {
+    if (!isAdmin) return;
+    setDisputeSummaryLoading(true);
+    try {
+      const response = await fetch("/api/admin/disputes?status=open&limit=1", { credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load disputes.");
+      }
+      const total = typeof payload.total === "number"
+        ? payload.total
+        : Array.isArray(payload.disputes)
+          ? payload.disputes.length
+          : null;
+      const statusCounts = isValidStatusCounts(payload?.statusCounts)
+        ? (payload.statusCounts as Record<DisputeStatus, number>)
+        : {};
+      setDisputeSummary({ total, statusCounts });
+    } catch (err) {
+      console.warn("[admin] Failed to load dispute summary", getErrorMessage(err));
+      setDisputeSummary({ total: null, statusCounts: {} });
+    } finally {
+      setDisputeSummaryLoading(false);
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -371,6 +459,7 @@ export default function AdminDashboard() {
         setIsAdmin(allowed);
         if (allowed) {
           await refreshData();
+          await refreshDisputeSummary();
         } else {
           setLoading(false);
         }
@@ -385,7 +474,7 @@ export default function AdminDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [allowList, refreshData, e2eBypass]);
+  }, [allowList, refreshData, refreshDisputeSummary, e2eBypass]);
 
   const fetchAuditLogs = useCallback(async () => {
     if (!isAdmin) return;
@@ -510,59 +599,117 @@ export default function AdminDashboard() {
 
   if (isAdmin === false) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-6">
-        <div className="mb-3 flex items-center gap-2">
+      <main className="mx-auto max-w-4xl px-md py-xl">
+        <div className="mb-sm flex items-center gap-xs">
           <Link href="/" className="text-brand-teal">&larr; Back</Link>
           <h1 className="text-lg font-semibold">Admin Dashboard</h1>
         </div>
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-red-700">
+        <div className="rounded border border-feedback-danger/30 bg-feedback-danger/5 p-md text-feedback-danger">
           You don’t have access to this page.
-          <div className="mt-2 text-sm text-red-600">Signed in as: {email ?? "(not signed in)"}</div>
+          <div className="mt-xs text-sm text-feedback-danger/80">Signed in as: {email ?? "(not signed in)"}</div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+    <main className="mx-auto max-w-6xl px-md py-xl">
+      <div className="mb-md flex flex-wrap items-center gap-xs">
         <Link href="/" className="text-brand-teal">&larr; Back</Link>
         <h1 className="text-xl font-semibold">Admin Dashboard</h1>
-        <div className="ml-auto flex flex-wrap gap-3 text-sm">
+        <div className="ml-auto flex flex-wrap gap-sm text-sm">
           <Link href="/admin/new" className="text-brand-teal">Create Session</Link>
           <Link href="/admin/sessions" className="text-brand-teal">Manage Sessions</Link>
           <Link href="/admin/venues" className="text-brand-teal">Manage Venues</Link>
           <Link href="/admin/activities" className="text-brand-teal">Manage Activities</Link>
+          <Link href={ADMIN_DISPUTES_ROUTE} className="inline-flex items-center gap-xxs text-brand-teal">
+            Moderate Disputes
+            {isAdmin
+              ? (() => {
+                  const openCount =
+                    disputeSummary.statusCounts.open ?? disputeSummary.total ?? null;
+                  return typeof openCount === "number" ? (
+                    <span
+                      data-testid="admin-dispute-nav-pill"
+                      className="rounded-full bg-feedback-danger/10 px-xxs text-[11px] font-semibold leading-none text-feedback-danger"
+                    >
+                      {openCount}
+                    </span>
+                  ) : null;
+                })()
+              : null}
+          </Link>
         </div>
       </div>
 
-      {error && <div className="mb-3 rounded bg-red-50 px-3 py-2 text-red-700">{error}</div>}
-      {banner && <div className="mb-3 rounded bg-green-50 px-3 py-2 text-green-700">{banner}</div>}
-
-      <section className="mb-6 rounded border bg-white p-4 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Filter Sessions</h2>
-            <p className="text-sm text-gray-500">Use the shared taxonomy + time presets to narrow the admin views.</p>
+      {isAdmin ? (
+        <div className="mb-sm grid gap-xs rounded border border-brand-teal/30 bg-brand-teal/5 px-sm py-sm text-sm text-ink-strong">
+          <div className="flex flex-wrap items-center gap-xs">
+            <span className="font-semibold text-brand-teal">Reliability disputes</span>
+            <span className="text-ink-strong">Monitor counts before opening the moderation queue.</span>
+            <span className="rounded-full border border-brand-teal/50 bg-white/80 px-sm py-xxs text-xs font-semibold text-brand-teal">
+              Open: {disputeSummary.statusCounts.open ?? disputeSummary.total ?? "—"}
+            </span>
           </div>
-          <div className="ml-auto flex items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-xs text-xs">
+            {DISPUTE_STATUS_ORDER.map((status) => {
+              const token = DISPUTE_STATUS_TOKENS[status];
+              const count = disputeSummary.statusCounts[status] ?? (status === "open" ? disputeSummary.total ?? null : null);
+              return (
+                <span key={status} className="inline-flex items-center gap-xxs rounded-full border border-brand-teal/30 bg-white/70 px-sm py-xxs font-semibold text-ink-strong">
+                  <span className={cn("inline-flex h-2 w-2 rounded-full", DISPUTE_STATUS_COLOR_MAP[status] ?? "bg-ink-muted")} />
+                  {token?.label ?? status}: {count ?? 0}
+                </span>
+              );
+            })}
+            <button
+              type="button"
+              onClick={refreshDisputeSummary}
+              disabled={disputeSummaryLoading}
+              className="ml-auto rounded-full border border-brand-teal/40 px-sm py-xxs font-semibold text-brand-teal/80 hover:border-brand-teal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal/40 disabled:opacity-60"
+            >
+              {disputeSummaryLoading ? "Refreshing…" : "Refresh counts"}
+            </button>
+            <Link href={ADMIN_DISPUTES_ROUTE} className="text-brand-teal">Open dashboard &rarr;</Link>
+          </div>
+        </div>
+      ) : null}
+
+      {error && (
+        <div className="mb-sm rounded border border-feedback-danger/30 bg-feedback-danger/5 px-sm py-xs text-feedback-danger">
+          {error}
+        </div>
+      )}
+      {banner && (
+        <div className="mb-sm rounded border border-feedback-success/30 bg-feedback-success/5 px-sm py-xs text-feedback-success">
+          {banner}
+        </div>
+      )}
+
+      <section className="mb-xl rounded border bg-surface p-md shadow-sm">
+        <div className="mb-md flex flex-wrap items-center gap-sm">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">Filter Sessions</h2>
+            <p className="text-sm text-ink-muted">Use the shared taxonomy + time presets to narrow the admin views.</p>
+          </div>
+          <div className="ml-auto flex items-center gap-sm text-sm">
             {activeFiltersCount > 0 && (
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700">
+              <span className="rounded-full bg-brand-teal/10 px-sm py-xxs text-brand-teal">
                 {activeFiltersCount} active filter{activeFiltersCount === 1 ? "" : "s"}
               </span>
             )}
             <button
               onClick={clearFilters}
-              className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded border border-midnight-border/60 px-sm py-xxs text-sm text-ink-strong hover:bg-surface-alt disabled:opacity-50"
               disabled={activeFiltersCount === 0}
             >
               Reset
             </button>
           </div>
         </div>
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="grid gap-xl lg:grid-cols-[2fr_1fr]">
           <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">Activity Categories</p>
+            <p className="mb-xs text-sm font-medium text-ink-strong">Activity Categories</p>
             <TaxonomyCategoryPicker
               taxonomy={activityTaxonomy}
               selectedIds={selectedCategories}
@@ -570,16 +717,16 @@ export default function AdminDashboard() {
             />
           </div>
           <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">Time of Day</p>
-            <div className="flex flex-wrap gap-2">
+            <p className="mb-xs text-sm font-medium text-ink-strong">Time of Day</p>
+            <div className="flex flex-wrap gap-xs">
               {ACTIVITY_TIME_FILTER_OPTIONS.map((option) => (
                 <button
                   key={option.key}
                   onClick={() => setTimeFilter(option.key)}
-                  className={`px-3 py-1.5 rounded-full border text-sm font-medium transition-colors ${
+                  className={`px-sm py-xs rounded-full border text-sm font-medium transition-colors ${
                     timeFilter === option.key
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-gray-200 text-gray-700 hover:border-blue-400"
+                      ? "border-brand-teal bg-brand-teal/10 text-brand-teal"
+                      : "border-midnight-border/40 text-ink-strong hover:border-brand-teal/60"
                   }`}
                 >
                   {option.label}
@@ -590,116 +737,166 @@ export default function AdminDashboard() {
         </div>
       </section>
 
-      <section className="mb-6 rounded border bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3">
+      <section className="mb-xl rounded border bg-surface p-md shadow-sm">
+        <div className="flex flex-wrap items-center gap-sm">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Search &amp; Monitor</h2>
-            <p className="text-sm text-gray-500">Quickly narrow sessions or venues by name, city, or taxonomy matches.</p>
+            <h2 className="text-lg font-semibold text-ink">Search &amp; Monitor</h2>
+            <p className="text-sm text-ink-muted">Quickly narrow sessions or venues by name, city, or taxonomy matches.</p>
           </div>
-          <div className="ml-auto flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <div className="ml-auto flex w-full flex-col gap-xs sm:w-auto sm:flex-row sm:items-center">
             <input
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search sessions or venues"
-              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-800 focus:border-brand-teal focus:outline-none"
+              className="w-full rounded border border-midnight-border/60 px-sm py-xs text-sm text-ink-strong focus:border-brand-teal focus:outline-none"
             />
             {searchQuery ? (
               <button
                 onClick={() => setSearchQuery("")}
-                className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                className="rounded border border-midnight-border/60 px-sm py-xxs text-sm text-ink-strong hover:bg-surface-alt"
               >
                 Clear
               </button>
             ) : null}
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-600">
-          <span className="rounded-full bg-gray-100 px-3 py-1">
+        <div className="mt-sm flex flex-wrap gap-sm text-xs text-ink-medium">
+          <span className="rounded-full bg-surface-alt px-sm py-xxs">
             {filteredSessions.length} session{filteredSessions.length === 1 ? "" : "s"} match search
           </span>
-          <span className="rounded-full bg-gray-100 px-3 py-1">
+          <span className="rounded-full bg-surface-alt px-sm py-xxs">
             {filteredVenues.length} venue{filteredVenues.length === 1 ? "" : "s"} match search
           </span>
-          {normalizedSearch ? <span className="text-gray-500">Query: “{searchQuery.trim()}”</span> : null}
+          {normalizedSearch ? <span className="text-ink-muted">Query: “{searchQuery.trim()}”</span> : null}
         </div>
       </section>
 
-      <section className="mb-6">
-        <div className="mb-3 flex items-center gap-3">
+      <section className="mb-xl">
+        <div className="mb-sm flex items-center gap-sm">
           <h2 className="text-lg font-semibold">Analytics</h2>
-          <button onClick={refreshData} className="rounded border border-brand-teal px-3 py-1 text-sm text-brand-teal disabled:opacity-50" disabled={loading}>
+          <button onClick={refreshData} className="rounded border border-brand-teal px-sm py-xxs text-sm text-brand-teal disabled:opacity-50" disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-sm sm:grid-cols-3">
           <MetricCard label="Users" metric={metrics.users} loading={loading} />
           <MetricCard label="Sessions" metric={metrics.sessions} loading={loading} />
           <MetricCard label="Venues" metric={metrics.venues} loading={loading} />
         </div>
         <GrowthHighlights metrics={metrics} loading={loading} />
+        <section className="mt-md rounded border bg-surface p-md shadow-sm">
+          <div className="flex flex-col gap-xxs sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">Social Sweat Readiness</p>
+              <h3 className="text-lg font-semibold text-ink">Onboarding Adoption</h3>
+              <p className="text-sm text-ink-muted">Monitor sport, trait, and pledge completion ahead of GA.</p>
+            </div>
+            {adoptionMetrics ? (
+              <span className="text-xs text-ink-muted">
+                {adoptionMetrics.totalProfiles} profile{adoptionMetrics.totalProfiles === 1 ? "" : "s"} tracked
+              </span>
+            ) : null}
+          </div>
+          {adoptionMetrics ? (
+            <div className="mt-md grid gap-sm md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              <AdoptionMetricCard
+                label="Sport & skill complete"
+                value={adoptionMetrics.sportStepCompleteCount}
+                total={adoptionMetrics.totalProfiles}
+                helper="Primary sport, play style, and skill saved."
+              />
+              <AdoptionMetricCard
+                label="Skill level saved"
+                value={adoptionMetrics.skillLevelMemberCount}
+                total={adoptionMetrics.totalProfiles}
+                helper="Members who set a skill rating."
+              />
+              <AdoptionMetricCard
+                label={`Trait goal (${ONBOARDING_TRAIT_GOAL})`}
+                value={adoptionMetrics.traitGoalCount}
+                total={adoptionMetrics.totalProfiles}
+                helper={`${ONBOARDING_TRAIT_GOAL} base vibes confirmed.`}
+              />
+              <AdoptionMetricCard
+                label="Reliability pledge"
+                value={adoptionMetrics.pledgeAckCount}
+                total={adoptionMetrics.totalProfiles}
+                helper="Profiles that acknowledged the pledge."
+              />
+              <AdoptionMetricCard
+                label="Fully ready"
+                value={adoptionMetrics.fullyReadyCount}
+                total={adoptionMetrics.totalProfiles}
+                helper="Traits + sport + pledge complete."
+              />
+            </div>
+          ) : (
+            <p className="mt-md text-sm text-ink-muted">{loading ? "Loading adoption metrics…" : "No profiles available yet."}</p>
+          )}
+        </section>
         {filteredCategoryStats.length > 0 ? (
-          <div className="mt-4 rounded border bg-white p-4 shadow-sm">
-            <p className="text-sm font-semibold text-gray-600">
+          <div className="mt-md rounded border bg-surface p-md shadow-sm">
+            <p className="text-sm font-semibold text-ink-medium">
               Top Categories {activeFiltersCount ? "(filtered)" : ""}
             </p>
-            <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            <ul className="mt-xs grid gap-xs sm:grid-cols-2">
               {filteredCategoryStats.map((stat) => (
                 <li key={stat.id} className="flex items-center justify-between text-sm">
                   <span>
                     {stat.label}
                     {stat.parentLabel ? (
-                      <span className="ml-2 text-xs text-gray-500">{stat.parentLabel}</span>
+                      <span className="ml-xs text-xs text-ink-muted">{stat.parentLabel}</span>
                     ) : null}
                   </span>
-                  <span className="text-gray-500">{stat.count}</span>
+                  <span className="text-ink-muted">{stat.count}</span>
                 </li>
               ))}
             </ul>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-gray-500">No categories match the selected filters yet.</p>
+          <p className="mt-md text-sm text-ink-muted">No categories match the selected filters yet.</p>
         )}
       </section>
 
-      <section className="mb-8">
-        <div className="mb-2 flex items-center gap-2">
+      <section className="mb-xxl">
+        <div className="mb-xs flex items-center gap-xs">
           <h2 className="text-lg font-semibold">All Sessions</h2>
           <Link href="/admin/sessions" className="text-sm text-brand-teal">Open detailed view</Link>
         </div>
         {loading && sessions.length === 0 ? (
           <p>Loading sessions…</p>
         ) : sessions.length === 0 ? (
-          <p className="text-sm text-gray-600">No sessions found.</p>
+          <p className="text-sm text-ink-medium">No sessions found.</p>
         ) : filteredSessions.length === 0 ? (
-          <p className="text-sm text-gray-600">No sessions match the current filters or search query.</p>
+          <p className="text-sm text-ink-medium">No sessions match the current filters or search query.</p>
         ) : (
           <div className="overflow-x-auto rounded border">
-            <div className="flex items-center justify-between border-b px-3 py-2 text-xs text-gray-500">
+            <div className="flex items-center justify-between border-b px-sm py-xs text-xs text-ink-muted">
               <span>
                 Showing {filteredSessions.length} of {sessions.length} sessions
                 {activeFiltersCount ? " (filters applied)" : ""}
               </span>
             </div>
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+              <thead className="bg-surface-alt text-left text-xs uppercase text-ink-muted">
                 <tr>
-                  <th className="px-3 py-2">Activity</th>
-                  <th className="px-3 py-2">Venue</th>
-                  <th className="px-3 py-2">Starts</th>
-                  <th className="px-3 py-2">Ends</th>
-                  <th className="px-3 py-2">Actions</th>
+                  <th className="px-sm py-xs">Activity</th>
+                  <th className="px-sm py-xs">Venue</th>
+                  <th className="px-sm py-xs">Starts</th>
+                  <th className="px-sm py-xs">Ends</th>
+                  <th className="px-sm py-xs">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSessions.map((row) => (
                   <tr key={row.id} className="border-t">
-                    <td className="px-3 py-2">{row.activities?.name ?? "–"}</td>
-                    <td className="px-3 py-2">{row.venues?.name ?? "–"}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(row.starts_at)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(row.ends_at)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap justify-end gap-2">
+                    <td className="px-sm py-xs">{row.activities?.name ?? "–"}</td>
+                    <td className="px-sm py-xs">{row.venues?.name ?? "–"}</td>
+                    <td className="px-sm py-xs whitespace-nowrap">{formatDateTime(row.starts_at)}</td>
+                    <td className="px-sm py-xs whitespace-nowrap">{formatDateTime(row.ends_at)}</td>
+                    <td className="px-sm py-xs">
+                      <div className="flex flex-wrap justify-end gap-xs">
                         <Link
                           href={{
                             pathname: "/admin/new",
@@ -720,14 +917,14 @@ export default function AdminDashboard() {
                               { source: "admin_dashboard_session" },
                             ),
                           }}
-                          className="rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:border-emerald-400"
+                          className="rounded border border-brand-teal/40 px-xs py-xxs text-xs font-semibold text-brand-teal hover:border-brand-teal"
                           aria-label={`Plan another session using ${row.activities?.name ?? 'this activity'}`}
                         >
                           Plan another
                         </Link>
                         <button
                           onClick={() => handleDeleteSession(row)}
-                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-700"
+                          className="rounded border border-feedback-danger/40 px-xs py-xxs text-xs text-feedback-danger hover:border-feedback-danger"
                         >
                           Delete
                         </button>
@@ -742,27 +939,27 @@ export default function AdminDashboard() {
       </section>
 
       <section>
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-xs flex items-center gap-xs">
           <h2 className="text-lg font-semibold">All Venues</h2>
           <Link href="/admin/venues" className="text-sm text-brand-teal">Open detailed view</Link>
         </div>
         {loading && venues.length === 0 ? (
           <p>Loading venues…</p>
         ) : venues.length === 0 ? (
-          <p className="text-sm text-gray-600">No venues available.</p>
+          <p className="text-sm text-ink-medium">No venues available.</p>
         ) : filteredVenues.length === 0 ? (
-          <p className="text-sm text-gray-600">No venues match the current search.</p>
+          <p className="text-sm text-ink-medium">No venues match the current search.</p>
         ) : (
           <ul className="divide-y rounded border">
             {filteredVenues.map((row) => (
-              <li key={row.id} className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+              <li key={row.id} className="flex flex-col gap-xs px-sm py-xs sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium">{row.name}</p>
-                  <p className="text-sm text-gray-500">{row.city_slug ?? "city unknown"}</p>
+                  <p className="text-sm text-ink-muted">{row.city_slug ?? "city unknown"}</p>
                 </div>
                 <button
                   onClick={() => handleDeleteVenue(row)}
-                  className="self-start rounded border border-red-300 px-2 py-1 text-xs text-red-700"
+                  className="self-start rounded border border-feedback-danger/40 px-xs py-xxs text-xs text-feedback-danger hover:border-feedback-danger"
                 >
                   Delete
                 </button>
@@ -772,17 +969,17 @@ export default function AdminDashboard() {
         )}
       </section>
 
-      <section className="mt-8">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
+      <section className="mt-xxl">
+        <div className="mb-xs flex flex-wrap items-center gap-xs">
           <h2 className="text-lg font-semibold">Audit Log</h2>
           <button
             onClick={fetchAuditLogs}
             disabled={auditLoading}
-            className="rounded border border-brand-teal px-3 py-1 text-sm text-brand-teal disabled:opacity-50"
+            className="rounded border border-brand-teal px-sm py-xxs text-sm text-brand-teal disabled:opacity-50"
           >
             {auditLoading ? "Refreshing…" : "Refresh"}
           </button>
-          <span className="text-xs text-gray-500">Latest {auditLogs.length} actions</span>
+          <span className="text-xs text-ink-muted">Latest {auditLogs.length} actions</span>
           <a
             href="/api/admin/audit-logs?format=csv"
             className="text-xs text-brand-teal underline-offset-2 hover:underline"
@@ -791,41 +988,45 @@ export default function AdminDashboard() {
             Download CSV
           </a>
         </div>
-        {auditError && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{auditError}</div>}
+        {auditError && (
+          <div className="mb-sm rounded border border-feedback-danger/30 bg-feedback-danger/5 px-sm py-xs text-sm text-feedback-danger">
+            {auditError}
+          </div>
+        )}
         {auditLogs.length === 0 ? (
-          <p className="text-sm text-gray-600">No recent admin actions recorded yet.</p>
+          <p className="text-sm text-ink-medium">No recent admin actions recorded yet.</p>
         ) : (
           <div className="overflow-x-auto rounded border">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+              <thead className="bg-surface-alt text-left text-xs uppercase text-ink-muted">
                 <tr>
-                  <th className="px-3 py-2">Action</th>
-                  <th className="px-3 py-2">Entity</th>
-                  <th className="px-3 py-2">Actor</th>
-                  <th className="px-3 py-2">Reason</th>
-                  <th className="px-3 py-2">Details</th>
-                  <th className="px-3 py-2">Timestamp</th>
+                  <th className="px-sm py-xs">Action</th>
+                  <th className="px-sm py-xs">Entity</th>
+                  <th className="px-sm py-xs">Actor</th>
+                  <th className="px-sm py-xs">Reason</th>
+                  <th className="px-sm py-xs">Details</th>
+                  <th className="px-sm py-xs">Timestamp</th>
                 </tr>
               </thead>
               <tbody>
                 {auditLogs.map((log) => (
                   <tr key={log.id} className="border-t">
-                    <td className="px-3 py-2 font-medium text-gray-800">{log.action}</td>
-                    <td className="px-3 py-2 text-gray-600">
+                    <td className="px-sm py-xs font-medium text-ink-strong">{log.action}</td>
+                    <td className="px-sm py-xs text-ink-medium">
                       {log.entity_type}
-                      {log.entity_id ? <span className="ml-1 text-xs text-gray-400">#{log.entity_id}</span> : null}
+                      {log.entity_id ? <span className="ml-xxs text-xs text-ink-muted">#{log.entity_id}</span> : null}
                     </td>
-                    <td className="px-3 py-2 text-gray-600">{log.actor_email}</td>
-                    <td className="px-3 py-2 text-gray-600">{log.reason?.trim() || "–"}</td>
-                    <td className="px-3 py-2 text-gray-600">{formatAuditDetails(log.details)}</td>
-                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{formatDateTime(log.created_at)}</td>
+                    <td className="px-sm py-xs text-ink-medium">{log.actor_email}</td>
+                    <td className="px-sm py-xs text-ink-medium">{log.reason?.trim() || "–"}</td>
+                    <td className="px-sm py-xs text-ink-medium">{formatAuditDetails(log.details)}</td>
+                    <td className="px-sm py-xs text-ink-muted whitespace-nowrap">{formatDateTime(log.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-        <p className="mt-2 text-xs text-gray-500">Entries are stored in Supabase (`admin_audit_logs`) and mirror this session’s deletes.</p>
+        <p className="mt-xs text-xs text-ink-muted">Entries are stored in Supabase (`admin_audit_logs`) and mirror this session’s deletes.</p>
       </section>
     </main>
   );
@@ -834,17 +1035,17 @@ export default function AdminDashboard() {
 const MetricCard = ({ label, metric, loading }: MetricCardProps) => {
   const deltaText = metric.delta === 0 ? "Flat vs prior 7d" : `${metric.delta > 0 ? "+" : ""}${metric.delta} vs prior 7d`;
   const deltaClass = cn("text-xs font-medium", {
-    "text-emerald-600": metric.delta > 0,
-    "text-gray-500": metric.delta === 0,
-    "text-red-600": metric.delta < 0,
+    "text-feedback-success": metric.delta > 0,
+    "text-ink-muted": metric.delta === 0,
+    "text-feedback-danger": metric.delta < 0,
   });
 
   return (
-    <div className="rounded border bg-white p-4 shadow-sm">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="text-2xl font-semibold">{loading ? "..." : metric.total}</p>
-      <p className="text-xs text-gray-500">{loading ? "" : `${metric.recent} in last 7d`}</p>
-      <p className={deltaClass}>{loading ? "" : deltaText}</p>
+    <div className="rounded-xl border border-midnight-border bg-surface p-lg shadow-card">
+      <p className="text-sm font-medium text-ink-medium">{label}</p>
+      <p className="mt-xxs text-2xl font-semibold text-ink-strong">{loading ? "…" : metric.total}</p>
+      <p className="mt-xxs text-xs text-ink-muted">{loading ? "" : `${metric.recent} in last 7d`}</p>
+      <p className={cn(deltaClass, "mt-xxs")}>{loading ? "" : deltaText}</p>
     </div>
   );
 };
@@ -856,14 +1057,36 @@ const GrowthHighlights = ({ metrics, loading }: { metrics: Metrics; loading: boo
     { key: "venues", label: "Venues verified", metric: metrics.venues },
   ];
   return (
-    <div className="mt-4 grid gap-3 md:grid-cols-3">
+    <div className="mt-md grid gap-sm md:grid-cols-3">
       {highlights.map((item) => (
-        <div key={item.key} className="rounded border border-dashed bg-white/70 p-3 text-sm shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-gray-500">{item.label}</p>
-          <p className="text-base font-semibold text-gray-900">{loading ? "…" : describeTrend(item.metric)}</p>
-          <p className="text-xs text-gray-500">Last 7d vs. prior week</p>
+        <div
+          key={item.key}
+          className="rounded-xl border border-dashed border-midnight-border bg-surface-alt p-md text-sm shadow-card"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{item.label}</p>
+          <p className="mt-xxs text-base font-semibold text-ink-strong">{loading ? "…" : describeTrend(item.metric)}</p>
+          <p className="text-xs text-ink-muted">Last 7d vs. prior week</p>
         </div>
       ))}
+    </div>
+  );
+};
+
+type AdoptionMetricCardProps = {
+  label: string;
+  value: number;
+  total: number;
+  helper: string;
+};
+
+const AdoptionMetricCard = ({ label, value, total, helper }: AdoptionMetricCardProps) => {
+  const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="rounded-xl border border-brand-teal/30 bg-surface p-lg shadow-card">
+      <p className="text-sm font-semibold text-ink-strong">{label}</p>
+      <p className="mt-xxs text-3xl font-bold text-ink-strong">{value}</p>
+      <p className="text-xs text-ink-medium">{total > 0 ? `${percent}% of ${total}` : "Awaiting first members"}</p>
+      <p className="mt-xxs text-xs text-ink-muted">{helper}</p>
     </div>
   );
 };

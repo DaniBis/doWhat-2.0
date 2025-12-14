@@ -1,5 +1,7 @@
 import { expect, Page, Route, test } from '@playwright/test';
 
+import { fulfillJson, handleCorsPreflight } from './support/supabaseMocks';
+
 const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? 'admin@example.com')
   .split(/[\s,]+/)
   .filter(Boolean)[0] ?? 'admin@example.com';
@@ -114,19 +116,22 @@ test.describe('/admin/sessions plan another links', () => {
 
 async function mockSupabase(page: Page, email: string) {
   const respondJson = (route: Route, body: unknown) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    fulfillJson(route, body);
   };
 
   await page.route('**/auth/v1/user', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, { user: { id: 'test-user', email }, session: null });
   });
 
   await page.route('**/rest/v1/sessions*', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, SESSION_FIXTURE);
   });
 
   for (const table of SAVED_TABLES) {
     await page.route(`**/rest/v1/${table}*`, (route) => {
+      if (handleCorsPreflight(route)) return;
       respondJson(route, EMPTY_ROWS);
     });
   }

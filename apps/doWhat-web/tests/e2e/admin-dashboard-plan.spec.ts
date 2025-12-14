@@ -1,5 +1,7 @@
 import { expect, Page, Route, test } from '@playwright/test';
 
+import { fulfillJson, handleCorsPreflight, withCorsHeaders } from './support/supabaseMocks';
+
 const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? 'admin@example.com')
   .split(/[\s,]+/)
   .filter(Boolean)[0] ?? 'admin@example.com';
@@ -50,6 +52,15 @@ const VENUES_FIXTURE = [
     created_at: '2025-11-20T08:00:00.000Z',
   },
 ];
+
+const SOCIAL_SWEAT_ADOPTION_ROW = {
+  total_profiles: 10,
+  sport_step_complete_count: 4,
+  sport_skill_member_count: 3,
+  trait_goal_count: 2,
+  pledge_ack_count: 1,
+  fully_ready_count: 1,
+};
 
 const EMPTY_ROWS: unknown[] = [];
 
@@ -127,27 +138,56 @@ test.describe('/admin dashboard plan links', () => {
 
 async function mockSupabase(page: Page, email: string) {
   const respondJson = (route: Route, body: unknown, headers?: Record<string, string>) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body), headers });
+    fulfillJson(route, body, headers);
   };
 
   await page.route('**/auth/v1/user', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, { user: { id: 'test-user', email }, session: null });
   });
 
   await page.route('**/rest/v1/sessions*', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, SESSIONS_FIXTURE);
   });
 
   await page.route('**/rest/v1/venues*', (route) => {
+    if (handleCorsPreflight(route)) return;
     respondJson(route, VENUES_FIXTURE);
   });
 
+  await page.route('**/rest/v1/social_sweat_adoption_metrics*', (route) => {
+    if (handleCorsPreflight(route)) return;
+    respondJson(route, SOCIAL_SWEAT_ADOPTION_ROW);
+  });
+
   await page.route('**/rest/v1/profiles*', (route) => {
+    if (handleCorsPreflight(route)) return;
     const countHeader = { 'content-range': '0-0/0' };
     if (route.request().method() === 'HEAD') {
-      route.fulfill({ status: 200, headers: countHeader });
+      route.fulfill({ status: 200, headers: withCorsHeaders(countHeader) });
       return;
     }
     respondJson(route, EMPTY_ROWS, countHeader);
+  });
+
+  await page.route('**/rest/v1/admin_audit_logs*', (route) => {
+    if (handleCorsPreflight(route)) return;
+    const method = route.request().method();
+    if (method === 'GET') {
+      respondJson(route, []);
+      return;
+    }
+    if (method === 'POST') {
+      const payload = JSON.parse(route.request().postData() ?? '{}');
+      const entry = {
+        id: `audit-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        ...payload,
+      };
+      respondJson(route, entry);
+      return;
+    }
+    respondJson(route, []);
   });
 }
