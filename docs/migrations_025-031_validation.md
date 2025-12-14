@@ -1,11 +1,11 @@
-# Migrations 025–035 Validation Checklist
+# Migrations 025–037 Validation Checklist
 
-_Last updated: 10 Dec 2025_
+_Last updated: 12 Dec 2025_
 
 This note captures the verification steps for the recent Supabase schema work:
 
 - Attendance + saved activities (025–034)
-- Social Sweat core foundations (035)
+- Social Sweat core + reliability pledge foundations (035–037)
 
 Use it when promoting changes to staging or production so we can prove migrations ran in order,
 seed helpers completed, and rollback files are on hand.
@@ -23,13 +23,10 @@ seed helpers completed, and rollback files are on hand.
 
    ## 10 Dec 2025 prep (Social Sweat core)
 
-   - [ ] Run `pnpm run db:migrate` against staging to apply `035_social_sweat_core.sql` after capturing the
-      latest database snapshot/backup.
-   - [ ] Verify `select filename from public.schema_migrations order by 1 desc limit 1;` now returns
-      `035_social_sweat_core.sql`.
-   - [ ] Rerun `pnpm --filter dowhat-web run typecheck` and mobile/web test suites after regenerating
-      Supabase types so new enums/tables compile across packages.
-   - [ ] Update this checklist with production rollout notes once 035 lands.
+   - [ ] Run `pnpm run db:migrate` against staging to apply `035_social_sweat_core.sql` (plus `036_attendance_reliability_trigger.sql` and `037_reliability_pledge_ack.sql`) after capturing the latest database snapshot/backup.
+   - [ ] Verify `select filename from public.schema_migrations order by 1 desc limit 1;` now returns `037_reliability_pledge_ack.sql`.
+   - [ ] Rerun `pnpm --filter dowhat-web run typecheck` and mobile/web test suites after regenerating Supabase types so new enums/tables compile across packages.
+   - [ ] Update this checklist with production rollout notes once the Social Sweat trio lands.
 
 
 ## How to apply
@@ -47,7 +44,13 @@ pnpm run db:migrate
 pnpm seed:taxonomy
 pnpm seed:places:bangkok
 pnpm seed:events:bangkok
+
+# 4. Quick health check for required migrations (optional but fast).
+node scripts/health-migrations.mjs --social-sweat
+# exits non-zero if core (025–031) or Social Sweat (034a–035) migrations are missing
 ```
+
+> Note: `scripts/health-migrations.mjs` now also enforces the intermediate 032–034 files by default, so running it without flags guarantees the trait guard fix, event participant cleanup, and admin audit logs migrations are present. Pass `--social-sweat` to extend the check through 034a–037.
 
 The runner emits `[migrate] Applied 031_user_saved_activities.sql` when the last migration succeeds.
 Check Supabase logs for DDL statements if you need external confirmation.
@@ -74,7 +77,7 @@ Check Supabase logs for DDL statements if you need external confirmation.
 1. **Schema migrations**
    - `node run_migrations.js` finishes without errors.
     - `select filename from public.schema_migrations where filename like '03%' order by 1;` returns
-       `030_attendance_views.sql` through `035_social_sweat_core.sql` (including `034a_extend_attendance_status.sql`).
+       `030_attendance_views.sql` through `037_reliability_pledge_ack.sql` (including `034a_extend_attendance_status.sql`).
 2. **Attendance rollups**
    - `select * from v_session_attendance_counts limit 5;` succeeds.
    - `select going_count from v_activity_attendance_summary order by updated_at desc limit 5;` succeeds.
@@ -86,12 +89,49 @@ Check Supabase logs for DDL statements if you need external confirmation.
    - `select * from user_sport_profiles limit 5;` succeeds (may be empty pre-onboarding).
    - `select enumlabel from pg_enum join pg_type on pg_type.oid = pg_enum.enumtypid where typname = 'attendance_reliability_status';` shows the new enum values.
    - `select enumlabel from pg_enum pg join pg_type t on t.oid = pg.enumtypid where t.typname = 'attendance_status';` includes both `registered` and `late_cancel`.
+   - `select reliability_pledge_ack_at, reliability_pledge_version from profiles where reliability_pledge_ack_at is not null limit 5;` works (expect zero rows until members acknowledge the pledge).
 5. **Rollbacks on hand**
    - Keep `028_sessions_schema_spec_rollback.sql` and `029_remove_rsvps_table_rollback.sql` synced to prod.
    - Document in the release note which migration would require a rollback and under what conditions.
+
+### Rollback dry-run
+
+For the migrations that carry explicit rollback files, verify they still apply cleanly by running them against a disposable Supabase database:
+
+```bash
+export SUPABASE_DB_URL=postgres://postgres:password@host:6543/postgres
+node run_migrations.js --only 028_sessions_schema_spec.sql
+psql "$SUPABASE_DB_URL" -f apps/doWhat-web/supabase/migrations/028_sessions_schema_spec_rollback.sql
+```
+
+Repeat the pattern for `029_remove_rsvps_table.sql` / `029_remove_rsvps_table_rollback.sql`. Each rollback script should complete without errors after the paired migration runs, proving we can unwind if necessary. Capture the dry-run output in release notes when promoting to staging/production.
 6. **Seed scripts** (optional but recommended on fresh environments)
    - `pnpm seed:taxonomy` populates shared taxonomy tables.
    - `pnpm seed:places:bangkok` + `pnpm seed:events:bangkok` hydrate demo data used by dashboards.
+   - `pnpm seed:social-sweat` spins up the Bucharest pilot data set (profiles, venues, sessions, open slots, and sport profiles). Follow it with `pnpm verify:social-sweat` (same Supabase env vars) to auto-confirm the hosts, venues, activities, sessions, open slots, and host attendance rows are all present. Need to rewind the pilot? Run `pnpm rollback:social-sweat` to delete the same set of records (plus the seeded auth users) before reseeding.
+
+### Seed validation queries
+
+Run the following SQL after each seed helper to confirm the expected rows were inserted:
+
+```sql
+-- Taxonomy version should advance after pnpm seed:taxonomy
+select version, updated_at from activity_taxonomy_state order by updated_at desc limit 1;
+
+-- Bangkok demo data should exist after pnpm seed:places:bangkok / pnpm seed:events:bangkok
+select count(*) from places where city = 'Bangkok';
+select count(*) from events where metadata ->> 'seedSource' = 'bangkok-demo';
+
+-- Social Sweat pilot data should exist after pnpm seed:social-sweat
+-- Prefer running the automated verifier for full coverage:
+--   pnpm verify:social-sweat
+-- It checks profiles, sport profiles, venues, activities, sessions, open slots, and host attendance rows.
+-- Need to clean up a stale pilot? Use:
+--   pnpm rollback:social-sweat
+-- to remove the seeded sessions/slots/venues/activities/profiles/auth users before reseeding.
+```
+
+If any query returns zero rows, rerun the corresponding seed command (and re-run `pnpm verify:social-sweat` for the pilot data) after confirming `SUPABASE_DB_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set.
 
 ## Troubleshooting
 

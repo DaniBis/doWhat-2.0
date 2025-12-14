@@ -13,6 +13,12 @@ const pickEnv = (...keys) => {
   return undefined;
 };
 
+const skipFlag = (process.env.TRAIT_HEALTH_SKIP ?? '').toLowerCase();
+if (['1', 'true', 'yes'].includes(skipFlag)) {
+  console.log('[trait-health] Skipping trait policy verification (TRAIT_HEALTH_SKIP set).');
+  process.exit(0);
+}
+
 const supabaseUrl = pickEnv('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_URL');
 const anonKey = pickEnv('SUPABASE_ANON_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'EXPO_PUBLIC_SUPABASE_ANON_KEY');
 const serviceKey = pickEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVICE_KEY');

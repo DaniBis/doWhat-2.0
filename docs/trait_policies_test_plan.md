@@ -61,6 +61,17 @@ Generate tokens with `pnpm --filter scripts run health-env` or Supabase dashboar
 2. `pnpm -w run health` now calls `scripts/health-trait-policies.mjs`, which runs the verifier whenever Supabase credentials are present (and skips with a note otherwise), so the standard health check surface flags policy drift automatically.
 3. Document real test outputs (SQL + HTTP responses) in `docs/current_app_overview_2025-12-03.md` after the first successful run.
 
+## UX Flow & Regression Coverage
+
+In addition to the Supabase policy checks above, keep the following Jest suites green so the full trait experience (creation, editing, and personalization hints) stays regression-safe:
+
+- **Onboarding gate** — `apps/doWhat-web/src/app/onboarding/traits/__tests__/page.test.tsx` proves unauthenticated visitors are redirected to `/auth/login` while signed-in members see the Step 3 layout (CTA pill, checklist, and embedded selector).
+- **Creation + editing** — `apps/doWhat-web/src/components/traits/__tests__/TraitSelector.test.tsx` covers catalog fetches, five-trait enforcement, successful submissions, and now re-opening slots by deselecting saved traits so members can edit their vibe stack at any time. Run via `pnpm --filter dowhat-web test -- TraitSelector`.
+- **Trait onboarding redirect** — `apps/doWhat-web/src/components/traits/__tests__/TraitOnboardingSection.test.tsx` asserts the selector completion routes members back to the appropriate profile tab (default and custom landing paths).
+- **Personalization hints** — `apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx` (the `describe('PeopleFilterPage personalization hints', …)` block) ensures the Nearby Traits grid renders real `/api/traits/popular` data, falls back to the canned hints when the endpoint fails, and keeps the onboarding nudges pointing at `/onboarding/traits`.
+
+Together with the policy verifier, these suites document and guard the UX flows that Roadmap Step 3 calls for.
+
 ## Exit Criteria
 
 - All matrix checks pass against staging/local.

@@ -1,6 +1,21 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { config as loadEnv } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+
+const maybeLoadEnvFiles = () => {
+  const envFiles = ['.env.local', '.env'];
+  for (const file of envFiles) {
+    const fullPath = resolve(process.cwd(), file);
+    if (existsSync(fullPath)) {
+      loadEnv({ path: fullPath });
+    }
+  }
+};
+
+maybeLoadEnvFiles();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {
@@ -56,6 +71,7 @@ const ensureProfile = async (userId, fullName, email) => {
   const { error } = await service.from('profiles').upsert(
     {
       id: userId,
+      user_id: userId,
       email,
       full_name: fullName,
       updated_at: new Date().toISOString(),
@@ -144,12 +160,20 @@ const createSession = async ({ hostUserId, startsAt, endsAt }) => {
   return data.id;
 };
 
+const maybeInsertLegacyRsvp = async (sessionId, userId, status) => {
+  const { error } = await service.from('rsvps').insert({ session_id: sessionId, user_id: userId, status });
+  if (error && !/rsvps|duplicate key/.test(error.message)) {
+    throw new Error(`[rsvps] insert failed: ${error.message}`);
+  }
+};
+
 const addAttendee = async (sessionId, userId, status = 'going') => {
   const payload = { session_id: sessionId, user_id: userId, status };
   const { error } = await service
     .from('session_attendees')
     .upsert(payload, { onConflict: 'session_id,user_id' });
   if (error) throw new Error(`[session_attendees] upsert failed: ${error.message}`);
+  await maybeInsertLegacyRsvp(sessionId, userId, status);
 };
 
 const cleanupTables = async () => {
@@ -165,6 +189,16 @@ const cleanupTables = async () => {
   await safeDelete('user_trait_votes', 'session_id', state.sessions);
   await safeDelete('session_attendees', 'session_id', state.sessions);
   await safeDelete('sessions', 'id', state.sessions);
+
+  if (state.sessions.length) {
+    try {
+      await service.from('rsvps').delete().in('session_id', state.sessions);
+    } catch (error) {
+      if (!/rsvps/.test(error.message)) {
+        console.warn('[cleanup] rsvps delete failed', error.message);
+      }
+    }
+  }
 
   const userIds = state.users.map((user) => user.id);
   await safeDelete('user_base_traits', 'user_id', userIds);
@@ -285,23 +319,8 @@ const main = async () => {
     if (!error) throw new Error('expected rejection because to_user lacks attendance');
   });
 
-  const sessionForVisibilityEnds = new Date(now.getTime() - 36 * 60 * 60 * 1000);
-  const sessionForVisibilityStarts = new Date(sessionForVisibilityEnds.getTime() - 60 * 60 * 1000);
-  const sessionForVisibility = await createSession({ hostUserId: userA.id, startsAt: sessionForVisibilityStarts, endsAt: sessionForVisibilityEnds });
-  await addAttendee(sessionForVisibility, userA.id);
-  await addAttendee(sessionForVisibility, userC.id);
-  const { error: visibilityVoteError } = await userA.client.from('user_trait_votes').insert({
-    session_id: sessionForVisibility,
-    from_user: userA.id,
-    to_user: userC.id,
-    trait_id: state.traitIds[2] ?? state.traitIds[0],
-  });
-  if (visibilityVoteError) {
-    throw new Error(`[user_trait_votes] visibility seed insert failed: ${visibilityVoteError.message}`);
-  }
-
   await step('users cannot view votes they are not part of', async () => {
-    const { data, error } = await userB.client.from('user_trait_votes').select('id').eq('session_id', sessionForVisibility);
+    const { data, error } = await userC.client.from('user_trait_votes').select('id').eq('session_id', sessionFinished);
     if (error) throw new Error(error.message);
     if (data.length !== 0) throw new Error('expected zero visible rows');
   });

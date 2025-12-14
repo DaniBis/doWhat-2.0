@@ -19,7 +19,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "db:migrate": "node run_migrations.js",
-    "health": "node scripts/health-env.mjs && node scripts/health-trait-policies.mjs && (curl -sf http://localhost:3002/api/health | jq .ok || true)",
+    "health": "node scripts/health-env.mjs && node scripts/health-migrations.mjs --social-sweat && node scripts/health-notifications.mjs && node scripts/health-trait-policies.mjs && node scripts/verify-social-sweat.mjs && (curl -sf http://localhost:3002/api/health | jq .ok || true)",
     "ci": "pnpm install --frozen-lockfile && pnpm -w run typecheck && pnpm -w run lint && pnpm -w run test && pnpm --filter dowhat-web run build && (pnpm --filter dowhat-web run start &) && node -e \"const http=require('node:http');const url='http://localhost:3002/api/health';let i=0;const max=30;const wait=2000;function poll(){i++;http.get(url,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{try{const j=JSON.parse(d);if(j.ok){console.log('Health OK');process.exit(0)}else{console.error('Health not OK yet');if(i<max)setTimeout(poll,wait);else process.exit(1)}}catch(e){if(i<max)setTimeout(poll,wait);else{console.error('Health parse error',e);process.exit(1)}}})}).on('error',e=>{if(i<max)setTimeout(poll,wait);else{console.error('Health request error',e);process.exit(1)}})}poll();\"",
     "cron:traits:batch": "curl -s -X POST -H x-cron-secret:$CRON_SECRET 'http://localhost:3002/api/traits/recompute/all?limit=50&offset=0'",
     "events:dry-run": "node scripts/events-dry-run.cjs",
@@ -28,7 +28,11 @@
     "db:ensure-profile-columns": "node apps/doWhat-web/scripts/ensure-profile-columns.js",
     "seed:places:bangkok": "node scripts/seed-places-bangkok.mjs",
     "seed:events:bangkok": "node scripts/seed-events-bangkok.mjs",
-    "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs"
+    "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs",
+    "seed:social-sweat": "node scripts/seed-social-sweat.mjs",
+    "rollback:social-sweat": "node scripts/rollback-social-sweat.mjs",
+    "verify:social-sweat": "node scripts/verify-social-sweat.mjs",
+    "test:onboarding-progress": "pnpm --filter dowhat-web test -- OnboardingProgressBanner apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx && pnpm --filter doWhat-mobile test -- onboarding-index profile.simple.cta OnboardingNavPrompt OnboardingNavPill people-filter"
   },
   "devDependencies": {
     "@jest/globals": "^29.3.1",
@@ -70,6 +74,7 @@
   },
   "version": "1.0.0",
   "dependencies": {
+    "@supabase/supabase-js": "^2.56.0",
     "expo": "~50.0.17",
     "pg": "^8.13.1",
     "react": "18.2.0",

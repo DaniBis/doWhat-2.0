@@ -28,6 +28,9 @@ importers:
 
   .:
     dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.56.0
+        version: 2.57.4
       expo:
         specifier: ~50.0.17
         version: 50.0.21(@babel/core@7.28.4)(@react-native/babel-preset@0.73.21(@babel/core@7.28.4)(@babel/preset-env@7.28.3(@babel/core@7.28.4)))(react-native@0.73.6(patch_hash=zg2tiam4adie3fie4wcoso773a)(@babel/core@7.28.4)(@babel/preset-env@7.28.3(@babel/core@7.28.4))(react@18.2.0))(react@18.2.0)
@@ -270,6 +273,9 @@ importers:
 
   apps/doWhat-web:
     dependencies:
+      '@dowhat/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       '@radix-ui/react-avatar':
         specifier: ^1.1.11
         version: 1.1.11(@types/react-dom@18.3.0)(@types/react@18.3.24)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)

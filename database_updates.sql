@@ -18,6 +18,11 @@
 --      pnpm seed:events:bangkok
 --      # scripts live under /scripts and rely on SUPABASE service keys.
 --
+-- 4. (Optional) Validate that required migrations are applied:
+--      node scripts/health-migrations.mjs
+--      # For Social Sweat schema checks as well:
+--      node scripts/health-migrations.mjs --social-sweat
+--
 -- Migration roster (025–034)
 -- ==========================
 -- 025_places_foursquare_metadata.sql      → Adds city + foursquare_id columns + indexes on places.
@@ -37,6 +42,10 @@
 --                                            `session_open_slots`, and related enums/triggers for the Social Sweat workstream.
 -- 036_attendance_reliability_trigger.sql  → Moves reliability scoring into Postgres triggers tied to session_attendees.
 -- 037_reliability_pledge_ack.sql          → Adds columns so profiles can track reliability pledge acknowledgements + versions.
+-- 038_social_sweat_adoption_metrics.sql   → Creates the `social_sweat_adoption_metrics` view powering the admin readiness cards.
+-- 039_notification_outbox.sql             → Adds the notification_outbox table + trigger that enqueues host SMS events when attendees join.
+-- 040_profiles_handle_new_user.sql        → Updates the `handle_new_user` trigger so Supabase auth inserts populate `profiles.user_id`.
+-- 041_attendance_disputes.sql             → Introduces `attendance_disputes` with RLS so members can contest reliability issues after sessions end.
 --
 -- Validation + rollback guidance now lives in docs/migrations_025-031_validation.md.
 -- Run `git diff -- apps/doWhat-web/supabase/migrations` before/after releases to confirm
