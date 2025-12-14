@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node", "jest"],
+    "outDir": "../../dist/supabase-functions"
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules"]
+}

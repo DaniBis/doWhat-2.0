@@ -1,8 +1,6 @@
-const { join } = require('node:path');
-
 module.exports = {
   displayName: 'supabase-functions',
-  rootDir: join(__dirname, '..', '..'),
+  rootDir: __dirname,
   testEnvironment: 'node',
   collectCoverage: false,
   transform: {
@@ -10,8 +8,8 @@ module.exports = {
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   testMatch: [
-    '<rootDir>/supabase/functions/**/__tests__/**/*.(test|spec).[tj]s?(x)',
-    '<rootDir>/supabase/functions/**/*.(test|spec).[tj]s?(x)',
+    '<rootDir>/**/__tests__/**/*.(test|spec).[tj]s?(x)',
+    '<rootDir>/**/*.(test|spec).[tj]s?(x)',
   ],
-  collectCoverageFrom: ['<rootDir>/supabase/functions/**/*.ts'],
+  collectCoverageFrom: ['<rootDir>/**/*.ts'],
 };
