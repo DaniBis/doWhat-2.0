@@ -1,36 +1,15 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { WebBrowserResult } from 'expo-web-browser';
+const mockRouterPush = jest.fn();
 
-type ExpoWebBrowserModule = typeof import('expo-web-browser');
-
-const dismissedBrowserResult: WebBrowserResult = { type: 'dismiss' as WebBrowserResult['type'] };
-
-jest.mock('expo-web-browser', () => {
-  const openBrowserAsync = jest.fn();
-  const WebBrowserResultType = {
-    DISMISS: dismissedBrowserResult.type,
-    CANCEL: 'cancel' as WebBrowserResult['type'],
-  };
-  return {
-    __esModule: true,
-    default: {
-      openBrowserAsync,
-      WebBrowserResultType,
-    },
-    openBrowserAsync,
-    WebBrowserResultType,
-  };
-});
-
-const { openBrowserAsync: mockOpenBrowserAsync } = jest.requireMock('expo-web-browser') as {
-  openBrowserAsync: jest.MockedFunction<ExpoWebBrowserModule['openBrowserAsync']>;
-};
-mockOpenBrowserAsync.mockResolvedValue(dismissedBrowserResult);
-
-const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+jest.mock('expo-router', () => ({
+  Link: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  useRouter: () => ({
+    push: mockRouterPush,
+  }),
+}));
 
 jest.mock('../../lib/web', () => ({
   createWebUrl: (path: string) => new URL(`https://example.org${path}`),
@@ -117,6 +96,144 @@ const createUserSportProfilesBuilder = () => {
   return builder;
 };
 
+const badgeState = {
+  owned: [] as unknown[],
+  catalog: [] as unknown[],
+};
+const traitSummaryState: unknown[] = [];
+
+type SupabaseQueryResult = { data: unknown; error: unknown };
+type ReliabilityPayload = {
+  reliability: { score?: number | null; confidence?: number | null } | null;
+  attendance: Partial<{
+    attended30: number;
+    noShow30: number;
+    lateCancel30: number;
+    excused30: number;
+    attended90: number;
+    noShow90: number;
+    lateCancel90: number;
+    excused90: number;
+  }> | null;
+};
+
+const buildIndexRow = (reliability: ReliabilityPayload['reliability']) => ({
+  score: reliability?.score ?? null,
+  confidence: reliability?.confidence ?? null,
+  components_json: {},
+});
+
+const buildMetricsRow = (attendance: ReliabilityPayload['attendance']) => ({
+  window_30d_json: attendance
+    ? {
+        attended: attendance.attended30 ?? 0,
+        no_shows: attendance.noShow30 ?? 0,
+        late_cancels: attendance.lateCancel30 ?? 0,
+        excused: attendance.excused30 ?? 0,
+      }
+    : null,
+  window_90d_json: attendance
+    ? {
+        attended: attendance.attended90 ?? 0,
+        no_shows: attendance.noShow90 ?? 0,
+        late_cancels: attendance.lateCancel90 ?? 0,
+        excused: attendance.excused90 ?? 0,
+      }
+    : null,
+});
+
+type ReliabilityHandler = () => SupabaseQueryResult | Promise<SupabaseQueryResult>;
+
+let mockReliabilityIndexHandler: ReliabilityHandler = () => ({ data: buildIndexRow(null), error: null });
+let mockReliabilityMetricsHandler: ReliabilityHandler = () => ({ data: buildMetricsRow(null), error: null });
+
+const setReliabilityHandlers = ({ index, metrics }: { index?: ReliabilityHandler; metrics?: ReliabilityHandler }) => {
+  if (index) mockReliabilityIndexHandler = index;
+  if (metrics) mockReliabilityMetricsHandler = metrics;
+};
+
+const resetReliabilityHandlers = () => {
+  mockReliabilityIndexHandler = () => ({ data: buildIndexRow(null), error: null });
+  mockReliabilityMetricsHandler = () => ({ data: buildMetricsRow(null), error: null });
+};
+
+const configureReliabilitySuccess = ({ reliability, attendance }: ReliabilityPayload) => {
+  setReliabilityHandlers({
+    index: () => Promise.resolve({ data: buildIndexRow(reliability), error: null }),
+    metrics: () => Promise.resolve({ data: buildMetricsRow(attendance), error: null }),
+  });
+};
+
+const configureReliabilityFailure = (status: number, body?: unknown) => {
+  const message = (() => {
+    if (body && typeof body === 'object' && 'error' in body) {
+      const extracted = (body as { error?: unknown }).error;
+      if (typeof extracted === 'string' && extracted.trim()) return extracted;
+    }
+    return `Failed to load reliability (${status})`;
+  })();
+  const error = new Error(message);
+  setReliabilityHandlers({
+    index: () => Promise.resolve({ data: null, error }),
+    metrics: () => Promise.resolve({ data: null, error: null }),
+  });
+};
+
+const createDeferredReliabilityFetch = () => {
+  let resolveIndex: ((value: SupabaseQueryResult) => void) | null = null;
+  let rejectIndex: ((reason?: unknown) => void) | null = null;
+  let resolveMetrics: ((value: SupabaseQueryResult) => void) | null = null;
+  let rejectMetrics: ((reason?: unknown) => void) | null = null;
+
+  const indexPromise = new Promise<SupabaseQueryResult>((resolve, reject) => {
+    resolveIndex = resolve;
+    rejectIndex = reject;
+  });
+  const metricsPromise = new Promise<SupabaseQueryResult>((resolve, reject) => {
+    resolveMetrics = resolve;
+    rejectMetrics = reject;
+  });
+
+  setReliabilityHandlers({
+    index: () => indexPromise,
+    metrics: () => metricsPromise,
+  });
+
+  return {
+    resolve: ({ reliability, attendance }: ReliabilityPayload) => {
+      resolveIndex?.({ data: buildIndexRow(reliability), error: null });
+      resolveMetrics?.({ data: buildMetricsRow(attendance), error: null });
+    },
+    reject: (error: Error) => {
+      rejectIndex?.(error);
+      rejectMetrics?.(error);
+    },
+  };
+};
+
+const createStaticSelectBuilder = (getResult: () => SupabaseQueryResult | Promise<SupabaseQueryResult>) => {
+  const builder: any = {};
+  const exec = () => Promise.resolve(getResult());
+  builder.select = jest.fn(() => builder);
+  builder.eq = jest.fn(() => builder);
+  builder.order = jest.fn(() => builder);
+  builder.limit = jest.fn(() => builder);
+  builder.range = jest.fn(() => builder);
+  builder.insert = jest.fn(() => builder);
+  builder.update = jest.fn(() => builder);
+  builder.upsert = jest.fn(() => exec());
+  builder.delete = jest.fn(() => builder);
+  builder.rpc = jest.fn(() => builder);
+  builder.maybeSingle = jest.fn(() => exec());
+  builder.single = jest.fn(() => exec());
+  builder.then = (onFulfilled: unknown, onRejected?: unknown) => exec().then(onFulfilled as any, onRejected as any);
+  builder.catch = (onRejected: unknown) => exec().catch(onRejected as any);
+  builder.finally = (onFinally: unknown) => exec().finally(onFinally as any);
+  return builder;
+};
+
+resetReliabilityHandlers();
+
 jest.mock('../../lib/supabase', () => {
   const auth = {
     getUser: jest.fn(async () => ({ data: { user: { id: 'user-mobile', user_metadata: {} } } })),
@@ -148,6 +265,21 @@ jest.mock('../../lib/supabase', () => {
       if (table === 'user_sport_profiles') {
         return createUserSportProfilesBuilder();
       }
+      if (table === 'user_badges') {
+        return createStaticSelectBuilder(() => ({ data: badgeState.owned, error: null }));
+      }
+      if (table === 'badges') {
+        return createStaticSelectBuilder(() => ({ data: badgeState.catalog, error: null }));
+      }
+      if (table === 'user_trait_summary') {
+        return createStaticSelectBuilder(() => ({ data: traitSummaryState, error: null }));
+      }
+      if (table === 'reliability_index') {
+        return createStaticSelectBuilder(() => mockReliabilityIndexHandler());
+      }
+      if (table === 'reliability_metrics') {
+        return createStaticSelectBuilder(() => mockReliabilityMetricsHandler());
+      }
       throw new Error(`Unexpected table ${table}`);
     }),
   };
@@ -162,6 +294,18 @@ jest.mock('../../lib/supabase', () => {
         profileState.profileRow.primary_sport = primarySport ?? null;
         profileState.profileRow.play_style = playStyle ?? null;
         sportProfileState.skill_level = skillLevel ?? null;
+      },
+      setBadgeData: ({ owned, catalog }: { owned?: unknown[]; catalog?: unknown[] }) => {
+        if (owned) {
+          badgeState.owned = owned;
+        }
+        if (catalog) {
+          badgeState.catalog = catalog;
+        }
+      },
+      setTraitSummaries: (rows: unknown[]) => {
+        traitSummaryState.length = 0;
+        traitSummaryState.push(...rows);
       },
       supabase: supabaseMock,
     },
@@ -186,16 +330,17 @@ const resetTestState = () => {
   installFetchMock();
   trackOnboardingEntry.mockClear();
   trackReliabilityAttendanceLogViewed.mockClear();
-  mockOpenBrowserAsync.mockClear();
-  mockOpenBrowserAsync.mockResolvedValue(dismissedBrowserResult);
-  alertSpy.mockClear();
-  setReliabilityResponseHandler(null);
+  mockRouterPush.mockClear();
+  resetReliabilityHandlers();
   profileState.profileRow.reliability_pledge_ack_at = null;
   profileState.profileRow.reliability_pledge_version = null;
   profileState.profileRow.primary_sport = null;
   profileState.profileRow.play_style = null;
   sportProfileState.skill_level = null;
   __supabaseMock.setBaseTraitCount(0);
+  badgeState.owned = [];
+  badgeState.catalog = [];
+  traitSummaryState.length = 0;
 };
 
 const mockFetchResponse = (body: unknown): Response => ({
@@ -203,47 +348,6 @@ const mockFetchResponse = (body: unknown): Response => ({
   status: 200,
   json: async () => body,
 }) as Response;
-
-const mockFetchErrorResponse = (status: number, body?: unknown): Response => ({
-  ok: false,
-  status,
-  json: async () => body ?? {},
-}) as Response;
-
-const defaultReliabilityPayload = { reliability: null, attendance: null };
-
-type ReliabilityResponseHandler = () => Promise<Response>;
-let reliabilityResponseHandler: ReliabilityResponseHandler | null = null;
-
-const setReliabilityResponseHandler = (handler: ReliabilityResponseHandler | null) => {
-  reliabilityResponseHandler = handler;
-};
-
-const configureReliabilitySuccess = (payload: unknown) => {
-  setReliabilityResponseHandler(async () => mockFetchResponse(payload));
-};
-
-const configureReliabilityFailure = (status: number, body?: unknown) => {
-  setReliabilityResponseHandler(async () => mockFetchErrorResponse(status, body));
-};
-
-const createDeferredReliabilityFetch = () => {
-  let resolveFn: ((value: Response) => void) | null = null;
-  let rejectFn: ((reason?: unknown) => void) | null = null;
-  const promise = new Promise<Response>((resolve, reject) => {
-    resolveFn = resolve;
-    rejectFn = reject;
-  });
-  setReliabilityResponseHandler(() => promise);
-  return {
-    resolve: (payload: unknown) => {
-      resolveFn?.(mockFetchResponse(payload));
-    },
-    reject: (error: Error) => {
-      rejectFn?.(error);
-    },
-  };
-};
 
 const defaultFetchHandler = async (input: string | URL) => {
   const target = typeof input === 'string' ? input : input.toString();
@@ -255,12 +359,6 @@ const defaultFetchHandler = async (input: string | URL) => {
   }
   if (target.includes('/api/profile/') && target.includes('/traits')) {
     return mockFetchResponse([]);
-  }
-  if (target.includes('/api/profile/') && target.includes('/reliability')) {
-    if (reliabilityResponseHandler) {
-      return reliabilityResponseHandler();
-    }
-    return mockFetchResponse(defaultReliabilityPayload);
   }
   return mockFetchResponse({});
 };
@@ -417,7 +515,7 @@ describe('Mobile Profile onboarding progress banner', () => {
     render(<ProfileScreen />);
     await act(async () => {});
 
-    await waitFor(() => expect(screen.getByText('Finish your Social Sweat onboarding')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Finish your doWhat onboarding')).toBeTruthy());
     expect(screen.getByText(/Next up: Pick 5 base traits/i)).toBeTruthy();
     expect(screen.getByText('Go to next step')).toBeTruthy();
     expect(screen.getAllByText('Pick 5 base traits').length).toBeGreaterThan(0);
@@ -505,7 +603,7 @@ describe('Mobile Profile reliability card', () => {
     render(<ProfileScreen />);
     await act(async () => {});
 
-    await waitFor(() => expect(screen.getByText('Failed to load reliability (500)')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('nope')).toBeTruthy());
   });
 
   it('guides members to attend sessions before the score is ready', async () => {
@@ -552,19 +650,12 @@ describe('Mobile Profile reliability card', () => {
       attendanceButton?.props.onPress?.();
     });
 
-    expect(alertSpy).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(trackReliabilityAttendanceLogViewed).toHaveBeenCalledWith({
         platform: 'mobile',
         surface: 'profile-reliability-card',
       }),
     );
-    await waitFor(() =>
-      expect(mockOpenBrowserAsync).toHaveBeenCalledWith('https://example.org/my/attendance'),
-    );
-    expect(trackReliabilityAttendanceLogViewed).toHaveBeenCalledWith({
-      platform: 'mobile',
-      surface: 'profile-reliability-card',
-    });
+    expect(mockRouterPush).toHaveBeenCalledWith('/profile/attendance-log');
   });
 });

@@ -6,7 +6,12 @@ import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Mode = "signin" | "signup" | "magic";
 
-export default function EmailAuth({ onDone }: { onDone?: () => void }) {
+type EmailAuthProps = {
+  onDone?: () => void;
+  callbackUrl?: string | null;
+};
+
+export default function EmailAuth({ onDone, callbackUrl }: EmailAuthProps) {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,14 +19,21 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const resolveCallbackUrl = () => {
+    if (callbackUrl) return callbackUrl;
+    if (typeof window === "undefined") return null;
+    return `${window.location.origin}/auth/callback`;
+  };
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null); setMsg(null); setBusy(true);
     try {
+      const targetCallback = resolveCallbackUrl();
       if (mode === "magic") {
         const { error } = await supabase.auth.signInWithOtp({
           email,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          options: targetCallback ? { emailRedirectTo: targetCallback } : undefined,
         });
         if (error) throw error;
         setMsg("Magic link sent. Check your email.");
@@ -34,7 +46,7 @@ export default function EmailAuth({ onDone }: { onDone?: () => void }) {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          options: targetCallback ? { emailRedirectTo: targetCallback } : undefined,
         });
         if (error) throw error;
         if (data.user && data.session) {

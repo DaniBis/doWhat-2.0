@@ -1,4 +1,3 @@
-import { createWebUrl } from './web';
 import { supabase } from './supabase';
 
 export type AttendanceStatus = 'going' | 'interested' | 'declined' | null;
@@ -19,71 +18,59 @@ export type AttendanceSummary = {
   maxAttendees: number;
 };
 
-export type AttendanceMutationResult = {
+type AttendanceMutationResult = {
   sessionId: string;
   userId: string;
   status: AttendanceStatus;
   previousStatus: AttendanceStatus;
   counts: AttendanceCounts;
 };
+const FUNCTION_NAME = 'mobile-session-attendance';
 
-async function resolveAccessToken(): Promise<string | null> {
+type AttendanceFunctionSummary = AttendanceSummary;
+type AttendanceFunctionMutation = AttendanceMutationResult;
+
+async function ensureAuthenticated() {
   const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
-}
-
-async function buildHeaders(options: { requireAuth?: boolean; json?: boolean } = {}): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {};
-  if (options.json) {
-    headers['Content-Type'] = 'application/json';
-  }
-  const token = await resolveAccessToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  } else if (options.requireAuth) {
+  if (!data.session?.access_token) {
     throw new Error('Please sign in first.');
   }
-  return headers;
 }
 
-async function request<T>(path: string, init?: RequestInit, requireAuth = false): Promise<T> {
-  const url = createWebUrl(path);
-  const headers = await buildHeaders({ requireAuth, json: init?.body !== undefined });
-  const response = await fetch(url.toString(), {
-    ...init,
-    headers: {
-      ...headers,
-      ...(init?.headers as Record<string, string> | undefined),
-    },
+async function invokeAttendanceFunction<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke<T>(FUNCTION_NAME, {
+    body,
   });
-  const data = (await response.json()) as { error?: string } & T;
-  if (!response.ok) {
-    throw new Error(data.error || 'Unable to process attendance request.');
+  if (error) {
+    const message = typeof error.message === 'string' && error.message.trim() ? error.message : 'Unable to process attendance request.';
+    throw new Error(message);
+  }
+  if (!data) {
+    throw new Error('Unable to process attendance request.');
   }
   return data;
 }
 
 export async function fetchAttendanceSummary(sessionId: string): Promise<AttendanceSummary> {
-  return request<AttendanceSummary>(`/api/sessions/${sessionId}/attendance`);
+  return invokeAttendanceFunction<AttendanceFunctionSummary>({
+    action: 'summary',
+    sessionId,
+  });
 }
 
 export async function joinSessionAttendance(sessionId: string, status: 'going' | 'interested') {
-  return request<AttendanceMutationResult>(
-    `/api/sessions/${sessionId}/attendance/join`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ status }),
-    },
-    true,
-  );
+  await ensureAuthenticated();
+  return invokeAttendanceFunction<AttendanceFunctionMutation>({
+    action: 'join',
+    sessionId,
+    status,
+  });
 }
 
 export async function leaveSessionAttendance(sessionId: string) {
-  return request<AttendanceMutationResult>(
-    `/api/sessions/${sessionId}/attendance/leave`,
-    {
-      method: 'POST',
-    },
-    true,
-  );
+  await ensureAuthenticated();
+  return invokeAttendanceFunction<AttendanceFunctionMutation>({
+    action: 'leave',
+    sessionId,
+  });
 }

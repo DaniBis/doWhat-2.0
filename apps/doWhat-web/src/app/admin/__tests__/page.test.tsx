@@ -205,7 +205,7 @@ describe("AdminDashboard", () => {
     expect(screen.queryByTestId("admin-dispute-nav-pill")).toBeNull();
   });
 
-  it("renders Social Sweat adoption metrics when Supabase returns data", async () => {
+  it("renders doWhat adoption metrics when Supabase returns data", async () => {
     const adoptionRow: SocialSweatAdoptionMetricsRow = {
       total_profiles: 100,
       sport_step_complete_count: 26,
@@ -220,7 +220,7 @@ describe("AdminDashboard", () => {
 
     render(<AdminDashboard />);
 
-    const readinessHeading = await screen.findByText(/Social Sweat Readiness/i);
+    const readinessHeading = await screen.findByText(/doWhat Readiness/i);
     expect(readinessHeading).toBeInTheDocument();
     expect(screen.getByText(/100 profiles tracked/i)).toBeInTheDocument();
 

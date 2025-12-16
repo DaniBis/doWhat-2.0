@@ -19,9 +19,10 @@ import {
 import {
   CITY_SWITCHER_ENABLED,
   DEFAULT_CITY_SLUG,
+  OPENSTREETMAP_FALLBACK_ATTRIBUTION,
   buildPlaceSavePayload,
-  createPlacesFetcher,
   defaultTier3Index,
+  fetchOverpassPlaceSummaries,
   getCityCategoryConfigMap,
   getCityConfig,
   getTier3Ids,
@@ -32,17 +33,17 @@ import {
   type ActivityTier3WithAncestors,
   type CityCategoryConfig,
   type CityConfig,
-  type PlaceSummary,
   type PlacesViewportQuery,
   usePlaces,
+  estimateRadiusFromBounds,
 } from '@dowhat/shared';
+import type { FetchPlaces, PlaceSummary } from '@dowhat/shared';
 
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
 import ngeohash from 'ngeohash';
 import { useRouter } from 'expo-router';
 
-import { createWebUrl } from '../../../lib/web';
-import { fetchWithTimeout } from '../../../lib/fetchWithTimeout';
+import { geocodeLabelToCoords } from '../../../lib/geocode';
 import { emitMapPlacesUpdated, subscribeProfileLocationUpdated } from '../../../lib/events';
 import {
   DEFAULT_CATEGORY_APPEARANCE,
@@ -52,6 +53,7 @@ import {
   resolvePrimaryCategoryKey,
 } from '../../../lib/placeCategories';
 import { supabase } from '../../../lib/supabase';
+import { fetchSupabasePlacesWithinBounds } from '../../../lib/supabasePlaces';
 import TaxonomyCategoryPicker from '../../../components/TaxonomyCategoryPicker';
 import { useSavedActivities } from '../../../contexts/SavedActivitiesContext';
 
@@ -90,9 +92,6 @@ const buildTaxonomyTagMap = () => {
   return map;
 };
 
-const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
-const GEOCODE_USER_AGENT = 'doWhat/1.0 (mobile@dowhat.app)';
-
 const parseCoordinate = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim()) {
@@ -107,65 +106,6 @@ const coordsApproximatelyEqual = (
   b: { lat: number; lng: number },
   epsilon = 0.0005,
 ) => Math.abs(a.lat - b.lat) <= epsilon && Math.abs(a.lng - b.lng) <= epsilon;
-
-const geocodeLabelToCoords = async (
-  label: string,
-  signal?: AbortSignal,
-): Promise<{ lat: number; lng: number } | null> => {
-  const query = label.trim();
-  if (!query) return null;
-
-  try {
-    const backendUrl = createWebUrl('/api/geocode');
-    backendUrl.searchParams.set('q', query);
-    const response = await fetchWithTimeout(backendUrl.toString(), { timeoutMs: 7000, signal });
-    if (response.ok) {
-      const payload = (await response.json()) as { lat?: number | string; lng?: number | string };
-      const lat = parseCoordinate(payload.lat);
-      const lng = parseCoordinate(payload.lng);
-      if (lat != null && lng != null) {
-        return { lat, lng };
-      }
-    }
-  } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
-      throw error;
-    }
-    console.info('[Map] Backend geocode failed', error);
-  }
-
-  try {
-    const url = new URL(`${NOMINATIM_BASE_URL}/search`);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
-    url.searchParams.set('q', query);
-    const response = await fetchWithTimeout(url.toString(), {
-      timeoutMs: 8000,
-      signal,
-      headers: {
-        'User-Agent': GEOCODE_USER_AGENT,
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Nominatim search failed (${response.status})`);
-    }
-    const payload = (await response.json()) as Array<{ lat?: string; lon?: string }>;
-    const entry = payload[0];
-    const lat = parseCoordinate(entry?.lat);
-    const lng = parseCoordinate(entry?.lon);
-    if (lat != null && lng != null) {
-      return { lat, lng };
-    }
-  } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
-      throw error;
-    }
-    console.info('[Map] Nominatim geocode failed', error);
-  }
-
-  return null;
-};
 
 const describeActionError = (error: unknown): string => {
   if (!error) return 'Something went wrong.';
@@ -1518,18 +1458,71 @@ export default function MapScreen() {
     }
   }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery]);
 
-  const placesFetcher = useMemo(
-    () =>
-      createPlacesFetcher({
-        buildUrl: () => createWebUrl('/api/places').toString(),
-        includeCredentials: true,
-        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
-      }),
-    [],
-  );
+  const supabasePlacesFetcher = useMemo<FetchPlaces>(() => {
+    return async ({ bounds, limit, city: queryCity, signal }) => {
+      const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+      const citySlugForQuery = queryCity ?? city.slug ?? DEFAULT_CITY_SLUG;
+      try {
+        const places = await fetchSupabasePlacesWithinBounds({
+          bounds,
+          citySlug: citySlugForQuery,
+          limit: limit ?? 400,
+        });
+        const latencyMs = Math.round(
+          (typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()) - startedAt,
+        );
+        return {
+          cacheHit: true,
+          places,
+          providerCounts: { supabase: places.length },
+          attribution: [],
+          latencyMs,
+        };
+      } catch (primaryError) {
+        if (__DEV__) {
+          console.warn('[Map] Supabase places fetch failed', primaryError);
+        }
+        const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+        const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
+        const fallbackRadius = estimateRadiusFromBounds(bounds);
+        try {
+          const fallbackPlaces = await fetchOverpassPlaceSummaries({
+            lat: centerLat,
+            lng: centerLng,
+            radiusMeters: fallbackRadius,
+            limit: limit ?? 400,
+            signal,
+          });
+          const latencyMs = Math.round(
+            (typeof performance !== 'undefined' && typeof performance.now === 'function'
+              ? performance.now()
+              : Date.now()) - startedAt,
+          );
+          return {
+            cacheHit: false,
+            places: fallbackPlaces,
+            providerCounts: { openstreetmap: fallbackPlaces.length },
+            attribution: [OPENSTREETMAP_FALLBACK_ATTRIBUTION],
+            latencyMs,
+          };
+        } catch (fallbackError) {
+          if (__DEV__) {
+            console.warn('[Map] Places fallback failed', fallbackError);
+          }
+          throw primaryError instanceof Error
+            ? primaryError
+            : new Error('Unable to load nearby places.');
+        }
+      }
+    };
+  }, [city.slug]);
 
   const placesQuery = usePlaces(query, {
-    fetcher: placesFetcher,
+    fetcher: supabasePlacesFetcher,
     enabled: Boolean(query),
     staleTime: 2 * 60_000,
   });
@@ -1708,7 +1701,7 @@ export default function MapScreen() {
 
   const providerHint = useMemo(() => {
     if (!filteredPlaces.length) return null;
-    return 'Powered by Foursquare Places.';
+    return 'Venues synced from Supabase (fallback: OpenStreetMap).';
   }, [filteredPlaces.length]);
 
   const dismissActivePlace = useCallback(() => setActivePlaceId(null), []);

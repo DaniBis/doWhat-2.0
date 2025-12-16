@@ -1,4 +1,4 @@
--- Migration 035: Social Sweat core scaffolding
+-- Migration 035: doWhat core scaffolding
 create extension if not exists "pgcrypto";
 
 -- Ensure enums exist before adding typed columns

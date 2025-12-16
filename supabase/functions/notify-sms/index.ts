@@ -152,7 +152,7 @@ async function buildSmsBody(row: NotificationOutboxRow): Promise<string> {
   const sessionTime = startsAt ? timeFormatter.format(startsAt) : "an upcoming session";
   const summary = session?.description ? session.description.split("\n")[0] : "your session";
 
-  return `${attendeeName} just joined ${summary} (${sessionTime}). Check the Social Sweat roster for details.`;
+  return `${attendeeName} just joined ${summary} (${sessionTime}). Check the doWhat roster for details.`;
 }
 
 async function fetchSession(sessionId: string): Promise<SessionRow | null> {

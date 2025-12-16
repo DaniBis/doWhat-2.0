@@ -54,7 +54,7 @@ const deleteSupabaseUsers = async (userIds) => {
 };
 
 const main = async () => {
-  console.info("Rolling back Social Sweat pilot data…\n");
+  console.info("Rolling back doWhat pilot data…\n");
 
   const sessionIds = SEED_SESSIONS.map((session) => uuidFromSeed(`session:${session.slug}`));
   const activityIds = SEED_ACTIVITIES.map((activity) => uuidFromSeed(`activity:${activity.slug}`));

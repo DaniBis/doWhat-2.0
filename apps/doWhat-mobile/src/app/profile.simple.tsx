@@ -3,10 +3,9 @@
 // Uses dynamic import for expo-image-picker so bundler won't fail if the
 // native module is temporarily unavailable; shows a graceful error instead.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { Link } = require('expo-router');
+const { Link, useRouter } = require('expo-router');
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import type { ElementRef } from 'react';
-import * as WebBrowser from 'expo-web-browser';
 import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking, Platform, ActionSheetIOS, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,7 +27,7 @@ import {
 } from '@dowhat/shared';
 import type { BadgeStatus, SportType, PlayStyle, OnboardingStep } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
-import { createWebUrl } from '../lib/web';
+import { searchGeocode, reverseGeocodeCoords } from '../lib/geocode';
 import { emitProfileLocationUpdated } from '../lib/events';
 import { BadgesList, MobileBadgeItem } from '../components/BadgesList';
 
@@ -189,8 +188,6 @@ type LocationSuggestion = {
 };
 
 const MAX_LOCATION_SUGGESTIONS = 5;
-const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
-const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
 const MAX_PROFILE_TRAITS = 5;
 const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
   traits: 'Pick 5 base traits',
@@ -350,94 +347,31 @@ const dedupeSuggestions = (list: LocationSuggestion[]): LocationSuggestion[] => 
   });
 };
 
-const fetchGeocodeSuggestionsFromBackend = async (
-  query: string,
-  limit: number,
-  signal?: AbortSignal,
-): Promise<LocationSuggestion[]> => {
-  const url = createWebUrl(`/api/geocode?q=${encodeURIComponent(query)}&limit=${limit}`);
-  const res = await fetch(url.toString(), { signal, credentials: 'include' });
-  if (!res.ok) {
-    throw new Error(`Geocode backend request failed (${res.status})`);
-  }
-  const payload = await res.json() as {
-    label?: string;
-    lat?: number;
-    lng?: number;
-    results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
-  };
-  const suggestions: LocationSuggestion[] = [];
-  if (Array.isArray(payload.results)) {
-    payload.results.forEach((entry, index) => {
-      const suggestion = toLocationSuggestion(entry, payload.label, `backend-${index}`);
-      if (suggestion) suggestions.push(suggestion);
-    });
-  }
-  const primary = toLocationSuggestion(payload, payload.label, 'backend-primary');
-  if (primary) suggestions.unshift(primary);
-  return dedupeSuggestions(suggestions).slice(0, limit);
-};
-
-const fetchGeocodeSuggestionsFromNominatim = async (
-  query: string,
-  limit: number,
-  signal?: AbortSignal,
-): Promise<LocationSuggestion[]> => {
-  const url = new URL(`${NOMINATIM_BASE_URL}/search`);
-  url.searchParams.set('format', 'jsonv2');
-  url.searchParams.set('q', query);
-  url.searchParams.set('limit', String(limit));
-  url.searchParams.set('addressdetails', '1');
-  const res = await fetch(url.toString(), {
-    signal,
-    headers: {
-      'User-Agent': GEOCODE_USER_AGENT,
-      Accept: 'application/json',
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Nominatim request failed (${res.status})`);
-  }
-  const payload = (await res.json()) as Array<{
-    lat?: string;
-    lon?: string;
-    display_name?: string;
-    address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
-  }>;
-  const suggestions: LocationSuggestion[] = [];
-  (payload ?? []).forEach((entry, index) => {
-    const addr = entry.address ?? {};
-    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
-    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
-    const label = parts.length ? parts.join(', ') : entry.display_name || query;
-    const suggestion = toLocationSuggestion({
-      label,
-      description: entry.display_name || null,
-      lat: entry.lat,
-      lng: entry.lon,
-    }, label, `nominatim-${index}`);
-    if (suggestion) suggestions.push(suggestion);
-  });
-  return dedupeSuggestions(suggestions).slice(0, limit);
-};
-
 const fetchGeocodeSuggestions = async (
   query: string,
   limit: number,
   signal?: AbortSignal,
 ): Promise<LocationSuggestion[]> => {
   try {
-    const backend = await fetchGeocodeSuggestionsFromBackend(query, limit, signal);
-    if (backend.length) return backend;
+    const results = await searchGeocode(query, { limit, signal });
+    const suggestions = results
+      .map((result, index) =>
+        toLocationSuggestion(
+          {
+            label: result.label,
+            description: result.description,
+            lat: result.lat,
+            lng: result.lng,
+          },
+          result.label,
+          `geocode-${index}`,
+        ),
+      )
+      .filter((entry): entry is LocationSuggestion => Boolean(entry));
+    return dedupeSuggestions(suggestions).slice(0, limit);
   } catch (error) {
     if (signal?.aborted) return [];
-    console.info('[ProfileSimple] backend geocode suggestions failed', error);
-  }
-  try {
-    return await fetchGeocodeSuggestionsFromNominatim(query, limit, signal);
-  } catch (error) {
-    if (signal?.aborted) return [];
-    console.info('[ProfileSimple] nominatim geocode suggestions failed', error);
+    console.info('[ProfileSimple] geocode suggestions failed', error);
     return [];
   }
 };
@@ -448,44 +382,11 @@ const resolveForwardGeocode = async (query: string, signal?: AbortSignal): Promi
 };
 
 const reverseGeocode = async (lat: number, lng: number): Promise<string | null> => {
-  const backendUrl = createWebUrl(`/api/geocode?lat=${lat}&lng=${lng}`);
   try {
-    const res = await fetch(backendUrl.toString(), { credentials: 'include' });
-    if (res.ok) {
-      const payload = await res.json() as { label?: string };
-      if (typeof payload?.label === 'string' && payload.label.trim()) {
-        return payload.label.trim();
-      }
-    }
+    const result = await reverseGeocodeCoords(lat, lng);
+    return result?.label ?? null;
   } catch (error) {
-    console.info('[ProfileSimple] reverse geocode backend failed', error);
-  }
-
-  try {
-    const url = new URL(`${NOMINATIM_BASE_URL}/reverse`);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('lat', String(lat));
-    url.searchParams.set('lon', String(lng));
-    url.searchParams.set('zoom', '10');
-    url.searchParams.set('addressdetails', '1');
-    const res = await fetch(url.toString(), {
-      headers: {
-        'User-Agent': GEOCODE_USER_AGENT,
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) throw new Error(`Nominatim reverse failed (${res.status})`);
-    const payload = await res.json() as {
-      display_name?: string;
-      address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
-    };
-    const addr = payload.address ?? {};
-    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
-    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
-    const label = parts.length ? parts.join(', ') : payload.display_name || `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
-    return label;
-  } catch (error) {
-    console.info('[ProfileSimple] reverse geocode nominatim failed', error);
+    console.info('[ProfileSimple] reverse geocode failed', error);
     return null;
   }
 };
@@ -755,6 +656,7 @@ const ownedToMobileBadge = (badge: OwnedBadge, fallback?: BadgeMeta): MobileBadg
 export default function ProfileSimple() {
   console.log('[ProfileSimple] Mounted');
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
   const [fullName, setFullName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -880,7 +782,7 @@ export default function ProfileSimple() {
   const pendingOnboardingLabel = pendingOnboardingCount === 1 ? '1 step' : `${pendingOnboardingCount} steps`;
   const onboardingEncouragementCopy =
     pendingOnboardingCount === 1
-      ? 'Just one more action to unlock full Social Sweat access.'
+      ? 'Just one more action to unlock full doWhat access.'
       : `${pendingOnboardingLabel} remain — finish them so hosts prioritize you for open slots.`;
   const nextOnboardingRoute = prioritizedOnboardingStep ? ONBOARDING_STEP_ROUTES[prioritizedOnboardingStep] : null;
   const reliabilityScoreDisplay = reliabilitySnapshot?.score != null ? Math.round(reliabilitySnapshot.score) : null;
@@ -946,27 +848,58 @@ export default function ProfileSimple() {
 
   const loadBadges = useCallback(async (uid: string) => {
     try {
-      const ownedUrl = createWebUrl(`/api/users/${uid}/badges`);
-      const catalogUrl = createWebUrl('/api/badges/catalog');
-      const [ownedRes, catalogRes] = await Promise.all([
-        fetch(ownedUrl.toString(), { credentials: 'include' }),
-        fetch(catalogUrl.toString(), { credentials: 'include' }),
+      const [ownedResult, catalogResult] = await Promise.all([
+        supabase
+          .from('user_badges')
+          .select('id,badge_id,status,source,created_at,verified_at,expiry_date,badges(*),v_badge_endorsement_counts!left(endorsements)')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('badges')
+          .select('*')
+          .order('category', { ascending: true })
+          .order('tier', { ascending: true }),
       ]);
-      if (ownedRes.ok) {
-        const payload: unknown = await ownedRes.json();
-        const badges = isRecord(payload) ? payload.badges : null;
-        setOwnedBadges(parseOwnedBadges(badges));
-      } else {
-        setOwnedBadges([]);
+
+      if (ownedResult.error) throw ownedResult.error;
+      if (catalogResult.error) throw catalogResult.error;
+
+      const ownedPayload = (ownedResult.data ?? []).map((row) => {
+        const { v_badge_endorsement_counts, ...rest } = row as Record<string, unknown> & {
+          v_badge_endorsement_counts?: { endorsements?: number } | null;
+        };
+        return {
+          ...rest,
+          endorsements:
+            typeof v_badge_endorsement_counts?.endorsements === 'number'
+              ? v_badge_endorsement_counts.endorsements
+              : 0,
+        };
+      });
+
+      setOwnedBadges(parseOwnedBadges(ownedPayload));
+
+      const ownedByBadgeId = new Map<string, unknown>();
+      ownedPayload.forEach((entry) => {
+        const badgeId = isRecord(entry) && typeof entry.badge_id === 'string' ? entry.badge_id : null;
+        if (badgeId) {
+          ownedByBadgeId.set(badgeId, entry);
+        }
+      });
+
+      const catalogPayload = (catalogResult.data ?? []).map((entry) => {
+        const badgeId = isRecord(entry) && typeof entry.id === 'string' ? entry.id : null;
+        return {
+          catalog: entry,
+          owned: badgeId ? ownedByBadgeId.get(badgeId) ?? null : null,
+        };
+      });
+
+      setCatalogBadges(parseCatalogBadges(catalogPayload));
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[ProfileSimple] loadBadges failed', error);
       }
-      if (catalogRes.ok) {
-        const payload: unknown = await catalogRes.json();
-        const badges = isRecord(payload) ? payload.badges : null;
-        setCatalogBadges(parseCatalogBadges(badges));
-      } else {
-        setCatalogBadges([]);
-      }
-    } catch {
       setOwnedBadges([]);
       setCatalogBadges([]);
     }
@@ -976,21 +909,33 @@ export default function ProfileSimple() {
     setTraitSummaryError(null);
     setTraitSummariesLoading(true);
     try {
-      const url = createWebUrl(`/api/profile/${uid}/traits?top=6`);
-      const response = await fetch(url.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        let detail: unknown = null;
-        try {
-          detail = await response.json();
-        } catch {
-          detail = null;
-        }
-        const message = isRecord(detail) && typeof detail.error === 'string'
-          ? detail.error
-          : `Failed to load traits (${response.status})`;
-        throw new Error(message);
-      }
-      const payload: unknown = await response.json();
+      const { data, error } = await supabase
+        .from('user_trait_summary')
+        .select('score,base_count,vote_count,updated_at,traits:trait_id(id,name,color,icon)')
+        .eq('user_id', uid)
+        .order('score', { ascending: false })
+        .limit(6);
+      if (error) throw error;
+      const payload = (data ?? []).map((row) => {
+        const trait = (() => {
+          const source = (row as Record<string, unknown>).traits;
+          if (Array.isArray(source)) return source[0];
+          return source;
+        })();
+        if (!isRecord(trait) || typeof trait.id !== 'string') return null;
+        return {
+          id: trait.id,
+          name: typeof trait.name === 'string' && trait.name ? trait.name : trait.id,
+          color: trait.color ?? null,
+          icon: trait.icon ?? null,
+          score: typeof row.score === 'number' ? row.score : 0,
+          baseCount: toNonNegativeInt((row as Record<string, unknown>).base_count),
+          voteCount: toNonNegativeInt((row as Record<string, unknown>).vote_count),
+          updatedAt: typeof row.updated_at === 'string' && row.updated_at.trim()
+            ? row.updated_at
+            : new Date().toISOString(),
+        } satisfies TraitSummary;
+      }).filter((entry): entry is TraitSummary => Boolean(entry));
       setTraitSummaries(parseTraitSummaries(payload));
     } catch (error) {
       setTraitSummaries([]);
@@ -1023,14 +968,47 @@ export default function ProfileSimple() {
     setReliabilityLoading(true);
     setReliabilityError(null);
     try {
-      const url = createWebUrl(`/api/profile/${uid}/reliability`);
-      const response = await fetch(url.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        throw new Error(`Failed to load reliability (${response.status})`);
-      }
-      const payload: unknown = await response.json();
-      const reliability = isRecord(payload) ? parseReliabilitySnapshot(payload.reliability) : null;
-      const attendance = isRecord(payload) ? parseAttendanceSummary(payload.attendance) : null;
+      const [indexResult, metricsResult] = await Promise.all([
+        supabase
+          .from('reliability_index')
+          .select('score,confidence,components_json')
+          .eq('user_id', uid)
+          .maybeSingle(),
+        supabase
+          .from('reliability_metrics')
+          .select('window_30d_json,window_90d_json')
+          .eq('user_id', uid)
+          .maybeSingle(),
+      ]);
+
+      if (indexResult.error) throw indexResult.error;
+      if (metricsResult.error) throw metricsResult.error;
+
+      const components = (indexResult.data?.components_json ?? {}) as Record<string, unknown>;
+      const reliability: ReliabilitySnapshot = {
+        score: typeof indexResult.data?.score === 'number' ? indexResult.data.score : null,
+        confidence: typeof indexResult.data?.confidence === 'number' ? indexResult.data.confidence : null,
+        components: {
+          AS30: typeof components.AS_30 === 'number' ? components.AS_30 : null,
+          AS90: typeof components.AS_90 === 'number' ? components.AS_90 : null,
+          reviewScore: typeof components.RS === 'number' ? components.RS : null,
+          hostBonus: typeof components.host_bonus === 'number' ? components.host_bonus : null,
+        },
+      };
+
+      const window30 = metricsResult.data?.window_30d_json as Record<string, unknown> | null;
+      const window90 = metricsResult.data?.window_90d_json as Record<string, unknown> | null;
+      const attendance: AttendanceSummary = {
+        attended30: toNonNegativeInt(window30?.attended),
+        noShow30: toNonNegativeInt(window30?.no_shows),
+        lateCancel30: toNonNegativeInt(window30?.late_cancels),
+        excused30: toNonNegativeInt(window30?.excused),
+        attended90: toNonNegativeInt(window90?.attended),
+        noShow90: toNonNegativeInt(window90?.no_shows),
+        lateCancel90: toNonNegativeInt(window90?.late_cancels),
+        excused90: toNonNegativeInt(window90?.excused),
+      };
+
       setReliabilitySnapshot(reliability);
       setAttendanceSummary(attendance);
     } catch (error) {
@@ -1410,18 +1388,13 @@ export default function ProfileSimple() {
     ]);
   }, [performSignOut, signingOut]);
 
-  const handleOpenAttendanceLog = useCallback(async () => {
-    try {
-      trackReliabilityAttendanceLogViewed({
-        platform: 'mobile',
-        surface: 'profile-reliability-card',
-      });
-      const url = createWebUrl('/my/attendance');
-      await WebBrowser.openBrowserAsync(url.toString());
-    } catch (error) {
-      Alert.alert('Unable to open log', describeError(error, 'Please try again in a moment.'));
-    }
-  }, []);
+  const handleOpenAttendanceLog = useCallback(() => {
+    trackReliabilityAttendanceLogViewed({
+      platform: 'mobile',
+      surface: 'profile-reliability-card',
+    });
+    router.push('/profile/attendance-log');
+  }, [router]);
 
   function applyDraftsToState() {
     setFullName(draftFullName);
@@ -2190,7 +2163,7 @@ export default function ProfileSimple() {
           >
             <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', letterSpacing:0.5 }}>Step 0 progress</Text>
           </View>
-          <Text style={{ fontSize:16, fontWeight:'700', color:'#065f46' }}>Finish your Social Sweat onboarding</Text>
+          <Text style={{ fontSize:16, fontWeight:'700', color:'#065f46' }}>Finish your doWhat onboarding</Text>
           <Text style={{ color:'#065f46', fontSize:14 }}>{onboardingEncouragementCopy}</Text>
           {prioritizedOnboardingLabel && (
             <Text style={{ color:'#065f46', fontWeight:'600' }}>Next up: {prioritizedOnboardingLabel}</Text>

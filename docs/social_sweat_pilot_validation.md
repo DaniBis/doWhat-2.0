@@ -1,6 +1,6 @@
-# Social Sweat Pilot Validation
+# doWhat Pilot Validation
 
-Use this checklist whenever you need to spin up the Bucharest Social Sweat pilot data (for demos, regression testing, or Find a 4th UX reviews). It walks through seeding Supabase, verifying the mobile/web experiences, and troubleshooting common issues.
+Use this checklist whenever you need to spin up the Bucharest doWhat pilot data (for demos, regression testing, or Find a 4th UX reviews). It walks through seeding Supabase, verifying the mobile/web experiences, and troubleshooting common issues.
 
 ## Prerequisites
 
@@ -85,4 +85,4 @@ If the hero does not appear:
 - **Stale mobile cache:** in Expo, shake the device (or press `Ctrl + m` on Android emulator) and reload the app to refresh Supabase queries.
 - **Removing pilot data:** delete rows with the `social-sweat:bucuresti` seed tag from `venues`/`activities`/`sessions` and revoke the pilot users in Supabase auth. There isn’t an automated cleaner yet (file an issue if needed).
 
-Following these steps ensures the Social Sweat demo environment always has credible data, the “Find a 4th player” ranking remains populated, and both mobile + web flows stay regression-safe.
+Following these steps ensures the doWhat demo environment always has credible data, the “Find a 4th player” ranking remains populated, and both mobile + web flows stay regression-safe.

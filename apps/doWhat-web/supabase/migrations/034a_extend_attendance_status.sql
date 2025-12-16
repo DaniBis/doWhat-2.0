@@ -1,4 +1,4 @@
--- Migration 034a: Extend attendance_status enum for Social Sweat work.
+-- Migration 034a: Extend attendance_status enum for doWhat work.
 -- Ensures new statuses exist (and are committed) before later migrations rely on them.
 
 DO $$

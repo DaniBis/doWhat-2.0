@@ -1,4 +1,4 @@
--- Social Sweat adoption metrics view tracks Step 0 completion progress ahead of GA.
+-- doWhat adoption metrics view tracks Step 0 completion progress ahead of GA.
 -- Requires migrations 021 (traits), 031 (user_saved_activities), 035 (user sport profiles), and 037 (reliability pledge).
 
 DROP VIEW IF EXISTS public.social_sweat_adoption_metrics;
@@ -45,4 +45,4 @@ SELECT
   (SELECT COUNT(*) FROM fully_ready) AS fully_ready_count,
   (SELECT COUNT(*) FROM public.user_sport_profiles) AS user_sport_profile_rows;
 
-COMMENT ON VIEW public.social_sweat_adoption_metrics IS 'Aggregated counts for Social Sweat onboarding adoption (traits, sport, skill, pledge).';
+COMMENT ON VIEW public.social_sweat_adoption_metrics IS 'Aggregated counts for doWhat onboarding adoption (traits, sport, skill, pledge).';

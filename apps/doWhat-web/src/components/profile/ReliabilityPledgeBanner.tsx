@@ -35,7 +35,7 @@ export function ReliabilityPledgeBanner({ lastAcknowledgedAt, steps }: Reliabili
         <p className="text-ink-medium">
           {friendlyAck
             ? `You last confirmed the pledge on ${friendlyAck}. Reconfirm it to keep your reliability score prioritized for new openings.`
-            : "Confirm the four Social Sweat commitments so hosts prioritize you when filling last-minute slots."}
+            : "Confirm the four doWhat commitments so hosts prioritize you when filling last-minute slots."}
         </p>
       </div>
       <Link

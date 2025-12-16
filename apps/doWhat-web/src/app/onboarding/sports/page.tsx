@@ -24,7 +24,7 @@ const highlights = [
 
 export const metadata = {
   title: "Set Your Sport",
-  description: "Tell Social Sweat your primary sport and level so we can personalize discovery.",
+  description: "Tell doWhat your primary sport and level so we can personalize discovery.",
 };
 
 export default async function SportsOnboardingPage() {
@@ -37,6 +37,13 @@ export default async function SportsOnboardingPage() {
     const nextParam = encodeURIComponent(ONBOARDING_PATH);
     redirect(`/auth/login?next=${nextParam}`);
   }
+
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select("reliability_pledge_ack_at")
+    .eq("id", user.id)
+    .maybeSingle<{ reliability_pledge_ack_at: string | null }>();
+  const needsReliabilityReminder = !profileRow?.reliability_pledge_ack_at;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900 text-white">
@@ -65,18 +72,33 @@ export default async function SportsOnboardingPage() {
               </div>
             ))}
           </dl>
-          <div className="space-y-2 rounded-3xl border border-amber-200/50 bg-amber-100/10 p-5 text-sm text-amber-300 shadow-lg shadow-amber-500/10">
-            <p className="font-semibold text-amber-100">Next up · Reliability pledge</p>
-            <p className="text-amber-200/90">
-              After saving your sport, head to the pledge step so hosts know you will follow through on every slot.
-            </p>
-            <Link
-              href="/onboarding/reliability-pledge"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-500/90 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
-            >
-              Continue to reliability pledge
-            </Link>
-          </div>
+          {needsReliabilityReminder ? (
+            <div className="space-y-2 rounded-3xl border border-amber-200/50 bg-amber-100/10 p-5 text-sm text-amber-300 shadow-lg shadow-amber-500/10">
+              <p className="font-semibold text-amber-100">Next up · Reliability pledge</p>
+              <p className="text-amber-200/90">
+                After saving your sport, head to the pledge step so hosts know you will follow through on every slot.
+              </p>
+              <Link
+                href="/onboarding/reliability-pledge"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-500/90 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
+              >
+                Continue to reliability pledge
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-2 rounded-3xl border border-emerald-200/50 bg-emerald-500/10 p-5 text-sm text-emerald-100 shadow-lg shadow-emerald-500/10">
+              <p className="font-semibold text-emerald-50">Reliability pledge locked</p>
+              <p className="text-emerald-100/80">
+                Thanks for completing the pledge. You can revisit it anytime from your profile if something changes.
+              </p>
+              <Link
+                href="/onboarding/reliability-pledge"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200/70 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/20"
+              >
+                Review or edit pledge
+              </Link>
+            </div>
+          )}
         </div>
         <div className="flex-1">
           <SportSelector className="shadow-2xl shadow-emerald-500/20" />

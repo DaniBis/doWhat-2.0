@@ -20,7 +20,7 @@
 --
 -- 4. (Optional) Validate that required migrations are applied:
 --      node scripts/health-migrations.mjs
---      # For Social Sweat schema checks as well:
+--      # For doWhat schema checks as well:
 --      node scripts/health-migrations.mjs --social-sweat
 --
 -- Migration roster (025–034)
@@ -37,9 +37,9 @@
 -- 032_trait_policy_guard_fix.sql          → Hardens trait policy guardrails (see docs/trait_policies_test_plan.md).
 -- 033_remove_event_participants.sql       → Cleans up the deprecated event_participants table + triggers.
 -- 034_admin_audit_logs.sql                → Adds admin_allowlist + admin_audit_logs with RLS-backed inserts/selects.
--- 034a_extend_attendance_status.sql       → Adds the 'registered' and 'late_cancel' enum values ahead of Social Sweat.
+-- 034a_extend_attendance_status.sql       → Adds the 'registered' and 'late_cancel' enum values ahead of doWhat.
 -- 035_social_sweat_core.sql               → Adds reliability columns, sport metadata, `user_sport_profiles`,
---                                            `session_open_slots`, and related enums/triggers for the Social Sweat workstream.
+--                                            `session_open_slots`, and related enums/triggers for the doWhat workstream.
 -- 036_attendance_reliability_trigger.sql  → Moves reliability scoring into Postgres triggers tied to session_attendees.
 -- 037_reliability_pledge_ack.sql          → Adds columns so profiles can track reliability pledge acknowledgements + versions.
 -- 038_social_sweat_adoption_metrics.sql   → Creates the `social_sweat_adoption_metrics` view powering the admin readiness cards.

@@ -30,7 +30,7 @@ const pickEnv = (...keys) => {
 
 const skipFlag = (process.env.SOCIAL_SWEAT_HEALTH_SKIP ?? "").toLowerCase();
 if (["1", "true", "yes"].includes(skipFlag)) {
-  console.log("[verify:social-sweat] Skipping Social Sweat verification (SOCIAL_SWEAT_HEALTH_SKIP set).");
+  console.log("[verify:social-sweat] Skipping doWhat verification (SOCIAL_SWEAT_HEALTH_SKIP set).");
   process.exit(0);
 }
 
@@ -332,7 +332,7 @@ const verifySessions = async () => {
 };
 
 const main = async () => {
-  console.info("Verifying Social Sweat pilot data…\n");
+  console.info("Verifying doWhat pilot data…\n");
   await verifyHosts();
   await verifyVenues();
   await verifyActivities();
@@ -343,7 +343,7 @@ const main = async () => {
     process.exit(1);
   }
 
-  console.info("All Social Sweat pilot entities look healthy: hosts, venues, activities, sessions, open slots, and host attendance rows are in place.\n");
+  console.info("All doWhat pilot entities look healthy: hosts, venues, activities, sessions, open slots, and host attendance rows are in place.\n");
 };
 
 main().catch((error) => {

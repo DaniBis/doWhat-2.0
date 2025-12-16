@@ -161,6 +161,7 @@ type Props = {
   onSelectActivity?: (activity: MapActivity) => void;
   onSelectEvent?: (event: EventSummary) => void;
   onRequestDetails?: (activity: MapActivity) => void;
+  onRequestCreateEvent?: (activity: MapActivity) => void;
   onRequestEventDetails?: (event: EventSummary) => void;
   mode?: 'activities' | 'events' | 'both';
   activeActivityId?: string | null;
@@ -177,6 +178,7 @@ export default function WebMap({
   onSelectActivity,
   onSelectEvent,
   onRequestDetails,
+  onRequestCreateEvent,
   onRequestEventDetails,
   mode = 'activities',
   activeActivityId,
@@ -195,6 +197,8 @@ export default function WebMap({
     () => describeActivityCategories(selectedActivity?.activity_types ?? []),
     [selectedActivity?.activity_types],
   );
+  const selectedActivityUpcomingSessions = selectedActivity?.upcoming_session_count ?? 0;
+  const canViewSelectedActivityEvents = selectedActivityUpcomingSessions > 0;
 
   useEffect(() => {
     setViewState((prev) => ({ ...prev, latitude: center.lat, longitude: center.lng }));
@@ -436,16 +440,31 @@ export default function WebMap({
                   className="w-full justify-center"
                 />
               ) : null}
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  onRequestDetails?.(selectedActivity);
-                }}
-                className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
-              >
-                View details →
-              </button>
+              <div className="flex flex-wrap gap-xs text-xs">
+                {canViewSelectedActivityEvents && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onRequestDetails?.(selectedActivity);
+                    }}
+                    className="rounded-full border border-brand-teal/40 px-sm py-xxs font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
+                  >
+                    View events
+                    {selectedActivityUpcomingSessions ? ` (${selectedActivityUpcomingSessions})` : ''} →
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onRequestCreateEvent?.(selectedActivity);
+                  }}
+                  className="rounded-full bg-brand-teal/90 px-sm py-xxs font-semibold text-surface transition hover:bg-brand-teal"
+                >
+                  Create event
+                </button>
+              </div>
             </div>
           </Popup>
         )}

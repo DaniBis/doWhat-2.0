@@ -16,7 +16,7 @@ async function SessionOpengraphImage({ params }: { params: { id: string } }) {
   const context = await fetchSessionOgContext(params.id);
   const { dateLabel, timeLabel } = formatSessionOgDate(context?.startsAt ?? null);
 
-  const title = context?.title ?? "Social Sweat session";
+  const title = context?.title ?? "doWhat session";
   const venue = context?.venue ?? "Location TBA";
   const host = context?.hostName ?? "Host pending";
   const slotDescriptor = describeOpenSlots(context?.openSlots ?? 0);
@@ -38,7 +38,7 @@ async function SessionOpengraphImage({ params }: { params: { id: string } }) {
           fontFamily,
         }}
       >
-        <div style={{ opacity: 0.85, letterSpacing: 6, fontSize: 26, textTransform: "uppercase" }}>Social Sweat</div>
+        <div style={{ opacity: 0.85, letterSpacing: 6, fontSize: 26, textTransform: "uppercase" }}>doWhat</div>
         <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
           <h1 style={{ fontSize: 78, lineHeight: 1.05, margin: 0 }}>{title}</h1>
           <p style={{ fontSize: 32, margin: 0, color: theme.palette.brand.yellow }}>

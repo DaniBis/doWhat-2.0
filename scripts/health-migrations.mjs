@@ -123,7 +123,7 @@ const main = async () => {
     }
 
     if (requireSocialSweat) {
-      await step('Social Sweat tables exist', async () => {
+      await step('doWhat tables exist', async () => {
         const { rows } = await client.query(
           `select table_name from information_schema.tables where table_schema='public' and table_name in ('user_sport_profiles','session_open_slots')`,
         );

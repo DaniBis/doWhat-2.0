@@ -1,12 +1,10 @@
 import { supabase } from "../lib/supabase";
-import { createWebUrl } from "../lib/web";
-import { fetchWithTimeout } from "../lib/fetchWithTimeout";
+import { fetchSupabasePlacesWithinBounds } from "../lib/supabasePlaces";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
 import {
   normaliseActivityName,
   formatPrice,
   formatDateRange,
-  createPlacesFetcher,
   formatPlaceUpdatedLabel,
   DEFAULT_CITY_SLUG,
   getCityConfig,
@@ -16,6 +14,8 @@ import {
   buildSessionSavePayload,
   trackFindA4thCardTap,
   trackFindA4thImpression,
+  fetchOverpassPlaceSummaries,
+  estimateRadiusFromBounds,
   type PlaceSummary,
   type PlacesViewportQuery,
   type ActivityRow,
@@ -143,24 +143,6 @@ type ProfileLocationRow = {
   last_lng: number | null;
 };
 
-type NearbyApiActivity = {
-  id?: string | null;
-  name?: string | null;
-};
-
-type NearbyApiResponse = {
-  activities?: NearbyApiActivity[];
-};
-
-type VenueFallbackRow = {
-  id: string | null;
-  name: string | null;
-  address: string | null;
-  lat: number | null;
-  lng: number | null;
-  ai_activity_tags: string[] | null;
-  verified_activities: string[] | null;
-};
 
 const lookingForPlayersFeatureEnabled = !(
   process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false" ||
@@ -183,7 +165,6 @@ function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
   const nearbyApiFailureLogged = useRef(false);
-  const nearbyFallbackFailureLogged = useRef(false);
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
   const [placesError, setPlacesError] = useState<string | null>(null);
   const placesFetchFailureLogged = useRef(false);
@@ -195,15 +176,6 @@ function HomeScreen() {
     refresh: refreshRankedOpenSessions,
   } = useRankedOpenSessions({ enabled: lookingForPlayersFeatureEnabled, autoRefresh: false });
   const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
-  const placesFetcher = useMemo(
-    () =>
-      createPlacesFetcher({
-        buildUrl: () => createWebUrl('/api/places').toString(),
-        includeCredentials: false,
-        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
-      }),
-    [],
-  );
 
     const FALLBACK_RADIUS_METERS = 2500;
 
@@ -283,142 +255,90 @@ function HomeScreen() {
     }, []);
 
   const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
-    if (latNow == null || lngNow == null) { setActivities([]); return; }
+    if (latNow == null || lngNow == null) {
+      setActivities([]);
+      return;
+    }
     try {
-      const url = createWebUrl('/api/nearby');
-      url.searchParams.set('lat', String(latNow));
-      url.searchParams.set('lng', String(lngNow));
-      url.searchParams.set('radius', '2500');
-      const res = await fetchWithTimeout(url.toString(), { timeoutMs: 8000 });
-      if (!res.ok) {
-        throw new Error(`Nearby API failed (${res.status})`);
-      }
-      const json = await res.json() as NearbyApiResponse;
-      const list = Array.isArray(json?.activities) ? json.activities : [];
-      const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
-        if (!item?.name) { return acc; }
-        const key = normaliseActivityName(item.name);
-        const existing = acc[key];
-        if (existing) {
-          existing.count += 1;
-        } else {
-          acc[key] = {
-            id: key,
-            name: item.name,
-            count: 1,
-          };
-        }
-        return acc;
-      }, {});
-      const grouped = Object.values(groupedMap).sort((a, b) => b.count - a.count);
+      const grouped = await fetchNearbyFromSupabase(latNow, lngNow);
       setActivities(grouped);
-    } catch (apiError) {
+      nearbyApiFailureLogged.current = false;
+    } catch (error) {
       if (__DEV__ && !nearbyApiFailureLogged.current) {
         nearbyApiFailureLogged.current = true;
-        console.info('[Home] Nearby API failed, falling back to Supabase', apiError);
+        console.info('[Home] Nearby Supabase query failed', error);
       }
-      try {
-        const fallback = await fetchNearbyFromSupabase(latNow, lngNow);
-        setActivities(fallback);
-      } catch (fallbackErr) {
-        if (__DEV__ && !nearbyFallbackFailureLogged.current) {
-          nearbyFallbackFailureLogged.current = true;
-          console.info('[Home] Nearby Supabase fallback failed', fallbackErr);
-        }
-        setActivities([]);
-      }
+      setActivities([]);
     }
   }, [fetchNearbyFromSupabase]);
 
-  const fetchPlacesFallbackFromSupabase = useCallback(
-    async (bounds: PlacesViewportQuery['bounds']): Promise<PlaceSummary[]> => {
-      const { data, error } = await supabase
-        .from('venues')
-        .select('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
-        .gte('lat', bounds.sw.lat)
-        .lte('lat', bounds.ne.lat)
-        .gte('lng', bounds.sw.lng)
-        .lte('lng', bounds.ne.lng)
-        .order('updated_at', { ascending: false })
-        .limit(30);
-      if (error) throw error;
-
-      const fallback = (data as VenueFallbackRow[] | null)
-        ?.filter((row) => typeof row.lat === 'number' && typeof row.lng === 'number' && row.id)
-        .map((row) => ({
-          id: row.id as string,
-          slug: null,
-          name: row.name ?? 'Nearby venue',
-          lat: row.lat as number,
-          lng: row.lng as number,
-          categories: row.verified_activities ?? [],
-          tags: row.ai_activity_tags ?? [],
-          address: row.address,
-          city: defaultCity.slug,
-          aggregatedFrom: ['supabase-venues'],
-          attributions: [],
-          metadata: { fallbackSource: 'supabase', venueId: row.id },
-          transient: true,
-        })) ?? [];
-
-      return fallback;
-    },
-    [defaultCity.slug],
-  );
-
   const fetchPlacesViewport = useCallback(
     async (latNow: number | null, lngNow: number | null) => {
+      const city = defaultCity;
+      const hasLocation = latNow != null && lngNow != null;
+      const latitudeDelta = hasLocation
+        ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
+        : city.defaultRegion.latitudeDelta;
+      const longitudeDelta = hasLocation
+        ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
+        : city.defaultRegion.longitudeDelta;
+      const centerLat = hasLocation ? latNow! : city.center.lat;
+      const centerLng = hasLocation ? lngNow! : city.center.lng;
+      const bounds: PlacesViewportQuery['bounds'] = {
+        sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
+        ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
+      };
+
+      let primaryError: unknown = null;
+      const fallbackCenterLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+      const fallbackCenterLng = (bounds.ne.lng + bounds.sw.lng) / 2;
       try {
-        const city = defaultCity;
-        const hasLocation = latNow != null && lngNow != null;
-        const latitudeDelta = hasLocation
-          ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
-          : city.defaultRegion.latitudeDelta;
-        const longitudeDelta = hasLocation
-          ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
-          : city.defaultRegion.longitudeDelta;
-        const centerLat = hasLocation ? latNow! : city.center.lat;
-        const centerLng = hasLocation ? lngNow! : city.center.lng;
-        const bounds: PlacesViewportQuery['bounds'] = {
-          sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
-          ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
-        };
-        const query: PlacesViewportQuery = {
+        const supabasePlaces = await fetchSupabasePlacesWithinBounds({
           bounds,
-          limit: 50,
-        };
-        if (!hasLocation) {
-          query.city = city.slug;
-        }
-        const response = await placesFetcher(query);
-        setNearbyPlaces(response.places ?? []);
+          citySlug: city.slug,
+          limit: 80,
+        });
+        setNearbyPlaces(supabasePlaces ?? []);
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
-        console.log('[Home] Places fetch success', response.places?.length, 'places');
+        if (__DEV__) {
+          console.log('[Home] Supabase places fetch success', supabasePlaces.length, 'places');
+        }
+        return;
       } catch (err) {
+        primaryError = err;
         if (__DEV__ && !placesFetchFailureLogged.current) {
           placesFetchFailureLogged.current = true;
-          console.warn('[Home] Places fetch failed', err);
+          console.warn('[Home] Supabase places fetch failed', err);
         }
-        try {
-          const fallbackPlaces = await fetchPlacesFallbackFromSupabase(bounds);
-          if (fallbackPlaces.length) {
-            setNearbyPlaces(fallbackPlaces);
-            setPlacesError('Showing limited nearby venues while the Places API restarts.');
-            return;
-          }
-        } catch (fallbackError) {
-          if (__DEV__ && placesFetchFailureLogged.current) {
-            console.warn('[Home] Places fallback failed', fallbackError);
-          }
-        }
-        setNearbyPlaces([]);
-        const defaultMessage = 'Unable to load nearby places. Make sure the web dev server is running on port 3002.';
-        setPlacesError(err instanceof Error ? `${defaultMessage}
-${err.message}` : defaultMessage);
       }
+
+      try {
+        const fallbackRadiusMeters = estimateRadiusFromBounds(bounds);
+        const fallbackPlaces = await fetchOverpassPlaceSummaries({
+          lat: fallbackCenterLat,
+          lng: fallbackCenterLng,
+          radiusMeters: fallbackRadiusMeters,
+          limit: 30,
+        });
+        if (fallbackPlaces.length) {
+          setNearbyPlaces(fallbackPlaces);
+          setPlacesError('Showing fallback nearby venues while Supabase recovers.');
+          return;
+        }
+      } catch (fallbackError) {
+        if (__DEV__ && placesFetchFailureLogged.current) {
+          console.warn('[Home] Places fallback failed', fallbackError);
+        }
+      }
+
+      setNearbyPlaces([]);
+      const defaultMessage = 'Unable to load nearby places from Supabase.';
+      setPlacesError(
+        primaryError instanceof Error ? `${defaultMessage}\n${primaryError.message}` : defaultMessage,
+      );
     },
-    [defaultCity, fetchPlacesFallbackFromSupabase, placesFetcher],
+    [defaultCity],
   );
 
   const load = useCallback(async () => {

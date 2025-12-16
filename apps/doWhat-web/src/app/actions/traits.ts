@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { TraitSystemError, recordTraitVotes, saveOnboardingTraits } from "@/lib/trait-system";
+import { ensureUserRow } from "@/lib/users/ensureUserRow";
 import { onboardingTraitsSchema, traitVoteSchema } from "@/lib/validation/traits";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 import type { TraitOnboardingPayload, TraitVoteRequest, TraitVoteResult } from "@/types/traits";
@@ -20,6 +21,13 @@ export async function completeTraitOnboardingAction(
     } = await supabase.auth.getUser();
     if (!user) {
       throw new TraitSystemError("Unauthorized", 401);
+    }
+    const ensured = await ensureUserRow(supabase, user);
+    if (!ensured) {
+      throw new TraitSystemError(
+        "Your account needs to finish syncing. Sign out and back in, then try again.",
+        409
+      );
     }
     const parsed = onboardingTraitsSchema.parse(payload);
     await saveOnboardingTraits({ userId: user.id, traitIds: parsed.traitIds }, supabase);

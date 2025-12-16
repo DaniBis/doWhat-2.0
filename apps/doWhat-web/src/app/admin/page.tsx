@@ -788,7 +788,7 @@ export default function AdminDashboard() {
         <section className="mt-md rounded border bg-surface p-md shadow-sm">
           <div className="flex flex-col gap-xxs sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">Social Sweat Readiness</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">doWhat Readiness</p>
               <h3 className="text-lg font-semibold text-ink">Onboarding Adoption</h3>
               <p className="text-sm text-ink-muted">Monitor sport, trait, and pledge completion ahead of GA.</p>
             </div>

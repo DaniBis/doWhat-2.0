@@ -14,7 +14,7 @@ const highlights = [
   },
   {
     title: "Boost your reliability score",
-    detail: "The pledge feeds into Social Sweat reliability nudges and the badge system.",
+    detail: "The pledge feeds into doWhat reliability nudges and the badge system.",
   },
   {
     title: "Signal good vibes",
@@ -24,10 +24,14 @@ const highlights = [
 
 export const metadata = {
   title: "Reliability Pledge",
-  description: "Review Social Sweat’s commitments and lock in your reliability pledge.",
+  description: "Review doWhat’s commitments and lock in your reliability pledge.",
 };
 
-export default async function ReliabilityPledgePage() {
+type ReliabilityPledgePageProps = {
+  searchParams?: { next?: string };
+};
+
+export default async function ReliabilityPledgePage({ searchParams }: ReliabilityPledgePageProps) {
   const supabase = createClient();
   const {
     data: { user },
@@ -35,8 +39,11 @@ export default async function ReliabilityPledgePage() {
 
   if (!user) {
     const nextParam = encodeURIComponent(ONBOARDING_PATH);
-    redirect(`/auth/login?next=${nextParam}`);
+    redirect(`/auth?intent=signin&next=${nextParam}`);
   }
+
+  const requestedRedirect = searchParams?.next && searchParams.next.startsWith("/") ? searchParams.next : null;
+  const redirectAfterPledge = requestedRedirect ?? "/profile";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900 text-white">
@@ -49,9 +56,9 @@ export default async function ReliabilityPledgePage() {
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-sm font-medium text-emerald-200">
               <ShieldCheck className="h-4 w-4" /> Step 3 · Reliability pledge
             </div>
-            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Lock the Social Sweat pledge</h1>
+            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Lock the doWhat pledge</h1>
             <p className="text-base text-slate-200 sm:text-lg">
-              Social Sweat runs on trust. Agree to the four expectations so hosts know you will follow through and reliability nudges stay accurate.
+              doWhat runs on trust. Agree to the four expectations so hosts know you will follow through and reliability nudges stay accurate.
             </p>
           </div>
           <dl className="space-y-4 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl shadow-emerald-500/10 backdrop-blur">
@@ -67,7 +74,7 @@ export default async function ReliabilityPledgePage() {
           </dl>
         </div>
         <div className="flex-1">
-          <ReliabilityPledge className="shadow-2xl shadow-emerald-500/20" />
+          <ReliabilityPledge className="shadow-2xl shadow-emerald-500/20" redirectTo={redirectAfterPledge} />
         </div>
       </div>
     </div>

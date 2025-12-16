@@ -34,7 +34,6 @@ import {
 } from '@dowhat/shared';
 
 import { supabase } from '../lib/supabase';
-import { createWebUrl } from '../lib/web';
 
 type UserTrait = {
 	trait_name: string;
@@ -96,6 +95,59 @@ const buildFallbackTraitCounts = (): UserTrait[] =>
 // Removed Activity Filters (categories/timeSlots) to keep this screen focused on People filters
 
 const PEOPLE_LOCAL_KEY = 'people_filters:v1';
+
+type TraitRecord = {
+	id: string;
+	name: string | null;
+	color?: string | null;
+	icon?: string | null;
+};
+
+type TraitSummaryRow = {
+	trait_id: string;
+	score: number | null;
+	vote_count: number | null;
+	base_count: number | null;
+	traits: TraitRecord | TraitRecord[] | null;
+};
+
+const normalizeTraitRecord = (input: TraitRecord | TraitRecord[] | null): TraitRecord | null => {
+	if (!input) return null;
+	return Array.isArray(input) ? input[0] ?? null : input;
+};
+
+const fetchPopularTraitsFromSupabase = async (limit: number): Promise<PopularTraitResponse[]> => {
+	const sampleSize = Math.min(Math.max(limit * 10, 60), 500);
+	const { data, error } = await supabase
+		.from('user_trait_summary')
+		.select('trait_id, score, vote_count, base_count, traits:trait_id(id, name, color, icon)')
+		.order('score', { ascending: false })
+		.limit(sampleSize);
+	if (error) throw error;
+	const aggregates = new Map<string, PopularTraitResponse>();
+	(data ?? []).forEach((row) => {
+		const trait = normalizeTraitRecord((row as TraitSummaryRow).traits);
+		if (!trait?.id) return;
+		const entry = aggregates.get(trait.id) ?? {
+			id: trait.id,
+			name: trait.name ?? 'Unknown',
+			color: trait.color ?? undefined,
+			icon: trait.icon ?? undefined,
+			score: 0,
+			voteCount: 0,
+			baseCount: 0,
+			popularity: 0,
+		};
+		entry.score += (row as TraitSummaryRow).score ?? 0;
+		entry.voteCount += (row as TraitSummaryRow).vote_count ?? 0;
+		entry.baseCount += (row as TraitSummaryRow).base_count ?? 0;
+		entry.popularity = entry.score + entry.voteCount + entry.baseCount;
+		aggregates.set(trait.id, entry);
+	});
+	return Array.from(aggregates.values())
+		.sort((a, b) => b.popularity - a.popularity)
+		.slice(0, limit);
+};
 
 export default function PeopleFilterScreen() {
 	const [peopleFilters, setPeopleFilters] = useState<PeopleFilterPreferences>(
@@ -347,12 +399,7 @@ export default function PeopleFilterScreen() {
 
 	const fetchNearbyTraits = async () => {
 		try {
-			const url = createWebUrl('/api/traits/popular?limit=9');
-			const response = await fetch(url.toString(), { credentials: 'include' });
-			if (!response.ok) {
-				throw new Error(`Failed to load traits (${response.status})`);
-			}
-			const payload = (await response.json()) as PopularTraitResponse[];
+			const payload = await fetchPopularTraitsFromSupabase(9);
 			if (!Array.isArray(payload) || payload.length === 0) {
 				setNearbyTraits(buildFallbackTraitCounts());
 				return;
@@ -497,7 +544,7 @@ export default function PeopleFilterScreen() {
 					<Text style={styles.pledgeCtaEyebrow}>Don’t forget the pledge</Text>
 					<Text style={styles.pledgeCtaTitle}>Lock your reliability</Text>
 					<Text style={styles.pledgeCtaBody}>
-						Confirm the four Social Sweat commitments so hosts prioritise you for last-minute slots.
+						Confirm the four doWhat commitments so hosts prioritise you for last-minute slots.
 					</Text>
 					<TouchableOpacity
 						style={styles.pledgeCtaButton}

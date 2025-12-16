@@ -914,7 +914,7 @@ export default function PeopleFilterPage() {
             <div className="space-y-1">
               <p className="text-base font-semibold text-indigo-900">Confirm the reliability pledge</p>
               <p>
-                Review the four Social Sweat commitments so hosts prioritize you for last-minute openings and high-reliability matches.
+                Review the four doWhat commitments so hosts prioritize you for last-minute openings and high-reliability matches.
               </p>
             </div>
             <Link

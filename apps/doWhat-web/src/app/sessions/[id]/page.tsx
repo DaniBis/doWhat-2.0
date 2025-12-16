@@ -19,7 +19,7 @@ type AttendanceStatus = SessionAttendeeRow["status"];
 
 type SessionPageProps = { params: { id: string } };
 
-const FALLBACK_METADATA_TITLE = "Session – Social Sweat";
+const FALLBACK_METADATA_TITLE = "Session – doWhat";
 
 export async function generateMetadata({ params }: SessionPageProps): Promise<Metadata> {
   const context = await fetchSessionOgContext(params.id);
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: SessionPageProps): Promise<Me
 
   const baseUrl = getBaseUrl();
   const description = buildSessionShareDescription(context);
-  const title = `${context.title} – Social Sweat`;
+  const title = `${context.title} – doWhat`;
   const imageUrl = `${baseUrl}/sessions/${context.id}/opengraph-image`;
 
   return {

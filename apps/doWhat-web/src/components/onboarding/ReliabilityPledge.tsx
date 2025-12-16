@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShieldCheck, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -25,7 +25,7 @@ const COMMITMENTS = [
   {
     id: "release-spot",
     title: "Release your spot",
-    description: "Late cancels sting. Free the slot immediately so another Social Sweat member can jump in.",
+    description: "Late cancels sting. Free the slot immediately so another doWhat member can jump in.",
   },
   {
     id: "respect-crew",
@@ -42,6 +42,8 @@ const buildCommitmentState = (checked: boolean) =>
 
 type ReliabilityPledgeProps = {
   className?: string;
+  redirectTo?: string | null;
+  redirectDelayMs?: number;
 };
 
 const formatAck = (timestamp: string | null) => {
@@ -53,7 +55,7 @@ const formatAck = (timestamp: string | null) => {
   }
 };
 
-export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
+export function ReliabilityPledge({ className, redirectTo = null, redirectDelayMs = 1500 }: ReliabilityPledgeProps) {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [commitments, setCommitments] = useState(() => buildCommitmentState(false));
@@ -63,6 +65,7 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [ackTimestamp, setAckTimestamp] = useState<string | null>(null);
   const [ackVersion, setAckVersion] = useState<string | null>(null);
+  const redirectTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -91,7 +94,7 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
           setCommitments(buildCommitmentState(true));
           setAckTimestamp(profileRow.reliability_pledge_ack_at);
           setAckVersion(profileRow.reliability_pledge_version);
-          setSuccess("Thanks for keeping Social Sweat reliable – edit anytime.");
+          setSuccess("Thanks for keeping doWhat reliable – edit anytime.");
         }
       } catch (err) {
         console.error("[ReliabilityPledge] failed to load state", err);
@@ -104,8 +107,17 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
     void hydrate();
     return () => {
       active = false;
+      if (redirectTimer.current) {
+        clearTimeout(redirectTimer.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (redirectTo) {
+      void router.prefetch(redirectTo);
+    }
+  }, [redirectTo, router]);
 
   const toggleCommitment = useCallback((id: keyof typeof commitments) => {
     setError(null);
@@ -144,7 +156,16 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
       setAckTimestamp(timestamp);
       setAckVersion(PLEDGE_VERSION);
       setSuccess("Reliability pledge saved! We’ll nudge you if expectations change.");
-      router.prefetch("/profile");
+      if (redirectTo) {
+        if (redirectTimer.current) {
+          clearTimeout(redirectTimer.current);
+        }
+        redirectTimer.current = setTimeout(() => {
+          router.push(redirectTo);
+        }, redirectDelayMs);
+      } else {
+        router.prefetch("/profile");
+      }
     } catch (err) {
       console.error("[ReliabilityPledge] failed to save", err);
       setError("Could not save your pledge. Please try again.");
@@ -164,7 +185,7 @@ export function ReliabilityPledge({ className }: ReliabilityPledgeProps) {
         </div>
         <h2 className="text-2xl font-semibold text-ink">Keep every session trustworthy</h2>
         <p className="text-sm text-ink-medium">
-          Social Sweat only works when everyone follows through. Review the commitments below and lock the pledge so hosts know they can count on you.
+          doWhat only works when everyone follows through. Review the commitments below and lock the pledge so hosts know they can count on you.
         </p>
       </CardHeader>
       <CardContent className="space-y-xl">

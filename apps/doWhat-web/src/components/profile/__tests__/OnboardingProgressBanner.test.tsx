@@ -41,7 +41,7 @@ describe("OnboardingProgressBanner", () => {
     const steps: OnboardingStep[] = ["traits", "sport"];
     render(<OnboardingProgressBanner steps={steps} />);
 
-    expect(screen.getByText(/Finish your Social Sweat onboarding/i)).toBeInTheDocument();
+    expect(screen.getByText(/Finish your doWhat onboarding/i)).toBeInTheDocument();
     expect(screen.getByText("Pick 5 base traits")).toBeInTheDocument();
     expect(screen.getByText("Set your sport & skill")).toBeInTheDocument();
     expect(screen.getByText(/Next up: Pick 5 base traits/i)).toBeInTheDocument();
@@ -62,7 +62,7 @@ describe("OnboardingProgressBanner", () => {
     render(<OnboardingProgressBanner steps={["pledge"]} />);
 
     expect(
-      screen.getByText(/Just one more action to unlock full Social Sweat access./i),
+      screen.getByText(/Just one more action to unlock full doWhat access./i),
     ).toBeInTheDocument();
     expect(screen.getByText(/Next up: Confirm the reliability pledge/i)).toBeInTheDocument();
   });

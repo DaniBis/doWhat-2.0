@@ -47,7 +47,7 @@ const STEP_ORDER: ReadonlyArray<OnboardingStepDefinition> = [
   {
     id: "pledge",
     title: "Step 3 · Reliability pledge",
-    description: "Confirm the four Social Sweat commitments so hosts know they can count on you.",
+    description: "Confirm the four doWhat commitments so hosts know they can count on you.",
     href: "/onboarding/reliability-pledge",
     actionLabel: "Review pledge",
   },
@@ -63,7 +63,7 @@ const formatAckDate = (value?: string | null) => {
 };
 
 export const metadata = {
-  title: "Social Sweat Onboarding",
+  title: "doWhat Onboarding",
   description: "Track your onboarding progress (traits, sport, reliability pledge) and jump back into any step.",
 };
 
@@ -169,12 +169,12 @@ export default async function OnboardingHomePage() {
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-12 px-4 py-12 sm:px-6 lg:py-20">
         <header className="space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-sm font-semibold text-emerald-200">
-            <Sparkles className="h-4 w-4" aria-hidden /> Social Sweat onboarding
+            <Sparkles className="h-4 w-4" aria-hidden /> doWhat onboarding
           </div>
           <div>
             <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Finish the Step 0 checklist</h1>
             <p className="mt-3 text-base text-slate-200 sm:text-lg">
-              Lock your vibe, sport, and reliability pledge so Social Sweat can prioritize you for last-minute sessions and reliable crews.
+              Lock your vibe, sport, and reliability pledge so doWhat can prioritize you for last-minute sessions and reliable crews.
             </p>
           </div>
         </header>

@@ -12,7 +12,7 @@ const ACTION_DELTAS: Record<ReliabilityAction, number> = {
 const clamp = (value: number) => Math.min(MAX_SCORE, Math.max(MIN_SCORE, value));
 
 /**
- * Applies the Social Sweat reliability rules to a participant score.
+ * Applies the doWhat reliability rules to a participant score.
  */
 export const calculateNewScore = (currentScore: number, action: ReliabilityAction): number => {
   const safeScore = Number.isFinite(currentScore) ? currentScore : MAX_SCORE;

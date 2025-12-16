@@ -85,14 +85,15 @@ export async function searchVenueActivities(
   let query = supabase
     .from('venues')
     .select(
-      'id,name,lat,lng,ai_activity_tags,ai_confidence_scores,verified_activities,needs_verification,metadata,last_ai_update',
+      'id,name,lat,lng,ai_activity_tags,ai_confidence_scores,verified_activities,needs_verification,last_ai_update',
     )
     .not('lat', 'is', null)
     .not('lng', 'is', null)
     .limit(Math.max(limit * 2, limit + 5));
 
   query = applyGeoFilters(query, params);
-  query = query.or(`ai_activity_tags.cs.${JSON.stringify([params.activity])},verified_activities.cs.${JSON.stringify([params.activity])}`);
+  const activityArrayLiteral = toPgTextArrayLiteral([params.activity]);
+  query = query.or(`ai_activity_tags.cs.${activityArrayLiteral},verified_activities.cs.${activityArrayLiteral}`);
 
   const { data: venues, error } = await query;
   if (error) throw error;
@@ -219,6 +220,11 @@ function applyGeoFilters<T extends VenueQueryBuilder>(query: T, filters: GeoFilt
   }
 
   return query;
+}
+
+function toPgTextArrayLiteral(values: string[]): string {
+  const escaped = values.map((value) => `"${value.replace(/"/g, '\\"')}"`);
+  return `{${escaped.join(',')}}`;
 }
 
 async function fetchVoteMap(supabase: Supabase, venueIds: string[], activity: ActivityName) {

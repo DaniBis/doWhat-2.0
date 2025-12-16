@@ -93,7 +93,7 @@ describe("ReliabilityPledge", () => {
 
     render(<ReliabilityPledge />);
 
-    await waitFor(() => expect(screen.getByText(/Thanks for keeping Social Sweat reliable/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Thanks for keeping doWhat reliable/i)).toBeInTheDocument());
     const firstCommitment = screen.getByRole("button", { name: /Confirm attendance early/i });
     expect(firstCommitment).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /Update pledge/i })).toBeInTheDocument();

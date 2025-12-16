@@ -59,7 +59,7 @@ const STEP_DEFINITIONS: ReadonlyArray<StepDefinition> = [
   {
     id: "pledge",
     title: "Step 3 · Reliability pledge",
-    description: "Confirm the four Social Sweat commitments so hosts know they can count on you.",
+    description: "Confirm the four doWhat commitments so hosts know they can count on you.",
     actionLabel: "Review pledge",
     href: "/onboarding/reliability-pledge",
   },
@@ -241,7 +241,7 @@ const OnboardingHomeScreen: React.FC = () => {
   const encouragementCopy = pendingStepCount === 0
     ? "You’re fully onboarded. Keep details fresh so hosts keep prioritizing you."
     : pendingStepCount === 1
-      ? "Just one more action to unlock full Social Sweat access."
+      ? "Just one more action to unlock full doWhat access."
       : `${pendingStepCount} steps remain — finish them so hosts prioritize you for open slots.`;
   const summaryCtaLabel = pendingStepCount === 0 ? "Return to Home" : "Go to next step";
 

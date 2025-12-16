@@ -13,7 +13,7 @@ export type SessionOgContext = {
   description: string | null;
 };
 
-const FALLBACK_TITLE = "Social Sweat session";
+const FALLBACK_TITLE = "doWhat session";
 const FALLBACK_VENUE = "Location TBA";
 
 export async function fetchSessionOgContext(sessionId: string): Promise<SessionOgContext | null> {

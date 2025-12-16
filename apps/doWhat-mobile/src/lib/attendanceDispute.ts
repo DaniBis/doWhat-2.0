@@ -1,6 +1,6 @@
 import { trackAttendanceDisputeSubmitted } from '@dowhat/shared';
 
-import { createWebUrl } from './web';
+import { supabase } from './supabase';
 
 export type AttendanceDisputeRequest = {
   sessionId: string;
@@ -27,69 +27,57 @@ export type AttendanceDisputeHistoryItem = {
   };
 };
 
+const FUNCTION_NAME = 'mobile-disputes';
+
+type DisputeSubmitResponse = {
+  id: string;
+  status: AttendanceDisputeHistoryItem['status'];
+  createdAt: string;
+};
+
+type DisputeHistoryResponse = {
+  disputes?: AttendanceDisputeHistoryItem[];
+};
+
+async function invokeDisputeFunction<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke<T>(FUNCTION_NAME, {
+    body,
+  });
+  if (error) {
+    const message = typeof error.message === 'string' && error.message.trim() ? error.message : 'Dispute service unavailable.';
+    throw new Error(message);
+  }
+  if (!data) {
+    throw new Error('Dispute service returned no data.');
+  }
+  return data;
+}
+
 export async function submitAttendanceDispute({ sessionId, reason, details = null }: AttendanceDisputeRequest) {
   if (!sessionId) {
     throw new Error('Missing session id.');
   }
   const trimmedReason = reason.trim();
   const payloadDetails = typeof details === 'string' ? details : null;
-  const endpoint = createWebUrl('/api/disputes');
-  const response = await fetch(endpoint.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      sessionId,
-      reason: trimmedReason,
-      details: payloadDetails ?? null,
-    }),
+  const result = await invokeDisputeFunction<DisputeSubmitResponse>({
+    action: 'submit',
+    sessionId,
+    reason: trimmedReason,
+    details: payloadDetails ?? null,
   });
-  let json: unknown = null;
-  try {
-    json = await response.json();
-  } catch {
-    json = null;
-  }
-  if (!response.ok) {
-    const message = extractErrorMessage(json) ?? 'Failed to submit dispute.';
-    throw new Error(message);
-  }
   trackAttendanceDisputeSubmitted({
     platform: 'mobile',
     sessionId,
     hasDetails: Boolean(payloadDetails && payloadDetails.trim()),
     reasonLength: trimmedReason.length,
   });
-  return json;
+  return result;
 }
 
 export async function fetchAttendanceDisputes(): Promise<AttendanceDisputeHistoryItem[]> {
-  const endpoint = createWebUrl('/api/disputes');
-  const response = await fetch(endpoint.toString(), {
-    credentials: 'include',
-  });
-  let json: unknown = null;
-  try {
-    json = await response.json();
-  } catch {
-    json = null;
-  }
-  if (!response.ok) {
-    const message = extractErrorMessage(json) ?? 'Failed to load dispute history.';
-    throw new Error(message);
-  }
-  if (json && typeof json === 'object' && Array.isArray((json as { disputes?: unknown }).disputes)) {
-    return ((json as { disputes: AttendanceDisputeHistoryItem[] }).disputes) ?? [];
+  const payload = await invokeDisputeFunction<DisputeHistoryResponse>({ action: 'list' });
+  if (payload && typeof payload === 'object' && Array.isArray(payload.disputes)) {
+    return payload.disputes;
   }
   return [];
-}
-
-function extractErrorMessage(payload: unknown) {
-  if (payload && typeof payload === 'object' && 'error' in (payload as Record<string, unknown>)) {
-    const message = (payload as { error?: unknown }).error;
-    if (typeof message === 'string' && message.trim()) {
-      return message;
-    }
-  }
-  return null;
 }

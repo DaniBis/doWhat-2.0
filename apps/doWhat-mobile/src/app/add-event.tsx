@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
-import { createWebUrl } from '../lib/web';
+import { searchGeocode } from '../lib/geocode';
 import { fetchNearbyPlaces, type PlaceSuggestion } from '../lib/placesSearch';
 
 type Option = { id: string; name: string };
@@ -325,60 +325,29 @@ export default function AddEvent() {
           }
         }
 
-        const url = createWebUrl('/api/geocode');
-        url.searchParams.set('q', query);
-        url.searchParams.set('limit', '5');
-        if (canBias) {
-          url.searchParams.set('nearLat', latNumber.toFixed(6));
-          url.searchParams.set('nearLng', lngNumber.toFixed(6));
-          url.searchParams.set('nearRadius', '2500');
-        }
-
-        const response = await fetch(url.toString(), {
-          method: 'GET',
-          signal: controller.signal,
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
-
-        if (!isActive) return;
-
         let geocodeResults: GeocodeSuggestion[] = [];
-        if (response.ok) {
-          const data = (await response.json()) as {
-            label?: string;
-            description?: string | null;
-            lat?: number;
-            lng?: number;
-            results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
-          };
-
-          const rawResults = Array.isArray(data.results) ? data.results : [];
-          geocodeResults = rawResults
-            .map((item) => {
-              const label = typeof item.label === 'string' ? item.label : null;
-              const description = typeof item.description === 'string' ? item.description : null;
-              const latValue = typeof item.lat === 'number' && Number.isFinite(item.lat) ? item.lat : null;
-              const lngValue = typeof item.lng === 'number' && Number.isFinite(item.lng) ? item.lng : null;
-              if (!label || latValue == null || lngValue == null) return null;
-              return { label, description, lat: latValue, lng: lngValue } satisfies GeocodeSuggestion;
-            })
-            .filter((item): item is GeocodeSuggestion => Boolean(item))
-            .slice(0, 5);
-
-          if (!geocodeResults.length && typeof data.label === 'string' && typeof data.lat === 'number' && typeof data.lng === 'number' && Number.isFinite(data.lat) && Number.isFinite(data.lng)) {
-            geocodeResults.push({
-              label: data.label,
-              description: typeof data.description === 'string' ? data.description : null,
-              lat: data.lat,
-              lng: data.lng,
-            });
-          }
+        try {
+          const results = await searchGeocode(query, {
+            limit: 5,
+            nearLat: canBias ? latNumber : undefined,
+            nearLng: canBias ? lngNumber : undefined,
+            signal: controller.signal,
+          });
+          if (!isActive) return;
+          geocodeResults = results.map((result) => ({
+            label: result.label,
+            description: result.description ?? null,
+            lat: result.lat,
+            lng: result.lng,
+          }));
           setAutocompleteError(null);
-        } else {
-          if (response.status !== 404 && !controller.signal.aborted) {
-            setAutocompleteError('Unable to fetch address suggestions.');
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError' || controller.signal.aborted) {
+            return;
           }
+          if (!isActive) return;
+          console.warn('Geocode suggestions failed', error);
+          setAutocompleteError('Unable to fetch address suggestions.');
         }
         const nearbyLabels = new Set(
           uniqueNearby
@@ -465,39 +434,17 @@ export default function AddEvent() {
     const latValue = Number.isFinite(parseFloat(lat)) ? Number.parseFloat(lat) : null;
     const lngValue = Number.isFinite(parseFloat(lng)) ? Number.parseFloat(lng) : null;
 
-    const response = await fetch(createWebUrl('/api/activities/upsert').toString(), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const { data, error } = await supabase
+      .from('activities')
+      .insert({
         name,
         lat: latValue,
         lng: lngValue,
-      }),
-    });
-
-    if (!response.ok) {
-      let message = 'Failed to save activity.';
-      try {
-        const data = (await response.json()) as { error?: string };
-        if (typeof data.error === 'string' && data.error.trim()) message = data.error;
-      } catch {}
-      throw new Error(message);
-    }
-
-    const payload = (await response.json()) as
-      | { activity?: { id?: string; name?: string | null } | null }
-      | { id?: string; name?: string | null };
-    const createdId =
-      (payload as { activity?: { id?: string | null } })?.activity?.id ??
-      (payload as { id?: string | null })?.id ??
-      null;
-    if (!createdId) {
-      throw new Error('Activity saved but no identifier was returned.');
-    }
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    const createdId = extractId(data);
 
     setActivityId(createdId);
     setSelectedActivityLabel(name);

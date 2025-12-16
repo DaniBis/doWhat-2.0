@@ -165,7 +165,7 @@ const upsertSession = async (spec, deps) => {
   const startsAt = new Date(Date.now() + spec.startsInHours * 60 * 60 * 1000);
   const durationMs = spec.durationMinutes * 60 * 1000;
   const endsAt = new Date(startsAt.getTime() + durationMs);
-  const description = spec.description ?? "Social Sweat pilot session";
+  const description = spec.description ?? "doWhat pilot session";
   const payload = {
     id: sessionId,
     activity_id: deps.activityId,
@@ -213,7 +213,7 @@ const upsertSession = async (spec, deps) => {
 };
 
 const main = async () => {
-  console.info("Seeding Social Sweat pilot data for Bucharest…\n");
+  console.info("Seeding doWhat pilot data for Bucharest…\n");
 
   const userIdByEmail = new Map();
   const passwordByEmail = new Map();
@@ -263,7 +263,7 @@ const main = async () => {
     sessionResults.push(result);
   }
 
-  console.info("Social Sweat seed complete:\n");
+  console.info("doWhat seed complete:\n");
   console.info(`• Hosts ensured: ${SEED_USERS.length}`);
   if (passwordByEmail.size) {
     console.info("  Newly created users:");

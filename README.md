@@ -146,7 +146,7 @@ node scripts/health-migrations.mjs                # verifies 025–034 (core mig
 node scripts/health-migrations.mjs --social-sweat # extends the check through 034a–037
 ```
 
-The `--social-sweat` flag now also confirms the Social Sweat adoption view plus the notification outbox migration/table required for the Twilio SMS engine.
+The `--social-sweat` flag now also confirms the doWhat adoption view plus the notification outbox migration/table required for the Twilio SMS engine.
 
 If you prefer the SQL editor, copy/paste individual files from the same folder in ascending order.
 
@@ -178,7 +178,7 @@ All scheduled endpoints require an `Authorization: Bearer $CRON_SECRET` header. 
 - Apply the job with `psql "$SUPABASE_DB_URL" -f supabase/functions/notify-sms/schedule.sql` (or through the SQL editor). The file wraps `cron.schedule` + `net.http_post` to call the Edge Function once per minute with the bearer token.
 - Update the cron expression or job name in the SQL file if you need a different cadence.
 - For local dry runs set `NOTIFICATION_TWILIO_STUB=true` (and, optionally, override `NOTIFICATION_TWILIO_STUB_TO`) so the Edge Function logs payloads instead of contacting Twilio; the health script treats Twilio credentials as optional when the stub flag is on.
-- `pnpm health` now includes `scripts/health-notifications.mjs`, which checks for stale pending rows and recent failures inside `notification_outbox` so cron/Twilio issues show up alongside the existing migration + Social Sweat checks.
+- `pnpm health` now includes `scripts/health-notifications.mjs`, which checks for stale pending rows and recent failures inside `notification_outbox` so cron/Twilio issues show up alongside the existing migration + doWhat checks.
 - Strategy: increment `offset` by `limit` until the response contains fewer than `limit` profiles.
 
 Example (local):
@@ -303,18 +303,18 @@ pnpm rollback:social-sweat # removes the Bucharest pilot data (sessions/venues/a
 `seed:social-sweat` talks directly to Supabase (no cron endpoint). Export `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`) before running, optionally `SOCIAL_SWEAT_SEED_PASSWORD` to force a deterministic password for newly created pilot users. The script:
 
 - Ensures the Bucharest pilot hosts exist in Supabase auth, creating accounts when missing and echoing their credentials at the end of the run.
-- Upserts the matching `profiles`, `user_sport_profiles`, venues, activities, and sessions tied to the Social Sweat pilot seed tag.
+- Upserts the matching `profiles`, `user_sport_profiles`, venues, activities, and sessions tied to the doWhat pilot seed tag.
 - Inserts matching `session_open_slots` rows, so the Find a 4th player carousel immediately has ranked inventory after a mobile refresh.
 
 Follow up with `pnpm verify:social-sweat` (same env vars) to confirm the hosts, venues, activities, sessions, open-slot rows, and host attendance records exist before running demos.
 
 If the seed fails because `auth.admin.createUser` returns a 500 and logs `new row violates row-level security` or `null value in column "user_id" of relation "profiles"`, the Supabase project is missing migration `040_profiles_handle_new_user.sql`. Re-run `pnpm db:migrate` (with `SUPABASE_DB_URL` set) to apply the migration so the trigger writes the `user_id` column before reseeding.
 
-Need to run health or verification commands before the Social Sweat seed is ready? Set `SOCIAL_SWEAT_HEALTH_SKIP=true` in the same shell (e.g. `SOCIAL_SWEAT_HEALTH_SKIP=true pnpm health`) to temporarily bypass the verifier without editing code. Only rely on the skip flag while staging environments or CI intentionally omit the Bucharest pilot data.
+Need to run health or verification commands before the doWhat seed is ready? Set `SOCIAL_SWEAT_HEALTH_SKIP=true` in the same shell (e.g. `SOCIAL_SWEAT_HEALTH_SKIP=true pnpm health`) to temporarily bypass the verifier without editing code. Only rely on the skip flag while staging environments or CI intentionally omit the Bucharest pilot data.
 
 ### Session share previews (Open Graph)
 
-- Every session page (`/sessions/[id]`) now exposes dynamic Open Graph + Twitter metadata via `generateMetadata` plus a dedicated OG image endpoint at `/sessions/[id]/opengraph-image`. The ImageResponse renders the Social Sweat gradient, remaining slot count, required skill label, venue, host, and start time so WhatsApp/iMessage previews highlight exactly what the host still needs.
+- Every session page (`/sessions/[id]`) now exposes dynamic Open Graph + Twitter metadata via `generateMetadata` plus a dedicated OG image endpoint at `/sessions/[id]/opengraph-image`. The ImageResponse renders the doWhat gradient, remaining slot count, required skill label, venue, host, and start time so WhatsApp/iMessage previews highlight exactly what the host still needs.
 - Sharing a session link automatically hits the same metadata. To verify manually, open `http://localhost:3002/sessions/<id>/opengraph-image` (replace `<id>` with a real session UUID or one from `pnpm seed:social-sweat`). The PNG output should show the sport name, slot pill, venue, host, and time on the emerald gradient.
 - When testing on WhatsApp or Slack, make sure the dev server is publicly accessible (e.g., via `ngrok http 3002`) so the crawler can fetch both the HTML metadata and the OG route. No authentication is required for the image endpoint, so avoid leaking private sessions outside trusted tunnels.
 
@@ -374,7 +374,7 @@ pnpm --filter dowhat-web test -- SavedActivitiesContext
 pnpm --filter doWhat-mobile test -- SavedActivitiesContext
 ```
 
-These suites cover optimistic save/unsave flows, fallback reads when Supabase views misbehave, and `trackSavedActivityToggle` telemetry. Pair them with `pnpm health` (env wiring, migrations, trait policies, Social Sweat verifier, `/api/health`) before committing so Saved Activities changes always ride on a verified schema.
+These suites cover optimistic save/unsave flows, fallback reads when Supabase views misbehave, and `trackSavedActivityToggle` telemetry. Pair them with `pnpm health` (env wiring, migrations, trait policies, doWhat verifier, `/api/health`) before committing so Saved Activities changes always ride on a verified schema.
 
 ### Trait onboarding validation
 

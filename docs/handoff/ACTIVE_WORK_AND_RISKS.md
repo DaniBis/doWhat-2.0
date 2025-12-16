@@ -10,7 +10,7 @@
 - `apps/doWhat-web/src/components/nav/OnboardingNavLink.tsx` — nav CTA styling + telemetry guard.
 - `apps/doWhat-web/tailwind.config.js`, `src/app/globals.css` — Tailwind now imports `@dowhat/shared` theme tokens.
 - `packages/shared/src/theme.ts` — palette + spacing exports, rem helpers.
-- `scripts/seed-social-sweat.mjs`, new `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs` — Social Sweat pilot tooling refactor.
+- `scripts/seed-social-sweat.mjs`, new `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs` — doWhat pilot tooling refactor.
 - Docs (`README.md`, `docs/migrations_025-031_validation.md`, `docs/social_sweat_pilot_validation.md`) updated with new workflow instructions.
 
 ## 2. Active Initiatives & Status
@@ -18,9 +18,9 @@
 | --- | --- | --- | --- |
 | Shared theme adoption | `packages/shared/src/theme.ts`, `apps/doWhat-web/tailwind.config.js`, `globals.css`, onboarding banners/nav | In progress | Reliability stack (`SessionAttendancePanel`/`List`), `ActivityCard`, `EmailAuth`, the home verification hero, profile traits/badge surfaces, `AuthButtons`, and `SportSelector` now use the shared tokens; reran `pnpm -w run typecheck`, `pnpm -w run lint`, and the Step 0 CTA suites (`profile` + `SportSelector`) on 13 Dec to validate the sweep; continue auditing discovery/profile pages for stray Tailwind emerald/amber utilities. |
 | Step 0 CTA parity | `apps/doWhat-web/src/components/profile/*`, nav link tests, `packages/shared/src/onboarding/*` | Guardrails in place | Ensure any new CTA uses `trackOnboardingEntry` with `steps`, `pendingSteps`, `nextStep`. |
-| Social Sweat pilot seeding | `scripts/seed-social-sweat.mjs`, `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs`, README/docs | Complete & documented | Verify new rollback script in staging; ensure `pnpm health` references stay consistent. |
+| doWhat pilot seeding | `scripts/seed-social-sweat.mjs`, `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs`, README/docs | Complete & documented | Verify new rollback script in staging; ensure `pnpm health` references stay consistent. |
 | Notification engine (Twilio SMS) | `apps/doWhat-web/supabase/migrations/039_notification_outbox.sql`, `supabase/functions/notify-sms/index.ts`, `supabase/config.toml`, README, `supabase/functions/notify-sms/schedule.sql`, `scripts/health-env.mjs`, `scripts/health-notifications.mjs` | In progress | Outbox table + trigger landed, the Edge Function polls Twilio with per-session rate limiting, JWT enforcement is now disabled via `supabase/config.toml`, pg_cron wiring lives in `supabase/functions/notify-sms/schedule.sql`, and `pnpm health` now jumps through env validation plus a notification-specific health script (stale pending + recent failures) unless `NOTIFICATION_TWILIO_STUB=true` is set for local dry runs. Next follow-ups: run the SQL per-environment and add integration/Twilio mocks as time permits. |
-| Social Sweat adoption metrics | `apps/doWhat-web/supabase/migrations/038_social_sweat_adoption_metrics.sql`, admin page | Partially landed | Need to confirm migration is applied, admin cards hitting new view, tests updated (`apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`). |
+| doWhat adoption metrics | `apps/doWhat-web/supabase/migrations/038_social_sweat_adoption_metrics.sql`, admin page | Partially landed | Need to confirm migration is applied, admin cards hitting new view, tests updated (`apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`). |
 | Mobile onboarding parity | `apps/doWhat-mobile/src/app/onboarding/*`, nav pill/prompt components, RN tests | Recently updated | Re-run `pnpm --filter doWhat-mobile test -- ...` before merge; ensure Expo Router layout changes committed. |
 | Find a 4th Player hero | `apps/doWhat-mobile/src/app/home.tsx`, `components/FindA4thHero.tsx`, `hooks/useRankedOpenSessions.ts` | Complete | Home screen now consumes `useRankedOpenSessions`, renders the hero carousel, emits Find-a-4th impression/tap telemetry, and is guarded by `home.findA4th.test.tsx`. |
 | Release checklist execution | Repo-wide | In progress | `pnpm -w run lint`, `pnpm -w run typecheck`, and the full workspace Jest command (`pnpm test -- --maxWorkers=50%`, 76 suites) are green, and the 10-spec Playwright suite (`pnpm --filter dowhat-web exec playwright test`) passed on 13 Dec; continue rerunning Expo Doctor before releases now that the repo is managed-only. |
@@ -51,7 +51,7 @@
 - `pnpm test:onboarding-progress` (chains the web OnboardingProgressBanner + people-filter suites with the Expo onboarding hub/profile/nav CTA/people-filter suites) — last executed on **14 Dec 2025**, all Step 0 CTA tests passed.
 - `pnpm --filter @dowhat/shared test` — last executed on **14 Dec 2025**, 8 suites/48 tests passed (taxonomy, onboarding, reliability, recommendations helpers).
 - `node scripts/verify-trait-policies.mjs` (requires `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) — re-ran on **14 Dec 2025** using the newly shared service-role credentials for `kdviydoftmjuglaglsmm`; every catalog/base trait/vote/RPC check returned `ok`.
-- `pnpm health` (validates migrations, Social Sweat data)
+- `pnpm health` (validates migrations, doWhat data)
 - `pnpm --filter dowhat-web exec playwright test` (defaults to port 4302; override `PLAYWRIGHT_PORT` only if that port is busy) — last executed on **14 Dec 2025**, all 10 admin specs passed in ~17s after binding the dev server to 4302.
 - `pnpm --filter doWhat-mobile exec npx expo-doctor` (managed-only repo; expect **15/15 checks passed** and regenerate native folders with `pnpm --filter doWhat-mobile exec expo prebuild --clean --platform ios android` before EAS builds)
 
@@ -59,20 +59,20 @@
 1. **Keep Playwright runs isolated** — make sure port 4302 is free (stop `web:dev` or export a new `PLAYWRIGHT_PORT`) before running `pnpm --filter dowhat-web exec playwright test`; the new intercept keeps `/admin/new` deletes from spamming errors, so failures now point to real regressions.
 2. **Decide on Expo Doctor warning** — either delete `ios/`/`android/` folders (managed workflow) or document manual config syncing before cutting an EAS build.
 3. **Wire notify-sms cron** — store the Supabase project URL + `NOTIFICATION_ADMIN_KEY` in Vault and run `supabase/functions/notify-sms/schedule.sql` against each environment so pg_cron calls the Edge Function every minute without needing a Supabase JWT.
-4. **Monitor Find a 4th inventory** — keep the Social Sweat seed fresh (`pnpm seed:social-sweat && pnpm verify-social-sweat`) so the ranked hero carousel always has open slots to highlight.
+4. **Monitor Find a 4th inventory** — keep the doWhat seed fresh (`pnpm seed:social-sweat && pnpm verify-social-sweat`) so the ranked hero carousel always has open slots to highlight.
 5. **Complete theme migration** — continue auditing remaining components for legacy colors/spacings, convert to shared Tailwind tokens.
-6. **Stabilize branch** — once features ready, commit in logical chunks (shared theme, onboarding restyles, Social Sweat scripts) to simplify review.
+6. **Stabilize branch** — once features ready, commit in logical chunks (shared theme, onboarding restyles, doWhat scripts) to simplify review.
 7. **Documentation refresh** — after merging, update roadmap (Step 0 progress, Find a 4th status) and current app overview snapshot.
 
 ## 6. Hand-off Pointers for Another AI/Developer
 - Use `docs/handoff/PROJECT_OVERVIEW.md` for overall architecture.
 - Reference this file for in-flight work and test expectations.
 - Sync with `ASSISTANT_CHANGES_LOG.md` for chronological context when preparing release notes.
-- Always run `pnpm health` before sharing environments—this catches Supabase drift and ensures Social Sweat pilot data is seeded/verified.
+- Always run `pnpm health` before sharing environments—this catches Supabase drift and ensures doWhat pilot data is seeded/verified.
 
 ## Adoption Metrics Validation Checklist (Migration 038)
 - [ ] **Apply migration in dev:** From repo root run `pnpm run db:migrate` with local `DATABASE_URL` pointing to your dev Supabase instance; verify the script reports migration `038_social_sweat_adoption_metrics.sql` applied or already present.
 - [ ] **Apply migration in staging:** Export `DATABASE_URL` for the staging database and run the same `pnpm run db:migrate` command; capture the migration log in release notes.
 - [ ] **Confirm view output:** In psql (or Supabase SQL editor) execute `SELECT * FROM public.social_sweat_adoption_metrics;` and ensure the single row returns non-null counts for `total_profiles`, `sport_step_complete_count`, and related columns.
-- [ ] **Verify admin dashboard cards:** Load `/admin` and confirm the “Social Sweat Readiness” panel renders the Sport & Skill, Skill Level Saved, Trait Goal (5), Reliability Pledge, and Fully Ready cards using the view data.
-- [ ] **Run Jest coverage:** Execute `pnpm --filter dowhat-web test -- admin` to cover `apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`, specifically the “renders Social Sweat adoption metrics…” and “shows an empty state…” suites that exercise the view wiring.
+- [ ] **Verify admin dashboard cards:** Load `/admin` and confirm the “doWhat Readiness” panel renders the Sport & Skill, Skill Level Saved, Trait Goal (5), Reliability Pledge, and Fully Ready cards using the view data.
+- [ ] **Run Jest coverage:** Execute `pnpm --filter dowhat-web test -- admin` to cover `apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`, specifically the “renders doWhat adoption metrics…” and “shows an empty state…” suites that exercise the view wiring.

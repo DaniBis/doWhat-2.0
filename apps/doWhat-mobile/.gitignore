@@ -9,6 +9,8 @@ dist/
 web-build/
 
 # Native
+android/
+ios/
 .kotlin/
 *.orig.*
 *.jks
@@ -16,6 +18,7 @@ web-build/
 *.p12
 *.key
 *.mobileprovision
+.native-dev-client-signature
 
 # Metro
 .metro-health-check*

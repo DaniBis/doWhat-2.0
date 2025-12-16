@@ -5,7 +5,7 @@ _Last updated: 12 Dec 2025_
 This note captures the verification steps for the recent Supabase schema work:
 
 - Attendance + saved activities (025–034)
-- Social Sweat core + reliability pledge foundations (035–037)
+- doWhat core + reliability pledge foundations (035–037)
 
 Use it when promoting changes to staging or production so we can prove migrations ran in order,
 seed helpers completed, and rollback files are on hand.
@@ -21,12 +21,12 @@ seed helpers completed, and rollback files are on hand.
    - 028 previously required every `host_user_id`; added fallback that assigns missing sessions to `bisceanudaniel@gmail.com` (or the first profile) after trying attendee-derived hosts.
    - 031 switched from `uuid_generate_v4()` → `gen_random_uuid()` (pgcrypto) and removed `v.region` from the view to match production schema.
 
-   ## 10 Dec 2025 prep (Social Sweat core)
+   ## 10 Dec 2025 prep (doWhat core)
 
    - [ ] Run `pnpm run db:migrate` against staging to apply `035_social_sweat_core.sql` (plus `036_attendance_reliability_trigger.sql` and `037_reliability_pledge_ack.sql`) after capturing the latest database snapshot/backup.
    - [ ] Verify `select filename from public.schema_migrations order by 1 desc limit 1;` now returns `037_reliability_pledge_ack.sql`.
    - [ ] Rerun `pnpm --filter dowhat-web run typecheck` and mobile/web test suites after regenerating Supabase types so new enums/tables compile across packages.
-   - [ ] Update this checklist with production rollout notes once the Social Sweat trio lands.
+   - [ ] Update this checklist with production rollout notes once the doWhat trio lands.
 
 
 ## How to apply
@@ -47,7 +47,7 @@ pnpm seed:events:bangkok
 
 # 4. Quick health check for required migrations (optional but fast).
 node scripts/health-migrations.mjs --social-sweat
-# exits non-zero if core (025–031) or Social Sweat (034a–035) migrations are missing
+# exits non-zero if core (025–031) or doWhat (034a–035) migrations are missing
 ```
 
 > Note: `scripts/health-migrations.mjs` now also enforces the intermediate 032–034 files by default, so running it without flags guarantees the trait guard fix, event participant cleanup, and admin audit logs migrations are present. Pass `--social-sweat` to extend the check through 034a–037.
@@ -69,8 +69,8 @@ Check Supabase logs for DDL statements if you need external confirmation.
 | 032 | `.../032_trait_policy_guard_fix.sql` | Patches the trait policy guardrail functions and grants to match docs/trait_policies_test_plan.md. | Existing trait tables + policies. | Rerun file (idempotent updates). |
 | 033 | `.../033_remove_event_participants.sql` | Drops the deprecated `event_participants` table + enum so attendance relies solely on `session_attendees`. | Attendance migrations (027–028). | None (recreate table manually if needed). |
 | 034 | `.../034_admin_audit_logs.sql` | Adds `admin_allowlist`, `admin_audit_logs`, and associated RLS so admin tooling can log destructive actions. | Existing admin dashboards (no schema deps). | Drop the tables if rollback required. |
-| 034a | `.../034a_extend_attendance_status.sql` | Extends the `attendance_status` enum with `registered` + `late_cancel` ahead of the Social Sweat migration. | Enum created in 010 + any remaining references. | Forward-only (enum drops require manual fixes). |
-| 035 | `.../035_social_sweat_core.sql` | Adds profile reliability columns, `user_sport_profiles`, `session_open_slots`, new attendance enums, and sport metadata for the Social Sweat transformation. | Attendance + profile tables (027–034a). | Forward-only (requires manual cleanup to revert). |
+| 034a | `.../034a_extend_attendance_status.sql` | Extends the `attendance_status` enum with `registered` + `late_cancel` ahead of the doWhat migration. | Enum created in 010 + any remaining references. | Forward-only (enum drops require manual fixes). |
+| 035 | `.../035_social_sweat_core.sql` | Adds profile reliability columns, `user_sport_profiles`, `session_open_slots`, new attendance enums, and sport metadata for the doWhat transformation. | Attendance + profile tables (027–034a). | Forward-only (requires manual cleanup to revert). |
 
 ## Validation checklist
 
@@ -84,7 +84,7 @@ Check Supabase logs for DDL statements if you need external confirmation.
 3. **Saved activities plumbing**
    - `select count(*) from user_saved_activities;` works.
    - `select * from user_saved_activities_view limit 5;` returns rows (or zero with correct columns).
-4. **Social Sweat core data**
+4. **doWhat core data**
    - `select count(*) from session_open_slots;` runs (expect zero until data entry).
    - `select * from user_sport_profiles limit 5;` succeeds (may be empty pre-onboarding).
    - `select enumlabel from pg_enum join pg_type on pg_type.oid = pg_enum.enumtypid where typname = 'attendance_reliability_status';` shows the new enum values.
@@ -122,7 +122,7 @@ select version, updated_at from activity_taxonomy_state order by updated_at desc
 select count(*) from places where city = 'Bangkok';
 select count(*) from events where metadata ->> 'seedSource' = 'bangkok-demo';
 
--- Social Sweat pilot data should exist after pnpm seed:social-sweat
+-- doWhat pilot data should exist after pnpm seed:social-sweat
 -- Prefer running the automated verifier for full coverage:
 --   pnpm verify:social-sweat
 -- It checks profiles, sport profiles, venues, activities, sessions, open slots, and host attendance rows.

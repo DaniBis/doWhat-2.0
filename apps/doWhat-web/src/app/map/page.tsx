@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -23,6 +23,7 @@ import {
   type MapFilterPreferences,
   loadUserPreference,
   saveUserPreference,
+  isUuid,
 } from "@dowhat/shared";
 import SaveToggleButton from "@/components/SaveToggleButton";
 
@@ -82,8 +83,17 @@ export default function MapPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [filters, setFilters] = useState<MapFilterPreferences>(DEFAULT_MAP_FILTER_PREFERENCES);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [locationErrored, setLocationErrored] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const buildReturnTo = useCallback(() => {
+    const path = pathname ?? '/map';
+    const query = searchParams?.toString();
+    return query && query.length ? `${path}?${query}` : path;
+  }, [pathname, searchParams]);
+  const highlightSessionId = searchParams?.get('highlightSession');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
   const [preferencesInitialised, setPreferencesInitialised] = useState(false);
@@ -335,6 +345,46 @@ export default function MapPage() {
 
   const events = useMemo(() => sortEventsByStart(eventsQuery.data?.events ?? []), [eventsQuery.data?.events]);
 
+  const filteredActivities = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return activities;
+    return activities.filter((activity) => {
+      const name = activity.name?.toLowerCase() ?? '';
+      const venue = activity.venue?.toLowerCase() ?? '';
+      return name.includes(term) || venue.includes(term);
+    });
+  }, [activities, searchTerm]);
+
+  const filteredEvents = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return events;
+    return events.filter((eventSummary) => {
+      const title = eventSummary.title?.toLowerCase() ?? '';
+      const venue = eventSummary.venue_name?.toLowerCase() ?? '';
+      return title.includes(term) || venue.includes(term);
+    });
+  }, [events, searchTerm]);
+
+  useEffect(() => {
+    if (!highlightSessionId || !filteredEvents.length) return;
+    const match = filteredEvents.find((eventSummary) => {
+      if (eventSummary.id === highlightSessionId) return true;
+      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      return sessionId === highlightSessionId;
+    });
+    if (!match) return;
+    setSelectedEventId(match.id);
+    if (dataMode === 'activities') {
+      setDataMode('both');
+    }
+    setViewMode('list');
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    params.delete('highlightSession');
+    const basePath = pathname ?? '/map';
+    const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
+    router.replace(nextUrl, { scroll: false });
+  }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParams]);
+
   const availableActivityTypes = useMemo(() => {
     const set = new Set<string>();
     for (const activity of activities) {
@@ -377,6 +427,7 @@ export default function MapPage() {
       activityTypes: selectedActivityTypes.length,
       traits: selectedTraits.length,
     });
+    setSearchTerm('');
     updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
   };
 
@@ -462,11 +513,35 @@ export default function MapPage() {
     [changeViewMode, track],
   );
 
-  const handleRequireAuth = useCallback(
+  const handleViewEvents = useCallback(
     (activityId: string) => {
       const target = `/activities/${activityId}`;
-      track('map_activity_details_requested', {
+      track('map_activity_events_requested', {
         activityId,
+        authenticated: isAuthenticated === true,
+      });
+      if (isAuthenticated) {
+        router.push(target as Route);
+      } else {
+        router.push(`/auth?redirect=${encodeURIComponent(target)}` as Route);
+      }
+    },
+    [isAuthenticated, router, track],
+  );
+
+  const handleCreateEvent = useCallback(
+    (activity: MapActivity) => {
+      const params = new URLSearchParams();
+      if (isUuid(activity.id)) {
+        params.set('activityId', activity.id);
+      }
+      if (activity.name) params.set('activityName', activity.name);
+      if (activity.venue) params.set('venueName', activity.venue);
+      if (typeof activity.lat === 'number') params.set('lat', activity.lat.toFixed(6));
+      if (typeof activity.lng === 'number') params.set('lng', activity.lng.toFixed(6));
+      const target = `/create?${params.toString()}`;
+      track('map_activity_create_event', {
+        activityId: activity.id,
         authenticated: isAuthenticated === true,
       });
       if (isAuthenticated) {
@@ -480,9 +555,9 @@ export default function MapPage() {
 
 const handleRequestDetails = useCallback(
   (activity: MapActivity) => {
-    handleRequireAuth(activity.id);
+    handleViewEvents(activity.id);
   },
-  [handleRequireAuth],
+  [handleViewEvents],
 );
 
 const handleEventDetails = useCallback((eventSummary: EventSummary) => {
@@ -507,7 +582,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     [track],
   );
 
-  const activeFiltersCount = selectedActivityTypes.length + selectedTraits.length;
+  const hasSearchFilter = searchTerm.trim().length > 0;
+  const activeFiltersCount =
+    selectedActivityTypes.length +
+    selectedTraits.length +
+    (hasSearchFilter ? 1 : 0);
 
   useEffect(() => {
     if (!nearby.data) return;
@@ -537,16 +616,18 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }, [dataMode]);
 
   const sortedActivities = useMemo(() => {
-    return [...activities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
-  }, [activities]);
+    return [...filteredActivities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
+  }, [filteredActivities]);
 
   const radiusLabel = formatKilometres(radiusMeters);
   const headerTitle = dataMode === 'events' ? 'Nearby events' : dataMode === 'both' ? 'Activities & events nearby' : 'Nearby activities';
+  const filteredActivitiesCount = filteredActivities.length;
+  const filteredEventsCount = filteredEvents.length;
   const headerSummary = dataMode === 'events'
-    ? `Showing ${events.length} events in ~${radiusLabel} radius`
+    ? `Showing ${filteredEventsCount} events in ~${radiusLabel} radius`
     : dataMode === 'both'
-      ? `${activities.length} activities · ${events.length} events in ~${radiusLabel} radius`
-      : `Showing ${activities.length} activities in ~${radiusLabel} radius`;
+      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events in ~${radiusLabel} radius`
+      : `Showing ${filteredActivitiesCount} activities in ~${radiusLabel} radius`;
 
   const eventTimeFormatter = useMemo(
     () =>
@@ -559,12 +640,19 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     [],
   );
 
-  const mapActivities = loadActivities ? activities : [];
-  const mapEvents = loadEvents ? events : [];
+  const mapActivities = loadActivities ? filteredActivities : [];
+  const mapEvents = loadEvents ? filteredEvents : [];
   const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
+  const filtersButtonDisabled = !loadActivities && !loadEvents;
 
-  const activityListEmpty = loadActivities && !nearby.isLoading && activities.length === 0;
-  const eventListEmpty = loadEvents && !eventsQuery.isLoading && events.length === 0;
+  const activityListEmpty = loadActivities && !nearby.isLoading && filteredActivities.length === 0;
+  const eventListEmpty = loadEvents && !eventsQuery.isLoading && filteredEvents.length === 0;
+  const activityEmptyCopy = hasSearchFilter
+    ? `No activities match "${searchTerm}". Try another name or clear the search.`
+    : "No activities match those filters yet. Try widening your search.";
+  const eventEmptyCopy = hasSearchFilter
+    ? `No events match "${searchTerm}". Try another name or clear the search.`
+    : "No events match those filters yet. Try widening your search.";
 
   if (!center) {
     return (
@@ -613,11 +701,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           <button
             type="button"
             onClick={() => {
-              if (!loadActivities) return;
+              if (filtersButtonDisabled) return;
               setFiltersOpen(true);
               track('map_filters_opened');
             }}
-            disabled={!loadActivities}
+            disabled={filtersButtonDisabled}
             className="inline-flex items-center gap-xs rounded-full border border-brand-teal px-sm py-xxs text-sm font-medium text-brand-teal hover:bg-brand-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Filters
@@ -644,6 +732,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             onSelectActivity={handleActivitySelect}
             onSelectEvent={handleEventSelect}
             onRequestDetails={handleRequestDetails}
+            onRequestCreateEvent={handleCreateEvent}
             onRequestEventDetails={handleEventDetails}
             activeActivityId={selectedActivityId}
             activeEventId={selectedEventId}
@@ -655,9 +744,9 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           <div className="flex items-center justify-between border-b border-midnight-border/40 px-md py-sm text-xs text-ink-muted">
             <span>
               {dataMode === 'events'
-                ? `${events.length} events`
+                ? `${filteredEventsCount} events`
                 : dataMode === 'both'
-                  ? `${activities.length} activities · ${events.length} events`
+                  ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events`
                   : `${sortedActivities.length} activities`}
             </span>
             <span>Radius ~{radiusLabel}</span>
@@ -678,13 +767,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 )}
                 {activityListEmpty && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
-                    No activities match those filters yet. Try widening your search.
+                    {activityEmptyCopy}
                   </div>
                 )}
                 <ul className="flex flex-col gap-sm">
                   {sortedActivities.map((activity) => {
                     const isSelected = activity.id === selectedActivityId;
                     const savePayload = createMapActivitySavePayload(activity);
+                    const upcomingSessions = activity.upcoming_session_count ?? 0;
+                    const canViewEvents = upcomingSessions > 0;
                     return (
                       <li key={activity.id}>
                         <div
@@ -730,16 +821,28 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               ) : null}
                             </div>
                           </div>
-                          <div className="mt-sm flex items-center justify-between text-xs">
+                          <div className="mt-sm flex flex-wrap items-center gap-xs text-xs">
+                            {canViewEvents && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleViewEvents(activity.id);
+                                }}
+                                className="rounded-full border border-brand-teal/40 px-sm py-xxs text-[11px] font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
+                              >
+                                View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                handleRequireAuth(activity.id);
+                                handleCreateEvent(activity);
                               }}
-                              className="text-brand-teal hover:text-brand-dark"
+                              className="rounded-full bg-brand-teal/90 px-sm py-xxs text-[11px] font-semibold text-surface transition hover:bg-brand-teal"
                             >
-                              View details →
+                              Create event
                             </button>
                             <button
                               type="button"
@@ -775,11 +878,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 )}
                 {eventListEmpty && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
-                    No public events found for the next two weeks. Try moving the map or change filters.
+                    {eventEmptyCopy}
                   </div>
                 )}
                 <ul className="flex flex-col gap-sm">
-                  {events.map((eventSummary) => {
+                  {filteredEvents.map((eventSummary) => {
                     const isSelected = eventSummary.id === selectedEventId;
                     const { start, end } = formatEventTimeRange(eventSummary);
                     return (
@@ -818,20 +921,6 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               </div>
                             </div>
                           </div>
-                          {eventSummary.url && (
-                            <div className="mt-sm flex justify-end">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleEventDetails(eventSummary);
-                                }}
-                                className="text-xs font-semibold text-brand-teal hover:text-brand-dark"
-                              >
-                                View details →
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </li>
                     );
@@ -862,49 +951,86 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 Close
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-lg py-md">
+            <div className="flex-1 overflow-y-auto px-lg py-md space-y-xl">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activity types</div>
-                <div className="mt-sm flex flex-wrap gap-xs">
-                  {availableActivityTypes.length === 0 && (
-                    <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
+                <label htmlFor="map-filter-search" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  Search by name
+                </label>
+                <div className="mt-xxs flex items-center gap-xs">
+                  <input
+                    id="map-filter-search"
+                    type="search"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Search activities or events"
+                    className="w-full rounded-xl border border-midnight-border/40 bg-surface px-sm py-xs text-sm text-ink focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+                  />
+                  {hasSearchFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="text-xs font-medium text-ink-muted underline-offset-2 hover:text-ink-strong"
+                    >
+                      Clear
+                    </button>
                   )}
-                  {availableActivityTypes.map((type) => {
-                    const active = selectedActivityTypes.includes(type);
-                    return (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => toggleActivityType(type)}
-                        className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                      >
-                        {type}
-                      </button>
-                    );
-                  })}
                 </div>
+                <p className="mt-xxs text-[11px] text-ink-muted">
+                  Matching results update instantly across the map and list.
+                </p>
               </div>
-              <div className="mt-xl">
-                <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
-                <div className="mt-sm flex flex-wrap gap-xs">
-                  {availableTraits.length === 0 && (
-                    <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
-                  )}
-                  {availableTraits.map((trait) => {
-                    const active = selectedTraits.includes(trait);
-                    return (
-                      <button
-                        key={trait}
-                        type="button"
-                        onClick={() => toggleTrait(trait)}
-                        className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                      >
-                        {trait}
-                      </button>
-                    );
-                  })}
+              {loadActivities ? (
+                <>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activity types</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {availableActivityTypes.length === 0 && (
+                        <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
+                      )}
+                      {availableActivityTypes.map((type) => {
+                        const active = selectedActivityTypes.includes(type);
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => toggleActivityType(type)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            {type}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {availableTraits.length === 0 && (
+                        <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
+                      )}
+                      {availableTraits.map((trait) => {
+                        const active = selectedTraits.includes(trait);
+                        return (
+                          <button
+                            key={trait}
+                            type="button"
+                            onClick={() => toggleTrait(trait)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            {trait}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
+                  Activity-type and trait filters are available when viewing activities. Switch to “Activities” or “Both” to adjust those selections.
                 </div>
-              </div>
+              )}
             </div>
             <div className="border-t border-midnight-border/40 px-lg py-md text-sm">
               <div className="flex items-center justify-between">

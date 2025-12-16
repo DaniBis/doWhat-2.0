@@ -1,5 +1,5 @@
 // src/app/auth/callback/route.ts
-import { createClient } from "@/lib/supabase/server";
+import { createRouteHandlerClient } from "@/lib/supabase/routeHandler";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const token = url.searchParams.get("token_hash") ?? url.searchParams.get("token");
   const type = (url.searchParams.get("type") ?? "signup") as EmailOtpType;
-  const supabase = createClient();
+  const supabase = createRouteHandlerClient();
 
   try {
     if (code) {

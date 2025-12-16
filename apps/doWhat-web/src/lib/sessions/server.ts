@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { isUuid } from '@dowhat/shared';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import type { ProfileRow, SessionAttendeeRow, SessionRow } from '@/types/database';
@@ -201,7 +202,8 @@ export async function ensureActivity(service: SupabaseClient, input: {
   lng?: number | null;
   venueName?: string | null;
 }): Promise<string> {
-  if (input.activityId) return input.activityId;
+  const candidateId = isUuid(input.activityId ?? null) ? input.activityId : null;
+  if (candidateId) return candidateId;
   const activityName = sanitizeRequiredText(input.activityName, 'Activity name is required.');
 
   const { data: existing, error: fetchError } = await service
@@ -232,7 +234,8 @@ export async function ensureVenue(service: SupabaseClient, input: {
   lat?: number | null;
   lng?: number | null;
 }): Promise<string> {
-  if (input.venueId) return input.venueId;
+  const candidateId = isUuid(input.venueId ?? null) ? input.venueId : null;
+  if (candidateId) return candidateId;
   const venueName = sanitizeRequiredText(input.venueName, 'Venue name is required.');
 
   const { data: existing, error: fetchError } = await service

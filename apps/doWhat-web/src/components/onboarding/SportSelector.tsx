@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { supabase } from "@/lib/supabase/browser";
+import { ensureUserRow } from "@/lib/users/ensureUserRow";
 import { cn } from "@/lib/utils/cn";
 import type { PlayStyle, SportType } from "@dowhat/shared";
 import {
@@ -69,6 +71,7 @@ export function SportSelector({ className }: SportSelectorProps) {
   const [skillLevel, setSkillLevel] = useState("");
   const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +115,7 @@ export function SportSelector({ className }: SportSelectorProps) {
           setError("Please sign in to continue.");
           return;
         }
+        setAuthUser(user);
         setUserId(user.id);
         const { data: profileRow, error: profileError } = await supabase
           .from("profiles")
@@ -180,7 +184,7 @@ export function SportSelector({ className }: SportSelectorProps) {
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!userId || !selectedSport || !skillLevel || !playStyle) {
+    if (!authUser || !userId || !selectedSport || !skillLevel || !playStyle) {
       setError("Select a sport, skill level, and play style to continue.");
       return;
     }
@@ -188,8 +192,15 @@ export function SportSelector({ className }: SportSelectorProps) {
     setError(null);
     setSuccess(null);
     try {
+      const ensured = await ensureUserRow(supabase, authUser);
+      if (!ensured) {
+        setError("Your account needs to finish syncing. Sign out and back in, then try again.");
+        setSaving(false);
+        return;
+      }
       const profileUpdate = {
         id: userId,
+        user_id: userId,
         primary_sport: selectedSport,
         play_style: playStyle,
         updated_at: new Date().toISOString(),
@@ -231,7 +242,7 @@ export function SportSelector({ className }: SportSelectorProps) {
     } finally {
       setSaving(false);
     }
-  }, [playStyle, router, skillLevel, selectedSport, userId]);
+  }, [authUser, playStyle, router, skillLevel, selectedSport, userId]);
 
   const canSave = Boolean(userId && selectedSport && skillLevel && playStyle && !saving);
 

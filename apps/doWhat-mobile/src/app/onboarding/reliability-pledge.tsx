@@ -26,7 +26,7 @@ const COMMITMENTS = [
   {
     id: "respect-crew",
     title: "Respect every crew",
-    description: "Keep games safe, supportive, and positive – Social Sweat only works when everyone feels welcome.",
+    description: "Keep games safe, supportive, and positive – doWhat only works when everyone feels welcome.",
   },
 ] as const;
 
@@ -152,7 +152,7 @@ const ReliabilityPledgeScreen: React.FC = () => {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.heading}>Reliability pledge</Text>
         <Text style={styles.description}>
-          A Social Sweat session only works when everyone follows through. Lock in these commitments so hosts know they can count on you.
+          A doWhat session only works when everyone follows through. Lock in these commitments so hosts know they can count on you.
         </Text>
 
         {loading ? (

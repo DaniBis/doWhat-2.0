@@ -20,7 +20,7 @@ export default function OnboardingNavPrompt() {
   const pendingCount = pendingSteps.length;
   const encouragementCopy = useMemo(() => {
     if (pendingCount === 0) return '';
-    if (pendingCount === 1) return 'Just one more action to unlock full Social Sweat access.';
+    if (pendingCount === 1) return 'Just one more action to unlock full doWhat access.';
     const label = pendingCount === 1 ? '1 step' : `${pendingCount} steps`;
     return `${label} remain — finish them so hosts prioritize you for open slots.`;
   }, [pendingCount]);

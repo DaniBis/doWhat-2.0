@@ -1,7 +1,7 @@
-# doWhat / Social Sweat — Project Overview
+# doWhat / doWhat — Project Overview
 
 ## 1. Mission & Product Pillars
-- **Social Sweat transformation:** shift doWhat into a sport-first community where members complete Step 0 onboarding (traits → sport/skill → reliability pledge) before hosts prioritize them for open slots.
+- **doWhat transformation:** shift doWhat into a sport-first community where members complete Step 0 onboarding (traits → sport/skill → reliability pledge) before hosts prioritize them for open slots.
 - **Host & ops tooling:** `/admin` dashboards, session creation, and verification flows ensure ops can manage supply and monitor adoption.
 - **Discovery surfaces:** consumer web/mobile apps expose activity filters, people filters, saved activities, and the “Find a 4th Player” experience (in-flight) powered by shared ranking logic.
 - **Telemetry & guardrails:** onboarding CTAs, saved-activity toggles, and host attendance UIs emit analytics via shared helpers to keep feature adoption measurable.
@@ -36,7 +36,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 
 ## 4. Backend & Data Layer
 - **Supabase:** Acts as primary backend (Postgres + auth + storage). Accessed via `@supabase/supabase-js` from both apps and scripts.
-- **Migrations:** Located in `apps/doWhat-web/supabase/migrations/025+`. Managed via `pnpm run db:migrate`. Key Social Sweat files: `035_social_sweat_core.sql`, `036_attendance_reliability_trigger.sql`, `037_reliability_pledge_ack.sql`, `038_social_sweat_adoption_metrics.sql` (in-progress).
+- **Migrations:** Located in `apps/doWhat-web/supabase/migrations/025+`. Managed via `pnpm run db:migrate`. Key doWhat files: `035_social_sweat_core.sql`, `036_attendance_reliability_trigger.sql`, `037_reliability_pledge_ack.sql`, `038_social_sweat_adoption_metrics.sql` (in-progress).
 - **Types:** `apps/doWhat-web/src/types/database.ts` auto-generated + manually extended to include new tables/enums.
 
 ## 5. Scripts & Automation
@@ -49,10 +49,10 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 | Area | Highlights | Status |
 | --- | --- | --- |
 | **Onboarding (Step 0)** | Shared progress helpers, profile banners, nav pill/prompt, CTA telemetry, onboarding hub parity, sport selector, reliability pledge. | Implemented + fully tested. Theme refresh ongoing. |
-| **Admin Tooling** | Prefill-aware `/admin/new`, Looking for Players open-slot creation + rollback, Social Sweat adoption cards (SQL view), allowlist gating, e2e Playwright coverage. | Landed, small polish ongoing. |
+| **Admin Tooling** | Prefill-aware `/admin/new`, Looking for Players open-slot creation + rollback, doWhat adoption cards (SQL view), allowlist gating, e2e Playwright coverage. | Landed, small polish ongoing. |
 | **Saved Activities** | Shared payload builders, doc’d health workflow, parity across web/mobile contexts, telemetry instrumentation. | Complete (Step 2). |
 | **Attendance & Reliability** | Trigger-based scoring, host roster UI, verified badge analytics, removal of RSVP legacy flows. | Complete (Step 1). |
-| **Social Sweat Seeds & Validation** | Pilot seeding, verification, rollback, docs. Ensures Find a 4th data always available. | Complete & documented. |
+| **doWhat Seeds & Validation** | Pilot seeding, verification, rollback, docs. Ensures Find a 4th data always available. | Complete & documented. |
 | **Find a 4th Player** | Shared `rankSessionsForUser` ready; mobile hero/cards partially styled, awaiting final data hook + telemetry. | Next major roadmap task. |
 
 ## 7. Testing & Quality Gates
@@ -74,7 +74,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 ## 10. Outstanding Work / Next Steps
 1. **Mobile Find a 4th Player hero:** hydrate ranked sessions via shared scorer, ensure CTA flows to session detail, add telemetry/tests.
 2. **Theme token rollout:** continue replacing legacy emerald/amber utility classes across admin/map components with shared palette.
-3. **Social Sweat adoption metrics:** finalize `038_social_sweat_adoption_metrics.sql` integration (web admin cards + docs).
+3. **doWhat adoption metrics:** finalize `038_social_sweat_adoption_metrics.sql` integration (web admin cards + docs).
 4. **Codebase cleanup:** large unstaged diff suggests ongoing edits—stabilize before merging.
 
 This overview should give any AI/dev an immediate sense of architecture, functionality, and roadmap focus. For change-by-change history, reference `ASSISTANT_CHANGES_LOG.md` and commit history on `feature/admin-dashboard-docs`.
