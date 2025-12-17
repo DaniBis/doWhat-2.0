@@ -5,6 +5,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { maybeResetInvalidSession } from '../lib/auth';
+import { ensureUserRow } from '../lib/ensureUserRow';
+import { REQUIRED_BASE_TRAITS } from '@dowhat/shared';
 import AuthButtons from './AuthButtons';
 
 type ProfileRow = {
@@ -16,7 +19,6 @@ type ProfileRow = {
   is_public?: boolean | null;
   bio?: string | null;
   onboarding_complete?: boolean | null;
-  personality_traits?: string[] | null;
 };
 
 type AuthGateProps = {
@@ -32,8 +34,6 @@ type ProfileDraft = {
   bio: string;
 };
 
-const MAX_PERSONALITY_TRAITS = 5;
-
 const deferNavigation = (navigate: () => void) => {
   InteractionManager.runAfterInteractions(() => {
     requestAnimationFrame(() => {
@@ -46,34 +46,6 @@ const deferNavigation = (navigate: () => void) => {
       }
     });
   });
-};
-
-const normaliseSignupTrait = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim().replace(/\s+/g, ' ');
-  if (!trimmed) return null;
-  if (trimmed.length < 2 || trimmed.length > 20) return null;
-  if (!/^[a-zA-Z][-a-zA-Z\s]+$/.test(trimmed)) return null;
-  return trimmed
-    .split(' ')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-};
-
-const sanitizeTraitList = (input: unknown): string[] => {
-  if (!Array.isArray(input)) return [];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const raw of input) {
-    const normalised = normaliseSignupTrait(raw);
-    if (!normalised) continue;
-    const key = normalised.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(normalised);
-    if (result.length >= MAX_PERSONALITY_TRAITS) break;
-  }
-  return result;
 };
 
 const normaliseDate = (value: string): string => {
@@ -120,61 +92,20 @@ const isForeignKeyMissingUser = (error: unknown): boolean => {
   return /profiles?_id_fkey/i.test(message) || /profiles?_id_fkey/i.test(details) || /table "users"/i.test(details);
 };
 
-const isRowLevelSecurityError = (error: unknown): boolean => {
-  if (!error || typeof error !== 'object') return false;
-  const record = error as { code?: unknown; message?: unknown; details?: unknown };
-  const code = typeof record.code === 'string' ? record.code : null;
-  const message = typeof record.message === 'string' ? record.message : '';
-  const details = typeof record.details === 'string' ? record.details : '';
-  if (code && code !== '42501') return false;
-  return /row[- ]level security/i.test(message) || /row[- ]level security/i.test(details) || code === '42501';
-};
-
-const ensurePublicUserRowViaRpc = async (session: Session, email: string | undefined, name: string | null) => {
-  const { error } = await supabase.rpc('ensure_public_user_row', {
-    p_user: session.user.id,
-    p_email: email ?? null,
-    p_full_name: name ?? null,
-  });
-  if (error) {
-    if (__DEV__) console.warn('[AuthGate] ensure_public_user_row RPC failed', error);
-    return false;
-  }
-  return true;
-};
-
-const ensureAppUserRow = async (session: Session, fallbackEmail?: string): Promise<boolean> => {
-  const metadata = session.user.user_metadata ?? {};
-  const resolvedEmail = session.user.email || fallbackEmail?.trim();
-  if (!resolvedEmail) {
-    return false;
-  }
-  const resolvedName =
-    getMetadataString(metadata, ['full_name', 'name', 'given_name']) ||
-    (typeof session.user.user_metadata?.preferred_username === 'string' ? session.user.user_metadata.preferred_username : null);
-
-  const { error } = await supabase
-    .from('users')
-    .upsert(
-      {
-        id: session.user.id,
-        email: resolvedEmail,
-        full_name: resolvedName,
-      },
-      { onConflict: 'id' },
-    );
-
-  if (error) {
-    if (isRowLevelSecurityError(error)) {
-      const ensured = await ensurePublicUserRowViaRpc(session, resolvedEmail, resolvedName);
-      if (ensured) {
-        return true;
-      }
+const hasCompletedBaseTraits = async (userId: string): Promise<boolean> => {
+  try {
+    const { count, error } = await supabase
+      .from('user_base_traits')
+      .select('trait_id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    if (error) throw error;
+    return (count ?? 0) >= REQUIRED_BASE_TRAITS;
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[AuthGate] base trait check failed', error);
     }
-    if (__DEV__) console.warn('[AuthGate] ensureAppUserRow failed', error);
     return false;
   }
-  return true;
 };
 
 function deriveDraft(session: Session, profile: ProfileRow | null): ProfileDraft {
@@ -282,15 +213,24 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
     setBusy(true);
     setError(null);
     try {
-      await ensureAppUserRow(session, contactEmail);
-      const metadataTraits = sanitizeTraitList(session.user?.user_metadata?.personality_traits);
-      const existingTraits = sanitizeTraitList(profile?.personality_traits ?? null);
-      const resolvedTraits = metadataTraits.length ? metadataTraits : existingTraits;
+      const metadata = session.user.user_metadata ?? {};
+      const resolvedName =
+        getMetadataString(metadata, ['full_name', 'name', 'given_name']) ||
+        (typeof session.user.user_metadata?.preferred_username === 'string' ? session.user.user_metadata.preferred_username : null);
+      const trimmedContactEmail = contactEmail.trim();
+      const ensurePayload = {
+        id: session.user.id,
+        email: session.user.email ?? (trimmedContactEmail || undefined),
+        fullName: resolvedName,
+      } as const;
+
+      await ensureUserRow(ensurePayload);
       const basePayload = {
         id: session.user.id,
+        user_id: session.user.id,
         username: cleanUsername,
         birthday: cleanBirthday,
-        contact_email: contactEmail.trim() ? contactEmail.trim() : null,
+        contact_email: trimmedContactEmail ? trimmedContactEmail : null,
         social_handle: socialHandle.trim() ? socialHandle.trim() : null,
         is_public: isPublic,
         bio: cleanBio,
@@ -298,28 +238,19 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
         updated_at: new Date().toISOString(),
       } satisfies Record<string, unknown>;
 
-      const includeTraits = resolvedTraits.length > 0;
-      const payloadWithTraits = includeTraits
-        ? { ...basePayload, personality_traits: resolvedTraits }
-        : basePayload;
-
-      let { error: upsertError } = await supabase.from('profiles').upsert(payloadWithTraits, { onConflict: 'id' });
+      let { error: upsertError } = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
 
       if (upsertError && isForeignKeyMissingUser(upsertError)) {
-        const ensured = await ensureAppUserRow(session, contactEmail);
+        const ensured = await ensureUserRow(ensurePayload);
         if (ensured) {
-          const retry = await supabase.from('profiles').upsert(payloadWithTraits, { onConflict: 'id' });
+          const retry = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
           upsertError = retry.error ?? null;
         }
       }
 
-      if (upsertError && includeTraits && /personality_traits/.test(upsertError.message)) {
-        const retry = await supabase.from('profiles').upsert(basePayload, { onConflict: 'id' });
-        upsertError = retry.error ?? null;
-      }
-
       if (upsertError) throw upsertError;
-      onComplete('/onboarding-traits');
+      const needsTraits = !(await hasCompletedBaseTraits(session.user.id));
+      onComplete(needsTraits ? '/onboarding-traits' : undefined);
     } catch (err) {
       console.error('[AuthGate] profile upsert failed', err);
       let message = 'Unable to save your profile right now.';
@@ -336,8 +267,6 @@ function ProfileSetup({ session, profile, onComplete }: ProfileSetupProps) {
         setError('That username is already taken. Try another one.');
       } else if (/column\s+"?(username|birthday|contact_email|social_handle|is_public|onboarding_complete)"?/i.test(message)) {
         setError('Profiles table is missing the onboarding fields. Run migration 012_profile_onboarding.sql against your Supabase database and try again.');
-      } else if (/column\s+"?personality_traits"?/i.test(message)) {
-        setError('Profiles table is missing the personality_traits column. Run migration 020_profile_personality_traits.sql (or apply database_updates.sql) against your Supabase database and try again.');
       } else if (/permission denied/i.test(message)) {
         setError('Permission denied while saving profile. Ensure RLS on public.profiles lets users upsert their own row.');
       } else {
@@ -524,6 +453,10 @@ export default function AuthGate({ children }: AuthGateProps) {
         applySession(data.session ?? null);
       } catch (error) {
         if (__DEV__) console.warn('[AuthGate] getSession failed', error);
+        const reset = await maybeResetInvalidSession(error);
+        if (reset) {
+          sessionTokenRef.current = null;
+        }
         if (!active) return;
         applySession(null);
       } finally {
@@ -549,6 +482,11 @@ export default function AuthGate({ children }: AuthGateProps) {
         }
       } catch (error) {
         if (__DEV__) console.warn('[AuthGate] foreground session refresh failed', error);
+        const reset = await maybeResetInvalidSession(error);
+        if (reset && !cancelled) {
+          sessionTokenRef.current = null;
+          applySession(null);
+        }
       }
     };
 
@@ -575,7 +513,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     (async () => {
       try {
         const baseColumns = ['id', 'username', 'birthday'] as const;
-        const optionalColumns = ['contact_email', 'social_handle', 'is_public', 'bio', 'onboarding_complete', 'personality_traits'];
+        const optionalColumns = ['contact_email', 'social_handle', 'is_public', 'bio', 'onboarding_complete'];
 
         const fetchProfile = async (columns: readonly string[]) =>
           supabase

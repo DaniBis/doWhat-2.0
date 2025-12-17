@@ -70,7 +70,7 @@ export default function LocationPickerMap({ lat, lng, onChange, height = 280 }: 
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 shadow-sm" style={{ height }}>
+    <div className="overflow-hidden rounded-lg border border-midnight-border/40 shadow-sm" style={{ height }}>
       <Map
         mapboxAccessToken={MAPBOX_TOKEN}
         mapStyle="mapbox://styles/mapbox/streets-v12"
@@ -88,11 +88,11 @@ export default function LocationPickerMap({ lat, lng, onChange, height = 280 }: 
           </Marker>
         ) : (
           <Marker latitude={viewState.latitude} longitude={viewState.longitude} anchor="bottom">
-            <div className="rounded-full bg-emerald-500/80 px-3 py-1 text-xs font-semibold text-white shadow">Tap to set</div>
+            <div className="rounded-full bg-emerald-500/80 px-sm py-xxs text-xs font-semibold text-white shadow">Tap to set</div>
           </Marker>
         )}
       </Map>
-      <div className="flex items-center justify-between bg-white px-3 py-2 text-xs text-gray-600">
+      <div className="flex items-center justify-between bg-surface px-sm py-xs text-xs text-ink-medium">
         <span>Click anywhere on the map to set coordinates.</span>
         {lat != null && lng != null && (
           <span className="font-medium text-emerald-600">{lat.toFixed(4)}, {lng.toFixed(4)}</span>

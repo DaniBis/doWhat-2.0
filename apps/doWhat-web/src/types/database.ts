@@ -1,3 +1,7 @@
+import type { AttendanceStatus, PlayStyle, SportType } from "@dowhat/shared";
+
+export type { AttendanceStatus, PlayStyle, SportType };
+
 export type Json =
   | string
   | number
@@ -46,27 +50,161 @@ export type UserTraitSummaryRow = {
   updated_at: string;
 };
 
-export type RsvpRow = {
-  id: string;
-  activity_id: string | null;
-  session_id: string | null;
-  user_id: string;
-  status: "going" | "interested" | "declined";
-  created_at: string;
-};
-
 export type SessionRow = {
   id: string;
+  venue_id: string | null;
   activity_id: string | null;
-  starts_at: string | null;
-  ends_at: string | null;
-  created_by: string | null;
+  host_user_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_cents: number;
+  visibility: "public" | "friends" | "private";
+  max_attendees: number;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionInsert = {
+  id?: string;
+  venue_id?: string | null;
+  activity_id?: string | null;
+  host_user_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_cents?: number;
+  visibility?: "public" | "friends" | "private";
+  max_attendees?: number;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionUpdate = {
+  id?: string;
+  venue_id?: string | null;
+  activity_id?: string | null;
+  host_user_id?: string;
+  starts_at?: string;
+  ends_at?: string;
+  price_cents?: number;
+  visibility?: "public" | "friends" | "private";
+  max_attendees?: number;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionAttendeeRow = {
+  session_id: string;
+  user_id: string;
+  status: "going" | "interested" | "declined";
+  checked_in: boolean;
+  attended_at: string | null;
+  created_at: string;
+  attendance_status: AttendanceStatus;
+};
+
+export type SessionAttendeeInsert = {
+  session_id: string;
+  user_id: string;
+  status?: "going" | "interested" | "declined";
+  checked_in?: boolean;
+  attended_at?: string | null;
+  created_at?: string;
+  attendance_status?: AttendanceStatus;
+};
+
+export type SessionAttendeeUpdate = {
+  session_id?: string;
+  user_id?: string;
+  status?: "going" | "interested" | "declined";
+  checked_in?: boolean;
+  attended_at?: string | null;
+  created_at?: string;
+  attendance_status?: AttendanceStatus;
 };
 
 export type ProfileRow = {
   id: string;
   full_name: string | null;
   avatar_url: string | null;
+  reliability_score: number;
+  primary_sport: SportType | null;
+  play_style: PlayStyle | null;
+  availability_window: Json;
+  reliability_pledge_ack_at: string | null;
+  reliability_pledge_version: string | null;
+};
+
+export type SessionOpenSlotRow = {
+  id: string;
+  session_id: string;
+  required_skill_level: string | null;
+  slots_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionOpenSlotInsert = {
+  id?: string;
+  session_id: string;
+  required_skill_level?: string | null;
+  slots_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SessionOpenSlotUpdate = {
+  id?: string;
+  session_id?: string;
+  required_skill_level?: string | null;
+  slots_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserSportProfileRow = {
+  id: string;
+  user_id: string;
+  sport: SportType;
+  skill_level: string | null;
+  years_experience: number | null;
+  preferred_time: Json | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UserSportProfileInsert = {
+  id?: string;
+  user_id: string;
+  sport: SportType;
+  skill_level?: string | null;
+  years_experience?: number | null;
+  preferred_time?: Json | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserSportProfileUpdate = {
+  id?: string;
+  user_id?: string;
+  sport?: SportType;
+  skill_level?: string | null;
+  years_experience?: number | null;
+  preferred_time?: Json | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SocialSweatAdoptionMetricsRow = {
+  total_profiles: number;
+  sport_step_complete_count: number;
+  sport_skill_member_count: number;
+  trait_goal_count: number;
+  pledge_ack_count: number;
+  fully_ready_count: number;
+  user_sport_profile_rows: number;
 };
 
 export type VenueRow = {
@@ -96,7 +234,7 @@ export type VenueActivityVoteRow = {
   updated_at: string;
 };
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       traits: {
@@ -123,22 +261,34 @@ export interface Database {
         Update: Partial<UserTraitSummaryRow>;
         Relationships: [];
       };
-      rsvps: {
-        Row: RsvpRow;
-        Insert: Partial<RsvpRow> & Pick<RsvpRow, "user_id">;
-        Update: Partial<RsvpRow>;
-        Relationships: [];
-      };
       sessions: {
         Row: SessionRow;
-        Insert: Partial<SessionRow>;
-        Update: Partial<SessionRow>;
+        Insert: SessionInsert;
+        Update: SessionUpdate;
+        Relationships: [];
+      };
+      session_attendees: {
+        Row: SessionAttendeeRow;
+        Insert: SessionAttendeeInsert;
+        Update: SessionAttendeeUpdate;
+        Relationships: [];
+      };
+      session_open_slots: {
+        Row: SessionOpenSlotRow;
+        Insert: SessionOpenSlotInsert;
+        Update: SessionOpenSlotUpdate;
         Relationships: [];
       };
       profiles: {
         Row: ProfileRow;
         Insert: Partial<ProfileRow> & Pick<ProfileRow, "id">;
         Update: Partial<ProfileRow>;
+        Relationships: [];
+      };
+      user_sport_profiles: {
+        Row: UserSportProfileRow;
+        Insert: UserSportProfileInsert;
+        Update: UserSportProfileUpdate;
         Relationships: [];
       };
       venues: {
@@ -151,6 +301,18 @@ export interface Database {
         Row: VenueActivityVoteRow;
         Insert: Partial<VenueActivityVoteRow> & Pick<VenueActivityVoteRow, "venue_id" | "user_id" | "activity_name" | "vote">;
         Update: Partial<VenueActivityVoteRow>;
+        Relationships: [];
+      };
+      social_sweat_adoption_metrics: {
+        Row: SocialSweatAdoptionMetricsRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      attendance_disputes: {
+        Row: AttendanceDisputeRow;
+        Insert: AttendanceDisputeInsert;
+        Update: AttendanceDisputeUpdate;
         Relationships: [];
       };
     } & {
@@ -179,6 +341,49 @@ export interface Database {
         Returns: unknown;
       };
     };
-    Enums: Record<string, never>;
+    Enums: {
+      attendance_status: AttendanceStatus;
+      play_style: PlayStyle;
+      sport_type: SportType;
+    };
   };
-}
+};
+
+export type AttendanceDisputeRow = {
+    id: string;
+    session_id: string;
+    reporter_id: string;
+    status: "open" | "reviewing" | "resolved" | "dismissed";
+    reason: string;
+    details: string | null;
+    resolution_notes: string | null;
+    resolved_at: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+export type AttendanceDisputeInsert = {
+    id?: string;
+    session_id: string;
+    reporter_id: string;
+    status?: AttendanceDisputeRow["status"];
+    reason: string;
+    details?: string | null;
+    resolution_notes?: string | null;
+    resolved_at?: string | null;
+    created_at?: string;
+    updated_at?: string;
+  };
+
+export type AttendanceDisputeUpdate = {
+    id?: string;
+    session_id?: string;
+    reporter_id?: string;
+    status?: AttendanceDisputeRow["status"];
+    reason?: string;
+    details?: string | null;
+    resolution_notes?: string | null;
+    resolved_at?: string | null;
+    created_at?: string;
+    updated_at?: string;
+  };

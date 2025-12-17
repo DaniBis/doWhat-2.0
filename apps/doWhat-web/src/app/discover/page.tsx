@@ -5,31 +5,38 @@ import { useEffect, useState } from "react";
 
 import ActivityCard from "@/components/ActivityCard";
 import { supabase } from "@/lib/supabase/browser";
+import type { RecommendationResponse, RecommendationSession, RecommendationVenueRef } from "@/types/recommendations";
 
-// Supabase relationship selects can return either an object or array depending on FK cardinality
-interface ActivityRef {
-  id: string;
-  name: string;
-  description?: string | null;
-  activity_types?: string[] | null;
-}
-interface VenueRef { id?: string | null; name: string; lat?: number; lng?: number }
-interface BaseSession {
-  id: string;
-  created_by?: string | null;
-  price_cents: number;
-  starts_at: string;
-  ends_at: string;
-  venue_id?: string | null;
-  activities: ActivityRef[] | ActivityRef | null;
-  venues: VenueRef[] | VenueRef | null;
-}
-interface PopularSession extends BaseSession { rsvps?: { id: string }[] | null }
-interface PopularSortable extends PopularSession { rsvp_count: number }
-type Event = BaseSession;
+type Event = RecommendationSession;
+type VenueRef = RecommendationVenueRef;
+type PopularSession = Event & { session_attendees?: { status: string | null }[] | null };
+type PopularSortable = PopularSession & { attendee_count: number };
 
 interface SessionActivityRef { activity_id: string | null }
-interface RsvpSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
+interface AttendanceSessionRef { sessions: SessionActivityRef | SessionActivityRef[] | null }
+
+const RECOMMENDATION_SECTION_LIMIT = 6;
+
+const getEventActivityId = (event: Event): string | null => {
+  const rel = event.activities;
+  if (!rel) return null;
+  const primary = Array.isArray(rel) ? rel[0] : rel;
+  return primary?.id ?? null;
+};
+
+const selectFallbackRecommendations = (events: Event[], userActivityTypes: string[]): Event[] => {
+  if (!events.length) return [];
+  if (userActivityTypes.length) {
+    const filtered = events.filter((event) => {
+      const activityId = getEventActivityId(event);
+      return Boolean(activityId && userActivityTypes.includes(activityId));
+    });
+    if (filtered.length) {
+      return filtered.slice(0, RECOMMENDATION_SECTION_LIMIT);
+    }
+  }
+  return [...events].sort(() => Math.random() - 0.5).slice(0, RECOMMENDATION_SECTION_LIMIT);
+};
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Event[]>([]);
   const [popularEvents, setPopularEvents] = useState<Event[]>([]);
@@ -67,11 +74,12 @@ export default function RecommendationsPage() {
 
         let userActivityTypes: string[] = [];
         if (uid) {
-          const { data: userRsvps } = await supabase
-            .from("rsvps")
+          const { data: userAttendance } = await supabase
+            .from("session_attendees")
             .select("sessions(activity_id)")
-            .eq("user_id", uid);
-          const typed = (userRsvps || []) as unknown as RsvpSessionRef[];
+            .eq("user_id", uid)
+            .neq("status", "declined");
+          const typed = (userAttendance || []) as unknown as AttendanceSessionRef[];
           userActivityTypes = typed
             .map((r) => {
               const s = r.sessions;
@@ -85,7 +93,7 @@ export default function RecommendationsPage() {
         const { data: upcomingEvents } = await supabase
           .from("sessions")
           .select(
-            "id, created_by, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
+            "id, host_user_id, price_cents, starts_at, ends_at, venue_id, activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)"
           )
           .gte("starts_at", new Date().toISOString())
           .order("starts_at", { ascending: true })
@@ -100,9 +108,9 @@ export default function RecommendationsPage() {
         const { data: popularData } = await supabase
           .from("sessions")
           .select(`
-            id, created_by, price_cents, starts_at, ends_at, venue_id,
+            id, host_user_id, price_cents, starts_at, ends_at, venue_id,
             activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng),
-            rsvps(id)
+            session_attendees(status)
           `)
           .gte("starts_at", new Date().toISOString())
           .order("starts_at", { ascending: true })
@@ -110,46 +118,63 @@ export default function RecommendationsPage() {
 
         if (popularData && !cancelled) {
           const typedPopular = popularData as PopularSession[];
-          const sortedByRsvps: Event[] = typedPopular
-            .map<PopularSortable>((ev) => ({ ...ev, rsvp_count: ev.rsvps?.length ?? 0 }))
-            .sort((a, b) => b.rsvp_count - a.rsvp_count)
+          const sortedByAttendance: Event[] = typedPopular
+            .map<PopularSortable>((ev) => ({ ...ev, attendee_count: ev.session_attendees?.length ?? 0 }))
+            .sort((a, b) => b.attendee_count - a.attendee_count)
             .slice(0, 6)
             .map((ev) => {
-              const { rsvps, rsvp_count, ...rest } = ev;
-              void rsvps;
-              void rsvp_count;
+              const { session_attendees, attendee_count, ...rest } = ev;
+              void session_attendees;
+              void attendee_count;
               return rest;
             });
-          setPopularEvents(sortedByRsvps);
+          setPopularEvents(sortedByAttendance);
         }
 
-        let recommendedEvents = typedUpcoming;
-        if (userActivityTypes.length > 0) {
-          recommendedEvents = typedUpcoming.filter((event) => {
-            const activities = event.activities;
-            if (!activities) return false;
-            const activityId = Array.isArray(activities)
-              ? activities[0]?.id
-              : (activities as { id: string; name: string }).id;
-            return userActivityTypes.includes(activityId || "");
-          });
-        }
+        const fetchRecommendationSessions = async (): Promise<Event[] | null> => {
+          if (!uid) return null;
+          try {
+            const params = new URLSearchParams();
+            params.set("limit", "12");
+            if (userLocation?.lat != null && userLocation?.lng != null) {
+              params.set("lat", userLocation.lat.toFixed(6));
+              params.set("lng", userLocation.lng.toFixed(6));
+            }
+            const query = params.toString();
+            const endpoint = query ? `/api/recommendations?${query}` : "/api/recommendations";
+            const response = await fetch(endpoint, {
+              credentials: "include",
+              cache: "no-store",
+            });
+            if (!response.ok) {
+              if (response.status !== 401) {
+                console.warn("[discover] recommendation API error", response.status);
+              }
+              return null;
+            }
+            const payload = (await response.json()) as RecommendationResponse;
+            if (!Array.isArray(payload.recommendations)) return null;
+            return payload.recommendations.map((entry) => entry.session);
+          } catch (apiError) {
+            console.warn("[discover] failed to fetch recommendations", apiError);
+            return null;
+          }
+        };
 
-        if (recommendedEvents.length === 0) {
-          recommendedEvents = [...typedUpcoming]
-            .sort(() => Math.random() - 0.5)
-            .slice(0, 6);
+        let recommendedEvents = await fetchRecommendationSessions();
+        if (!recommendedEvents || recommendedEvents.length === 0) {
+          recommendedEvents = selectFallbackRecommendations(typedUpcoming, userActivityTypes);
         }
 
         if (!cancelled) {
-          setRecommendations(recommendedEvents.slice(0, 6));
+          setRecommendations((recommendedEvents ?? []).slice(0, RECOMMENDATION_SECTION_LIMIT));
         }
 
         if (userLocation) {
           const { data: nearbyData } = await supabase
             .from("sessions")
             .select(`
-              id, created_by, price_cents, starts_at, ends_at, venue_id,
+              id, host_user_id, price_cents, starts_at, ends_at, venue_id,
               activities(id,name,description,activity_types), venues(id,name,lat:lat,lng:lng)
             `)
             .gte("starts_at", new Date().toISOString())
@@ -232,12 +257,12 @@ export default function RecommendationsPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-7xl px-4 py-8">
+      <main className="mx-auto max-w-7xl px-md py-xxl">
         <div className="animate-pulse">
-          <div className="h-8 w-64 bg-gray-200 rounded mb-6"></div>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="h-8 w-64 rounded bg-ink-subtle mb-xl"></div>
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-48 bg-gray-200 rounded-lg"></div>
+              <div key={i} className="h-48 rounded-lg bg-ink-subtle"></div>
             ))}
           </div>
         </div>
@@ -257,7 +282,7 @@ export default function RecommendationsPage() {
         };
         sessions: Array<{
           id?: string;
-          created_by?: string | null;
+          host_user_id?: string | null;
           price_cents?: number | null;
           starts_at?: string | null;
           ends_at?: string | null;
@@ -284,7 +309,7 @@ export default function RecommendationsPage() {
       }
       grouped.get(key)!.sessions.push({
         id: event.id,
-        created_by: event.created_by ?? null,
+        host_user_id: event.host_user_id ?? null,
         price_cents: event.price_cents ?? null,
         starts_at: event.starts_at,
         ends_at: event.ends_at,
@@ -326,9 +351,9 @@ export default function RecommendationsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Discover Events</h1>
+    <main className="mx-auto max-w-7xl px-md py-xxl">
+      <div className="mb-xl flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-ink-strong">Discover Events</h1>
         <Link href="/" className="text-brand-teal hover:underline">
           ← Back to Home
         </Link>
@@ -336,11 +361,11 @@ export default function RecommendationsPage() {
 
       {/* Recommendations */}
       {recommendations.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             🎯 Recommended for You
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(recommendations)}
           </div>
         </section>
@@ -348,11 +373,11 @@ export default function RecommendationsPage() {
 
       {/* Popular Events */}
       {popularEvents.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             🔥 Trending Events
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(popularEvents)}
           </div>
         </section>
@@ -360,25 +385,25 @@ export default function RecommendationsPage() {
 
       {/* Nearby Events */}
       {nearbyEvents.length > 0 && (
-        <section className="mb-12">
-          <h2 className="mb-6 text-2xl font-semibold text-gray-800">
+        <section className="mb-gutter">
+          <h2 className="mb-xl text-2xl font-semibold text-ink-strong">
             📍 Near You
           </h2>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
             {renderActivityCards(nearbyEvents)}
           </div>
         </section>
       )}
 
       {recommendations.length === 0 && popularEvents.length === 0 && nearbyEvents.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-8 text-center">
-          <h3 className="mb-2 text-lg font-semibold text-gray-800">No events found</h3>
-          <p className="text-gray-600 mb-4">
+        <div className="rounded-lg border border-ink-subtle bg-surface-alt p-gutter text-center">
+          <h3 className="mb-xs text-lg font-semibold text-ink-strong">No events found</h3>
+          <p className="mb-sm text-ink-medium">
             There are no upcoming events to recommend right now.
           </p>
           <Link 
             href="/create"
-            className="inline-block rounded-lg bg-brand-teal px-6 py-3 text-white hover:bg-teal-700"
+            className="inline-block rounded-lg bg-brand-teal px-xxl py-sm text-white transition hover:bg-brand-dark"
           >
             Create the First Event
           </Link>

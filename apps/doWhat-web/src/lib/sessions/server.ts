@@ -1,0 +1,568 @@
+import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { isUuid } from '@dowhat/shared';
+import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import type { ProfileRow, SessionAttendeeRow, SessionRow } from '@/types/database';
+
+export type SessionVisibility = SessionRow['visibility'];
+
+export type ActivitySummary = {
+  id: string;
+  name: string | null;
+  description: string | null;
+  venueLabel: string | null;
+  lat: number | null;
+  lng: number | null;
+};
+
+export type VenueSummary = {
+  id: string;
+  name: string | null;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+};
+
+export type ProfileSummary = {
+  id: string;
+  username: string | null;
+  fullName: string | null;
+  avatarUrl: string | null;
+};
+
+export type HydratedSession = {
+  id: string;
+  activityId: string | null;
+  venueId: string | null;
+  hostUserId: string;
+  startsAt: string;
+  endsAt: string;
+  priceCents: number;
+  price: number;
+  maxAttendees: number;
+  visibility: SessionVisibility;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  activity: ActivitySummary | null;
+  venue: VenueSummary | null;
+  host: ProfileSummary | null;
+};
+
+export type AttendanceCounts = {
+  going: number;
+  interested: number;
+  declined: number;
+  total: number;
+  verified: number;
+};
+
+export type ParsedSessionPayload = {
+  activityId?: string | null;
+  activityName?: string | null;
+  venueId?: string | null;
+  venueName?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  priceCents?: number | null;
+  maxAttendees?: number | null;
+  visibility?: SessionVisibility;
+  description?: string | null;
+};
+
+export type SessionPayloadOptions = {
+  requireSchedule?: boolean;
+  requireCoordinates?: boolean;
+  defaultVisibility?: SessionVisibility;
+  defaultMaxAttendees?: number;
+  defaultPriceCents?: number;
+};
+
+export class SessionValidationError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.name = 'SessionValidationError';
+    this.statusCode = statusCode;
+  }
+}
+
+export async function resolveApiUser(req: Request): Promise<User | null> {
+  const authHeader = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  const service = createServiceClient();
+
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token) {
+      try {
+        const { data, error } = await service.auth.getUser(token);
+        if (!error && data?.user) return data.user;
+      } catch {
+        // Ignore bearer parsing errors and fall back to cookie session.
+      }
+    }
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user ?? null;
+}
+
+export function extractSessionPayload(body: unknown, options: SessionPayloadOptions = {}): ParsedSessionPayload {
+  if (!body || typeof body !== 'object') {
+    throw new SessionValidationError('Request body must be a JSON object.');
+  }
+  const raw = body as Record<string, unknown>;
+  const parsed: ParsedSessionPayload = {};
+
+  assignOptionalId(raw, 'activityId', (value) => {
+    parsed.activityId = value;
+  });
+  assignOptionalId(raw, 'activity_id', (value) => {
+    parsed.activityId = value;
+  });
+  assignOptionalText(raw, 'activityName', (value) => {
+    parsed.activityName = value;
+  });
+  assignOptionalText(raw, 'activity_name', (value) => {
+    parsed.activityName = value;
+  });
+
+  assignOptionalId(raw, 'venueId', (value) => {
+    parsed.venueId = value;
+  });
+  assignOptionalId(raw, 'venue_id', (value) => {
+    parsed.venueId = value;
+  });
+  assignOptionalText(raw, 'venueName', (value) => {
+    parsed.venueName = value;
+  });
+  assignOptionalText(raw, 'venue_name', (value) => {
+    parsed.venueName = value;
+  });
+
+  const latProvided = hasKey(raw, 'lat');
+  const lngProvided = hasKey(raw, 'lng');
+  if (latProvided) parsed.lat = parseCoordinate(raw.lat, 'latitude');
+  if (lngProvided) parsed.lng = parseCoordinate(raw.lng, 'longitude');
+
+  if (options.requireCoordinates) {
+    if (parsed.lat == null || parsed.lng == null) {
+      throw new SessionValidationError('Latitude and longitude are required.');
+    }
+  }
+
+  const startProvided = hasKey(raw, 'startsAt') || hasKey(raw, 'starts_at');
+  const endProvided = hasKey(raw, 'endsAt') || hasKey(raw, 'ends_at');
+  if (startProvided) parsed.startsAt = parseIsoDate(raw.startsAt ?? raw.starts_at, 'start time');
+  if (endProvided) parsed.endsAt = parseIsoDate(raw.endsAt ?? raw.ends_at, 'end time');
+
+  if (options.requireSchedule) {
+    if (!parsed.startsAt || !parsed.endsAt) {
+      throw new SessionValidationError('Start and end times are required.');
+    }
+    ensureChronology(parsed.startsAt, parsed.endsAt);
+  } else if (parsed.startsAt && parsed.endsAt) {
+    ensureChronology(parsed.startsAt, parsed.endsAt);
+  }
+
+  const priceCents = resolvePriceCents(raw);
+  if (priceCents != null) {
+    parsed.priceCents = priceCents;
+  } else if (options.defaultPriceCents != null) {
+    parsed.priceCents = options.defaultPriceCents;
+  }
+
+  const maxAttendees = resolveMaxAttendees(raw);
+  if (maxAttendees != null) {
+    parsed.maxAttendees = maxAttendees;
+  } else if (options.defaultMaxAttendees != null) {
+    parsed.maxAttendees = options.defaultMaxAttendees;
+  }
+
+  const visibility = resolveVisibility(raw, options.defaultVisibility);
+  if (visibility) parsed.visibility = visibility;
+
+  if (hasKey(raw, 'description')) {
+    parsed.description = sanitizeText(raw.description);
+  }
+
+  return parsed;
+}
+
+export async function ensureActivity(service: SupabaseClient, input: {
+  activityId?: string | null;
+  activityName?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  venueName?: string | null;
+}): Promise<string> {
+  const candidateId = isUuid(input.activityId ?? null) ? input.activityId : null;
+  if (candidateId) return candidateId;
+  const activityName = sanitizeRequiredText(input.activityName, 'Activity name is required.');
+
+  const { data: existing, error: fetchError } = await service
+    .from('activities')
+    .select('id')
+    .eq('name', activityName)
+    .maybeSingle<{ id: string }>();
+  if (fetchError) throw fetchError;
+  if (existing?.id) return existing.id;
+
+  const insert: Record<string, unknown> = { name: activityName };
+  if (typeof input.lat === 'number') insert.lat = input.lat;
+  if (typeof input.lng === 'number') insert.lng = input.lng;
+  if (input.venueName) insert.venue = input.venueName;
+
+  const { data: inserted, error: insertError } = await service
+    .from('activities')
+    .insert(insert)
+    .select('id')
+    .single<{ id: string }>();
+  if (insertError) throw insertError;
+  return inserted.id;
+}
+
+export async function ensureVenue(service: SupabaseClient, input: {
+  venueId?: string | null;
+  venueName?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+}): Promise<string> {
+  const candidateId = isUuid(input.venueId ?? null) ? input.venueId : null;
+  if (candidateId) return candidateId;
+  const venueName = sanitizeRequiredText(input.venueName, 'Venue name is required.');
+
+  const { data: existing, error: fetchError } = await service
+    .from('venues')
+    .select('id, lat, lng')
+    .eq('name', venueName)
+    .maybeSingle<{ id: string; lat?: number | null; lng?: number | null }>();
+  if (fetchError) throw fetchError;
+  if (existing?.id) {
+    const needsLat = existing.lat == null && typeof input.lat === 'number';
+    const needsLng = existing.lng == null && typeof input.lng === 'number';
+    if (needsLat || needsLng) {
+      const patch: Record<string, unknown> = {};
+      if (needsLat) patch.lat = input.lat;
+      if (needsLng) patch.lng = input.lng;
+      if (Object.keys(patch).length) {
+        await service.from('venues').update(patch).eq('id', existing.id);
+      }
+    }
+    return existing.id;
+  }
+
+  if (typeof input.lat !== 'number' || typeof input.lng !== 'number') {
+    throw new SessionValidationError('Latitude and longitude are required to create a new venue.');
+  }
+
+  const insert = {
+    name: venueName,
+    lat: input.lat,
+    lng: input.lng,
+  };
+  const { data: inserted, error: insertError } = await service
+    .from('venues')
+    .insert(insert)
+    .select('id')
+    .single<{ id: string }>();
+  if (insertError) throw insertError;
+  return inserted.id;
+}
+
+export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[]): Promise<HydratedSession[]> {
+  if (!rows.length) return [];
+
+  const activityIds = dedupe(rows.map((row) => row.activity_id).filter(Boolean) as string[]);
+  const venueIds = dedupe(rows.map((row) => row.venue_id).filter(Boolean) as string[]);
+  const hostIds = dedupe(rows.map((row) => row.host_user_id));
+
+  const [activityMap, venueMap, profileMap] = await Promise.all([
+    loadActivities(service, activityIds),
+    loadVenues(service, venueIds),
+    loadProfiles(service, hostIds),
+  ]);
+
+  return rows.map((row) => ({
+    id: row.id,
+    activityId: row.activity_id,
+    venueId: row.venue_id,
+    hostUserId: row.host_user_id,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    priceCents: row.price_cents ?? 0,
+    price: (row.price_cents ?? 0) / 100,
+    maxAttendees: row.max_attendees,
+    visibility: row.visibility,
+    description: row.description ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    activity: row.activity_id ? activityMap.get(row.activity_id) ?? null : null,
+    venue: row.venue_id ? venueMap.get(row.venue_id) ?? null : null,
+    host: profileMap.get(row.host_user_id) ?? null,
+  }));
+}
+
+function hasKey(source: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(source, key);
+}
+
+function assignOptionalId(
+  raw: Record<string, unknown>,
+  key: string,
+  assign: (value: string | null) => void,
+) {
+  if (!hasKey(raw, key)) return;
+  const value = raw[key];
+  if (value == null) {
+    assign(null);
+    return;
+  }
+  if (typeof value !== 'string') {
+    throw new SessionValidationError(`Field ${key} must be a string.`);
+  }
+  const trimmed = value.trim();
+  assign(trimmed || null);
+}
+
+function assignOptionalText(
+  raw: Record<string, unknown>,
+  key: string,
+  assign: (value: string | null) => void,
+) {
+  if (!hasKey(raw, key)) return;
+  assign(sanitizeText(raw[key]));
+}
+
+function sanitizeText(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    throw new SessionValidationError('Text fields must be strings.');
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function sanitizeRequiredText(value: string | null | undefined, message: string): string {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) {
+    throw new SessionValidationError(message);
+  }
+  return trimmed;
+}
+
+function parseCoordinate(value: unknown, label: string): number | null {
+  if (value == null || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    throw new SessionValidationError(`Field ${label} must be a valid number.`);
+  }
+  return num;
+}
+
+function parseIsoDate(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new SessionValidationError(`Field ${label} must be an ISO date string.`);
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new SessionValidationError(`Field ${label} is not a valid date.`);
+  }
+  return date.toISOString();
+}
+
+function ensureChronology(startsAt: string, endsAt: string) {
+  if (new Date(endsAt).getTime() <= new Date(startsAt).getTime()) {
+    throw new SessionValidationError('End time must be after the start time.');
+  }
+}
+
+function resolvePriceCents(raw: Record<string, unknown>): number | null {
+  if (hasKey(raw, 'priceCents')) {
+    return normalizePriceCents(raw.priceCents);
+  }
+  if (hasKey(raw, 'price_cents')) {
+    return normalizePriceCents(raw.price_cents);
+  }
+  if (hasKey(raw, 'price')) {
+    const priceValue = Number(raw.price);
+    if (!Number.isFinite(priceValue)) {
+      throw new SessionValidationError('Price must be a number.');
+    }
+    return normalizePriceCents(priceValue * 100);
+  }
+  return null;
+}
+
+function normalizePriceCents(value: unknown): number {
+  const cents = Math.round(Number(value));
+  if (!Number.isFinite(cents) || cents < 0) {
+    throw new SessionValidationError('Price cannot be negative.');
+  }
+  return cents;
+}
+
+function resolveMaxAttendees(raw: Record<string, unknown>): number | null {
+  if (!hasKey(raw, 'maxAttendees') && !hasKey(raw, 'max_attendees')) return null;
+  const value = hasKey(raw, 'maxAttendees') ? raw.maxAttendees : raw.max_attendees;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new SessionValidationError('maxAttendees must be a positive number.');
+  }
+  return Math.floor(num);
+}
+
+function resolveVisibility(
+  raw: Record<string, unknown>,
+  fallback?: SessionVisibility,
+): SessionVisibility | undefined {
+  const value = hasKey(raw, 'visibility') ? raw.visibility : undefined;
+  if (value == null) return fallback;
+  if (typeof value !== 'string') {
+    throw new SessionValidationError('visibility must be a string.');
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'public' || normalized === 'friends' || normalized === 'private') {
+    return normalized;
+  }
+  throw new SessionValidationError('visibility must be public, friends, or private.');
+}
+
+async function loadActivities(service: SupabaseClient, ids: string[]): Promise<Map<string, ActivitySummary>> {
+  const map = new Map<string, ActivitySummary>();
+  if (!ids.length) return map;
+  const { data, error } = await service
+    .from('activities')
+    .select('id, name, description, venue, lat, lng')
+    .in('id', ids);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    map.set(row.id, {
+      id: row.id,
+      name: row.name ?? null,
+      description: row.description ?? null,
+      venueLabel: row.venue ?? null,
+      lat: typeof row.lat === 'number' ? row.lat : null,
+      lng: typeof row.lng === 'number' ? row.lng : null,
+    });
+  }
+  return map;
+}
+
+async function loadVenues(service: SupabaseClient, ids: string[]): Promise<Map<string, VenueSummary>> {
+  const map = new Map<string, VenueSummary>();
+  if (!ids.length) return map;
+  const { data, error } = await service
+    .from('venues')
+    .select('id, name, address, lat, lng')
+    .in('id', ids);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    map.set(row.id, {
+      id: row.id,
+      name: row.name ?? null,
+      address: typeof row.address === 'string' ? row.address : null,
+      lat: typeof row.lat === 'number' ? row.lat : null,
+      lng: typeof row.lng === 'number' ? row.lng : null,
+    });
+  }
+  return map;
+}
+
+async function loadProfiles(service: SupabaseClient, ids: string[]): Promise<Map<string, ProfileSummary>> {
+  const map = new Map<string, ProfileSummary>();
+  if (!ids.length) return map;
+  const { data, error } = await service
+    .from('profiles')
+    .select('id, username, full_name, avatar_url')
+    .in('id', ids);
+  if (error) throw error;
+  for (const row of (data ?? []) as Array<ProfileRow & { username?: string | null }>) {
+    map.set(row.id, {
+      id: row.id,
+      username: row.username ?? null,
+      fullName: row.full_name ?? null,
+      avatarUrl: row.avatar_url ?? null,
+    });
+  }
+  return map;
+}
+
+function dedupe(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+export async function getSessionOrThrow(service: SupabaseClient, sessionId: string): Promise<SessionRow> {
+  const { data, error } = await service
+    .from('sessions')
+    .select('*')
+    .eq('id', sessionId)
+    .maybeSingle<SessionRow>();
+  if (error) throw error;
+  if (!data) {
+    throw new SessionValidationError('Session not found.', 404);
+  }
+  return data;
+}
+
+export async function getAttendanceCounts(service: SupabaseClient, sessionId: string): Promise<AttendanceCounts> {
+  const [going, interested, declined, verified] = await Promise.all([
+    countByStatus(service, sessionId, 'going'),
+    countByStatus(service, sessionId, 'interested'),
+    countByStatus(service, sessionId, 'declined'),
+    countVerifiedMatches(service, sessionId),
+  ]);
+  return {
+    going,
+    interested,
+    declined,
+    total: going + interested + declined,
+    verified,
+  };
+}
+
+async function countByStatus(
+  service: SupabaseClient,
+  sessionId: string,
+  status: SessionAttendeeRow['status'],
+): Promise<number> {
+  const { count, error } = await service
+    .from('session_attendees')
+    .select('status', { count: 'exact', head: true })
+    .eq('session_id', sessionId)
+    .eq('status', status);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+async function countVerifiedMatches(service: SupabaseClient, sessionId: string): Promise<number> {
+  const { count, error } = await service
+    .from('session_attendees')
+    .select('checked_in', { count: 'exact', head: true })
+    .eq('session_id', sessionId)
+    .eq('attendance_status', 'attended')
+    .eq('checked_in', true);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function getUserAttendanceStatus(
+  service: SupabaseClient,
+  sessionId: string,
+  userId: string,
+): Promise<SessionAttendeeRow['status'] | null> {
+  const { data, error } = await service
+    .from('session_attendees')
+    .select('status')
+    .eq('session_id', sessionId)
+    .eq('user_id', userId)
+    .maybeSingle<{ status: SessionAttendeeRow['status'] }>();
+  if (error) throw error;
+  return data?.status ?? null;
+}

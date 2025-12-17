@@ -1,9 +1,9 @@
 // src/app/auth/signout/route.ts
-import { createClient } from "@/lib/supabase/server";
+import { createRouteHandlerClient } from "@/lib/supabase/routeHandler";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
-  const supabase = createClient();
+  const supabase = createRouteHandlerClient();
 
   await supabase.auth.signOut();
   

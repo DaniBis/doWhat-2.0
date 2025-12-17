@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { format, isAfter, isBefore, parseISO } from "date-fns";
 
-import RsvpQuickActions from "./RsvpQuickActions";
+import { buildSessionSavePayload, type ActivityRow } from "@dowhat/shared";
+import SessionAttendanceQuickActions from "./SessionAttendanceQuickActions";
 import SessionAttendanceList from "./SessionAttendanceList";
 import WebActivityIcon from "./WebActivityIcon";
+import SaveToggleButton from "./SaveToggleButton";
 
 export type ScheduleActivity = {
   id: string;
@@ -221,52 +223,52 @@ export default function ActivityScheduleBoard({
 
   const sessionItemClasses =
     density === "compact"
-      ? "flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-      : "flex flex-col gap-4 rounded-3xl border border-gray-100 bg-white px-6 py-5 sm:flex-row sm:items-center sm:justify-between";
+      ? "flex flex-col gap-sm rounded-2xl border border-midnight-border/30 bg-surface px-md py-sm text-sm sm:flex-row sm:items-center sm:justify-between"
+      : "flex flex-col gap-md rounded-3xl border border-midnight-border/30 bg-surface px-xl py-lg sm:flex-row sm:items-center sm:justify-between";
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-center gap-4">
+    <div className="flex flex-col gap-xxl">
+      <header className="rounded-3xl border border-midnight-border/30 bg-surface p-xl shadow-sm">
+        <div className="flex flex-wrap items-center gap-md">
           <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
             <WebActivityIcon name={activity.name} size={26} color="#92400e" />
           </span>
           <div className="flex-1 min-w-[220px]">
-            <h1 className="text-2xl font-bold text-gray-900">{activity.name}</h1>
+            <h1 className="text-2xl font-bold text-ink">{activity.name}</h1>
             {activity.description && (
-              <p className="mt-1 text-sm text-gray-600 max-w-2xl">{activity.description}</p>
+              <p className="mt-xxs text-sm text-ink-medium max-w-2xl">{activity.description}</p>
             )}
           </div>
-          <dl className="flex flex-col items-start gap-1 text-sm text-gray-600 sm:items-end">
-            <div className="flex items-center gap-2">
-              <dt className="font-medium text-gray-500">Upcoming</dt>
-              <dd className="font-semibold text-gray-900">{totalUpcoming}</dd>
+          <dl className="flex flex-col items-start gap-xxs text-sm text-ink-medium sm:items-end">
+            <div className="flex items-center gap-xs">
+              <dt className="font-medium text-ink-muted">Upcoming</dt>
+              <dd className="font-semibold text-ink">{totalUpcoming}</dd>
             </div>
-            <div className="flex items-center gap-2">
-              <dt className="font-medium text-gray-500">Venues</dt>
-              <dd className="font-semibold text-gray-900">{venueCount}</dd>
+            <div className="flex items-center gap-xs">
+              <dt className="font-medium text-ink-muted">Venues</dt>
+              <dd className="font-semibold text-ink">{venueCount}</dd>
             </div>
             {dateRangeLabel && (
-              <div className="flex items-center gap-2">
-                <dt className="font-medium text-gray-500">Range</dt>
-                <dd className="font-semibold text-gray-900">{dateRangeLabel}</dd>
+              <div className="flex items-center gap-xs">
+                <dt className="font-medium text-ink-muted">Range</dt>
+                <dd className="font-semibold text-ink">{dateRangeLabel}</dd>
               </div>
             )}
           </dl>
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-gray-100 bg-white/80 p-4 shadow-sm">
-        <div className="flex items-center gap-2 rounded-full bg-gray-100 p-1 text-sm font-medium text-gray-600">
+      <div className="flex flex-wrap items-center gap-md rounded-2xl border border-midnight-border/30 bg-surface/80 p-md shadow-sm">
+        <div className="flex items-center gap-xs rounded-full bg-surface-alt p-xxs text-sm font-medium text-ink-medium">
           {windowOptions.map((option) => (
             <button
               key={option.value}
               type="button"
               onClick={() => setWindowFilter(option.value)}
-              className={`rounded-full px-3 py-1 transition ${
+              className={`rounded-full px-sm py-xxs transition ${
                 windowFilter === option.value
                   ? "bg-emerald-500 text-white"
-                  : "text-gray-600 hover:text-emerald-600"
+                  : "text-ink-medium hover:text-emerald-600"
               }`}
             >
               {option.label}
@@ -274,16 +276,16 @@ export default function ActivityScheduleBoard({
           ))}
         </div>
 
-        <div className="flex items-center gap-2 rounded-full bg-gray-100 p-1 text-sm font-medium text-gray-600">
+        <div className="flex items-center gap-xs rounded-full bg-surface-alt p-xxs text-sm font-medium text-ink-medium">
           {densityOptions.map((option) => (
             <button
               key={option.value}
               type="button"
               onClick={() => setDensity(option.value)}
-              className={`rounded-full px-3 py-1 transition ${
+              className={`rounded-full px-sm py-xxs transition ${
                 density === option.value
                   ? "bg-emerald-500 text-white"
-                  : "text-gray-600 hover:text-emerald-600"
+                  : "text-ink-medium hover:text-emerald-600"
               }`}
             >
               {option.label}
@@ -296,33 +298,33 @@ export default function ActivityScheduleBoard({
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Search by venue, description, or date"
-            className="w-full rounded-full border border-gray-200 px-4 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            className="w-full rounded-full border border-midnight-border/40 px-md py-xs text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
           />
         </div>
 
         <Link
           href={{ pathname: `/activities/${activity.id}` }}
-          className="ml-auto inline-flex items-center gap-2 rounded-full border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50"
+          className="ml-auto inline-flex items-center gap-xs rounded-full border border-emerald-200 px-md py-xs text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50"
         >
           Back to overview
         </Link>
       </div>
 
-      <section className="space-y-6">
+      <section className="space-y-xl">
         {groupedSessions.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          <div className="rounded-2xl border border-dashed border-midnight-border/40 bg-surface p-xxxl text-center text-sm text-ink-muted">
             No sessions match your filters.
           </div>
         ) : (
           groupedSessions.map((group) => (
-            <div key={group.dateKey} className="rounded-3xl border border-gray-100 bg-white shadow-sm">
-              <header className="sticky top-16 z-10 flex items-center justify-between gap-4 border-b border-gray-100 bg-white/95 px-6 py-4 backdrop-blur-sm">
-                <h2 className="text-lg font-semibold text-gray-900">{group.label}</h2>
-                <span className="text-sm text-gray-500">
+            <div key={group.dateKey} className="rounded-3xl border border-midnight-border/30 bg-surface shadow-sm">
+              <header className="sticky top-jumbo z-10 flex items-center justify-between gap-md border-b border-midnight-border/30 bg-surface/95 px-xl py-md backdrop-blur-sm">
+                <h2 className="text-lg font-semibold text-ink">{group.label}</h2>
+                <span className="text-sm text-ink-muted">
                   {group.items.length} slot{group.items.length === 1 ? "" : "s"}
                 </span>
               </header>
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-midnight-border/30">
                 {group.items.map((session) => {
                   const start = parseISO(session.starts_at);
                   const end = session.ends_at ? parseISO(session.ends_at) : null;
@@ -330,41 +332,70 @@ export default function ActivityScheduleBoard({
                   const duration = formatDuration(start, end);
                   const venue = toVenueMeta(session);
                   const priceLabel = toPriceLabel(session.price_cents);
+                  const activityRow: ActivityRow = {
+                    id: session.id,
+                    price_cents: session.price_cents ?? null,
+                    starts_at: session.starts_at ?? null,
+                    ends_at: session.ends_at ?? null,
+                    activities: {
+                      id: activity.id,
+                      name: activity.name,
+                    },
+                    venues: {
+                      name: venue.name ?? null,
+                    },
+                  };
+                  const baseSavePayload = buildSessionSavePayload(activityRow, {
+                    source: "web_activity_schedule",
+                  });
+                  const savePayload = baseSavePayload
+                    ? {
+                        ...baseSavePayload,
+                        venueId: venue.id ?? baseSavePayload.venueId,
+                        address: baseSavePayload.address ?? venue.name ?? undefined,
+                        metadata: {
+                          ...(baseSavePayload.metadata ?? {}),
+                          venueId: venue.id ?? null,
+                          venueLat: venue.lat ?? null,
+                          venueLng: venue.lng ?? null,
+                        },
+                      }
+                    : null;
 
                   return (
                     <li key={session.id} className={sessionItemClasses}>
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-xxs">
                         <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
                           {timeRange}
                         </div>
-                        <div className="text-base font-semibold text-gray-900">{venue.name}</div>
-                        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
+                        <div className="text-base font-semibold text-ink">{venue.name}</div>
+                        <div className="flex flex-wrap items-center gap-xs text-sm text-ink-muted">
                           <span>{priceLabel}</span>
                           {duration && <span>• Duration {duration}</span>}
                         </div>
                         {session.description && (
-                          <p className="mt-1 text-sm text-gray-600 max-w-2xl">{session.description}</p>
+                          <p className="mt-xxs text-sm text-ink-medium max-w-2xl">{session.description}</p>
                         )}
                       </div>
-                      <div className="flex flex-col items-start gap-3 sm:items-end">
+                      <div className="flex flex-col items-start gap-sm sm:items-end">
                         {session.id ? (
-                          <SessionAttendanceList
-                            sessionId={session.id}
-                            activityId={activity.id}
-                            className="justify-end"
-                          />
+                          <>
+                            <SessionAttendanceList
+                              sessionId={session.id}
+                              className="justify-end"
+                            />
+                            <SessionAttendanceQuickActions
+                              sessionId={session.id}
+                              size={density === "compact" ? "compact" : "default"}
+                              className="sm:self-end"
+                            />
+                          </>
                         ) : null}
-                        <RsvpQuickActions
-                          activityId={activity.id}
-                          sessionId={session.id ?? null}
-                          size={density === "compact" ? "compact" : "default"}
-                          className="sm:self-end"
-                        />
-                        <div className="flex flex-wrap gap-2 text-sm font-semibold text-emerald-600">
+                        <div className="flex flex-wrap items-center gap-xs text-sm font-semibold text-emerald-600">
                           {session.id ? (
                             <Link
                               href={{ pathname: `/sessions/${session.id}` }}
-                              className="inline-flex items-center gap-2 transition hover:text-emerald-700"
+                              className="inline-flex items-center gap-xs transition hover:text-emerald-700"
                             >
                               Session details →
                             </Link>
@@ -372,11 +403,12 @@ export default function ActivityScheduleBoard({
                           {showVenueScheduleLink && venue.id && (
                             <Link
                               href={{ pathname: `/venues/${venue.id}/schedule` }}
-                              className="inline-flex items-center gap-2 transition hover:text-emerald-700"
+                              className="inline-flex items-center gap-xs transition hover:text-emerald-700"
                             >
                               Venue schedule →
                             </Link>
                           )}
+                          <SaveToggleButton payload={savePayload} />
                         </div>
                       </div>
                     </li>

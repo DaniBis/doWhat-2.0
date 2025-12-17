@@ -10,15 +10,15 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-emerald-500 text-white hover:bg-emerald-600 focus-visible:ring-emerald-500",
-        outline: "border border-gray-200 bg-white text-gray-900 hover:bg-gray-50",
-        secondary: "bg-slate-900 text-white hover:bg-slate-800",
-        ghost: "bg-transparent text-gray-700 hover:bg-gray-100",
+        outline: "border border-midnight-border/40 bg-surface text-ink hover:bg-surface-alt",
+        secondary: "bg-midnight text-white hover:bg-slate-800",
+        ghost: "bg-transparent text-ink-strong hover:bg-surface-alt",
         destructive: "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500",
       },
       size: {
-        default: "px-4 py-2",
-        sm: "px-3 py-1.5 text-xs",
-        lg: "px-5 py-2.5 text-base",
+        default: "px-md py-xs",
+        sm: "px-sm py-1.5 text-xs",
+        lg: "px-lg py-2.5 text-base",
         icon: "h-9 w-9 rounded-full",
       },
     },

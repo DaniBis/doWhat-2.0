@@ -108,44 +108,44 @@ export function TraitSelector({ onCompleted, className }: TraitSelectorProps) {
 
   return (
     <Card className={cn("w-full", className)}>
-      <CardHeader className="space-y-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-600">
+      <CardHeader className="space-y-sm">
+        <div className="flex items-center gap-xs text-sm font-semibold text-emerald-600">
           <Sparkles className="h-4 w-4" />
           <span>Pick your base vibes</span>
         </div>
-        <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-md">
           <div>
-            <h2 className="text-2xl font-semibold text-gray-900">Choose exactly five traits</h2>
-            <p className="text-sm text-gray-600">
+            <h2 className="text-2xl font-semibold text-ink">Choose exactly five traits</h2>
+            <p className="text-sm text-ink-medium">
               These become your starting stack. Teammates can nominate more traits after shared sessions.
             </p>
           </div>
-          <div className="text-sm font-semibold text-gray-700">
+          <div className="text-sm font-semibold text-ink-strong">
             {selection.length} / {MAX_ONBOARDING_TRAITS}
           </div>
         </div>
         <div className="relative">
-          <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden />
+          <Search className="absolute left-4 top-xxs/2 h-4 w-4 -translate-y-1/2 text-ink-muted" aria-hidden />
           <input
             type="text"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search traits"
-            className="w-full rounded-2xl border border-gray-200 bg-white py-2 pl-11 pr-4 text-sm focus:border-emerald-400 focus:outline-none"
+            className="w-full rounded-2xl border border-midnight-border/40 bg-surface py-xs pl-11 pr-md text-sm focus:border-emerald-400 focus:outline-none"
           />
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-xl">
         {selectedTraits.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Selected</p>
-            <div className="flex flex-wrap gap-2">
+          <div className="space-y-xs">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Selected</p>
+            <div className="flex flex-wrap gap-xs">
               {selectedTraits.map((trait) => (
                 <button
                   key={trait.id}
                   type="button"
                   onClick={() => toggleTrait(trait.id)}
-                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-4 py-1.5 text-sm font-medium text-gray-800 transition hover:border-gray-300"
+                  className="inline-flex items-center gap-xs rounded-full border border-midnight-border/40 bg-surface-alt px-md py-1.5 text-sm font-medium text-ink-strong transition hover:border-midnight-border/60"
                 >
                   <span>{trait.name}</span>
                   <X className="h-4 w-4" aria-hidden />
@@ -157,16 +157,16 @@ export function TraitSelector({ onCompleted, className }: TraitSelectorProps) {
         )}
 
         <TooltipProvider>
-          <ScrollArea className="h-[360px] rounded-2xl border border-gray-100 p-2">
-            <div className="grid gap-3 sm:grid-cols-2">
+          <ScrollArea className="h-[360px] rounded-2xl border border-midnight-border/30 p-xs">
+            <div className="grid gap-sm sm:grid-cols-2">
               {loading && (
-                <div className="col-span-2 flex items-center justify-center py-10 text-gray-500">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading traits…
+                <div className="col-span-2 flex items-center justify-center py-xxxl text-ink-muted">
+                  <Loader2 className="mr-xs h-4 w-4 animate-spin" /> Loading traits…
                 </div>
               )}
 
               {!loading && catalogError && (
-                <div className="col-span-2 flex flex-col items-center gap-3 py-12 text-center text-sm text-gray-500">
+                <div className="col-span-2 flex flex-col items-center gap-sm py-gutter text-center text-sm text-ink-muted">
                   <p>{catalogError}</p>
                   <Button variant="outline" size="sm" onClick={loadCatalog} disabled={loading}>
                     Try again
@@ -175,7 +175,7 @@ export function TraitSelector({ onCompleted, className }: TraitSelectorProps) {
               )}
 
               {!loading && !catalogError && filteredTraits.length === 0 && (
-                <div className="col-span-2 text-center text-sm text-gray-500">No traits match that search.</div>
+                <div className="col-span-2 text-center text-sm text-ink-muted">No traits match that search.</div>
               )}
 
               {!catalogError &&
@@ -190,7 +190,7 @@ export function TraitSelector({ onCompleted, className }: TraitSelectorProps) {
                 ))}
             </div>
           </ScrollArea>
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+          <div className="flex flex-wrap items-center justify-between gap-sm text-sm text-ink-medium">
             <span>
               {remaining > 0
                 ? `Select ${remaining} more ${remaining === 1 ? "trait" : "traits"}.`
@@ -199,7 +199,7 @@ export function TraitSelector({ onCompleted, className }: TraitSelectorProps) {
             {submitError && <span className="text-red-600">{submitError}</span>}
             {submitSuccess && <span className="text-emerald-600">{submitSuccess}</span>}
           </div>
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-sm">
             {catalogError && (
               <Button variant="outline" size="sm" onClick={loadCatalog} disabled={loading}>
                 Retry
@@ -235,25 +235,25 @@ function TraitOptionCard({ trait, selected, disabled, onToggle }: TraitOptionCar
           onClick={onToggle}
           disabled={disabled}
           className={cn(
-            "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition",
+            "flex w-full items-center justify-between rounded-2xl border px-md py-sm text-left transition",
             selected
-              ? "border-transparent bg-gray-900 text-white"
-              : "border-gray-100 bg-white text-gray-800 hover:border-gray-200",
+              ? "border-transparent bg-midnight text-white"
+              : "border-midnight-border/30 bg-surface text-ink-strong hover:border-midnight-border/40",
             disabled && !selected && "opacity-50"
           )}
           style={selected ? undefined : { borderColor: accent }}
           aria-pressed={selected}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-sm">
             <span
               className="flex h-10 w-10 items-center justify-center rounded-2xl"
               style={{ backgroundColor: selected ? "rgba(255,255,255,0.12)" : chipFill }}
             >
-              <Icon className={cn("h-5 w-5", selected ? "text-white" : "text-gray-700")} />
+              <Icon className={cn("h-5 w-5", selected ? "text-white" : "text-ink-strong")} />
             </span>
             <div>
               <p className="font-semibold">{trait.name}</p>
-              <p className="text-xs text-gray-500">Tap to {selected ? "remove" : "add"}</p>
+              <p className="text-xs text-ink-muted">Tap to {selected ? "remove" : "add"}</p>
             </div>
           </div>
           {selected && <Check className="h-4 w-4" aria-hidden />}

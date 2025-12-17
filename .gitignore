@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+apps/**/coverage/
 
 # next.js
 /.next/
@@ -25,6 +26,8 @@ packages/**/node_modules/
 packages/**/dist/
 .expo/
 apps/**/.expo/
+apps/doWhat-mobile/ios/
+apps/doWhat-mobile/android/
 
 # production
 /build
@@ -32,6 +35,9 @@ apps/**/.expo/
 # misc
 .DS_Store
 *.pem
+.eslintcache
+lint.log
+lint-report.json
 
 # debug
 npm-debug.log*

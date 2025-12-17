@@ -28,6 +28,7 @@ export interface ProviderPlace {
   categories: string[];
   tags?: string[];
   address?: string;
+  description?: string | null;
   locality?: string;
   region?: string;
   country?: string;
@@ -47,9 +48,11 @@ export interface ExistingPlaceRow {
   id: string;
   slug: string | null;
   name: string;
+  description?: string | null;
   categories: string[] | null;
   tags: string[] | null;
   address?: string | null;
+  city?: string | null;
   locality?: string | null;
   region?: string | null;
   country?: string | null;
@@ -71,6 +74,7 @@ export interface ExistingPlaceRow {
   last_seen_at?: string | null;
   geohash6?: string | null;
   source_confidence?: number | null;
+  foursquare_id?: string | null;
 }
 
 export interface PlaceSourceRow {
@@ -102,17 +106,20 @@ export interface CanonicalPlace {
   id: string;
   slug: string | null;
   name: string;
+  description?: string;
   lat: number;
   lng: number;
   categories: string[];
   tags: string[];
   address?: string;
+  city?: string;
   locality?: string;
   region?: string;
   country?: string;
   postcode?: string;
   phone?: string;
   website?: string;
+  fsqId?: string | null;
   rating?: number;
   ratingCount?: number;
   priceLevel?: number;
@@ -130,11 +137,13 @@ export interface PersistablePlaceInput {
   id?: string;
   slug?: string | null;
   name: string;
+  description?: string | null;
   lat: number;
   lng: number;
   categories: string[];
   tags: string[];
   address?: string | null;
+  city?: string | null;
   locality?: string | null;
   region?: string | null;
   country?: string | null;
@@ -152,6 +161,7 @@ export interface PersistablePlaceInput {
   cached_at: string;
   cache_expires_at: string;
   last_seen_at: string;
+  foursquare_id?: string | null;
 }
 
 export interface PersistablePlaceSourceInput {

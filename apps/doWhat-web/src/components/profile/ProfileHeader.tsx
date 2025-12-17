@@ -259,11 +259,11 @@ export function ProfileHeader({
 
   return (
     <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-blue-900 text-white">
-      <div className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+      <div className="max-w-5xl mx-auto px-xl py-xxxl">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-xl">
           <div
             ref={dropZoneRef}
-            className={`relative w-28 h-28 rounded-full ring-4 ring-white/20 overflow-hidden flex items-center justify-center bg-white/10 group ${dragActive ? 'ring-emerald-300 ring-offset-2 ring-offset-emerald-200' : ''}`}
+            className={`relative w-28 h-28 rounded-full ring-4 ring-white/20 overflow-hidden flex items-center justify-center bg-surface/10 group ${dragActive ? 'ring-emerald-300 ring-offset-2 ring-offset-emerald-200' : ''}`}
           >
             {avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -280,25 +280,25 @@ export function ProfileHeader({
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-start gap-3">
-              <h1 className="text-3xl font-bold tracking-tight mb-1 break-words">{name || 'Profile'}</h1>
+            <div className="flex items-start gap-sm">
+              <h1 className="text-3xl font-bold tracking-tight mb-xxs break-words">{name || 'Profile'}</h1>
               {editable && (
                 <button
                   onClick={openEdit}
-                  className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/20 bg-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/20 transition"
+                  className="mt-xxs inline-flex items-center gap-xxs rounded-md border border-white/20 bg-surface/10 px-xs py-xxs text-xs text-white/80 hover:bg-surface/20 transition"
                 >Edit</button>
               )}
             </div>
             {location && <p className="text-white/80 text-sm">📍 {location}</p>}
             {reliability && (
-              <div className="mt-4">
+              <div className="mt-md">
                 <button
                   onClick={() => setOpen(o=>!o)}
-                  className="group inline-flex items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-5 py-3 backdrop-blur hover:bg-white/20 transition"
+                  className="group inline-flex items-center gap-sm rounded-xl border border-white/15 bg-surface/10 px-lg py-sm backdrop-blur hover:bg-surface/20 transition"
                 >
                   <div className="text-left">
                     <div className="text-xs uppercase tracking-wide text-white/60">Reliability Index</div>
-                    <div className="flex items-end gap-2">
+                    <div className="flex items-end gap-xs">
                       <span className="text-2xl font-semibold tabular-nums">{Math.round(reliability.score)}</span>
                       <span className="text-xs text-white/60">score</span>
                       <span className="text-sm text-emerald-300 font-medium">{(reliability.confidence*100).toFixed(0)}% conf</span>
@@ -307,7 +307,7 @@ export function ProfileHeader({
                   <svg className={`w-5 h-5 text-white/70 transition-transform ${open?'rotate-180':''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
                 </button>
                 {open && (
-                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="mt-sm grid grid-cols-2 sm:grid-cols-4 gap-sm text-xs">
                     <ReliabilityComponent label="AS30" value={reliability.components.AS30} />
                     <ReliabilityComponent label="AS90" value={reliability.components.AS90} />
                     {reliability.components.reviewScore !== undefined && <ReliabilityComponent label="Review" value={reliability.components.reviewScore} />}
@@ -319,7 +319,7 @@ export function ProfileHeader({
           </div>
         </div>
         {errorMsg && (
-          <div className="mt-4 text-sm text-red-200 bg-white/10 border border-red-200/40 px-3 py-2 rounded-md max-w-md">
+          <div className="mt-md text-sm text-red-200 bg-surface/10 border border-red-200/40 px-sm py-xs rounded-md max-w-md">
             {errorMsg}
           </div>
         )}
@@ -327,37 +327,37 @@ export function ProfileHeader({
   {editOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={()=>setEditOpen(false)} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-lg text-gray-900">
-            <h2 className="text-lg font-semibold mb-4">Edit Profile</h2>
-    {errorMsg && <div className="mb-3 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">{errorMsg}</div>}
-            <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+      <div className="relative z-10 w-full max-w-md rounded-2xl bg-surface p-xl shadow-lg text-ink">
+            <h2 className="text-lg font-semibold mb-md">Edit Profile</h2>
+    {errorMsg && <div className="mb-sm rounded-md bg-red-50 border border-red-200 px-sm py-xs text-xs text-red-600">{errorMsg}</div>}
+            <label className="block text-sm font-medium text-ink-strong mb-xxs">Display Name</label>
             <input
               value={pendingName}
               onChange={e=>setPendingName(e.target.value)}
-        className="w-full mb-4 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
+        className="w-full mb-md rounded-md border border-midnight-border/60 px-sm py-xs text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-ink placeholder-ink-muted"
               placeholder="Your name"
             />
-            <label className="block text-sm font-medium text-gray-700 mb-1">Bio</label>
+            <label className="block text-sm font-medium text-ink-strong mb-xxs">Bio</label>
             <textarea
               value={pendingBio}
               onChange={e=>setPendingBio(e.target.value)}
               rows={3}
-              className="w-full mb-4 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
+              className="w-full mb-md rounded-md border border-midnight-border/60 px-sm py-xs text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-ink placeholder-ink-muted"
               placeholder="Share a short blurb"
             />
-            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <label className="block text-sm font-medium text-ink-strong mb-xxs">Location</label>
             <input
               value={pendingLocation}
               onChange={(e) => setPendingLocation(e.target.value.slice(0, 120))}
               placeholder="City, neighbourhood, or leave blank"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400"
+              className="w-full rounded-md border border-midnight-border/60 px-sm py-xs text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-ink placeholder-ink-muted"
             />
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            <div className="mt-xs flex flex-wrap items-center gap-xs text-xs text-ink-muted">
               <button
                 type="button"
                 onClick={resolveLocationFromDevice}
                 disabled={locStatus === 'loading'}
-                className="inline-flex items-center gap-1 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/60 px-sm py-xxs text-xs font-medium text-ink-strong hover:bg-surface-alt disabled:opacity-50"
               >
                 {locStatus === 'loading' ? 'Locating…' : 'Use my current location'}
               </button>
@@ -365,34 +365,34 @@ export function ProfileHeader({
                 <button
                   type="button"
                   onClick={() => { setPendingLocation(''); setLocStatus('idle'); setLocError(null); }}
-                  className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-500 hover:bg-gray-100"
+                  className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/40 px-sm py-xxs text-xs text-ink-muted hover:bg-surface-alt"
                 >
                   Clear
                 </button>
               )}
-              <span className="text-[11px] text-gray-400">Keep it general if you prefer privacy.</span>
+              <span className="text-[11px] text-ink-muted">Keep it general if you prefer privacy.</span>
             </div>
             {locError && (
-              <div className="mt-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">{locError}</div>
+              <div className="mt-xs rounded-md bg-amber-50 border border-amber-200 px-sm py-xs text-xs text-amber-700">{locError}</div>
             )}
-            <div className="mb-4 flex flex-col gap-3">
-              <div className="text-xs font-medium text-gray-700 uppercase tracking-wide">Social Connections</div>
-              <div className="grid grid-cols-1 gap-3">
+            <div className="mb-md flex flex-col gap-sm">
+              <div className="text-xs font-medium text-ink-strong uppercase tracking-wide">Social Connections</div>
+              <div className="grid grid-cols-1 gap-sm">
                 <div>
-                  <label className="block text-[11px] font-medium text-gray-600 mb-1">Instagram Handle</label>
-                  <input value={socials.instagram||''} onChange={e=>setSocials(s=>({...s,instagram:cleanInstagramInput(e.target.value)}))} placeholder="yourgram" className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-900 placeholder-gray-400" />
+                  <label className="block text-[11px] font-medium text-ink-medium mb-xxs">Instagram Handle</label>
+                  <input value={socials.instagram||''} onChange={e=>setSocials(s=>({...s,instagram:cleanInstagramInput(e.target.value)}))} placeholder="yourgram" className="w-full rounded-md border border-midnight-border/60 px-sm py-xs text-xs text-ink placeholder-ink-muted" />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-gray-600 mb-1">WhatsApp Number</label>
-                  <input value={socials.whatsapp||''} onChange={e=>setSocials(s=>({...s,whatsapp:cleanWhatsAppInput(e.target.value)}))} placeholder="+1234567890" className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-900 placeholder-gray-400" />
-                  <p className="mt-1 text-[10px] text-gray-500">Stored as E.164 (country code + number). No dashes or spaces.</p>
+                  <label className="block text-[11px] font-medium text-ink-medium mb-xxs">WhatsApp Number</label>
+                  <input value={socials.whatsapp||''} onChange={e=>setSocials(s=>({...s,whatsapp:cleanWhatsAppInput(e.target.value)}))} placeholder="+1234567890" className="w-full rounded-md border border-midnight-border/60 px-sm py-xs text-xs text-ink placeholder-ink-muted" />
+                  <p className="mt-xxs text-[10px] text-ink-muted">Stored as E.164 (country code + number). No dashes or spaces.</p>
                 </div>
               </div>
-              <p className="text-[11px] text-gray-500">Only Instagram & WhatsApp supported currently.</p>
+              <p className="text-[11px] text-ink-muted">Only Instagram & WhatsApp supported currently.</p>
             </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={()=>setEditOpen(false)} className="px-4 py-2 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cancel</button>
-              <button onClick={saveEdits} disabled={saving || locStatus === 'loading'} className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+            <div className="flex justify-end gap-xs">
+              <button onClick={()=>setEditOpen(false)} className="px-md py-xs text-sm rounded-md border border-midnight-border/60 bg-surface hover:bg-surface-alt">Cancel</button>
+              <button onClick={saveEdits} disabled={saving || locStatus === 'loading'} className="px-md py-xs text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
             </div>
           </div>
         </div>
@@ -406,8 +406,8 @@ export type SocialHandles = { instagram?: string | null; whatsapp?: string | nul
 function ReliabilityComponent({ label, value, raw }: { label: string; value: number; raw?: boolean }) {
   const pct = raw ? value : Math.round(value);
   return (
-    <div className="rounded-lg border border-white/15 bg-white/5 px-3 py-2">
-      <div className="text-white/60 text-[10px] uppercase tracking-wide mb-0.5">{label}</div>
+    <div className="rounded-lg border border-white/15 bg-surface/5 px-sm py-xs">
+      <div className="text-white/60 text-[10px] uppercase tracking-wide mb-hairline">{label}</div>
       <div className="text-sm font-medium tabular-nums">{pct}</div>
     </div>
   );

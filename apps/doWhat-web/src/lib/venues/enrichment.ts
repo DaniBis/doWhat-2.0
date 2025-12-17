@@ -15,7 +15,7 @@ import {
   summarizeVenueText,
 } from '@/lib/venues/providers';
 import type { ExternalVenueRecord, VenueClassificationResult } from '@/lib/venues/types';
-import type { Database, Json } from '@/types/database';
+import type { Json, VenueRow } from '@/types/database';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -37,9 +37,8 @@ function getOpenAIClient(): OpenAI {
 
 const VALID_ACTIVITY_SET = new Set<ActivityName>(ACTIVITY_NAMES);
 
-type ServiceClient = SupabaseClient<Database>;
-type VenueRow = Database['public']['Tables']['venues']['Row'];
-type VenueUpdate = Database['public']['Tables']['venues']['Update'];
+type ServiceClient = SupabaseClient;
+type VenueUpdate = Partial<VenueRow>;
 
 type EnrichmentOptions = {
   supabase: ServiceClient;
@@ -249,7 +248,7 @@ function parseClassificationPayload(text: string): RawClassificationPayload {
 function normalizeClassification(payload: RawClassificationPayload): VenueClassificationResult {
   const timestamp = new Date().toISOString();
   const normalizedTags: ActivityName[] = [];
-  const normalizedConfidence: Record<ActivityName, number> = {};
+  const normalizedConfidence: Record<ActivityName, number> = Object.create(null);
 
   (payload.tags ?? []).forEach((tag) => {
     const activity = toActivityName(tag);
@@ -384,6 +383,17 @@ type DiscoveryMetadataPatch = {
   rating?: number | null;
   priceLevel?: number | null;
   photos?: string[];
+  address?: {
+    formatted?: string | null;
+    locality?: string | null;
+    region?: string | null;
+    country?: string | null;
+    postcode?: string | null;
+  };
+  timezone?: string | null;
+  openNow?: boolean | null;
+  hoursSummary?: string | null;
+  hours?: Record<string, unknown> | null;
 };
 
 function buildMetadataPatch(existing: Json | null, record: ExternalVenueRecord | null): Json | null {
@@ -394,6 +404,27 @@ function buildMetadataPatch(existing: Json | null, record: ExternalVenueRecord |
   if (typeof record.rating === 'number') patch.rating = record.rating;
   if (typeof record.priceLevel === 'number') patch.priceLevel = record.priceLevel;
   if (record.photos?.length) patch.photos = record.photos;
+  if (record.address || record.locality || record.region || record.country || record.postcode) {
+    patch.address = {
+      formatted: record.address ?? null,
+      locality: record.locality ?? null,
+      region: record.region ?? null,
+      country: record.country ?? null,
+      postcode: record.postcode ?? null,
+    };
+  }
+  if (typeof record.openNow === 'boolean') {
+    patch.openNow = record.openNow;
+  }
+  if (typeof record.hoursSummary === 'string' && record.hoursSummary.trim()) {
+    patch.hoursSummary = record.hoursSummary.trim();
+  }
+  if (record.hours) {
+    patch.hours = record.hours;
+  }
+  if (typeof record.timezone === 'string' && record.timezone.trim()) {
+    patch.timezone = record.timezone.trim();
+  }
   if (Object.keys(patch).length === 0) return null;
   return mergeDiscoveryMetadata(existing, patch);
 }
@@ -408,6 +439,18 @@ function mergeDiscoveryMetadata(existing: Json | null, patch: DiscoveryMetadataP
     ...(patch.rating !== undefined ? { rating: patch.rating } : {}),
     ...(patch.priceLevel !== undefined ? { priceLevel: patch.priceLevel } : {}),
     ...(patch.photos ? { photos: patch.photos } : {}),
+    ...(patch.address
+      ? {
+          address: {
+            ...(isJsonObject(prevDiscovery.address) ? (prevDiscovery.address as Record<string, unknown>) : {}),
+            ...patch.address,
+          },
+        }
+      : {}),
+    ...(patch.timezone ? { timezone: patch.timezone } : {}),
+    ...(patch.openNow !== undefined ? { openNow: patch.openNow } : {}),
+    ...(patch.hoursSummary ? { hoursSummary: patch.hoursSummary } : {}),
+    ...(patch.hours ? { hours: patch.hours } : {}),
   };
   return { ...base, discovery: nextDiscovery } as Json;
 }

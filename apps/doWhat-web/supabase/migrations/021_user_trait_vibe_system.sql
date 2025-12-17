@@ -19,9 +19,18 @@ begin
   return new;
 end;$$;
 
-create trigger trg_traits_updated
-before update on public.traits
-for each row execute function public.set_updated_at();
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgname = 'trg_traits_updated'
+      and tgrelid = 'public.traits'::regclass
+  ) then
+    create trigger trg_traits_updated
+      before update on public.traits
+      for each row execute function public.set_updated_at();
+  end if;
+end$$;
 
 -- 2. User-selected base traits (onboarding) ----------------------------------
 create table if not exists public.user_base_traits (
@@ -92,31 +101,38 @@ alter table public.user_trait_votes enable row level security;
 alter table public.user_trait_summary enable row level security;
 
 -- traits: anyone can read catalog
+drop policy if exists traits_public_read on public.traits;
 create policy traits_public_read on public.traits for select using (true);
 
 -- allow service/admin inserts (optional) and prevent direct user writes unless needed
+drop policy if exists traits_admin_write on public.traits;
 create policy traits_admin_write on public.traits for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 
 -- user_base_traits: owners manage their selections
+drop policy if exists user_base_traits_owner_select on public.user_base_traits;
 create policy user_base_traits_owner_select on public.user_base_traits for select using (auth.uid() = user_id);
+
+drop policy if exists user_base_traits_owner_mutate on public.user_base_traits;
 create policy user_base_traits_owner_mutate on public.user_base_traits for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- user_trait_votes: insert guard ensures shared attendance + cooldown
+drop policy if exists user_trait_votes_visible_to_participants on public.user_trait_votes;
 create policy user_trait_votes_visible_to_participants on public.user_trait_votes
   for select using (auth.uid() = to_user or auth.uid() = from_user);
 
+drop policy if exists user_trait_votes_insert_guard on public.user_trait_votes;
 create policy user_trait_votes_insert_guard on public.user_trait_votes
   for insert
   with check (
     auth.uid() = from_user
     and exists (
-      select 1 from public.rsvps r
+      select 1 from public.session_attendees r
       where r.session_id = session_id
         and r.user_id = auth.uid()
         and r.status = 'going'
     )
     and exists (
-      select 1 from public.rsvps r2
+      select 1 from public.session_attendees r2
       where r2.session_id = session_id
         and r2.user_id = to_user
         and r2.status = 'going'
@@ -130,6 +146,7 @@ create policy user_trait_votes_insert_guard on public.user_trait_votes
   );
 
 -- user_trait_summary: public readable, no direct writes
+drop policy if exists user_trait_summary_public_read on public.user_trait_summary;
 create policy user_trait_summary_public_read on public.user_trait_summary for select using (true);
 
 -- 7. Seed initial traits ------------------------------------------------------

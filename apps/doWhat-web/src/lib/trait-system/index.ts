@@ -2,13 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
-import type { Database, TraitRow, RsvpRow } from "@/types/database";
+import type { TraitRow, SessionAttendeeRow } from "@/types/database";
 import type { TraitOption, TraitSummary, TraitVoteRequest, TraitVoteResult } from "@/types/traits";
 import { MAX_ONBOARDING_TRAITS, MAX_VOTE_TRAITS_PER_USER } from "@/lib/validation/traits";
 
 const VOTE_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-type TypedClient = SupabaseClient<Database>;
+type TypedClient = SupabaseClient;
 
 type VoteInput = TraitVoteRequest["votes"];
 
@@ -30,7 +30,7 @@ export class TraitSystemError extends Error {
 }
 
 function getClient(client?: TypedClient) {
-  return client ?? createClient<Database>();
+  return client ?? createClient();
 }
 
 function normalizeIds(ids: string[]) {
@@ -165,11 +165,11 @@ async function ensureSessionWindow(sessionId: string, supabase: TypedClient) {
   }
 }
 
-type AttendanceRow = Pick<RsvpRow, "user_id" | "status">;
+type AttendanceRow = Pick<SessionAttendeeRow, "user_id" | "status">;
 
 async function loadSessionAttendance(sessionId: string, supabase: TypedClient) {
   const { data, error } = await supabase
-    .from("rsvps")
+    .from("session_attendees")
     .select("user_id, status")
     .eq("session_id", sessionId);
   if (error) {

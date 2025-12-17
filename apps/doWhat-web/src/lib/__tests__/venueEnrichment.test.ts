@@ -199,7 +199,7 @@ function createSupabaseStub(existing: VenueRow, updated?: VenueRow) {
     update: updateMock,
   }));
 
-  const supabase = { from: fromMock } as unknown as SupabaseClient<Database>;
+  const supabase = { from: fromMock } as unknown as SupabaseClient;
   return {
     supabase,
     getUpdatePayload: () => lastUpdatePayload,

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,224 +7,295 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
-  Animated,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import type { User } from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase';
+import { ensureUserRow } from '../lib/ensureUserRow';
 
 const MAX_TRAITS = 5;
-const MIN_LENGTH = 2;
-const MAX_LENGTH = 20;
 
-const BANNED_WORDS = [
-  'fuck',
-  'shit',
-  'bitch',
-  'asshole',
-  'slut',
-  'whore',
-  'nazi',
-  'terrorist',
-  'racist',
-  'sexist',
-  'homophobic',
-];
-
-const TRAIT_COLORS = ['#FF9F43', '#FF6B6B', '#6C5CE7', '#10B981', '#2D9CDB', '#F2C94C'];
-
-type CanonicalTrait = {
-  key: string;
-  display: string;
+type TraitOption = {
+  id: string;
+  name: string;
+  color?: string | null;
+  icon?: string | null;
 };
 
-const hashKey = (key: string) => {
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    hash = (hash << 5) - hash + key.charCodeAt(i);
-    hash |= 0;
+const DEFAULT_COLOR = '#0EA5E9';
+const TRAIT_ICON_FALLBACK = '✨';
+const TRAIT_ICON_EMOJI_MAP: Record<string, string> = {
+  Heart: '❤️',
+  Sparkles: '✨',
+  Smile: '😊',
+  Zap: '⚡️',
+  Star: '⭐️',
+  Sun: '☀️',
+  Moon: '🌙',
+  Flame: '🔥',
+  Users: '🤝',
+  Shield: '🛡️',
+  Lotus: '🌸',
+  Megaphone: '📣',
+  Compass: '🧭',
+  Target: '🎯',
+  Gamepad2: '🎮',
+  ClipboardCheck: '✅',
+  SmilePlus: '😄',
+  Shuffle: '🔀',
+  ShieldCheck: '🛡️',
+};
+
+const traitTintFromColor = (value?: string | null, alpha = 0.16) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return `rgba(14, 165, 233, ${alpha})`;
   }
-  return Math.abs(hash);
-};
-
-export const normalizeTrait = (input: string): CanonicalTrait => {
-  const trimmed = input.trim();
-  const collapsed = trimmed.replace(/\s+/g, ' ');
-  const lower = collapsed
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const display = collapsed
-    .toLowerCase()
-    .split(' ')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-  return { key: lower, display };
-};
-
-export const isProfane = (input: string) => {
-  const candidate = input.trim().toLowerCase();
-  return BANNED_WORDS.some((word) => candidate.includes(word));
-};
-
-export const validateTrait = (input: string) => {
-  const trimmed = input.trim();
-  if (!trimmed) return false;
-  if (trimmed.length < MIN_LENGTH || trimmed.length > MAX_LENGTH) return false;
-  if (isProfane(trimmed)) return false;
-  return true;
-};
-
-export async function saveTraitsToSupabase(userId: string, traits: CanonicalTrait[]) {
-  if (!traits.length) return;
-  const canonicalTraits = traits.map((trait) => trait.display.trim()).filter(Boolean);
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .update({
-      personality_traits: canonicalTraits,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', userId)
-    .select('id');
-
-  if (error) {
-    throw error;
+  const trimmed = value.trim().startsWith('#') ? value.trim() : `#${value.trim()}`;
+  if (!/^#([0-9a-f]{6})$/i.test(trimmed)) {
+    return `rgba(14, 165, 233, ${alpha})`;
   }
-
-  if (!data?.length) {
-    const { error: upsertError } = await supabase
-      .from('profiles')
-      .upsert(
-        {
-          id: userId,
-          personality_traits: canonicalTraits,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' },
-      );
-    if (upsertError) throw upsertError;
-  }
-}
-
-type TraitChipProps = {
-  trait: CanonicalTrait;
-  onRemove: () => void;
+  const hex = trimmed.slice(1);
+  const numeric = Number.parseInt(hex, 16);
+  const r = (numeric >> 16) & 255;
+  const g = (numeric >> 8) & 255;
+  const b = numeric & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-const TraitChip: React.FC<TraitChipProps> = ({ trait, onRemove }) => {
-  const colorIndex = hashKey(trait.key) % TRAIT_COLORS.length;
-  const bgColor = TRAIT_COLORS[colorIndex];
-  const scale = useRef(new Animated.Value(0.85)).current;
+const resolveTraitGlyph = (icon?: string | null): string => {
+  if (!icon) return TRAIT_ICON_FALLBACK;
+  if (TRAIT_ICON_EMOJI_MAP[icon]) return TRAIT_ICON_EMOJI_MAP[icon];
+  const trimmed = icon.trim();
+  if (!trimmed) return TRAIT_ICON_FALLBACK;
+  if (trimmed.length === 1) return trimmed.toUpperCase();
+  return trimmed.charAt(0).toUpperCase();
+};
 
-  React.useEffect(() => {
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      damping: 12,
-    }).start();
-  }, [scale]);
+const describeError = (error: unknown, fallback = 'Something went wrong. Please try again.') => {
+  if (!error) return fallback;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  return fallback;
+};
 
+const pickMetadataString = (metadata: Record<string, unknown> | undefined, keys: string[]): string | null => {
+  if (!metadata) return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+};
+
+const resolveUserFullName = (user: User | null): string | null => {
+  if (!user) return null;
   return (
-    <Animated.View style={[styles.chip, { backgroundColor: `${bgColor}1A`, borderColor: bgColor, transform: [{ scale }] }]}
-    >
-      <Text style={[styles.chipText, { color: bgColor }]}>{trait.display}</Text>
-      <Pressable hitSlop={12} onPress={onRemove}>
-        <Text style={[styles.chipRemove, { color: bgColor }]}>×</Text>
-      </Pressable>
-    </Animated.View>
+    pickMetadataString(user.user_metadata, ['full_name', 'name', 'given_name']) ||
+    (typeof user.user_metadata?.preferred_username === 'string'
+      ? user.user_metadata.preferred_username.trim() || null
+      : null)
   );
 };
+
+const resolveUserEmail = (user: User | null): string | null => {
+  if (!user) return null;
+  if (typeof user.email === 'string' && user.email.trim()) {
+    return user.email.trim();
+  }
+  return pickMetadataString(user.user_metadata, ['contact_email', 'email']);
+};
+
+const isForeignKeyMissingUser = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof record.code === 'string' ? record.code : null;
+  const message = typeof record.message === 'string' ? record.message : '';
+  const details = typeof record.details === 'string' ? record.details : '';
+  if (code && code !== '23503') return false;
+  return /user[s]?[_-]?[a-z]*_?id?_?fkey/i.test(message) || /user[s]?[_-]?[a-z]*_?id?_?fkey/i.test(details) || /table "users"/i.test(details);
+};
+
+async function persistTraitSelection(userId: string, traitIds: string[]) {
+  const unique = Array.from(new Set(traitIds.filter((id) => typeof id === 'string' && id.trim().length > 0)));
+  if (unique.length !== MAX_TRAITS) {
+    throw new Error(`Pick exactly ${MAX_TRAITS} traits.`);
+  }
+
+  const { data: existing, error: catalogError } = await supabase
+    .from('traits')
+    .select('id')
+    .in('id', unique);
+  if (catalogError) throw catalogError;
+  const available = new Set((existing ?? []).map((row) => row.id));
+  if (available.size !== unique.length) {
+    throw new Error('One of the selected traits is no longer available. Refresh and try again.');
+  }
+
+  const { error: deleteError } = await supabase.from('user_base_traits').delete().eq('user_id', userId);
+  if (deleteError) throw deleteError;
+
+  const payload = unique.map((traitId) => ({ user_id: userId, trait_id: traitId }));
+  const { error: insertError } = await supabase.from('user_base_traits').insert(payload);
+  if (insertError) throw insertError;
+
+  await Promise.all(
+    unique.map(async (traitId) => {
+      const { error: rpcError } = await supabase.rpc('increment_user_trait_score', {
+        p_user: userId,
+        p_trait: traitId,
+        p_score_delta: 3,
+        p_base_delta: 1,
+        p_vote_delta: 0,
+      });
+      if (rpcError) throw rpcError;
+    }),
+  );
+}
 
 const TraitSelectionScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const [inputValue, setInputValue] = useState('');
-  const [traits, setTraits] = useState<CanonicalTrait[]>([]);
+  const [catalog, setCatalog] = useState<TraitOption[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [prefillDone, setPrefillDone] = useState(false);
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const handleAddTrait = useCallback(
-    (rawValue: string) => {
-      const trimmed = rawValue.replace(/[\n,]/g, '').trim();
-      if (!trimmed) return;
-      if (!validateTrait(trimmed)) {
-        setError('Traits must be 2-20 letters, no profanity.');
-        return;
-      }
-      const next = normalizeTrait(trimmed);
-      if (!next.key) {
-        setError('Trait looks empty. Try again.');
-        return;
-      }
-      if (traits.some((trait) => trait.key === next.key)) {
-        setError('Trait already added.');
-        return;
-      }
-      if (traits.length >= MAX_TRAITS) {
-        setWarning('You already have 5 traits. Remove one to add another.');
-        return;
-      }
-      setTraits((prev) => [...prev, next]);
-      setInputValue('');
-      setWarning(null);
-      setError(null);
-    },
-    [traits]
-  );
-
-  const handleTextChange = (text: string) => {
-    if (text.includes(',') || text.includes('\n')) {
-      const parts = text.replace(/\n/g, ',').split(',');
-      parts.forEach((part, index) => {
-        if (index === parts.length - 1) {
-          setInputValue(part);
-        } else {
-          handleAddTrait(part);
-        }
-      });
-      return;
+  const loadCatalog = useCallback(async () => {
+    setCatalogError(null);
+    setCatalogLoading(true);
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('traits')
+        .select('id, name, color, icon')
+        .order('name', { ascending: true });
+      if (fetchError) throw fetchError;
+      setCatalog(data ?? []);
+    } catch (err) {
+      console.error('[traits] catalog fetch failed', err);
+      setCatalogError('Could not load traits. Tap reload or try again.');
+    } finally {
+      setCatalogLoading(false);
     }
-    setInputValue(text);
-  };
-
-  const handleSubmitEditing = () => {
-    handleAddTrait(inputValue);
-  };
-
-  const handleRemoveTrait = useCallback((key: string) => {
-    setTraits((prev) => prev.filter((trait) => trait.key !== key));
-    setWarning(null);
-    setError(null);
   }, []);
 
-  const handleContinue = useCallback(async () => {
-    if (traits.length !== MAX_TRAITS) return;
-    setSaving(true);
-    setError(null);
+  const hydrateSelection = useCallback(async () => {
+    setPrefillDone(false);
     try {
       const { data } = await supabase.auth.getUser();
       const userId = data?.user?.id;
       if (!userId) {
-        setError('Please sign in again.');
-        setSaving(false);
+        setSelection([]);
         return;
       }
-      await saveTraitsToSupabase(userId, traits);
-      router.push('/(tabs)');
+      const { data: rows, error: loadError } = await supabase
+        .from('user_base_traits')
+        .select('trait_id')
+        .eq('user_id', userId);
+      if (loadError) throw loadError;
+      const existing = (rows ?? [])
+        .map((row) => row.trait_id)
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .slice(0, MAX_TRAITS);
+      setSelection(existing);
+    } catch (err) {
+      if (__DEV__) console.warn('[traits] prefill failed', err);
+    } finally {
+      setPrefillDone(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCatalog();
+    hydrateSelection();
+  }, [loadCatalog, hydrateSelection]);
+
+  const filteredTraits = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return catalog;
+    return catalog.filter((trait) => trait.name.toLowerCase().includes(term));
+  }, [catalog, query]);
+
+  const remaining = MAX_TRAITS - selection.length;
+  const ready = selection.length === MAX_TRAITS;
+  const disableNewAdds = remaining === 0;
+  const busy = catalogLoading || !prefillDone;
+
+  const toggleTrait = useCallback(
+    (traitId: string) => {
+      setError(null);
+      setSelection((prev) => {
+        if (prev.includes(traitId)) {
+          return prev.filter((id) => id !== traitId);
+        }
+        if (prev.length >= MAX_TRAITS) {
+          return prev;
+        }
+        return [...prev, traitId];
+      });
+    },
+    [],
+  );
+
+  const handleSave = useCallback(async () => {
+    if (!ready || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const { data } = await supabase.auth.getUser();
+      const user = data?.user ?? null;
+      if (!user) {
+        setError('Please sign in again.');
+        return;
+      }
+
+      const saveAndNavigate = async () => {
+        await persistTraitSelection(user.id, selection);
+        router.replace('/(tabs)');
+      };
+
+      const ensurePayload = {
+        id: user.id,
+        email: resolveUserEmail(user) ?? undefined,
+        fullName: resolveUserFullName(user),
+      } as const;
+
+      await ensureUserRow(ensurePayload);
+
+      try {
+        await saveAndNavigate();
+        return;
+      } catch (primaryError) {
+        if (isForeignKeyMissingUser(primaryError)) {
+          const ensured = await ensureUserRow(ensurePayload);
+          if (ensured) {
+            await saveAndNavigate();
+            return;
+          }
+          setError('Your account needs to finish syncing. Sign out and back in, then try again.');
+          if (__DEV__) console.warn('[traits] user_base_traits failed due to missing users row', primaryError);
+          return;
+        }
+        throw primaryError;
+      }
     } catch (err) {
       console.error('[traits] save failed', err);
-      setError('Could not save your traits. Please try again.');
+      setError(describeError(err, 'Could not save your traits. Please try again.'));
     } finally {
       setSaving(false);
     }
-  }, [traits]);
+  }, [ready, saving, selection]);
 
-  const counter = `${traits.length} / ${MAX_TRAITS} traits added`;
+  const counter = `${selection.length} / ${MAX_TRAITS} selected`;
 
   return (
     <KeyboardAvoidingView
@@ -234,28 +305,21 @@ const TraitSelectionScreen: React.FC = () => {
     >
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 160 },
-        ]}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 160 }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        showsVerticalScrollIndicator
       >
         <View style={styles.headerRow}>
           <Text style={styles.heading}>Choose 5 traits that describe you</Text>
           <Text style={styles.counter}>{counter}</Text>
         </View>
-        <Text style={styles.subheading}>
-          Type a trait and press Enter. Other people can add more after activities.
-        </Text>
+        <Text style={styles.subheading}>Pick your starting vibe. Teammates can nominate more traits after sessions.</Text>
 
         <View style={styles.inputWrapper}>
           <TextInput
-            value={inputValue}
-            onChangeText={handleTextChange}
-            onSubmitEditing={handleSubmitEditing}
-            placeholder="Type a trait and press Enter… (e.g. friendly, creative)"
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search traits"
             placeholderTextColor="#94A3B8"
             style={styles.input}
             autoCapitalize="none"
@@ -263,30 +327,74 @@ const TraitSelectionScreen: React.FC = () => {
             spellCheck={false}
             autoComplete="off"
             textContentType="none"
-            returnKeyType="done"
-            blurOnSubmit={false}
-            editable={!saving && traits.length < MAX_TRAITS}
+            editable={!catalogLoading}
           />
         </View>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {warning ? <Text style={styles.warning}>{warning}</Text> : null}
 
-        <View style={styles.chipGrid}>
-          {traits.length ? (
-            traits.map((trait) => (
-              <TraitChip key={trait.key} trait={trait} onRemove={() => handleRemoveTrait(trait.key)} />
-            ))
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {catalogError ? <Text style={styles.warning}>{catalogError}</Text> : null}
+
+        <View style={styles.selectedRow}>
+          {selection.length ? (
+            selection.map((id) => {
+              const trait = catalog.find((entry) => entry.id === id);
+              if (!trait) return null;
+              return (
+                <View key={id} style={[styles.selectedChip, { backgroundColor: traitTintFromColor(trait.color, 0.24) }]}
+                >
+                  <Text style={styles.selectedChipText}>{trait.name}</Text>
+                  <Pressable hitSlop={8} onPress={() => toggleTrait(id)}>
+                    <Text style={styles.selectedChipRemove}>×</Text>
+                  </Pressable>
+                </View>
+              );
+            })
           ) : (
-            <Text style={styles.emptyState}>No traits yet. Start typing above.</Text>
+            <Text style={styles.selectedPlaceholder}>Selections appear here.</Text>
           )}
         </View>
 
+        <View style={styles.catalogHeader}>
+          <Text style={styles.catalogTitle}>{filteredTraits.length} traits</Text>
+          <Pressable style={styles.retryButton} onPress={loadCatalog} disabled={catalogLoading}>
+            <Text style={styles.retryText}>{catalogLoading ? 'Refreshing…' : 'Reload'}</Text>
+          </Pressable>
+        </View>
+
+        {busy ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator color="#38BDF8" />
+            <Text style={styles.loadingText}>Loading catalog…</Text>
+          </View>
+        ) : (
+          <View style={styles.catalogGrid}>
+            {filteredTraits.map((trait) => (
+              <TraitCard
+                key={trait.id}
+                trait={trait}
+                selected={selection.includes(trait.id)}
+                disabled={!selection.includes(trait.id) && disableNewAdds}
+                onToggle={() => toggleTrait(trait.id)}
+              />
+            ))}
+            {!filteredTraits.length && !catalogLoading && (
+              <Text style={styles.emptyState}>No traits match that search.</Text>
+            )}
+          </View>
+        )}
+
+        <Text style={styles.helperText}>
+          {remaining > 0 ? `Select ${remaining} more ${remaining === 1 ? 'trait' : 'traits'} to continue.` : 'All set! Save to continue.'}
+        </Text>
+
         <Pressable
-          style={[styles.continueButton, traits.length === MAX_TRAITS ? styles.continueEnabled : styles.continueDisabled]}
-          disabled={traits.length !== MAX_TRAITS || saving}
-          onPress={handleContinue}
+          testID="trait-onboarding-save-button"
+          accessibilityRole="button"
+          style={[styles.continueButton, ready ? styles.continueEnabled : styles.continueDisabled]}
+          disabled={!ready || saving}
+          onPress={handleSave}
         >
-          <Text style={styles.continueText}>{saving ? 'Saving…' : 'Continue'}</Text>
+          <Text style={styles.continueText}>{saving ? 'Saving…' : 'Save traits'}</Text>
         </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -342,37 +450,122 @@ const styles = StyleSheet.create({
     color: '#E2E8F0',
     paddingVertical: 12,
   },
-  chipGrid: {
-    paddingVertical: 24,
+  selectedRow: {
+    marginTop: 20,
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 10,
   },
-  chip: {
+  selectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderRadius: 999,
-    borderWidth: 1,
-    gap: 8,
-    marginRight: 12,
-    marginBottom: 12,
+    gap: 6,
   },
-  chipText: {
-    fontSize: 14,
+  selectedChipText: {
+    color: '#0F172A',
     fontWeight: '600',
   },
-  chipRemove: {
+  selectedChipRemove: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  selectedPlaceholder: {
+    color: '#475569',
+    fontSize: 13,
+  },
+  catalogHeader: {
+    marginTop: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  catalogTitle: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  retryButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  retryText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  loadingState: {
+    marginTop: 32,
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadingText: {
+    color: '#94A3B8',
+    fontSize: 13,
+  },
+  catalogGrid: {
+    marginTop: 20,
+    gap: 12,
+  },
+  traitCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    backgroundColor: '#0F172A',
+    gap: 14,
+  },
+  traitCardSelected: {
+    backgroundColor: '#0B1120',
+    borderColor: '#34D399',
+  },
+  traitCardDisabled: {
+    opacity: 0.45,
+  },
+  traitEmoji: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  traitEmojiText: {
+    fontSize: 20,
+  },
+  traitInfo: {
+    flex: 1,
+  },
+  traitName: {
+    color: '#F8FAFC',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  traitHint: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  traitCheck: {
+    color: '#34D399',
+    fontSize: 20,
     fontWeight: '700',
   },
   warning: {
-    marginTop: 8,
+    marginTop: 12,
     color: '#FBBF24',
     fontSize: 13,
   },
   error: {
-    marginTop: 8,
+    marginTop: 12,
     color: '#F87171',
     fontSize: 13,
   },
@@ -381,6 +574,12 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'center',
     fontSize: 14,
+  },
+  helperText: {
+    marginTop: 24,
+    color: '#94A3B8',
+    textAlign: 'center',
+    fontSize: 13,
   },
   continueButton: {
     marginTop: 24,
@@ -400,5 +599,34 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
 });
+
+type TraitCardProps = {
+  trait: TraitOption;
+  selected: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+};
+
+const TraitCard: React.FC<TraitCardProps> = ({ trait, selected, disabled, onToggle }) => {
+  const accent = trait.color?.trim() || DEFAULT_COLOR;
+  return (
+    <Pressable
+      testID={`trait-card-${trait.id}`}
+      onPress={onToggle}
+      disabled={disabled}
+      style={[styles.traitCard, selected && styles.traitCardSelected, disabled && !selected && styles.traitCardDisabled]}
+    >
+      <View style={[styles.traitEmoji, { backgroundColor: traitTintFromColor(accent, selected ? 0.32 : 0.2) }]}
+      >
+        <Text style={styles.traitEmojiText}>{resolveTraitGlyph(trait.icon)}</Text>
+      </View>
+      <View style={styles.traitInfo}>
+        <Text style={styles.traitName}>{trait.name}</Text>
+        <Text style={styles.traitHint}>{selected ? 'Tap to remove' : 'Tap to add'}</Text>
+      </View>
+      {selected ? <Text style={styles.traitCheck}>✓</Text> : null}
+    </Pressable>
+  );
+};
 
 export default TraitSelectionScreen;

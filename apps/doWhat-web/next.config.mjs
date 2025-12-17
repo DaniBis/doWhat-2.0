@@ -18,6 +18,15 @@ const nextConfig = {
       },
     ],
   },
+  async redirects() {
+    return [
+      {
+        source: '/my/rsvps',
+        destination: '/my/attendance',
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

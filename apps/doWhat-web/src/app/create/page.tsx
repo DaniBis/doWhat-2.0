@@ -1,25 +1,89 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import type { Route } from "next";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { isUuid } from "@dowhat/shared";
 import LocationPickerMap from "@/components/create/LocationPickerMap";
+import { extractSessionId, type CreateSessionResponse } from "./extractSessionId";
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Option = { id: string; name: string };
 
+type LocationStatus = 'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual';
+
+type PrefillState = {
+  activityId: string | null;
+  activityName: string | null;
+  venueId: string | null;
+  venueName: string | null;
+  lat: string | null;
+  lng: string | null;
+  returnTo: string | null;
+};
+
+const sanitizeQueryValue = (value: string | null): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const normalizeCoordinateParam = (value: string | null): string | null => {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric.toFixed(6);
+};
+
+const sanitizeRelativePath = (value: string | null): string | null => {
+  if (!value) return null;
+  try {
+    const url = new URL(value, 'https://dowhat.local');
+    if (!url.pathname.startsWith('/')) return null;
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+};
+
+const buildReturnTarget = (basePath: string | null, sessionId: string): string => {
+  const fallback = '/map';
+  try {
+    const url = new URL(basePath ?? fallback, 'https://dowhat.local');
+    url.searchParams.set('highlightSession', sessionId);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return `${fallback}?highlightSession=${encodeURIComponent(sessionId)}`;
+  }
+};
+
 export default function CreateEventPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefill = useMemo<PrefillState>(() => {
+    const activityIdParam = sanitizeQueryValue(searchParams?.get('activityId'));
+    const activityId = activityIdParam && isUuid(activityIdParam) ? activityIdParam : null;
+    const activityName = sanitizeQueryValue(searchParams?.get('activityName'));
+    const venueIdParam = sanitizeQueryValue(searchParams?.get('venueId'));
+    const venueId = venueIdParam && isUuid(venueIdParam) ? venueIdParam : null;
+    const venueName = sanitizeQueryValue(searchParams?.get('venueName'));
+    const lat = normalizeCoordinateParam(searchParams?.get('lat'));
+    const lng = normalizeCoordinateParam(searchParams?.get('lng'));
+    const returnTo = sanitizeRelativePath(searchParams?.get('returnTo'));
+    return { activityId, activityName, venueId, venueName, lat, lng, returnTo } satisfies PrefillState;
+  }, [searchParams]);
+  const hasPrefilledCoords = Boolean(prefill.lat && prefill.lng);
   const [activities, setActivities] = useState<Option[]>([]);
   const [venues, setVenues] = useState<Option[]>([]);
 
-  const [activityId, setActivityId] = useState('');
-  const [activityName, setActivityName] = useState('');
-  const [venueId, setVenueId] = useState('');
-  const [venueName, setVenueName] = useState('');
-  const [lat, setLat] = useState('');
-  const [lng, setLng] = useState('');
+  const [activityId, setActivityId] = useState(prefill.activityId ?? '');
+  const [activityName, setActivityName] = useState(prefill.activityName ?? '');
+  const [venueId, setVenueId] = useState(prefill.venueId ?? '');
+  const [venueName, setVenueName] = useState(prefill.venueId ? '' : prefill.venueName ?? '');
+  const [lat, setLat] = useState(prefill.lat ?? '');
+  const [lng, setLng] = useState(prefill.lng ?? '');
   const [price, setPrice] = useState('');
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
@@ -28,7 +92,7 @@ export default function CreateEventPage() {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual'>('idle');
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>(prefill.lat && prefill.lng ? 'success' : 'idle');
 
   const { defaultStart, defaultEnd } = useMemo(() => {
     const tomorrow = new Date();
@@ -119,12 +183,24 @@ export default function CreateEventPage() {
       }
     })();
 
-    requestLocation();
+    if (!hasPrefilledCoords) {
+      requestLocation();
+    } else {
+      setLocationStatus((prev) => (prev === 'idle' ? 'success' : prev));
+    }
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [hasPrefilledCoords]);
+
+  useEffect(() => {
+    if (!venueId || venueName) return;
+    const selectedVenue = venues.find((v) => v.id === venueId);
+    if (selectedVenue?.name) {
+      setVenueName(selectedVenue.name);
+    }
+  }, [venueId, venueName, venues]);
 
   function requestLocation() {
     if (!navigator.geolocation) {
@@ -187,14 +263,16 @@ export default function CreateEventPage() {
         body: JSON.stringify(payload),
       });
 
-      const result = (await response.json()) as { id?: string; error?: string };
-      if (!response.ok || !result?.id) {
+      const result = (await response.json()) as CreateSessionResponse;
+      const sessionId = extractSessionId(result);
+      if (!response.ok || !sessionId) {
         throw new Error(result?.error || 'Failed to create event.');
       }
 
       setMsg('Event created successfully!');
+      const redirectTarget = buildReturnTarget(prefill.returnTo, sessionId);
       setTimeout(() => {
-        router.push(`/sessions/${result.id}`);
+        router.push(redirectTarget as Route);
       }, 1000);
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
@@ -272,8 +350,14 @@ export default function CreateEventPage() {
             <select
               value={venueId}
               onChange={(e) => {
-                setVenueId(e.target.value);
-                if (e.target.value) setVenueName('');
+                const selectedValue = e.target.value;
+                setVenueId(selectedValue);
+                if (selectedValue) {
+                  const selectedVenue = venues.find((v) => v.id === selectedValue);
+                  setVenueName(selectedVenue?.name ?? '');
+                } else {
+                  setVenueName('');
+                }
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             >

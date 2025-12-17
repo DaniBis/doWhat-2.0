@@ -46,17 +46,17 @@ export default function ActivitiesFilter({
 
   return (
     <fieldset className={`w-full ${className}`} aria-disabled={disabled}>
-      <legend className="mb-2 block text-sm font-medium text-gray-900">
+      <legend className="mb-xs block text-sm font-medium text-ink">
         {label}
       </legend>
 
       {/* Helpers */}
       {showHelpers && (
-        <div className="mb-2 flex items-center gap-2 text-xs">
+        <div className="mb-xs flex items-center gap-xs text-xs">
           <button
             type="button"
             onClick={selectAll}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded border px-xs py-xxs hover:bg-surface-alt disabled:opacity-50"
             disabled={disabled || selected.length === options.length}
           >
             Select all
@@ -64,12 +64,12 @@ export default function ActivitiesFilter({
           <button
             type="button"
             onClick={clearAll}
-            className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded border px-xs py-xxs hover:bg-surface-alt disabled:opacity-50"
             disabled={disabled || selected.length === 0}
           >
             Clear
           </button>
-          <span className="ml-auto text-gray-500">
+          <span className="ml-auto text-ink-muted">
             {selected.length}/{options.length} selected
           </span>
         </div>
@@ -77,7 +77,7 @@ export default function ActivitiesFilter({
 
       {/* Mobile: horizontal chip scroller */}
       <div className="sm:hidden">
-        <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-2">
+        <div className="flex snap-x snap-mandatory gap-xs overflow-x-auto pb-xs">
           {options.map((o) => {
             const active = selected.includes(o.id);
             return (
@@ -89,11 +89,11 @@ export default function ActivitiesFilter({
                 onClick={() => toggle(o.id)}
                 disabled={disabled}
                 className={[
-                  "snap-start whitespace-nowrap rounded-full border px-3 py-2 text-sm",
+                  "snap-start whitespace-nowrap rounded-full border px-sm py-xs text-sm",
                   "focus:outline-none focus:ring-2 focus:ring-offset-2",
                   active
                     ? "border-emerald-600 bg-emerald-50 text-emerald-700 focus:ring-emerald-600"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-400",
+                    : "border-midnight-border/60 bg-surface text-ink-strong hover:bg-surface-alt focus:ring-gray-400",
                   disabled && "opacity-50 cursor-not-allowed",
                 ].join(" ")}
               >
@@ -105,7 +105,7 @@ export default function ActivitiesFilter({
       </div>
 
       {/* Desktop: responsive grid of pills */}
-      <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+      <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-xs">
         {options.map((o) => {
           const active = selected.includes(o.id);
           return (
@@ -117,11 +117,11 @@ export default function ActivitiesFilter({
               onClick={() => toggle(o.id)}
               disabled={disabled}
               className={[
-                "w-full rounded-full border px-3 py-2 text-sm text-left",
+                "w-full rounded-full border px-sm py-xs text-sm text-left",
                 "focus:outline-none focus:ring-2 focus:ring-offset-2",
                 active
                   ? "border-emerald-600 bg-emerald-50 text-emerald-700 focus:ring-emerald-600"
-                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-400",
+                  : "border-midnight-border/60 bg-surface text-ink-strong hover:bg-surface-alt focus:ring-gray-400",
                 disabled && "opacity-50 cursor-not-allowed",
               ].join(" ")}
             >

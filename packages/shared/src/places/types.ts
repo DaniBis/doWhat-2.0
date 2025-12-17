@@ -28,12 +28,15 @@ export interface PlaceSummary {
   categories: string[];
   tags: string[];
   address?: string | null;
+  city?: string | null;
   locality?: string | null;
   region?: string | null;
   country?: string | null;
   postcode?: string | null;
   phone?: string | null;
   website?: string | null;
+  description?: string | null;
+  fsqId?: string | null;
   rating?: number | null;
   ratingCount?: number | null;
   priceLevel?: number | null;

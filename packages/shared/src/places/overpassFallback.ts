@@ -176,10 +176,13 @@ export async function fetchOverpassPlaceSummaries(options: OverpassFallbackOptio
       categories: categoriesForPlace,
       tags: inferredTags,
       address: address ?? null,
+      city: locality ?? null,
       locality: locality ?? null,
       region: region ?? null,
       country: country ?? null,
       postcode: postcode ?? null,
+      description: null,
+      fsqId: null,
       aggregatedFrom: ['openstreetmap'],
       primarySource: 'openstreetmap',
       attributions: [

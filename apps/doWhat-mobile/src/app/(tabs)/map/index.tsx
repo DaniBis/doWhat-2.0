@@ -3,6 +3,8 @@ import type { ComponentRef } from 'react';
 import * as Location from 'expo-location';
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -17,28 +19,31 @@ import {
 import {
   CITY_SWITCHER_ENABLED,
   DEFAULT_CITY_SLUG,
-  createPlacesFetcher,
+  OPENSTREETMAP_FALLBACK_ATTRIBUTION,
+  buildPlaceSavePayload,
   defaultTier3Index,
+  fetchOverpassPlaceSummaries,
   getCityCategoryConfigMap,
   getCityConfig,
   getTier3Ids,
+  isUuid,
   listCities,
   trackTaxonomyFiltersApplied,
   trackTaxonomyToggle,
   type ActivityTier3WithAncestors,
   type CityCategoryConfig,
   type CityConfig,
-  type PlaceSummary,
   type PlacesViewportQuery,
   usePlaces,
+  estimateRadiusFromBounds,
 } from '@dowhat/shared';
+import type { FetchPlaces, PlaceSummary } from '@dowhat/shared';
 
-import MapView, { Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
+import MapView, { Callout, Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
 import ngeohash from 'ngeohash';
 import { useRouter } from 'expo-router';
 
-import { createWebUrl } from '../../../lib/web';
-import { fetchWithTimeout } from '../../../lib/fetchWithTimeout';
+import { geocodeLabelToCoords } from '../../../lib/geocode';
 import { emitMapPlacesUpdated, subscribeProfileLocationUpdated } from '../../../lib/events';
 import {
   DEFAULT_CATEGORY_APPEARANCE,
@@ -48,7 +53,9 @@ import {
   resolvePrimaryCategoryKey,
 } from '../../../lib/placeCategories';
 import { supabase } from '../../../lib/supabase';
+import { fetchSupabasePlacesWithinBounds } from '../../../lib/supabasePlaces';
 import TaxonomyCategoryPicker from '../../../components/TaxonomyCategoryPicker';
+import { useSavedActivities } from '../../../contexts/SavedActivitiesContext';
 
 type MapRegion = {
   latitude: number;
@@ -85,9 +92,6 @@ const buildTaxonomyTagMap = () => {
   return map;
 };
 
-const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
-const GEOCODE_USER_AGENT = 'doWhat/1.0 (mobile@dowhat.app)';
-
 const parseCoordinate = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim()) {
@@ -103,63 +107,13 @@ const coordsApproximatelyEqual = (
   epsilon = 0.0005,
 ) => Math.abs(a.lat - b.lat) <= epsilon && Math.abs(a.lng - b.lng) <= epsilon;
 
-const geocodeLabelToCoords = async (
-  label: string,
-  signal?: AbortSignal,
-): Promise<{ lat: number; lng: number } | null> => {
-  const query = label.trim();
-  if (!query) return null;
-
-  try {
-    const backendUrl = createWebUrl('/api/geocode');
-    backendUrl.searchParams.set('q', query);
-    const response = await fetchWithTimeout(backendUrl.toString(), { timeoutMs: 7000, signal });
-    if (response.ok) {
-      const payload = (await response.json()) as { lat?: number | string; lng?: number | string };
-      const lat = parseCoordinate(payload.lat);
-      const lng = parseCoordinate(payload.lng);
-      if (lat != null && lng != null) {
-        return { lat, lng };
-      }
-    }
-  } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
-      throw error;
-    }
-    console.info('[Map] Backend geocode failed', error);
+const describeActionError = (error: unknown): string => {
+  if (!error) return 'Something went wrong.';
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message || 'Something went wrong.';
   }
-
-  try {
-    const url = new URL(`${NOMINATIM_BASE_URL}/search`);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
-    url.searchParams.set('q', query);
-    const response = await fetchWithTimeout(url.toString(), {
-      timeoutMs: 8000,
-      signal,
-      headers: {
-        'User-Agent': GEOCODE_USER_AGENT,
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Nominatim search failed (${response.status})`);
-    }
-    const payload = (await response.json()) as Array<{ lat?: string; lon?: string }>;
-    const entry = payload[0];
-    const lat = parseCoordinate(entry?.lat);
-    const lng = parseCoordinate(entry?.lon);
-    if (lat != null && lng != null) {
-      return { lat, lng };
-    }
-  } catch (error) {
-    if ((error as Error)?.name === 'AbortError') {
-      throw error;
-    }
-    console.info('[Map] Nominatim geocode failed', error);
-  }
-
-  return null;
+  return 'Something went wrong.';
 };
 
 type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
@@ -202,7 +156,20 @@ type StructuredHours = {
   timeframes?: OpeningFrame[] | null;
 };
 
+type FoursquareLocation = {
+  address?: string | null;
+  formatted_address?: string | null;
+  locality?: string | null;
+  neighborhood?: string | null;
+  region?: string | null;
+  country?: string | null;
+  postcode?: string | null;
+};
+
+type OpenStreetMapTags = Record<string, string | null | undefined>;
+
 type PlaceMetadata = Record<string, unknown> & {
+  linkedVenueId?: string | null;
   priceLevel?: number | string | null;
   price_level?: number | string | null;
   price_range?: number | string | null;
@@ -228,7 +195,12 @@ type PlaceMetadata = Record<string, unknown> & {
     capacity?: number | string | null;
     hours?: StructuredHours | null;
     popular?: { timeframes?: OpeningFrame[] | null } | null;
-    venue?: { attributes?: { capacity?: number | string | null } | null } | null;
+    location?: FoursquareLocation | null;
+    venue?: {
+      name?: string | null;
+      location?: FoursquareLocation | null;
+      attributes?: { capacity?: number | string | null } | null;
+    } | null;
   } | null;
   google_places?: {
     priceLevel?: number | string | null;
@@ -237,11 +209,20 @@ type PlaceMetadata = Record<string, unknown> & {
   openstreetmap?: {
     capacity?: number | string | null;
     opening_hours?: string | null;
-    tags?: {
-      capacity?: number | string | null;
-      opening_hours?: string | null;
-    } | null;
+    address?: string | null;
+    locality?: string | null;
+    region?: string | null;
+    country?: string | null;
+    postcode?: string | null;
+    tags?: OpenStreetMapTags | null;
   } | null;
+  venueId?: string | null;
+  venue_id?: string | null;
+  supabaseVenueId?: string | null;
+  supabase_venue_id?: string | null;
+  matchedVenueId?: string | null;
+  venue?: { id?: string | null } | null;
+  supabaseVenue?: { id?: string | null } | null;
 };
 
 const toPlaceMetadata = (metadata: PlaceSummary['metadata']): PlaceMetadata | undefined => {
@@ -250,6 +231,44 @@ const toPlaceMetadata = (metadata: PlaceSummary['metadata']): PlaceMetadata | un
   }
   return metadata as PlaceMetadata;
 };
+
+const normaliseStringId = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const extractVenueIdFromMetadata = (place: PlaceSummary | null): string | null => {
+  if (!place) return null;
+  const metadata = toPlaceMetadata(place.metadata);
+  if (!metadata) return null;
+  const candidates: Array<unknown> = [
+    metadata.linkedVenueId,
+    metadata.venueId,
+    metadata.venue_id,
+    metadata.supabaseVenueId,
+    metadata.supabase_venue_id,
+    metadata.matchedVenueId,
+    metadata.venue?.id,
+    metadata.supabaseVenue?.id,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normaliseStringId(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const resolveVenueIdForSaving = (place: PlaceSummary | null): string | null => {
+  const candidate = extractVenueIdFromMetadata(place);
+  if (candidate && isUuid(candidate)) {
+    return candidate;
+  }
+  return null;
+};
+
 
 const DEFAULT_FILTERS: Filters = {
   categories: [],
@@ -726,11 +745,6 @@ const SPIDERFY_DELTA_THRESHOLD = 0.022;
 const SPIDERFY_MAX_COUNT = 8;
 const SPIDERFY_MIN_RADIUS = 0.00012;
 const SPIDERFY_MAX_RADIUS = 0.005;
-type ProviderCounts = {
-  openstreetmap: number;
-  foursquare: number;
-  google_places: number;
-};
 
 const normaliseRegion = (region: MapRegion): MapRegion => {
   const latitudeDelta = Math.min(
@@ -856,12 +870,187 @@ const clusterPlacesForRegion = (places: PlaceSummary[], region: MapRegion) => {
   return { clusters, singles };
 };
 
+type AddressParts = {
+  address: string | null;
+  locality: string | null;
+  region: string | null;
+  country: string | null;
+  postcode: string | null;
+};
+
+const EMPTY_ADDRESS_PARTS: AddressParts = {
+  address: null,
+  locality: null,
+  region: null,
+  country: null,
+  postcode: null,
+};
+
+const cleanString = (value?: string | null): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const combineAddressSegments = (...segments: Array<string | null>) => {
+  const parts = segments
+    .map((segment) => cleanString(segment))
+    .filter((segment): segment is string => Boolean(segment));
+  if (!parts.length) return null;
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+};
+
+const extractFoursquareAddressParts = (metadata?: PlaceMetadata | null): AddressParts => {
+  if (!metadata?.foursquare) return EMPTY_ADDRESS_PARTS;
+  const candidate = metadata.foursquare.venue?.location ?? metadata.foursquare.location ?? null;
+  if (!candidate) return EMPTY_ADDRESS_PARTS;
+  const formatted = cleanString(candidate.formatted_address);
+  const streetLine = combineAddressSegments(candidate.address ?? null, candidate.neighborhood ?? null);
+  return {
+    address: formatted ?? streetLine,
+    locality: cleanString(candidate.locality),
+    region: cleanString(candidate.region),
+    country: cleanString(candidate.country),
+    postcode: cleanString(candidate.postcode),
+  };
+};
+
+const extractOpenStreetMapAddressParts = (metadata?: PlaceMetadata | null): AddressParts => {
+  if (!metadata?.openstreetmap) return EMPTY_ADDRESS_PARTS;
+  const tags = metadata.openstreetmap.tags;
+  const pickTag = (key: string) => {
+    const value = tags?.[key];
+    return typeof value === 'string' ? value : null;
+  };
+  const street = combineAddressSegments(pickTag('addr:housenumber'), pickTag('addr:street'));
+  const fallback =
+    cleanString(metadata.openstreetmap.address) ??
+    street ??
+    cleanString(pickTag('addr:place')) ??
+    cleanString(pickTag('addr:full'));
+
+  return {
+    address: fallback,
+    locality:
+      cleanString(metadata.openstreetmap.locality) ??
+      cleanString(
+        pickTag('addr:city') ??
+          pickTag('addr:town') ??
+          pickTag('addr:village') ??
+          pickTag('addr:municipality') ??
+          pickTag('addr:suburb') ??
+          pickTag('addr:neighbourhood'),
+      ),
+    region:
+      cleanString(metadata.openstreetmap.region) ??
+      cleanString(pickTag('addr:state') ?? pickTag('addr:province') ?? pickTag('is_in:state')),
+    country: cleanString(metadata.openstreetmap.country) ?? cleanString(pickTag('addr:country')),
+    postcode:
+      cleanString(metadata.openstreetmap.postcode) ??
+      cleanString(pickTag('addr:postcode') ?? pickTag('postal_code') ?? pickTag('addr:postalcode')),
+  };
+};
+
+const mergeAddressParts = (...sources: AddressParts[]): AddressParts => {
+  const pick = (key: keyof AddressParts) => {
+    for (const source of sources) {
+      const value = source[key];
+      if (value) return value;
+    }
+    return null;
+  };
+  return {
+    address: pick('address'),
+    locality: pick('locality'),
+    region: pick('region'),
+    country: pick('country'),
+    postcode: pick('postcode'),
+  };
+};
+
+const getResolvedAddressParts = (place: PlaceSummary): AddressParts => {
+  const metadata = toPlaceMetadata(place.metadata);
+  const base: AddressParts = {
+    address: cleanString(place.address),
+    locality: cleanString(place.city ?? place.locality),
+    region: cleanString(place.region),
+    country: cleanString(place.country),
+    postcode: cleanString(place.postcode),
+  };
+  const fsq = extractFoursquareAddressParts(metadata);
+  const osm = extractOpenStreetMapAddressParts(metadata);
+  return mergeAddressParts(base, fsq, osm);
+};
+
 const formatPlaceAddress = (place: PlaceSummary) => {
-  const rawParts = [place.address, place.locality, place.region, place.country];
-  const parts = rawParts
-    .map((value) => (typeof value === 'string' ? value.trim() : ''))
-    .filter((value) => value.length > 0);
-  return parts.length ? parts.join(', ') : null;
+  const parts = getResolvedAddressParts(place);
+  const ordered = [parts.address, parts.locality, parts.region, parts.country]
+    .map((value) => cleanString(value) ?? '')
+    .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index);
+  return ordered.length ? ordered.join(', ') : null;
+};
+
+const formatShortAddress = (place: PlaceSummary) => {
+  const parts = getResolvedAddressParts(place);
+  if (parts.locality) return parts.locality;
+  if (parts.address) {
+    const primary = parts.address.split(/[\n,]/)[0]?.trim();
+    if (primary) return primary;
+  }
+  if (parts.region) return parts.region;
+  if (parts.country) return parts.country;
+  return null;
+};
+
+const GENERIC_NAME_RE = /^(unnamed|unknown|activity spot)$/i;
+
+const resolvePlaceName = (place: PlaceSummary) => {
+  const metadata = toPlaceMetadata(place.metadata);
+  const fallbackCandidates: Array<string | null | undefined> = [
+    metadata?.foursquare?.venue?.name,
+    metadata?.foursquare && typeof (metadata.foursquare as Record<string, unknown>).name === 'string'
+      ? ((metadata.foursquare as Record<string, unknown>).name as string)
+      : null,
+    metadata?.openstreetmap?.tags?.name,
+    metadata?.openstreetmap?.tags?.['name:en'],
+    metadata?.openstreetmap?.tags?.alt_name,
+  ];
+
+  const evaluate = (value?: string | null) => {
+    const cleaned = cleanString(value);
+    if (!cleaned) return null;
+    if (GENERIC_NAME_RE.test(cleaned.toLowerCase())) return null;
+    return cleaned;
+  };
+
+  const primary = evaluate(place.name);
+  if (primary) return primary;
+  for (const candidate of fallbackCandidates) {
+    const resolved = evaluate(typeof candidate === 'string' ? candidate : null);
+    if (resolved) return resolved;
+  }
+  return cleanString(place.name) ?? 'Activity spot';
+};
+
+const normaliseWebsiteUrl = (value: string | null | undefined) => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+};
+
+const formatWebsiteHost = (value: string | null | undefined) => {
+  const normalised = normaliseWebsiteUrl(value ?? null);
+  if (!normalised) return null;
+  try {
+    const url = new URL(normalised);
+    return url.host.replace(/^www\./i, '') || url.hostname;
+  } catch (_error) {
+    return normalised.replace(/^https?:\/\//i, '');
+  }
 };
 
 export default function MapScreen() {
@@ -891,14 +1080,13 @@ export default function MapScreen() {
   const [draftFilters, setDraftFilters] = useState<Filters>(() => cloneFilters(DEFAULT_FILTERS));
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [attributions, setAttributions] = useState<Array<{ text: string; url?: string; license?: string }>>([]);
-  const [providerCounts, setProviderCounts] = useState<ProviderCounts>({
-    openstreetmap: 0,
-    foursquare: 0,
-    google_places: 0,
-  });
+  const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [profileLocation, setProfileLocation] = useState<{ lat: number; lng: number; label?: string | null } | null>(null);
   const [locationInitialized, setLocationInitialized] = useState(false);
+  const { isSaved, toggle, pendingIds: savingIds } = useSavedActivities();
+  const [activeVenueSessions, setActiveVenueSessions] = useState<{ upcoming: number; total: number } | null>(null);
+  const [activeVenueSessionsLoading, setActiveVenueSessionsLoading] = useState(false);
 
   const mapRef = useRef<ComponentRef<typeof MapView> | null>(null);
   const lastRegionRef = useRef<MapRegion>(cityRegion);
@@ -948,7 +1136,7 @@ export default function MapScreen() {
     return 'Discover Places';
   }, [filters.categories, categoryLabelByKey]);
   const defaultSubtitle =
-    'Move the map to discover venues powered by OpenStreetMap and Foursquare, then plan an activity there.';
+    'Move the map to discover venues powered by Foursquare Places, then plan an activity there.';
   const filterSubtitle = filterSummary ? `Filters: ${filterSummary}` : null;
 
   const now = useMemo(() => new Date(), [filters.timeWindow]);
@@ -1002,7 +1190,7 @@ export default function MapScreen() {
 
       (async () => {
         try {
-          const coords = await geocodeLabelToCoords(trimmed, controller.signal);
+          const coords = await geocodeLabelToCoords(trimmed, { signal: controller.signal });
           if (!coords) return;
           lastGeocodedLabelRef.current = trimmed;
           lastGeocodedCoordsRef.current = coords;
@@ -1270,18 +1458,73 @@ export default function MapScreen() {
     }
   }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery]);
 
-  const placesFetcher = useMemo(
-    () =>
-      createPlacesFetcher({
-        buildUrl: () => createWebUrl('/api/places').toString(),
-        includeCredentials: true,
-        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
-      }),
-    [],
-  );
+  const supabasePlacesFetcher = useMemo<FetchPlaces>(() => {
+    return async ({ bounds, limit, city: queryCity, signal }) => {
+      const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+      const citySlugForQuery = queryCity ?? city.slug ?? DEFAULT_CITY_SLUG;
+      try {
+        const places = await fetchSupabasePlacesWithinBounds({
+          bounds,
+          citySlug: citySlugForQuery,
+          limit: limit ?? 400,
+        });
+        const latencyMs = Math.round(
+          (typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()) - startedAt,
+        );
+        const providerCounts: Record<string, number> = { supabase: places.length };
+        return {
+          cacheHit: true,
+          places,
+          providerCounts,
+          attribution: [],
+          latencyMs,
+        };
+      } catch (primaryError) {
+        if (__DEV__) {
+          console.warn('[Map] Supabase places fetch failed', primaryError);
+        }
+        const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+        const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
+        const fallbackRadius = estimateRadiusFromBounds(bounds);
+        try {
+          const fallbackPlaces = await fetchOverpassPlaceSummaries({
+            lat: centerLat,
+            lng: centerLng,
+            radiusMeters: fallbackRadius,
+            limit: limit ?? 400,
+            signal,
+          });
+          const latencyMs = Math.round(
+            (typeof performance !== 'undefined' && typeof performance.now === 'function'
+              ? performance.now()
+              : Date.now()) - startedAt,
+          );
+          const providerCounts: Record<string, number> = { openstreetmap: fallbackPlaces.length };
+          return {
+            cacheHit: false,
+            places: fallbackPlaces,
+            providerCounts,
+            attribution: [OPENSTREETMAP_FALLBACK_ATTRIBUTION],
+            latencyMs,
+          };
+        } catch (fallbackError) {
+          if (__DEV__) {
+            console.warn('[Map] Places fallback failed', fallbackError);
+          }
+          throw primaryError instanceof Error
+            ? primaryError
+            : new Error('Unable to load nearby places.');
+        }
+      }
+    };
+  }, [city.slug]);
 
   const placesQuery = usePlaces(query, {
-    fetcher: placesFetcher,
+    fetcher: supabasePlacesFetcher,
     enabled: Boolean(query),
     staleTime: 2 * 60_000,
   });
@@ -1296,16 +1539,6 @@ export default function MapScreen() {
       setAttributions(placesQuery.data.attribution);
     }
   }, [placesQuery.data?.attribution]);
-
-  useEffect(() => {
-    if (placesQuery.data?.providerCounts) {
-      setProviderCounts({
-        openstreetmap: placesQuery.data.providerCounts.openstreetmap ?? 0,
-        foursquare: placesQuery.data.providerCounts.foursquare ?? 0,
-        google_places: placesQuery.data.providerCounts.google_places ?? 0,
-      });
-    }
-  }, [placesQuery.data?.providerCounts]);
 
   const handleRegionChangeComplete: MapViewProps['onRegionChangeComplete'] = (nextRegion) => {
     const normalised = normaliseRegion(nextRegion);
@@ -1335,6 +1568,69 @@ export default function MapScreen() {
     [deferredPlaces, deferredRegion],
   );
 
+  const activePlace = useMemo(
+    () => filteredPlaces.find((place) => place.id === activePlaceId) ?? null,
+    [filteredPlaces, activePlaceId],
+  );
+
+  const activeVenueId = useMemo(() => resolveVenueIdForSaving(activePlace), [activePlace]);
+
+  useEffect(() => {
+    if (!activePlaceId) return;
+    if (!filteredPlaces.some((place) => place.id === activePlaceId)) {
+      setActivePlaceId(null);
+    }
+  }, [filteredPlaces, activePlaceId]);
+
+  const activeAppearance = useMemo(
+    () => (activePlace ? resolveCategoryAppearance(activePlace, selectedCategoryTags) : DEFAULT_CATEGORY_APPEARANCE),
+    [activePlace, selectedCategoryTags],
+  );
+
+  const activePlaceName = useMemo(() => (activePlace ? resolvePlaceName(activePlace) : null), [activePlace]);
+
+  const activeCategoryLabel = useMemo(() => {
+    if (!activePlace) return null;
+    const primary = resolvePrimaryCategoryKey(activePlace, selectedCategoryTags);
+    if (primary) {
+      return formatCategoryName(primary, categoryLabelByKey);
+    }
+    const fallback = activePlace.categories?.[0];
+    return fallback ? formatCategoryName(fallback, categoryLabelByKey) : null;
+  }, [activePlace, selectedCategoryTags, categoryLabelByKey]);
+
+  const activeOpenNow = useMemo(() => (activePlace ? isPlaceOpenNow(activePlace, now) : null), [activePlace, now]);
+  const activePriceLevel = useMemo(() => (activePlace ? resolvePriceLevel(activePlace) : null), [activePlace]);
+  const activeAddress = useMemo(() => (activePlace ? formatPlaceAddress(activePlace) : null), [activePlace]);
+  const activeDescription = useMemo(() => {
+    if (!activePlace?.description) return null;
+    const trimmed = activePlace.description.trim();
+    return trimmed.length ? trimmed : null;
+  }, [activePlace]);
+  const activeWebsite = activePlace?.website ?? null;
+  const activeWebsiteHost = useMemo(() => formatWebsiteHost(activeWebsite), [activeWebsite]);
+  const activePlaceIsSaved = activePlace ? isSaved(activePlace.id) : false;
+  const activePlaceSaving = activePlace?.id ? savingIds.has(activePlace.id) : false;
+
+  const handleToggleSave = useCallback(async () => {
+    if (!activePlace || activePlaceSaving) return;
+    const payload = buildPlaceSavePayload(activePlace, city.slug ?? null);
+    if (activePlaceName) {
+      payload.name = activePlaceName;
+    }
+    if (activeAddress) {
+      payload.address = activeAddress;
+    }
+    if (activeVenueId) {
+      payload.venueId = activeVenueId;
+    }
+    try {
+      await toggle(payload);
+    } catch (actionError) {
+      Alert.alert('Save place', describeActionError(actionError));
+    }
+  }, [activePlace, activePlaceSaving, toggle, city.slug, activeVenueId, activeAddress]);
+
   useEffect(() => {
     const broadcast = filteredPlaces.slice(0, 80).map((place) => ({
       id: place.id,
@@ -1348,6 +1644,45 @@ export default function MapScreen() {
     }));
     emitMapPlacesUpdated(broadcast);
   }, [filteredPlaces, selectedCategoryTags]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeVenueId) {
+      setActiveVenueSessions(null);
+      setActiveVenueSessionsLoading(false);
+      return;
+    }
+    setActiveVenueSessions(null);
+    setActiveVenueSessionsLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('v_venue_attendance_summary')
+          .select('upcoming_sessions,total_sessions')
+          .eq('venue_id', activeVenueId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!cancelled) {
+          setActiveVenueSessions({
+            upcoming: typeof data?.upcoming_sessions === 'number' ? data.upcoming_sessions : 0,
+            total: typeof data?.total_sessions === 'number' ? data.total_sessions : 0,
+          });
+        }
+      } catch (sessionError) {
+        if (!cancelled) {
+          console.info('[Map] Failed to load session counts', sessionError);
+          setActiveVenueSessions(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setActiveVenueSessionsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeVenueId]);
 
   const placesCountLabel = useMemo(() => {
     if (loading && !filteredPlaces.length) return null;
@@ -1368,11 +1703,10 @@ export default function MapScreen() {
 
   const providerHint = useMemo(() => {
     if (!filteredPlaces.length) return null;
-    if (providerCounts.foursquare === 0 && providerCounts.google_places === 0) {
-      return 'Showing OpenStreetMap venues. Add Foursquare or Google Places keys to broaden results.';
-    }
-    return null;
-  }, [filteredPlaces.length, providerCounts]);
+    return 'Venues synced from Supabase (fallback: OpenStreetMap).';
+  }, [filteredPlaces.length]);
+
+  const dismissActivePlace = useCallback(() => setActivePlaceId(null), []);
 
   const removeCategory = (categoryId: string) => {
     setFilters((prev) => {
@@ -1501,6 +1835,7 @@ export default function MapScreen() {
         },
         220,
       );
+      setActivePlaceId(place.id);
     },
     [region],
   );
@@ -1521,6 +1856,14 @@ export default function MapScreen() {
     },
     [router],
   );
+
+  const handleOpenWebsite = useCallback((url?: string | null) => {
+    const target = normaliseWebsiteUrl(url ?? null);
+    if (!target) return;
+    Linking.openURL(target).catch((error) => {
+      console.warn('[Map] Failed to open venue website', error);
+    });
+  }, []);
 
   const handleClusterPress = useCallback(
     (cluster: PlaceCluster) => {
@@ -1773,29 +2116,43 @@ export default function MapScreen() {
               : place.categories[0]
                 ? formatCategoryName(place.categories[0], categoryLabelByKey)
                 : 'Activity';
-            const addressLabel = formatPlaceAddress(place);
-            const calloutDescription = addressLabel
-              ? [addressLabel, descriptionLabel !== 'Activity' ? descriptionLabel : null]
-                  .filter(Boolean)
-                  .join('\n')
-              : descriptionLabel;
+            const shortAddressLabel = formatShortAddress(place);
+            const markerLabel = resolvePlaceName(place) ?? place.name;
+            const isActive = activePlaceId === place.id;
             return (
               <Marker
                 key={place.id}
                 coordinate={coordinate}
                 onPress={() => handleMarkerPress(place, coordinate)}
                 onCalloutPress={() => handlePlanEvent(place, descriptionLabel)}
-                title={place.name}
-                description={calloutDescription}
               >
-                <View
-                  style={[
-                    styles.marker,
-                    { backgroundColor: appearance.color },
-                  ]}
-                >
-                  <Text style={styles.markerEmoji}>{appearance.emoji}</Text>
+                <View style={styles.markerWrapper}>
+                  <View
+                    style={[
+                      styles.marker,
+                      { backgroundColor: appearance.color },
+                      isActive && styles.markerActive,
+                    ]}
+                  >
+                    <Text style={styles.markerEmoji}>{appearance.emoji}</Text>
+                  </View>
+                  {markerLabel ? (
+                    <View style={[styles.markerLabel, isActive && styles.markerLabelActive]}>
+                      <Text numberOfLines={1} style={styles.markerLabelText}>
+                        {markerLabel}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
+                <Callout tooltip>
+                  <View style={styles.markerCallout}>
+                    <Text style={styles.markerCalloutTitle}>{markerLabel}</Text>
+                    {shortAddressLabel ? (
+                      <Text style={styles.markerCalloutSubtitle}>{shortAddressLabel}</Text>
+                    ) : null}
+                    <Text style={styles.markerCalloutCta}>Plan an event ↗</Text>
+                  </View>
+                </Callout>
               </Marker>
             );
           })}
@@ -1827,13 +2184,128 @@ export default function MapScreen() {
             <Text style={styles.zoomButtonText}>-</Text>
           </TouchableOpacity>
         </View>
-
+        {activePlace ? (
+          <View style={styles.placeDetailWrapper}>
+            <View style={styles.placeDetailCard}>
+              <View style={styles.placeDetailHeader}>
+                <View
+                  style={[
+                    styles.placeDetailEmoji,
+                    { backgroundColor: activeAppearance ? `${activeAppearance.color}22` : '#E2E8F0' },
+                  ]}
+                >
+                  <Text style={styles.markerEmoji}>{activeAppearance?.emoji ?? '📍'}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.placeDetailTitle}>{activePlaceName ?? activePlace.name}</Text>
+                  {activeCategoryLabel ? (
+                    <Text style={styles.placeDetailSubtitle}>{activeCategoryLabel}</Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={handleToggleSave}
+                  disabled={activePlaceSaving}
+                  style={[
+                    styles.placeDetailSaveButton,
+                    activePlaceIsSaved && styles.placeDetailSaveButtonActive,
+                    activePlaceSaving && styles.placeDetailSaveButtonDisabled,
+                  ]}
+                >
+                  {activePlaceSaving ? (
+                    <ActivityIndicator size="small" color={activePlaceIsSaved ? '#047857' : '#0F172A'} />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.placeDetailSaveButtonText,
+                        activePlaceIsSaved && styles.placeDetailSaveButtonTextActive,
+                      ]}
+                    >
+                      {activePlaceIsSaved ? 'Saved' : 'Save'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" onPress={dismissActivePlace}>
+                  <Text style={styles.placeDetailClose}>×</Text>
+                </TouchableOpacity>
+              </View>
+              {activeAddress ? <Text style={styles.placeDetailAddress}>{activeAddress}</Text> : null}
+              <View style={styles.placeDetailMetaRow}>
+                {typeof activeOpenNow === 'boolean' ? (
+                  <Text
+                    style={[
+                      styles.placeDetailBadge,
+                      activeOpenNow ? styles.placeDetailBadgeOpen : styles.placeDetailBadgeClosed,
+                    ]}
+                  >
+                    {activeOpenNow ? 'Open now' : 'Closed'}
+                  </Text>
+                ) : null}
+                {activePriceLevel != null ? (
+                  <Text style={styles.placeDetailMetaText}>Price {priceLevelLabel(activePriceLevel)}</Text>
+                ) : null}
+              </View>
+              {activeVenueId ? (
+                <View style={styles.placeDetailSessionsRow}>
+                  {activeVenueSessionsLoading ? (
+                    <Text style={styles.placeDetailMetaText}>Checking upcoming sessions…</Text>
+                  ) : activeVenueSessions ? (
+                    <>
+                      <Text style={styles.placeDetailMetaText}>
+                        {activeVenueSessions.upcoming
+                          ? `${activeVenueSessions.upcoming} upcoming session${activeVenueSessions.upcoming === 1 ? '' : 's'}`
+                          : 'No upcoming sessions yet'}
+                      </Text>
+                      {activeVenueSessions.total > activeVenueSessions.upcoming ? (
+                        <Text style={styles.placeDetailMetaSubtle}>
+                          {activeVenueSessions.total} total session{activeVenueSessions.total === 1 ? '' : 's'} hosted here
+                        </Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Text style={styles.placeDetailMetaSubtle}>Session info unavailable</Text>
+                  )}
+                </View>
+              ) : null}
+              {activeDescription ? (
+                <Text style={styles.placeDetailDescription} numberOfLines={4}>
+                  {activeDescription}
+                </Text>
+              ) : null}
+              {activeWebsite && activeWebsiteHost ? (
+                <TouchableOpacity
+                  accessibilityRole="link"
+                  style={styles.placeDetailWebsiteButton}
+                  onPress={() => handleOpenWebsite(activeWebsite)}
+                >
+                  <Text style={styles.placeDetailWebsiteText}>{activeWebsiteHost}</Text>
+                </TouchableOpacity>
+              ) : null}
+              <View style={styles.placeDetailActions}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.placeDetailPrimaryAction}
+                  onPress={() => handlePlanEvent(activePlace, activeCategoryLabel)}
+                >
+                  <Text style={styles.placeDetailPrimaryActionText}>Create event here</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.placeDetailSecondaryAction}
+                  onPress={dismissActivePlace}
+                >
+                  <Text style={styles.placeDetailSecondaryActionText}>Dismiss</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </View>
       <View style={styles.attribution}>
         <Text style={styles.attributionText}>
           {attributions.length
             ? `Data from ${attributions.map((attr) => attr.text).join(', ')}`
-            : 'Data from OpenStreetMap and Foursquare Places.'}
+            : 'Data from Foursquare Places.'}
         </Text>
       </View>
     </SafeAreaView>
@@ -2115,6 +2587,9 @@ const styles = StyleSheet.create({
     flex: 1,
     position: 'relative',
   },
+  markerWrapper: {
+    alignItems: 'center',
+  },
   marker: {
     width: 38,
     height: 38,
@@ -2130,8 +2605,52 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
+  markerActive: {
+    borderColor: '#0EA5E9',
+    transform: [{ scale: 1.05 }],
+  },
   markerEmoji: {
     fontSize: 18,
+  },
+  markerLabel: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15,23,42,0.88)',
+    maxWidth: 140,
+  },
+  markerLabelActive: {
+    backgroundColor: '#0F172A',
+  },
+  markerLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  markerCallout: {
+    minWidth: 160,
+    maxWidth: 220,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+  },
+  markerCalloutTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 2,
+  },
+  markerCalloutSubtitle: {
+    fontSize: 12,
+    color: '#CBD5F5',
+    marginBottom: 6,
+  },
+  markerCalloutCta: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#38BDF8',
   },
   clusterMarker: {
     minWidth: 44,
@@ -2195,6 +2714,164 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0F172A',
     lineHeight: 28,
+  },
+  placeDetailWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 16,
+  },
+  placeDetailCard: {
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 8,
+  },
+  placeDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  placeDetailEmoji: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeDetailTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  placeDetailSubtitle: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#475569',
+  },
+  placeDetailClose: {
+    fontSize: 24,
+    color: '#94A3B8',
+    fontWeight: '600',
+    paddingHorizontal: 8,
+  },
+  placeDetailSaveButton: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+    marginRight: 4,
+  },
+  placeDetailSaveButtonActive: {
+    borderColor: '#10B981',
+    backgroundColor: '#D1FAE5',
+  },
+  placeDetailSaveButtonDisabled: {
+    opacity: 0.7,
+  },
+  placeDetailSaveButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  placeDetailSaveButtonTextActive: {
+    color: '#047857',
+  },
+  placeDetailAddress: {
+    marginTop: 14,
+    fontSize: 13,
+    color: '#475569',
+  },
+  placeDetailMetaRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  placeDetailBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  placeDetailBadgeOpen: {
+    backgroundColor: '#DCFCE7',
+    color: '#15803D',
+  },
+  placeDetailBadgeClosed: {
+    backgroundColor: '#FFE4E6',
+    color: '#BE123C',
+  },
+  placeDetailMetaText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  placeDetailMetaSubtle: {
+    fontSize: 12,
+    color: '#475569',
+    marginTop: 2,
+  },
+  placeDetailSessionsRow: {
+    marginTop: 8,
+  },
+  placeDetailDescription: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#1E293B',
+    lineHeight: 18,
+  },
+  placeDetailWebsiteButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#E0F2FE',
+  },
+  placeDetailWebsiteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  placeDetailActions: {
+    marginTop: 16,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  placeDetailPrimaryAction: {
+    flex: 1,
+    borderRadius: 14,
+    backgroundColor: '#0EA5E9',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  placeDetailPrimaryActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  placeDetailSecondaryAction: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeDetailSecondaryActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
   },
   errorBadge: {
     position: 'absolute',

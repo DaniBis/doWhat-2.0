@@ -37,6 +37,10 @@ interface RpcNearbyRow {
 }
 interface ErrorPayload { error: string }
 
+interface UpcomingSessionRow {
+  activity_id: string | null;
+}
+
 type PublicNearbyActivity = {
   id: string;
   name: string;
@@ -47,6 +51,61 @@ type PublicNearbyActivity = {
   activity_types: string[] | null;
   tags: string[] | null;
   traits: string[] | null;
+};
+
+type VenueFallbackRow = {
+  id: string | null;
+  name: string | null;
+  address: string | null;
+  lat: number | string | null;
+  lng: number | string | null;
+  ai_activity_tags?: string[] | null;
+  verified_activities?: string[] | null;
+  updated_at?: string | null;
+};
+
+const sanitizeCoordinate = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const displayStringList = (values?: (string | null)[] | null): string[] | null => {
+  const entries = (values ?? [])
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value): value is string => Boolean(value));
+  return entries.length ? entries : null;
+};
+
+const toMapActivityFromVenue = (
+  row: VenueFallbackRow,
+  origin: { lat: number; lng: number },
+): PublicNearbyActivity | null => {
+  if (!row?.id) return null;
+  const lat = sanitizeCoordinate(row.lat);
+  const lng = sanitizeCoordinate(row.lng);
+  if (lat == null || lng == null) return null;
+  return {
+    id: `venue:${row.id}`,
+    name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby venue',
+    venue: row.address ?? null,
+    lat,
+    lng,
+    distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
+    activity_types: displayStringList(row.verified_activities ?? null),
+    tags: displayStringList(row.ai_activity_tags ?? null),
+    traits: null,
+  };
+};
+
+const metersToLatDelta = (meters: number) => meters / 111_320;
+const metersToLngDelta = (meters: number, latitude: number) => {
+  const radians = (latitude * Math.PI) / 180;
+  const denominator = Math.max(Math.cos(radians), 0.00001) * 111_320;
+  return meters / denominator;
 };
 
 // GET /api/nearby?lat=..&lng=..&radius=2000&types=a,b&tags=x,y&traits=t1,t2&limit=50
@@ -113,6 +172,40 @@ const dedupeById = <T extends { id: string | number }>(items: T[]): T[] => {
     result.push(item);
   }
   return result;
+};
+
+const fetchVenueFallbackActivities = async (
+  client: ReturnType<typeof db>,
+  query: NearbyQuery,
+  radiusMeters: number,
+  limit: number,
+): Promise<PublicNearbyActivity[]> => {
+  const latDelta = metersToLatDelta(radiusMeters * 1.2);
+  const lngDelta = metersToLngDelta(radiusMeters * 1.2, query.lat);
+  const swLat = query.lat - latDelta;
+  const neLat = query.lat + latDelta;
+  const swLng = query.lng - lngDelta;
+  const neLng = query.lng + lngDelta;
+  const { data, error } = await client
+    .from('venues')
+    .select('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
+    .gte('lat', swLat)
+    .lte('lat', neLat)
+    .gte('lng', swLng)
+    .lte('lng', neLng)
+    .order('updated_at', { ascending: false })
+    .limit(Math.max(limit * 2, 40))
+    .returns<VenueFallbackRow[]>();
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? [])
+    .map((row) => toMapActivityFromVenue(row, { lat: query.lat, lng: query.lng }))
+    .filter((activity): activity is PublicNearbyActivity => Boolean(activity))
+    .sort((a, b) => a.distance_m - b.distance_m)
+    .slice(0, limit);
 };
 
 const isMissingParticipantPreferenceRelationship = (error: { message?: string | null; details?: string | null; hint?: string | null }): boolean => {
@@ -206,52 +299,15 @@ const respondWithOverpass = async (
   query: NearbyQuery,
   radiusMeters: number,
   limit: number,
-  options?: { degraded?: boolean; cause?: unknown },
 ) => {
-  const degradedMeta = options?.degraded ? { degraded: true } : {};
-  const fallbackErrorMeta = options?.degraded && options?.cause
-    ? { fallbackError: getErrorMessage(options.cause) }
-    : {};
-
-  try {
-    const external = await fetchOverpassActivities(query, radiusMeters, limit);
-    if (external.length > 0) {
-      return Response.json({
-        center: { lat: query.lat, lng: query.lng },
-        radiusMeters,
-        count: external.length,
-        activities: external.map((activity) => ({
-          id: activity.id,
-          name: activity.name,
-          venue: activity.venue,
-          lat: activity.lat,
-          lng: activity.lng,
-          distance_m: activity.distance_m,
-          activity_types: activity.activity_types,
-          tags: activity.tags,
-          traits: activity.traits,
-        })),
-        source: 'osm-overpass',
-        ...degradedMeta,
-        ...fallbackErrorMeta,
-      });
-    }
-
-    return Response.json({
-      center: { lat: query.lat, lng: query.lng },
-      radiusMeters,
-      count: 0,
-      activities: [],
-      source: 'empty',
-      ...degradedMeta,
-      ...fallbackErrorMeta,
-    });
-  } catch (fallbackError) {
-    // eslint-disable-next-line no-console
-    console.error('Nearby fallback error', fallbackError);
-    const payload: ErrorPayload = { error: getErrorMessage(options?.cause ?? fallbackError) };
-    return Response.json(payload, { status: 500 });
-  }
+  const external = await fetchOverpassActivities(query, radiusMeters, limit);
+  return {
+    center: { lat: query.lat, lng: query.lng },
+    radiusMeters,
+    count: external.length,
+    activities: external,
+    source: external.length ? 'osm-overpass' : 'empty',
+  } as const;
 };
 
 export async function GET(request: Request) {
@@ -344,7 +400,7 @@ export async function GET(request: Request) {
         .limit(Math.max(200, fallbackLimit * 4))
         .returns<NearbyActivityRow[]>();
 
-    let includePreferences = true;
+    let includePreferences = Boolean(q.traits?.length);
     let includeTraits = true;
     let rawRowsResult = await executeActivitiesSelect({ includePreferences, includeTraits });
     let rawRows = rawRowsResult.data ?? null;
@@ -421,41 +477,143 @@ export async function GET(request: Request) {
     const withinRadius = withDistance.filter((row) => row.distance <= radiusMeters);
     const chosen = withinRadius.slice(0, fallbackLimit);
 
-    if (chosen.length > 0) {
-      return Response.json({
-        center: { lat: q.lat, lng: q.lng },
-        radiusMeters,
-        count: chosen.length,
-        activities: chosen.map((row) => {
-          const prefTraits = (row.participant_preferences ?? []).flatMap((pref) =>
-            (pref?.preferred_traits ?? []).filter((trait): trait is string => typeof trait === 'string'),
-          );
-          const uniqueTraits = Array.from(
-            new Set<string>([
-              ...((row.traits ?? []).filter((trait): trait is string => typeof trait === 'string')),
-              ...prefTraits,
-            ]),
-          );
-          return {
-            id: row.id,
-            name: row.name,
-            venue: row.venue,
-            lat: row.lat,
-            lng: row.lng,
-            distance_m: row.distance,
-            activity_types: row.activity_types ?? null,
-            tags: row.tags ?? null,
-            traits: uniqueTraits.length ? uniqueTraits : null,
-          };
-        }),
-        source: 'client-filter',
-      });
+    const activityIds = chosen.map((row) => row.id);
+    const upcomingCounts: Record<string, number> = {};
+    if (activityIds.length) {
+      const nowIso = new Date().toISOString();
+      const { data: upcomingRows, error: upcomingError } = await supabase
+        .from('sessions')
+        .select('activity_id')
+        .in('activity_id', activityIds)
+        .gte('starts_at', nowIso)
+        .limit(5000)
+        .returns<UpcomingSessionRow[]>();
+
+      if (upcomingError) {
+        // eslint-disable-next-line no-console
+        console.warn('[nearby] failed to load upcoming session counts', upcomingError);
+      } else if (upcomingRows) {
+        for (const row of upcomingRows) {
+          if (!row.activity_id) continue;
+          upcomingCounts[row.activity_id] = (upcomingCounts[row.activity_id] ?? 0) + 1;
+        }
+      }
     }
 
-    return respondWithOverpass(q, radiusMeters, fallbackLimit);
+    const mapRowToActivity = (row: (typeof chosen)[number]) => {
+      const prefTraits = (row.participant_preferences ?? []).flatMap((pref) =>
+        (pref?.preferred_traits ?? []).filter((trait): trait is string => typeof trait === 'string'),
+      );
+      const uniqueTraits = Array.from(
+        new Set<string>([
+          ...((row.traits ?? []).filter((trait): trait is string => typeof trait === 'string')),
+          ...prefTraits,
+        ]),
+      );
+      return {
+        id: row.id,
+        name: row.name,
+        venue: row.venue,
+        lat: row.lat,
+        lng: row.lng,
+        distance_m: row.distance,
+        activity_types: row.activity_types ?? null,
+        tags: row.tags ?? null,
+        traits: uniqueTraits.length ? uniqueTraits : null,
+        upcoming_session_count: upcomingCounts[row.id] ?? 0,
+      };
+    };
+
+    const mapFallbackActivity = (activity: PublicNearbyActivity) => ({
+      id: activity.id,
+      name: activity.name,
+      venue: activity.venue,
+      lat: activity.lat,
+      lng: activity.lng,
+      distance_m: activity.distance_m,
+      activity_types: activity.activity_types ?? null,
+      tags: activity.tags ?? null,
+      traits: activity.traits ?? null,
+      upcoming_session_count: 0,
+    });
+
+    let activitiesPayload = chosen.map(mapRowToActivity);
+    let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
+
+    if (activitiesPayload.length < fallbackLimit) {
+      try {
+        const fallbackResult = await respondWithOverpass(q, radiusMeters, fallbackLimit);
+        if (fallbackResult.activities.length) {
+          const combined = dedupeById([
+            ...activitiesPayload,
+            ...fallbackResult.activities.map(mapFallbackActivity),
+          ]);
+          activitiesPayload = combined.slice(0, fallbackLimit);
+          if (fallbackResult.source === 'osm-overpass') {
+            fallbackMeta.fallbackSource = 'osm-overpass';
+          }
+        }
+      } catch (fallbackError) {
+        console.warn('[nearby] fallback append failed', fallbackError);
+        fallbackMeta = {
+          degraded: true,
+          fallbackError: getErrorMessage(fallbackError),
+        };
+        try {
+          const venueFallback = await fetchVenueFallbackActivities(supabase, q, radiusMeters, fallbackLimit);
+          if (venueFallback.length) {
+            const combined = dedupeById([
+              ...activitiesPayload,
+              ...venueFallback.map(mapFallbackActivity),
+            ]);
+            activitiesPayload = combined.slice(0, fallbackLimit);
+            fallbackMeta.fallbackSource = 'supabase-venues';
+          }
+        } catch (venueFallbackError) {
+          console.warn('[nearby] venue fallback failed', venueFallbackError);
+        }
+        if (!activitiesPayload.length) {
+          return Response.json({ error: getErrorMessage(fallbackError) }, { status: 500 });
+        }
+      }
+    }
+
+    const source = activitiesPayload.length === 0
+      ? (fallbackMeta.degraded ? 'degraded' : 'empty')
+      : fallbackMeta.fallbackSource ?? 'client-filter';
+
+    return Response.json({
+      center: { lat: q.lat, lng: q.lng },
+      radiusMeters,
+      count: activitiesPayload.length,
+      activities: activitiesPayload,
+      source,
+      ...fallbackMeta,
+    });
   } catch (error: unknown) {
-    // eslint-disable-next-line no-console
     console.error('Nearby error', error);
-    return respondWithOverpass(q, radiusMeters, fallbackLimit, { degraded: true, cause: error });
+    try {
+      const fallback = await respondWithOverpass(q, radiusMeters, fallbackLimit);
+      return Response.json({ ...fallback, degraded: true, fallbackError: getErrorMessage(error) });
+    } catch (fallbackError) {
+      console.warn('[nearby] overpass degraded fallback failed', fallbackError);
+      try {
+        const venueFallback = await fetchVenueFallbackActivities(db(), q, radiusMeters, fallbackLimit);
+        return Response.json({
+          center: { lat: q.lat, lng: q.lng },
+          radiusMeters,
+          count: venueFallback.length,
+          activities: venueFallback,
+          source: venueFallback.length ? 'supabase-venues' : 'empty',
+          degraded: true,
+          fallbackError: getErrorMessage(error),
+          fallbackSource: 'supabase-venues',
+        });
+      } catch (venueFallbackError) {
+        console.error('[nearby] venue degraded fallback failed', venueFallbackError);
+        const payload: ErrorPayload = { error: getErrorMessage(error) };
+        return Response.json(payload, { status: 500 });
+      }
+    }
   }
 }

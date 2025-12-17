@@ -1,13 +1,30 @@
 "use client";
-import { useEffect, useState } from 'react';
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  derivePendingOnboardingSteps,
+  isPlayStyle,
+  isSportType,
+  ONBOARDING_TRAIT_GOAL,
+  trackOnboardingEntry,
+  type OnboardingStep,
+  type PlayStyle,
+  type SportType,
+} from '@dowhat/shared';
 import { supabase } from '@/lib/supabase/browser';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
+import { SportOnboardingBanner } from '@/components/profile/SportOnboardingBanner';
+import { ReliabilityPledgeBanner } from '@/components/profile/ReliabilityPledgeBanner';
+import { OnboardingProgressBanner } from '@/components/profile/OnboardingProgressBanner';
 import { KPIGrid } from '@/components/profile/KPIGrid';
 import { BadgesPreview } from '@/components/profile/BadgesPreview';
 import { AttendanceBars } from '@/components/profile/AttendanceBars';
+import { ReliabilityExplainer } from '@/components/profile/ReliabilityExplainer';
 import { BioCard } from '@/components/profile/BioCard';
 import { ReviewsTab } from '@/components/profile/ReviewsTab';
 import { TraitCarousel } from '@/components/traits/TraitCarousel';
+import { TraitSelector } from '@/components/traits/TraitSelector';
 import { resolveTraitIcon } from '@/components/traits/icon-utils';
 import type { TraitSummary } from '@/types/traits';
 import type { KPI, Badge, Reliability, AttendanceMetrics, ProfileUser } from '@/types/profile';
@@ -22,12 +39,75 @@ export default function ProfilePage() {
   const [reliability, setReliability] = useState<Reliability | null>(null);
   const [attendance, setAttendance] = useState<AttendanceMetrics | undefined>();
   const [traits, setTraits] = useState<TraitSummary[]>([]);
+  const [traitEditorOpen, setTraitEditorOpen] = useState(false);
+  const [traitsRefreshing, setTraitsRefreshing] = useState(false);
+  const [traitEditorError, setTraitEditorError] = useState<string | null>(null);
   const [badges, setBadges] = useState<Badge[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoDenied, setGeoDenied] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileLoading, setSportProfileLoading] = useState(true);
+  const [reliabilityPledgeAckAt, setReliabilityPledgeAckAt] = useState<string | null>(null);
+  const [reliabilityPledgeLoading, setReliabilityPledgeLoading] = useState(true);
+  const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
+  const traitCountLoading = loading || traitsRefreshing;
+  const onboardingProgressReady = !traitCountLoading && !sportProfileLoading && !reliabilityPledgeLoading;
+  const incompleteSteps = useMemo<OnboardingStep[]>(() => {
+    if (!onboardingProgressReady) return [];
+    return derivePendingOnboardingSteps({
+      traitCount: baseTraitCount,
+      primarySport,
+      playStyle,
+      skillLevel: sportSkillLevel,
+      pledgeAckAt: reliabilityPledgeAckAt,
+    });
+  }, [
+    onboardingProgressReady,
+    baseTraitCount,
+    playStyle,
+    primarySport,
+    reliabilityPledgeAckAt,
+    sportSkillLevel,
+  ]);
+  const needsTraitOnboarding = incompleteSteps.includes('traits');
+  const needsSportOnboarding = incompleteSteps.includes('sport');
+  const needsReliabilityPledge = incompleteSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding ? Math.max(1, ONBOARDING_TRAIT_GOAL - baseTraitCount) : 0;
+
+  const refreshTraits = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setTraitsRefreshing(true);
+      const resp = await fetch(`/api/profile/${userId}/traits?top=6`);
+      if (!resp.ok) {
+        throw new Error(`Failed to refresh traits (${resp.status})`);
+      }
+      const json = await resp.json();
+      setTraits(Array.isArray(json) ? json : []);
+      setTraitEditorError(null);
+    } catch (err) {
+      console.error('Trait refresh failed', err);
+      setTraitEditorError(getErrorMessage(err));
+    } finally {
+      setTraitsRefreshing(false);
+    }
+  }, [userId]);
+
+  const handleTraitEditorCompleted = useCallback(async () => {
+    setTraitEditorOpen(false);
+    await refreshTraits();
+  }, [refreshTraits]);
+
+  useEffect(() => {
+    if (!userId) {
+      setTraitEditorOpen(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
     (async () => {
@@ -49,6 +129,10 @@ export default function ProfilePage() {
         if (traitsRes.ok) {
           const json = await traitsRes.json();
           setTraits(Array.isArray(json) ? json : []);
+          setTraitEditorError(null);
+        } else {
+          setTraits([]);
+          setTraitEditorError('Unable to load traits right now.');
         }
         if (badgesRes.ok) setBadges(await badgesRes.json());
       } catch(error) {
@@ -58,6 +142,77 @@ export default function ProfilePage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadProfileMeta = async () => {
+      if (!userId) {
+        if (!cancelled) {
+          setPrimarySport(null);
+          setSportSkillLevel(null);
+          setReliabilityPledgeAckAt(null);
+          setPlayStyle(null);
+          setSportProfileLoading(false);
+          setReliabilityPledgeLoading(false);
+        }
+        return;
+      }
+      setSportProfileLoading(true);
+      setReliabilityPledgeLoading(true);
+      try {
+        const { data: profileRow, error: profileError } = await supabase
+          .from('profiles')
+          .select('primary_sport, play_style, reliability_pledge_ack_at')
+          .eq('id', userId)
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>();
+        if (profileError && profileError.code !== 'PGRST116') {
+          throw profileError;
+        }
+        const normalized = profileRow && isSportType(profileRow.primary_sport) ? profileRow.primary_sport : null;
+        const normalizedPlayStyle: PlayStyle | null = profileRow && profileRow.play_style && isPlayStyle(profileRow.play_style)
+          ? profileRow.play_style
+          : null;
+        if (!cancelled) {
+          setPrimarySport(normalized);
+          setPlayStyle(normalizedPlayStyle);
+          setReliabilityPledgeAckAt(profileRow?.reliability_pledge_ack_at ?? null);
+        }
+        if (normalized) {
+          const { data: sportRow, error: sportError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', userId)
+            .eq('sport', normalized)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (sportError && sportError.code !== 'PGRST116') {
+            throw sportError;
+          }
+          if (!cancelled) {
+            setSportSkillLevel(sportRow?.skill_level ?? null);
+          }
+        } else if (!cancelled) {
+          setSportSkillLevel(null);
+        }
+      } catch (err) {
+        console.warn('[profile] failed to load sport/reliability preferences', err);
+        if (!cancelled) {
+          setPrimarySport(null);
+          setSportSkillLevel(null);
+          setReliabilityPledgeAckAt(null);
+          setPlayStyle(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSportProfileLoading(false);
+          setReliabilityPledgeLoading(false);
+        }
+      }
+    };
+    void loadProfileMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // Attempt to capture geolocation & populate location if missing once profile is loaded.
   useEffect(() => {
@@ -150,7 +305,12 @@ export default function ProfilePage() {
       />
       <main className="max-w-5xl mx-auto px-6 -mt-8 relative z-10 pb-20">
         {error && <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
+        {incompleteSteps.length > 0 && <OnboardingProgressBanner steps={incompleteSteps} />}
         <div className="mb-8"><KPIGrid kpis={kpis} /></div>
+        {needsReliabilityPledge && (
+          <ReliabilityPledgeBanner lastAcknowledgedAt={reliabilityPledgeAckAt} steps={incompleteSteps} />
+        )}
+        {needsSportOnboarding && <SportOnboardingBanner skillLevel={sportSkillLevel} steps={incompleteSteps} />}
         {profile?.socials && (profile.socials.instagram || profile.socials.whatsapp) && (
           <div className="mb-6 flex flex-wrap gap-3 items-center text-sm">
             {profile.socials.instagram && (() => {
@@ -192,11 +352,64 @@ export default function ProfilePage() {
             </div>
             <div className="md:col-span-2 lg:col-span-2"><BadgesPreview badges={badges.slice(0,4)} /></div>
             <div className="md:col-span-2 lg:col-span-2"><AttendanceBars metrics={attendance} /></div>
+            <div className="md:col-span-2 lg:col-span-2">
+              <ReliabilityExplainer reliability={reliability} attendance={attendance} />
+            </div>
             <div className="md:col-span-2 lg:col-span-2"><BioCard bio={profile?.bio} editable onSave={saveBio} /></div>
           </div>
         )}
         {activeTab === 'traits' && (
           <div className="mt-8 space-y-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTraitEditorOpen((open) => !open)}
+                disabled={traitsRefreshing}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
+              >
+                {traitEditorOpen ? 'Close trait editor' : 'Edit base traits'}
+              </button>
+              {traitsRefreshing && <span className="text-xs text-gray-500">Refreshing…</span>}
+              {traitEditorError && !traitEditorOpen && (
+                <span className="text-xs text-red-600">{traitEditorError}</span>
+              )}
+              {!traitEditorOpen && !traitEditorError && (
+                <span className="text-xs text-gray-500">Update your starting vibes anytime.</span>
+              )}
+            </div>
+            {needsTraitOnboarding && (
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-teal/25 bg-brand-teal/5 p-4 text-sm text-brand-dark">
+                <div className="space-y-1">
+                  <p className="text-base font-semibold text-brand-dark">Finish your base traits</p>
+                  <p>
+                    Pick {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to lock in the full onboarding stack and unlock better people filters.
+                  </p>
+                </div>
+                <Link
+                  href="/onboarding/traits"
+                  className="inline-flex items-center gap-2 rounded-full bg-brand-teal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark"
+                  onClick={() =>
+                    trackOnboardingEntry({
+                      source: 'traits-banner',
+                      platform: 'web',
+                      step: 'traits',
+                      steps: incompleteSteps.length > 0 ? incompleteSteps : ['traits'],
+                      pendingSteps: Math.max(incompleteSteps.length, 1),
+                      nextStep: '/onboarding/traits',
+                    })
+                  }
+                >
+                  Go to onboarding
+                  <ArrowRight className="h-4 w-4" aria-hidden />
+                </Link>
+              </div>
+            )}
+            {traitEditorOpen && (
+              <TraitSelector
+                className="w-full"
+                onCompleted={handleTraitEditorCompleted}
+              />
+            )}
             <TraitCarousel traits={traits} title="Trait stack" description="Scores update as people nominate you." />
             <TraitSummaryList traits={traits} />
           </div>
@@ -207,7 +420,17 @@ export default function ProfilePage() {
               <div key={b.id} className="rounded-lg bg-white border border-gray-200 p-4 flex flex-col gap-1">
                 <div className="flex items-center justify-between">
                   <div className="font-medium text-sm text-gray-800 truncate">{b.name}</div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${b.status==='verified'?'bg-emerald-100 text-emerald-700 border-emerald-200': b.status==='expired'?'bg-red-100 text-red-600 border-red-200':'bg-gray-100 text-gray-600 border-gray-200'}`}>{b.status}</span>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                      b.status === 'verified'
+                        ? 'bg-brand-teal/15 text-brand-teal border-brand-teal/30'
+                        : b.status === 'expired'
+                          ? 'bg-feedback-danger/10 text-feedback-danger border-feedback-danger/30'
+                          : 'bg-ink-subtle text-ink-medium border-midnight-border/20'
+                    }`}
+                  >
+                    {b.status}
+                  </span>
                 </div>
                 <div className="text-xs text-gray-600 flex items-center gap-2">
                   {b.level && <span className="font-mono bg-gray-100 px-1 rounded border border-gray-200">L{b.level}</span>}

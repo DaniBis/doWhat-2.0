@@ -1,37 +1,49 @@
 import { supabase } from "../lib/supabase";
-import { createWebUrl } from "../lib/web";
-import { fetchWithTimeout } from "../lib/fetchWithTimeout";
+import { fetchSupabasePlacesWithinBounds } from "../lib/supabasePlaces";
 import { ensureBackgroundLocation, getLastKnownBackgroundLocation } from "../lib/bg-location";
 import {
   normaliseActivityName,
   formatPrice,
   formatDateRange,
-  createPlacesFetcher,
   formatPlaceUpdatedLabel,
   DEFAULT_CITY_SLUG,
   getCityConfig,
   theme,
+  buildPlaceSavePayload,
+  buildActivitySavePayload,
+  buildSessionSavePayload,
+  trackFindA4thCardTap,
+  trackFindA4thImpression,
+  fetchOverpassPlaceSummaries,
+  estimateRadiusFromBounds,
   type PlaceSummary,
   type PlacesViewportQuery,
   type ActivityRow,
+  type SavePayload,
 } from "@dowhat/shared";
 import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
 const { Link, useFocusEffect, router } = ExpoRouter;
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform } from "react-native";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform, Alert } from "react-native";
+import type { StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
 import ActivityIcon from '../components/ActivityIcon';
 import { Ionicons } from '@expo/vector-icons';
-import RsvpBadges from "../components/RsvpBadges";
+import SessionAttendanceBadges from "../components/SessionAttendanceBadges";
+import SessionAttendanceQuickActions from "../components/SessionAttendanceQuickActions";
 import SearchBar from "../components/SearchBar";
 import EmptyState from "../components/EmptyState";
+import OnboardingNavPrompt from "../components/OnboardingNavPrompt";
+import FindA4thHero, { type FindA4thHeroSession } from "../components/FindA4thHero";
 import type { Session } from '@supabase/supabase-js';
 import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
+import { useSavedActivities } from "../contexts/SavedActivitiesContext";
+import { useRankedOpenSessions } from '../hooks/useRankedOpenSessions';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -53,6 +65,77 @@ const activityVisuals: Record<string, { icon: string; color: string; bgColor: st
 
 const defaultVisual = { icon: '🎯', color: '#FF6B35', bgColor: '#FFF4F1' };
 
+type SaveBadgeVariant = 'dark' | 'light';
+
+type SaveBadgeProps = {
+  saved: boolean;
+  saving?: boolean;
+  disabled?: boolean;
+  variant?: SaveBadgeVariant;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+};
+
+const resolveSaveBadgePalette = (variant: SaveBadgeVariant, saved: boolean) => {
+  if (variant === 'dark') {
+    return {
+      container: {
+        borderColor: saved ? 'rgba(16,185,129,0.65)' : 'rgba(148,163,184,0.45)',
+        backgroundColor: saved ? 'rgba(16,185,129,0.18)' : 'rgba(2,6,23,0.7)',
+      },
+      labelColor: saved ? '#34D399' : '#E2E8F0',
+      iconColor: saved ? '#34D399' : '#E2E8F0',
+    } as const;
+  }
+  return {
+    container: {
+      borderColor: saved ? 'rgba(4,120,87,0.32)' : 'rgba(15,23,42,0.08)',
+      backgroundColor: saved ? 'rgba(5,150,105,0.12)' : '#FFFFFF',
+      shadowColor: 'rgba(15,23,42,0.08)',
+      shadowOpacity: 1,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    labelColor: saved ? '#047857' : '#0F172A',
+    iconColor: saved ? '#047857' : '#0F172A',
+  } as const;
+};
+
+const SaveBadge = ({ saved, saving = false, disabled = false, variant = 'light', style, onPress }: SaveBadgeProps) => {
+  const palette = resolveSaveBadgePalette(variant, saved);
+  return (
+    <Pressable
+      onPress={(event) => {
+        event.stopPropagation?.();
+        event.preventDefault?.();
+        if (disabled || saving || !onPress) return;
+        onPress();
+      }}
+      disabled={disabled || saving || !onPress}
+      style={[
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderRadius: 999,
+          borderWidth: 1,
+          paddingHorizontal: 14,
+          paddingVertical: 6,
+          gap: 6,
+          opacity: disabled || saving || !onPress ? 0.6 : 1,
+        },
+        palette.container,
+        style,
+      ]}
+    >
+      <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={14} color={palette.iconColor} />
+      <Text style={{ color: palette.labelColor, fontWeight: '700', fontSize: 12 }}>
+        {saved ? 'Saved' : 'Save'}
+      </Text>
+    </Pressable>
+  );
+};
+
 type NearbyActivity = { id: string; name: string; count: number };
 
 type ProfileLocationRow = {
@@ -60,18 +143,19 @@ type ProfileLocationRow = {
   last_lng: number | null;
 };
 
-type NearbyApiActivity = {
-  id?: string | null;
-  name?: string | null;
-};
 
-type NearbyApiResponse = {
-  activities?: NearbyApiActivity[];
-};
+const lookingForPlayersFeatureEnabled = !(
+  process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false" ||
+  process.env.NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false"
+);
+
+const FIND_A_FOURTH_SURFACE = 'home_find_fourth';
+
 
 function HomeScreen() {
   const insets = useSafeAreaInsets();
   const isAndroid = Platform.OS === 'android';
+  const { isSaved, pendingIds, toggle } = useSavedActivities();
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -81,20 +165,17 @@ function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
   const nearbyApiFailureLogged = useRef(false);
-  const nearbyFallbackFailureLogged = useRef(false);
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
   const [placesError, setPlacesError] = useState<string | null>(null);
   const placesFetchFailureLogged = useRef(false);
+  const findA4thImpressionLogged = useRef(false);
+  const {
+    sessions: recruitingSessions,
+    isLoading: recruitingLoading,
+    error: recruitingError,
+    refresh: refreshRankedOpenSessions,
+  } = useRankedOpenSessions({ enabled: lookingForPlayersFeatureEnabled, autoRefresh: false });
   const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
-  const placesFetcher = useMemo(
-    () =>
-      createPlacesFetcher({
-        buildUrl: () => createWebUrl('/api/places').toString(),
-        includeCredentials: false,
-        fetchImpl: (input, init) => fetchWithTimeout(input, { timeoutMs: 8000, ...(init ?? {}) }),
-      }),
-    [],
-  );
 
     const FALLBACK_RADIUS_METERS = 2500;
 
@@ -174,92 +255,90 @@ function HomeScreen() {
     }, []);
 
   const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
-    if (latNow == null || lngNow == null) { setActivities([]); return; }
+    if (latNow == null || lngNow == null) {
+      setActivities([]);
+      return;
+    }
     try {
-      const url = createWebUrl('/api/nearby');
-      url.searchParams.set('lat', String(latNow));
-      url.searchParams.set('lng', String(lngNow));
-      url.searchParams.set('radius', '2500');
-      const res = await fetchWithTimeout(url.toString(), { timeoutMs: 8000 });
-      if (!res.ok) {
-        throw new Error(`Nearby API failed (${res.status})`);
-      }
-      const json = await res.json() as NearbyApiResponse;
-      const list = Array.isArray(json?.activities) ? json.activities : [];
-      const groupedMap = list.reduce<Record<string, NearbyActivity>>((acc, item) => {
-        if (!item?.name) { return acc; }
-        const key = normaliseActivityName(item.name);
-        const existing = acc[key];
-        if (existing) {
-          existing.count += 1;
-        } else {
-          acc[key] = {
-            id: key,
-            name: item.name,
-            count: 1,
-          };
-        }
-        return acc;
-      }, {});
-      const grouped = Object.values(groupedMap).sort((a, b) => b.count - a.count);
+      const grouped = await fetchNearbyFromSupabase(latNow, lngNow);
       setActivities(grouped);
-    } catch (apiError) {
+      nearbyApiFailureLogged.current = false;
+    } catch (error) {
       if (__DEV__ && !nearbyApiFailureLogged.current) {
         nearbyApiFailureLogged.current = true;
-        console.info('[Home] Nearby API failed, falling back to Supabase', apiError);
+        console.info('[Home] Nearby Supabase query failed', error);
       }
-      try {
-        const fallback = await fetchNearbyFromSupabase(latNow, lngNow);
-        setActivities(fallback);
-      } catch (fallbackErr) {
-        if (__DEV__ && !nearbyFallbackFailureLogged.current) {
-          nearbyFallbackFailureLogged.current = true;
-          console.info('[Home] Nearby Supabase fallback failed', fallbackErr);
-        }
-        setActivities([]);
-      }
+      setActivities([]);
     }
   }, [fetchNearbyFromSupabase]);
 
   const fetchPlacesViewport = useCallback(
     async (latNow: number | null, lngNow: number | null) => {
+      const city = defaultCity;
+      const hasLocation = latNow != null && lngNow != null;
+      const latitudeDelta = hasLocation
+        ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
+        : city.defaultRegion.latitudeDelta;
+      const longitudeDelta = hasLocation
+        ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
+        : city.defaultRegion.longitudeDelta;
+      const centerLat = hasLocation ? latNow! : city.center.lat;
+      const centerLng = hasLocation ? lngNow! : city.center.lng;
+      const bounds: PlacesViewportQuery['bounds'] = {
+        sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
+        ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
+      };
+
+      let primaryError: unknown = null;
+      const fallbackCenterLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+      const fallbackCenterLng = (bounds.ne.lng + bounds.sw.lng) / 2;
       try {
-        const city = defaultCity;
-        const hasLocation = latNow != null && lngNow != null;
-        const latitudeDelta = hasLocation
-          ? Math.max(city.defaultRegion.latitudeDelta * 0.6, 0.05)
-          : city.defaultRegion.latitudeDelta;
-        const longitudeDelta = hasLocation
-          ? Math.max(city.defaultRegion.longitudeDelta * 0.6, 0.05)
-          : city.defaultRegion.longitudeDelta;
-        const centerLat = hasLocation ? latNow! : city.center.lat;
-        const centerLng = hasLocation ? lngNow! : city.center.lng;
-        const bounds: PlacesViewportQuery['bounds'] = {
-          sw: { lat: centerLat - latitudeDelta / 2, lng: centerLng - longitudeDelta / 2 },
-          ne: { lat: centerLat + latitudeDelta / 2, lng: centerLng + longitudeDelta / 2 },
-        };
-        const query: PlacesViewportQuery = {
+        const supabasePlaces = await fetchSupabasePlacesWithinBounds({
           bounds,
-          limit: 50,
-        };
-        if (!hasLocation) {
-          query.city = city.slug;
-        }
-        const response = await placesFetcher(query);
-        setNearbyPlaces(response.places ?? []);
+          citySlug: city.slug,
+          limit: 80,
+        });
+        setNearbyPlaces(supabasePlaces ?? []);
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
-        console.log('[Home] Places fetch success', response.places?.length, 'places');
+        if (__DEV__) {
+          console.log('[Home] Supabase places fetch success', supabasePlaces.length, 'places');
+        }
+        return;
       } catch (err) {
+        primaryError = err;
         if (__DEV__ && !placesFetchFailureLogged.current) {
           placesFetchFailureLogged.current = true;
-          console.error('[Home] Places fetch failed', err);
+          console.warn('[Home] Supabase places fetch failed', err);
         }
-        setNearbyPlaces([]);
-        setPlacesError(err instanceof Error ? err.message : 'Unable to load nearby places.');
       }
+
+      try {
+        const fallbackRadiusMeters = estimateRadiusFromBounds(bounds);
+        const fallbackPlaces = await fetchOverpassPlaceSummaries({
+          lat: fallbackCenterLat,
+          lng: fallbackCenterLng,
+          radiusMeters: fallbackRadiusMeters,
+          limit: 30,
+        });
+        if (fallbackPlaces.length) {
+          setNearbyPlaces(fallbackPlaces);
+          setPlacesError('Showing fallback nearby venues while Supabase recovers.');
+          return;
+        }
+      } catch (fallbackError) {
+        if (__DEV__ && placesFetchFailureLogged.current) {
+          console.warn('[Home] Places fallback failed', fallbackError);
+        }
+      }
+
+      setNearbyPlaces([]);
+      const defaultMessage = 'Unable to load nearby places from Supabase.';
+      setPlacesError(
+        primaryError instanceof Error ? `${defaultMessage}\n${primaryError.message}` : defaultMessage,
+      );
     },
-    [defaultCity, placesFetcher],
+    [defaultCity],
   );
 
   const load = useCallback(async () => {
@@ -267,6 +346,8 @@ function HomeScreen() {
     try {
       const { data: auth } = await supabase.auth.getSession();
       setSession(auth.session ?? null);
+      const userId = auth.session?.user?.id ?? null;
+
       let latNow: number | null = null;
       let lngNow: number | null = null;
       try {
@@ -291,13 +372,11 @@ function HomeScreen() {
       }
       if (latNow == null || lngNow == null) {
         try {
-          const { data: auth } = await supabase.auth.getUser();
-          const uid = auth?.user?.id ?? null;
-          if (uid) {
+          if (userId) {
             const { data } = await supabase
               .from('profiles')
               .select('last_lat,last_lng')
-              .eq('id', uid)
+              .eq('id', userId)
               .maybeSingle<ProfileLocationRow>();
             const la = data?.last_lat ?? null;
             const ln = data?.last_lng ?? null;
@@ -308,8 +387,10 @@ function HomeScreen() {
           }
         } catch {}
       }
+
       await fetchNearbyActivities(latNow, lngNow);
       await fetchPlacesViewport(latNow, lngNow);
+  await refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } });
       
       // Get current sessions with future start times
       const now = new Date().toISOString();
@@ -327,7 +408,7 @@ function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [fetchNearbyActivities, fetchPlacesViewport]);
+  }, [fetchNearbyActivities, fetchPlacesViewport, refreshRankedOpenSessions]);
 
   useEffect(() => {
     ensureBackgroundLocation().catch(() => {});
@@ -385,6 +466,19 @@ function HomeScreen() {
   const handleFilter = () => {
     router.push('/filter');
   };
+
+  const handleTogglePlaceSave = useCallback(async (place: PlaceSummary) => {
+    const payload = buildPlaceSavePayload(place, defaultCity.slug ?? null);
+    try {
+      await toggle(payload);
+    } catch (err) {
+      if (__DEV__) {
+        console.error('[Home] Failed to toggle saved place', err);
+      }
+      const message = err instanceof Error ? err.message : 'Unable to update saved activities.';
+      Alert.alert('Save place', message);
+    }
+  }, [defaultCity.slug, toggle]);
 
   const activityPresence = useMemo(() => {
     const idSet = new Set<string>();
@@ -447,6 +541,66 @@ function HomeScreen() {
 
   const upcomingStandaloneSessions = useMemo(() => standaloneSessions.slice(0, 6), [standaloneSessions]);
   const topPlaces = useMemo(() => nearbyPlaces.slice(0, 12), [nearbyPlaces]);
+  const heroSessions: FindA4thHeroSession[] = useMemo(
+    () =>
+      recruitingSessions
+        .filter((item) => Boolean(item.session?.id))
+        .map((item) => ({
+          id: item.session.id,
+          sportLabel: item.session.activityName ?? null,
+          venueLabel: item.session.venueName ?? null,
+          startsAt: item.session.startsAt ?? null,
+          openSlots: item.session.openSlotMeta?.slotsCount ?? item.session.openSlots?.slotsTotal ?? null,
+        })),
+    [recruitingSessions],
+  );
+  const showRecruitingSection = lookingForPlayersFeatureEnabled && (recruitingLoading || heroSessions.length > 0);
+  const showFindA4thHero = !recruitingLoading && heroSessions.length > 0;
+
+  const handleToggleSavePayload = useCallback(async (payload: SavePayload | null) => {
+    if (!payload) return;
+    try {
+      await toggle(payload);
+    } catch (err) {
+      if (__DEV__) {
+        console.error('[Home] Failed to toggle saved activity', err);
+      }
+      const message = err instanceof Error ? err.message : 'Unable to update saved activities.';
+      Alert.alert('Save activity', message);
+    }
+  }, [toggle]);
+
+  const handleFindA4thHeroPress = useCallback(
+    (session: FindA4thHeroSession) => {
+      trackFindA4thCardTap({
+        platform: 'mobile',
+        surface: FIND_A_FOURTH_SURFACE,
+        sessionId: session.id,
+        sport: session.sportLabel ?? null,
+        venue: session.venueLabel ?? null,
+      });
+      router.push(`/(tabs)/sessions/${session.id}`);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (showFindA4thHero && heroSessions.length > 0 && !findA4thImpressionLogged.current) {
+      trackFindA4thImpression({
+        platform: 'mobile',
+        surface: FIND_A_FOURTH_SURFACE,
+        sessions: heroSessions.map((session) => ({
+          sessionId: session.id,
+          sport: session.sportLabel ?? null,
+          venue: session.venueLabel ?? null,
+        })),
+      });
+      findA4thImpressionLogged.current = true;
+    } else if (!showFindA4thHero) {
+      findA4thImpressionLogged.current = false;
+    }
+  }, [heroSessions, showFindA4thHero]);
+
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -563,6 +717,10 @@ function HomeScreen() {
           </View>
         </View>
 
+        <View style={{ paddingHorizontal: 20, marginTop: 18 }}>
+          <OnboardingNavPrompt />
+        </View>
+
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 40 }}
@@ -592,6 +750,8 @@ function HomeScreen() {
                       : 'Activity';
                   const updatedLabel = formatPlaceUpdatedLabel(place);
                   const locality = place.address ?? place.locality ?? null;
+                  const placeSaved = isSaved(place.id);
+                  const placeSaving = pendingIds.has(place.id);
                   return (
                     <Pressable
                       key={place.id}
@@ -608,6 +768,13 @@ function HomeScreen() {
                         elevation: 4,
                       }}
                     >
+                      <SaveBadge
+                        saved={placeSaved}
+                        saving={placeSaving}
+                        variant="dark"
+                        style={{ position: 'absolute', top: 12, right: 12 }}
+                        onPress={() => handleTogglePlaceSave(place)}
+                      />
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <View
                           style={{
@@ -646,6 +813,52 @@ function HomeScreen() {
           ) : placesError ? (
             <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
               <Text style={{ color: '#DC2626', fontSize: 13 }}>{placesError}</Text>
+            </View>
+          ) : null}
+
+          {showRecruitingSection ? (
+            <View style={{ marginTop: 28 }}>
+              {showFindA4thHero ? (
+                <FindA4thHero
+                  sessions={heroSessions}
+                  onPress={handleFindA4thHeroPress}
+                  title="Find a 4th player"
+                  subtitle="Sessions asking for teammates, sorted for you."
+                />
+              ) : recruitingLoading ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, columnGap: 16 }}
+                >
+                  {[0, 1, 2].map((key) => (
+                    <View
+                      key={`recruiting-skeleton-${key}`}
+                      style={{
+                        width: 260,
+                        borderRadius: 20,
+                        backgroundColor: '#FFFFFF',
+                        padding: 16,
+                        shadowColor: '#000',
+                        shadowOpacity: 0.05,
+                        shadowRadius: 10,
+                        shadowOffset: { width: 0, height: 4 },
+                        elevation: 2,
+                        gap: 10,
+                      }}
+                    >
+                      <View style={{ height: 16, backgroundColor: '#E5E7EB', borderRadius: 8, width: 180 }} />
+                      <View style={{ height: 12, backgroundColor: '#E5E7EB', borderRadius: 8, width: 120 }} />
+                      <View style={{ height: 12, backgroundColor: '#E5E7EB', borderRadius: 8, width: 150 }} />
+                      <View style={{ height: 36, backgroundColor: '#F1F5F9', borderRadius: 999 }} />
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : recruitingError ? (
+                <View style={{ paddingHorizontal: 20 }}>
+                  <Text style={{ color: '#DC2626', fontSize: 13 }}>{recruitingError}</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -700,6 +913,12 @@ function HomeScreen() {
                   const sessionCount = getActivitySessionCount(activity);
                   const derivedCount = Math.max(sessionCount, activity.count ?? 0);
                   const visual = activityVisuals[activity.name] || defaultVisual;
+                  const activityPayload = buildActivitySavePayload(activity, rows, {
+                    source: 'mobile_home_activity_card',
+                  });
+                  const activityPayloadId = activityPayload?.id ?? null;
+                  const saved = activityPayloadId ? isSaved(activityPayloadId) : false;
+                  const saving = activityPayloadId ? pendingIds.has(activityPayloadId) : false;
                   return (
                     <Link
                       key={activity.id}
@@ -719,6 +938,18 @@ function HomeScreen() {
                         elevation: 4,
                         marginBottom: 16,
                       }}>
+                        <SaveBadge
+                          saved={saved}
+                          saving={saving}
+                          disabled={!activityPayloadId}
+                          variant="light"
+                          style={{ position: 'absolute', top: 12, right: 12 }}
+                          onPress={() => {
+                            if (activityPayload) {
+                              handleToggleSavePayload(activityPayload);
+                            }
+                          }}
+                        />
                         {/* Activity Icon Container */}
                         <View style={{
                           width: 84,
@@ -779,11 +1010,31 @@ function HomeScreen() {
             ) : (
               upcomingStandaloneSessions.map((s) => (
                 <View key={String(s.id)} style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                  {(() => {
+                    const sessionSavePayload = buildSessionSavePayload(s, {
+                      source: 'mobile_home_upcoming_sessions',
+                    });
+                    if (!sessionSavePayload) return null;
+                    const payloadId = sessionSavePayload.id;
+                    const sessionSaved = payloadId ? isSaved(payloadId) : false;
+                    const sessionSaving = payloadId ? pendingIds.has(payloadId) : false;
+                    return (
+                      <SaveBadge
+                        saved={sessionSaved}
+                        saving={sessionSaving}
+                        disabled={!payloadId}
+                        variant="light"
+                        style={{ position: 'absolute', top: 12, right: 12 }}
+                        onPress={() => handleToggleSavePayload(sessionSavePayload)}
+                      />
+                    );
+                  })()}
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{s.activities?.name ?? 'Activity'}</Text>
                   <Text style={{ color: '#6B7280', marginTop: 2 }}>{s.venues?.name ?? 'Venue'}</Text>
                   <Text style={{ marginTop: 4 }}>{formatPrice(s.price_cents)}</Text>
                   <Text style={{ marginTop: 2, color: '#374151' }}>{formatDateRange(s.starts_at, s.ends_at)}</Text>
-                  <RsvpBadges activityId={s.activities?.id ?? null} />
+                  <SessionAttendanceBadges sessionId={s.id ?? null} />
+                  <SessionAttendanceQuickActions sessionId={s.id ?? null} size="compact" style={{ marginTop: 8 }} />
                   <Link href={`/sessions/${s.id}`} asChild>
                     <Pressable style={{ marginTop: 10, padding: 10, backgroundColor: '#10B981', borderRadius: 10 }}>
                       <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '600' }}>View details</Text>

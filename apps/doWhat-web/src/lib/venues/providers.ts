@@ -19,33 +19,60 @@ type CacheKey = 'fsq_id' | 'place_id';
 type FoursquareCategory = { id?: number; name?: string | null };
 type FoursquarePhoto = { prefix?: string | null; suffix?: string | null };
 type FoursquareTip = { text?: string | null };
+type FoursquareHours = {
+  display?: string | null;
+  status?: string | null;
+  is_open?: boolean | null;
+  open_now?: boolean | null;
+  timeframes?: Array<Record<string, unknown>> | null;
+};
+
 type FoursquareResponse = {
   name?: string | null;
   description?: string | null;
   categories?: FoursquareCategory[];
   tips?: FoursquareTip[];
   photos?: FoursquarePhoto[];
-  location?: { address?: string | null; city?: string | null };
+  location?: {
+    address?: string | null;
+    formatted_address?: string | null;
+    locality?: string | null;
+    city?: string | null;
+    region?: string | null;
+    postcode?: string | null;
+    country?: string | null;
+  };
   geocodes?: { main?: { latitude?: number | null; longitude?: number | null } };
   rating?: number;
   price?: number;
+  hours?: FoursquareHours | null;
+  hours_popular?: FoursquareHours | null;
+  timezone?: string | null;
 };
 
 type GooglePhotoAttribution = { photoUri?: string | null };
 type GooglePhoto = { authorAttributions?: GooglePhotoAttribution[]; name?: string | null };
 type GoogleReview = { text?: { text?: string | null } | null };
 type GoogleDisplayName = { text?: string | null };
+type GoogleOpeningHours = {
+  openNow?: boolean | null;
+  weekdayDescriptions?: string[] | null;
+};
 type GoogleResponse = {
   name?: string | null;
   displayName?: GoogleDisplayName | null;
   editorialSummary?: { text?: string | null } | null;
   shortFormattedAddress?: string | null;
+  formattedAddress?: string | null;
   location?: { latitude?: number | null; longitude?: number | null } | null;
   rating?: number;
   priceLevel?: number;
   reviews?: GoogleReview[];
   types?: string[];
   photos?: GooglePhoto[];
+  currentOpeningHours?: GoogleOpeningHours | null;
+  regularOpeningHours?: GoogleOpeningHours | null;
+  utcOffsetMinutes?: number | null;
 };
 
 async function readCache(
@@ -56,7 +83,7 @@ async function readCache(
 ): Promise<ExternalVenueRecord | null> {
   const { data, error } = await supabase
     .from(table)
-    .select<CacheRow>('payload, expires_at')
+    .select('payload, expires_at')
     .eq(keyColumn, key)
     .maybeSingle();
 
@@ -65,11 +92,12 @@ async function readCache(
     return null;
   }
 
-  if (!data) return null;
-  if (new Date(data.expires_at).getTime() < Date.now()) {
+  const row = (data ?? null) as CacheRow | null;
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
     return null;
   }
-  return data.payload;
+  return row.payload;
 }
 
 async function writeCache(
@@ -110,6 +138,23 @@ function dedupeStrings(values: (string | null | undefined)[]): string[] {
   return result;
 }
 
+function joinAddressParts(parts: Array<string | null | undefined>): string | null {
+  const cleaned = parts
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+  return cleaned.length ? cleaned.join(', ') : null;
+}
+
+function formatUtcOffset(minutes: number | null | undefined): string | null {
+  if (minutes == null || Number.isNaN(minutes)) return null;
+  const hours = Math.trunc(minutes / 60);
+  const mins = Math.abs(minutes % 60);
+  const sign = hours >= 0 ? '+' : '-';
+  const paddedHours = String(Math.abs(hours)).padStart(2, '0');
+  const paddedMinutes = String(mins).padStart(2, '0');
+  return `UTC${sign}${paddedHours}:${paddedMinutes}`;
+}
+
 export async function fetchFoursquareVenue(opts: {
   supabase: SupabaseClient;
   fsqId: string;
@@ -137,6 +182,9 @@ export async function fetchFoursquareVenue(opts: {
     'website',
     'photos',
     'tips',
+    'hours',
+    'hours_popular',
+    'timezone',
   ].join(',');
 
   const response = await fetch(`${FOURSQUARE_BASE_URL}/${fsqId}?fields=${fields}`, {
@@ -157,6 +205,9 @@ export async function fetchFoursquareVenue(opts: {
         .map((cat) => (typeof cat?.name === 'string' ? cat.name : null))
         .filter((value): value is string => Boolean(value))
     : [];
+  const locality = json.location?.locality ?? json.location?.city ?? null;
+  const formattedAddress =
+    json.location?.formatted_address ?? joinAddressParts([json.location?.address, locality, json.location?.region, json.location?.country]);
   const reviews = Array.isArray(json.tips)
     ? json.tips
         .map((tip) => (typeof tip?.text === 'string' ? tip.text : null))
@@ -169,23 +220,43 @@ export async function fetchFoursquareVenue(opts: {
           if (!photo?.prefix || !photo?.suffix) return null;
           return `${photo.prefix}original${photo.suffix}`;
         })
-        .filter(Boolean)
+        .filter((value): value is string => Boolean(value))
         .slice(0, 5)
     : [];
+  const openNow = typeof json.hours?.is_open === 'boolean'
+    ? json.hours.is_open
+    : typeof json.hours?.open_now === 'boolean'
+      ? json.hours.open_now
+      : typeof json.hours?.status === 'string'
+        ? json.hours.status.toLowerCase().includes('open')
+        : null;
+  const hoursSummary = json.hours?.display ?? json.hours?.status ?? json.hours_popular?.display ?? json.hours_popular?.status ?? null;
+  const hoursPayload = json.hours || json.hours_popular
+    ? ({ regular: json.hours ?? null, popular: json.hours_popular ?? null } as Record<string, unknown>)
+    : null;
 
   const normalized: ExternalVenueRecord = {
     provider: 'foursquare',
     providerId: fsqId,
-    name: json.name,
+    name: json.name ?? 'Unknown venue',
     description: json.description ?? null,
     categories,
-    keywords: dedupeStrings([json.location?.address, json.location?.city, ...categories]),
+    keywords: dedupeStrings([formattedAddress, locality, json.location?.region, json.location?.country, ...categories]),
     rating: typeof json.rating === 'number' ? json.rating : null,
     priceLevel: typeof json.price === 'number' ? json.price : null,
     lat: json.geocodes?.main?.latitude ?? null,
     lng: json.geocodes?.main?.longitude ?? null,
     photos,
     reviews,
+    address: formattedAddress,
+    locality,
+    region: json.location?.region ?? null,
+    country: json.location?.country ?? null,
+    postcode: json.location?.postcode ?? null,
+    timezone: json.timezone ?? null,
+    openNow,
+    hoursSummary: hoursSummary ?? null,
+    hours: hoursPayload,
   };
 
   await writeCache(supabase, 'foursquare_cache', 'fsq_id', fsqId, normalized, FOURSQUARE_TTL_MS, venueId);
@@ -214,12 +285,16 @@ export async function fetchGooglePlace(opts: {
     'displayName',
     'editorialSummary',
     'shortFormattedAddress',
+    'formattedAddress',
     'location',
     'rating',
     'priceLevel',
     'reviews',
     'types',
     'photos',
+    'currentOpeningHours',
+    'regularOpeningHours',
+    'utcOffsetMinutes',
   ].join(',');
 
   const response = await fetch(`${GOOGLE_BASE_URL}/places/${placeId}?languageCode=en&fields=${fields}`, {
@@ -248,9 +323,18 @@ export async function fetchGooglePlace(opts: {
   const photos = Array.isArray(json.photos)
     ? json.photos
         .map((photo) => photo?.authorAttributions?.[0]?.photoUri ?? photo?.name ?? null)
-        .filter(Boolean)
+        .filter((value): value is string => Boolean(value))
         .slice(0, 5)
     : [];
+  const formattedAddress = json.shortFormattedAddress ?? json.formattedAddress ?? null;
+  const openNow = typeof json.currentOpeningHours?.openNow === 'boolean' ? json.currentOpeningHours.openNow : null;
+  const hoursSummary =
+    json.currentOpeningHours?.weekdayDescriptions?.[0] ?? json.regularOpeningHours?.weekdayDescriptions?.[0] ?? null;
+  const hoursPayload =
+    json.currentOpeningHours || json.regularOpeningHours
+      ? ({ current: json.currentOpeningHours ?? null, regular: json.regularOpeningHours ?? null } as Record<string, unknown>)
+      : null;
+  const timezone = formatUtcOffset(json.utcOffsetMinutes ?? null);
 
   const normalized: ExternalVenueRecord = {
     provider: 'google',
@@ -258,13 +342,22 @@ export async function fetchGooglePlace(opts: {
     name: json.displayName?.text ?? json.name ?? 'Unknown venue',
     description: json.editorialSummary?.text ?? null,
     categories,
-    keywords: dedupeStrings([json.shortFormattedAddress ?? null, ...categories]),
+    keywords: dedupeStrings([formattedAddress, ...categories]),
     rating: typeof json.rating === 'number' ? json.rating : null,
     priceLevel: typeof json.priceLevel === 'number' ? json.priceLevel : null,
     lat: json.location?.latitude ?? null,
     lng: json.location?.longitude ?? null,
     photos,
     reviews,
+    address: formattedAddress,
+    locality: null,
+    region: null,
+    country: null,
+    postcode: null,
+    timezone,
+    openNow,
+    hoursSummary: hoursSummary ?? null,
+    hours: hoursPayload,
   };
 
   await writeCache(supabase, 'google_places_cache', 'place_id', placeId, normalized, GOOGLE_TTL_MS, venueId);
@@ -278,8 +371,8 @@ export function mergeExternalVenues(records: ExternalVenueRecord[]): ExternalVen
     providerId: records[0].providerId,
     name: records.find((r) => r.name)?.name ?? records[0].name,
     description: records.find((r) => r.description)?.description ?? records[0].description ?? null,
-    categories: Array.from(new Set(records.flatMap((r) => r.categories))).filter(Boolean),
-    keywords: Array.from(new Set(records.flatMap((r) => r.keywords))).filter(Boolean),
+    categories: Array.from(new Set(records.flatMap((r) => r.categories))).filter((value): value is string => Boolean(value)),
+    keywords: Array.from(new Set(records.flatMap((r) => r.keywords))).filter((value): value is string => Boolean(value)),
     rating:
       records.find((r) => typeof r.rating === 'number')?.rating ??
       (typeof records[0].rating === 'number' ? records[0].rating : null),

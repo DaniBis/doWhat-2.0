@@ -1,5 +1,5 @@
 import { expandCategoryAliases, foursquareCategoryMap, normalizeCategoryKey, type NormalizedCategory } from '../categories';
-import type { CityCategoryConfig } from '@dowhat/shared';
+import type { CityCategoryConfig, FoursquareCategory, FoursquarePlace, FoursquareSearchResponse } from '@dowhat/shared';
 import { haversineMeters, mergeCategories } from '../utils';
 import type { PlacesQuery, ProviderPlace } from '../types';
 
@@ -29,37 +29,6 @@ const buildKeywordFilters = (
   });
   return Array.from(keywords);
 };
-
-interface FoursquareCategory {
-  id: number | string;
-  name: string;
-}
-
-interface FoursquareGeocodes {
-  main: { latitude: number; longitude: number };
-}
-
-interface FoursquareLocation {
-  address?: string;
-  locality?: string;
-  region?: string;
-  country?: string;
-  postcode?: string;
-}
-
-interface FoursquareResult {
-  fsq_id: string;
-  name: string;
-  categories: FoursquareCategory[];
-  geocodes: FoursquareGeocodes;
-  location: FoursquareLocation;
-  distance?: number;
-  link?: string;
-  website?: string;
-  rating?: number;
-  popularity?: number;
-  tel?: string;
-}
 
 const interpretCategories = (categories: FoursquareCategory[]): NormalizedCategory[] => {
   const set = new Set<NormalizedCategory>();
@@ -108,6 +77,7 @@ export const fetchFoursquarePlaces = async (
   if (keywordFilters.length && !url.searchParams.has('query')) {
     url.searchParams.set('query', keywordFilters.join(' '));
   }
+  url.searchParams.set('fields', 'fsq_id,name,location,categories,geocodes,website,description,hours,link');
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -121,14 +91,14 @@ export const fetchFoursquarePlaces = async (
     throw new Error(`Foursquare request failed (${response.status})`);
   }
 
-  const payload = (await response.json()) as { results?: FoursquareResult[] };
+  const payload = (await response.json()) as FoursquareSearchResponse;
   const results = payload.results ?? [];
 
-  return results.map<ProviderPlace>((result) => {
+  return results.map<ProviderPlace>((result: FoursquarePlace) => {
     const geocodes = result.geocodes?.main;
-    const mergedCategories = mergeCategories(categories, interpretCategories(result.categories));
+    const mergedCategories = mergeCategories(categories, interpretCategories(result.categories ?? []));
     const categoriesForPlace = mergedCategories.length ? mergedCategories : ['activity'];
-    const tagSet = new Set(result.categories.map((category) => category.name.toLowerCase()));
+    const tagSet = new Set((result.categories ?? []).map((category) => category.name.toLowerCase()));
     keywordFilters.forEach((keyword) => tagSet.add(keyword.toLowerCase()));
 
     return {
@@ -139,13 +109,14 @@ export const fetchFoursquarePlaces = async (
       lng: geocodes?.longitude ?? 0,
       categories: categoriesForPlace,
       tags: Array.from(tagSet),
-      address: result.location.address,
-      locality: result.location.locality,
-      region: result.location.region,
-      country: result.location.country,
-      postcode: result.location.postcode,
+      address: result.location?.address,
+      locality: result.location?.locality,
+      region: result.location?.region,
+      country: result.location?.country,
+      postcode: result.location?.postcode,
       website: result.website,
       phone: result.tel,
+      description: result.description,
       rating: typeof result.rating === 'number' ? result.rating : undefined,
       raw: result as unknown as Record<string, unknown>,
       attribution: {

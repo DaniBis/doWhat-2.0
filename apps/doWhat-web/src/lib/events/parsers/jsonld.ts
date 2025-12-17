@@ -1,12 +1,15 @@
 type CheerioLib = typeof import('cheerio');
 
+let cachedCheerio: CheerioLib | null = null;
 let cachedLoad: CheerioLib['load'] | null = null;
 
 const getCheerioLoad = (): CheerioLib['load'] => {
   if (cachedLoad) return cachedLoad;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-  const cheerio = require('cheerio') as CheerioLib;
-  cachedLoad = cheerio.load;
+  if (!cachedCheerio) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- Jest needs the CommonJS entry
+    cachedCheerio = require('cheerio') as CheerioLib;
+  }
+  cachedLoad = cachedCheerio.load;
   return cachedLoad;
 };
 

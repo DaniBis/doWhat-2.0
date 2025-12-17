@@ -5,6 +5,13 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 
+const mockRouter = {
+  push: jest.fn(),
+  replace: jest.fn(),
+  back: jest.fn(),
+  dismissAll: jest.fn(),
+};
+
 type SupabaseAuthMock = {
   getUser: jest.MockedFunction<() => Promise<{ data: { user: { id: string; email?: string } } | null }>>;
   onAuthStateChange: jest.MockedFunction<() => { data: { subscription: { unsubscribe: () => void } } }>;
@@ -41,9 +48,14 @@ jest.mock('../lib/supabase', () => ({
 // Stub expo-linear-gradient for JSDOM tests
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: require('react-native').View }));
+jest.mock('expo-web-browser', () => ({
+  openBrowserAsync: jest.fn(),
+  WebBrowserResultType: { DISMISS: 'dismiss' },
+}));
 // Stub expo-router Link to a passthrough
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useRouter: () => mockRouter,
 }));
 // NOTE: Avoid patching 'react-native' at module level to prevent resolver issues
 // in Jest when the suite is skipped. If/when re-enabling this suite, consider
@@ -98,6 +110,7 @@ function createProfilesSelectMock(result?: unknown, error?: unknown): ProfilesQu
 describe('Mobile Profile edit', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Object.values(mockRouter).forEach((fn) => fn.mockClear());
     mockFetch.mockClear();
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { id: 'u-1', email: 'u@example.com' } } });
     supabaseMock.auth.onAuthStateChange.mockReturnValue({

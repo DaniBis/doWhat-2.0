@@ -1,6 +1,6 @@
-import { formatDateRange, formatPrice } from '@dowhat/shared';
+import { formatDateRange, formatPrice, buildActivitySavePayload, type ActivityRow, type SavePayload } from '@dowhat/shared';
 import { useLocalSearchParams, Link, router } from 'expo-router';
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, FlatList, SafeAreaView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -17,7 +17,10 @@ const activityVisuals: Record<string, { icon: string; color: string }> = {
 	'Basketball': { icon: '🏀', color: '#f59e42' },
 };
 
-import { supabase } from '../../lib/supabase';
+import SessionAttendanceBadges from '../../../components/SessionAttendanceBadges';
+import SessionAttendanceQuickActions from '../../../components/SessionAttendanceQuickActions';
+import { supabase } from '../../../lib/supabase';
+import { useSavedActivities } from '../../../contexts/SavedActivitiesContext';
 
 
 type Row = {
@@ -113,6 +116,8 @@ export default function ActivityPage() {
 	const [err, setErr] = useState<string | null>(null);
 	const [resolvedActivityId, setResolvedActivityId] = useState<string | null>(isUuid(id) ? id : null);
 	const [resolvedActivityNameState, setResolvedActivityNameState] = useState<string | null>(initialActivityName);
+	const { isSaved, toggle, pendingIds } = useSavedActivities();
+	const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -234,6 +239,17 @@ export default function ActivityPage() {
 		return Object.values(grouped);
 	}, [rows]);
 
+	const activityRowsForSaving = useMemo<ActivityRow[]>(() => {
+		return (rows ?? []).map((row) => ({
+			id: row.session_id,
+			price_cents: row.price_cents,
+			starts_at: row.starts_at,
+			ends_at: row.ends_at,
+			activities: { id: row.activity_id, name: row.activity_name },
+			venues: { name: row.venue_name },
+		}));
+	}, [rows]);
+
 	const hasLoaded = rows !== null;
 	const hasData = (rows?.length ?? 0) > 0;
 	const isExternal = id ? !isUuid(id) : false;
@@ -255,6 +271,56 @@ export default function ActivityPage() {
 	const nextSessionPrice = nextSession ? describePrice(nextSession.price_cents) : null;
 	const nextSessionVenue = nextSession?.venue_name?.trim() ? nextSession.venue_name.trim() : null;
 	const nextSessionAddress = nextSession?.venue_address?.trim() ? nextSession.venue_address.trim() : null;
+	const nextSessionId = nextSession?.session_id ?? null;
+	const nextSessionVenueId = nextSession?.venue_id ?? null;
+
+	const savePayload = useMemo<SavePayload | null>(() => {
+		const targetActivityId = resolvedActivityId ?? (isUuid(id) ? id : null);
+		if (!targetActivityId) return null;
+		const activitySummary = {
+			id: targetActivityId,
+			name: activityName?.trim() ?? null,
+		};
+		const basePayload = buildActivitySavePayload(activitySummary, activityRowsForSaving, {
+			source: 'mobile_activity_detail',
+		});
+		if (!basePayload) return null;
+		return {
+			...basePayload,
+			venueId: nextSessionVenueId ?? basePayload.venueId,
+			address: nextSessionAddress ?? basePayload.address,
+			metadata: {
+				...(basePayload.metadata ?? {}),
+				primarySessionId: nextSessionId ?? null,
+				nextScheduleLabel: nextSessionRange ?? null,
+				nextPriceLabel: nextSessionPrice ?? null,
+				nextVenueName: nextSessionVenue ?? null,
+			},
+		};
+	}, [activityName, activityRowsForSaving, id, nextSessionAddress, nextSessionId, nextSessionPrice, nextSessionRange, nextSessionVenue, nextSessionVenueId, resolvedActivityId]);
+
+	const savePayloadId = savePayload?.id ?? null;
+	const savePending = savePayload ? pendingIds.has(savePayload.id) : false;
+	const saved = savePayload ? isSaved(savePayload.id) : false;
+	const saveButtonColor = saved ? '#065f46' : '#0d9488';
+	const saveIcon = saved ? 'bookmark' : 'bookmark-outline';
+
+	useEffect(() => {
+		setSaveFeedback(null);
+	}, [savePayloadId]);
+
+	const handleToggleSave = useCallback(async () => {
+		if (!savePayload) return;
+		setSaveFeedback(null);
+		const wasSaved = isSaved(savePayload.id);
+		try {
+			await toggle(savePayload);
+			setSaveFeedback({ type: 'success', message: wasSaved ? 'Removed from Saved.' : 'Saved for later.' });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Unable to update saved activities.';
+			setSaveFeedback({ type: 'error', message });
+		}
+	}, [isSaved, savePayload, toggle]);
 
 	const headerComponent = (
 		<View style={{ marginBottom: 20 }}>
@@ -290,8 +356,42 @@ export default function ActivityPage() {
 			<View style={{ paddingHorizontal: 20, paddingTop: 24 }}>
 				<Text style={{ fontSize: 20, fontWeight: '700', color: '#0F172A' }}>Places for {activityName}</Text>
 				<Text style={{ color: '#475569', marginTop: 6 }}>
-					Tap a session to explore the details or RSVP quickly.
+					Tap a session to explore the details or update your attendance in seconds.
 				</Text>
+				{savePayload && (
+					<View style={{ marginTop: 16 }}>
+						<Pressable
+							onPress={handleToggleSave}
+							disabled={savePending}
+							style={{
+								alignSelf: 'flex-start',
+								paddingVertical: 10,
+								paddingHorizontal: 16,
+								borderRadius: 9999,
+								borderWidth: 1,
+								borderColor: saveButtonColor,
+								backgroundColor: saved ? '#ecfdf5' : '#ffffff',
+								opacity: savePending ? 0.6 : 1,
+								flexDirection: 'row',
+								alignItems: 'center',
+								gap: 8,
+							}}
+						>
+							<Ionicons name={saveIcon} size={16} color={saveButtonColor} />
+							<Text style={{ color: saveButtonColor, fontWeight: '600' }}>{saved ? 'Saved' : 'Save'}</Text>
+						</Pressable>
+						{saveFeedback && (
+							<Text
+								style={{
+									marginTop: 6,
+									color: saveFeedback.type === 'success' ? '#065f46' : '#b91c1c',
+								}}
+							>
+								{saveFeedback.message}
+							</Text>
+						)}
+					</View>
+				)}
 				{nextSession && (
 					<View style={{ marginTop: 16, backgroundColor: '#eef2ff', borderRadius: 18, padding: 16 }}>
 						<Text style={{ fontSize: 13, fontWeight: '700', color: '#4338ca', textTransform: 'uppercase' }}>Next session</Text>
@@ -439,6 +539,8 @@ export default function ActivityPage() {
 										<Ionicons name="pricetag-outline" size={16} color="#0F172A" />
 										<Text style={{ marginLeft: 8, color: '#475569', fontWeight: '600' }}>{sessionPrice}</Text>
 									</View>
+									<SessionAttendanceBadges sessionId={s.session_id} />
+									<SessionAttendanceQuickActions sessionId={s.session_id} size="compact" style={{ marginTop: 10 }} />
 									<Link href={`/sessions/${s.session_id}`} asChild>
 										<Pressable style={{ marginTop: 12, backgroundColor: '#16A34A', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 16 }}>
 											<Text style={{ color: '#FFFFFF', textAlign: 'center', fontWeight: '600' }}>View details</Text>

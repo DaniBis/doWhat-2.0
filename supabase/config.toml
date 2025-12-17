@@ -1,0 +1,10 @@
+# Supabase Edge Function configuration
+# notify-sms relies on its own bearer token so we disable JWT verification.
+[functions."notify-sms"]
+verify_jwt = false
+
+[functions."mobile-disputes"]
+verify_jwt = true
+
+[functions."mobile-session-attendance"]
+verify_jwt = true

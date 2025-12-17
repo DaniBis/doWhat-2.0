@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -21,21 +21,58 @@ import {
   normaliseMapFilterPreferences,
   mapPreferencesToQueryFilters,
   type MapFilterPreferences,
+  loadUserPreference,
+  saveUserPreference,
+  isUuid,
 } from "@dowhat/shared";
+import SaveToggleButton from "@/components/SaveToggleButton";
 
 import type { MapMovePayload, ViewBounds } from "@/components/WebMap";
 import { supabase } from "@/lib/supabase/browser";
+import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
 
 const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
+const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
+
+const readLocalMapFilters = (): MapFilterPreferences | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MAP_FILTERS_LOCAL_KEY);
+    if (!raw) return null;
+    return normaliseMapFilterPreferences(JSON.parse(raw) as MapFilterPreferences);
+  } catch (error) {
+    console.warn("[map] unable to parse cached map filters", error);
+    return null;
+  }
+};
+
+const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      MAP_FILTERS_LOCAL_KEY,
+      JSON.stringify(normaliseMapFilterPreferences(prefs)),
+    );
+  } catch (error) {
+    console.warn("[map] unable to cache map filters locally", error);
+  }
+};
 
 const formatKilometres = (meters?: number | null) => {
   if (!meters || meters <= 0) return "<0.5 km";
   const km = meters / 1000;
   if (km < 1) return `${Math.round(km * 10) / 10} km`;
   return `${Math.round(km * 10) / 10} km`;
+};
+
+const getSessionIdFromMetadata = (metadata: unknown): string | null => {
+  if (!metadata || typeof metadata !== "object") return null;
+  const record = metadata as Record<string, unknown>;
+  const candidate = record.sessionId ?? record.session_id;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
 };
 
 type Bounds = ViewBounds;
@@ -53,10 +90,15 @@ export default function MapPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [filters, setFilters] = useState<MapFilterPreferences>(DEFAULT_MAP_FILTER_PREFERENCES);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [locationErrored, setLocationErrored] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const highlightSessionId = searchParams?.get('highlightSession');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
+  const [preferencesInitialised, setPreferencesInitialised] = useState(false);
   const updateFilters = useCallback(
     (updater: (prev: MapFilterPreferences) => MapFilterPreferences) => {
       setFilters((prev) => normaliseMapFilterPreferences(updater(prev)));
@@ -91,26 +133,60 @@ export default function MapPage() {
 
   const filtersForQuery = mapPreferencesToQueryFilters(filters);
 
-  const loadPreferencesForUser = useCallback(async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('user_preferences')
-        .select('value')
-        .eq('user_id', userId)
-        .eq('key', 'map_filters')
-        .maybeSingle<{ value: unknown }>();
-      if (error) throw error;
-      if (data?.value && typeof data.value === 'object') {
-        updateFilters(() => normaliseMapFilterPreferences(data.value as MapFilterPreferences));
-      } else {
-        updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
-      }
-      setPreferencesUserId(userId);
-    } catch (error) {
-      console.warn('[map] failed to load map filter preferences', error);
-      setPreferencesUserId(userId);
-    }
+  const hydrateAnonymousPreferences = useCallback(() => {
+    const next = readLocalMapFilters() ?? DEFAULT_MAP_FILTER_PREFERENCES;
+    updateFilters(() => next);
+    setPreferencesUserId(null);
+    setPreferencesInitialised(true);
   }, [updateFilters]);
+
+  const loadPreferencesForUser = useCallback(
+    async (userId: string) => {
+      try {
+        const remote = await loadUserPreference<MapFilterPreferences>(supabase, userId, "map_filters");
+        if (remote) {
+          const normalised = normaliseMapFilterPreferences(remote);
+          updateFilters(() => normalised);
+          writeLocalMapFilters(normalised);
+        } else {
+          const fallback = readLocalMapFilters();
+          const next = fallback ?? DEFAULT_MAP_FILTER_PREFERENCES;
+          updateFilters(() => next);
+        }
+        setPreferencesUserId(userId);
+      } catch (error) {
+        console.warn("[map] failed to load map filters", error);
+        const fallback = readLocalMapFilters();
+        if (fallback) {
+          updateFilters(() => fallback);
+        }
+        setPreferencesUserId(userId);
+      } finally {
+        setPreferencesInitialised(true);
+      }
+    },
+    [updateFilters],
+  );
+
+  const persistPreferences = useCallback(
+    async (next: MapFilterPreferences) => {
+      const normalised = normaliseMapFilterPreferences(next);
+      writeLocalMapFilters(normalised);
+      if (preferencesUserId) {
+        try {
+          await saveUserPreference(supabase, preferencesUserId, "map_filters", normalised);
+        } catch (error) {
+          console.warn("[map] failed to persist map filters", error);
+        }
+      }
+    },
+    [preferencesUserId],
+  );
+
+  useEffect(() => {
+    if (!preferencesInitialised) return;
+    void persistPreferences(filters);
+  }, [filters, persistPreferences, preferencesInitialised]);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,15 +241,13 @@ export default function MapPage() {
             await loadPreferencesForUser(userId);
           }
         } else {
-          setPreferencesUserId(null);
-          updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+          hydrateAnonymousPreferences();
         }
       } catch (error) {
         console.warn('[map] unable to resolve auth session', error);
         if (mounted) {
           setIsAuthenticated(false);
-          setPreferencesUserId(null);
-          updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+          hydrateAnonymousPreferences();
         }
       }
     };
@@ -187,8 +261,7 @@ export default function MapPage() {
       if (userId) {
         await loadPreferencesForUser(userId);
       } else {
-        setPreferencesUserId(null);
-        updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+        hydrateAnonymousPreferences();
       }
     });
 
@@ -196,7 +269,7 @@ export default function MapPage() {
       listener.subscription.unsubscribe();
       mounted = false;
     };
-  }, [loadPreferencesForUser, preferencesUserId, updateFilters]);
+  }, [hydrateAnonymousPreferences, loadPreferencesForUser, preferencesUserId]);
 
   const fetcher = useMemo(
     () =>
@@ -274,6 +347,46 @@ export default function MapPage() {
 
   const events = useMemo(() => sortEventsByStart(eventsQuery.data?.events ?? []), [eventsQuery.data?.events]);
 
+  const filteredActivities = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return activities;
+    return activities.filter((activity) => {
+      const name = activity.name?.toLowerCase() ?? '';
+      const venue = activity.venue?.toLowerCase() ?? '';
+      return name.includes(term) || venue.includes(term);
+    });
+  }, [activities, searchTerm]);
+
+  const filteredEvents = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return events;
+    return events.filter((eventSummary) => {
+      const title = eventSummary.title?.toLowerCase() ?? '';
+      const venue = eventSummary.venue_name?.toLowerCase() ?? '';
+      return title.includes(term) || venue.includes(term);
+    });
+  }, [events, searchTerm]);
+
+  useEffect(() => {
+    if (!highlightSessionId || !filteredEvents.length) return;
+    const match = filteredEvents.find((eventSummary) => {
+      if (eventSummary.id === highlightSessionId) return true;
+      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      return sessionId === highlightSessionId;
+    });
+    if (!match) return;
+    setSelectedEventId(match.id);
+    if (dataMode === 'activities') {
+      setDataMode('both');
+    }
+    setViewMode('list');
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    params.delete('highlightSession');
+    const basePath = pathname ?? '/map';
+    const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
+    router.replace(nextUrl as Route, { scroll: false });
+  }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParams]);
+
   const availableActivityTypes = useMemo(() => {
     const set = new Set<string>();
     for (const activity of activities) {
@@ -316,6 +429,7 @@ export default function MapPage() {
       activityTypes: selectedActivityTypes.length,
       traits: selectedTraits.length,
     });
+    setSearchTerm('');
     updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
   };
 
@@ -401,11 +515,35 @@ export default function MapPage() {
     [changeViewMode, track],
   );
 
-  const handleRequireAuth = useCallback(
+  const handleViewEvents = useCallback(
     (activityId: string) => {
       const target = `/activities/${activityId}`;
-      track('map_activity_details_requested', {
+      track('map_activity_events_requested', {
         activityId,
+        authenticated: isAuthenticated === true,
+      });
+      if (isAuthenticated) {
+        router.push(target as Route);
+      } else {
+        router.push(`/auth?redirect=${encodeURIComponent(target)}` as Route);
+      }
+    },
+    [isAuthenticated, router, track],
+  );
+
+  const handleCreateEvent = useCallback(
+    (activity: MapActivity) => {
+      const params = new URLSearchParams();
+      if (isUuid(activity.id)) {
+        params.set('activityId', activity.id);
+      }
+      if (activity.name) params.set('activityName', activity.name);
+      if (activity.venue) params.set('venueName', activity.venue);
+      if (typeof activity.lat === 'number') params.set('lat', activity.lat.toFixed(6));
+      if (typeof activity.lng === 'number') params.set('lng', activity.lng.toFixed(6));
+      const target = `/create?${params.toString()}`;
+      track('map_activity_create_event', {
+        activityId: activity.id,
         authenticated: isAuthenticated === true,
       });
       if (isAuthenticated) {
@@ -419,9 +557,9 @@ export default function MapPage() {
 
 const handleRequestDetails = useCallback(
   (activity: MapActivity) => {
-    handleRequireAuth(activity.id);
+    handleViewEvents(activity.id);
   },
-  [handleRequireAuth],
+  [handleViewEvents],
 );
 
 const handleEventDetails = useCallback((eventSummary: EventSummary) => {
@@ -446,7 +584,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     [track],
   );
 
-  const activeFiltersCount = selectedActivityTypes.length + selectedTraits.length;
+  const hasSearchFilter = searchTerm.trim().length > 0;
+  const activeFiltersCount =
+    selectedActivityTypes.length +
+    selectedTraits.length +
+    (hasSearchFilter ? 1 : 0);
 
   useEffect(() => {
     if (!nearby.data) return;
@@ -476,16 +618,18 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }, [dataMode]);
 
   const sortedActivities = useMemo(() => {
-    return [...activities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
-  }, [activities]);
+    return [...filteredActivities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
+  }, [filteredActivities]);
 
   const radiusLabel = formatKilometres(radiusMeters);
   const headerTitle = dataMode === 'events' ? 'Nearby events' : dataMode === 'both' ? 'Activities & events nearby' : 'Nearby activities';
+  const filteredActivitiesCount = filteredActivities.length;
+  const filteredEventsCount = filteredEvents.length;
   const headerSummary = dataMode === 'events'
-    ? `Showing ${events.length} events in ~${radiusLabel} radius`
+    ? `Showing ${filteredEventsCount} events in ~${radiusLabel} radius`
     : dataMode === 'both'
-      ? `${activities.length} activities · ${events.length} events in ~${radiusLabel} radius`
-      : `Showing ${activities.length} activities in ~${radiusLabel} radius`;
+      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events in ~${radiusLabel} radius`
+      : `Showing ${filteredActivitiesCount} activities in ~${radiusLabel} radius`;
 
   const eventTimeFormatter = useMemo(
     () =>
@@ -498,16 +642,23 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     [],
   );
 
-  const mapActivities = loadActivities ? activities : [];
-  const mapEvents = loadEvents ? events : [];
+  const mapActivities = loadActivities ? filteredActivities : [];
+  const mapEvents = loadEvents ? filteredEvents : [];
   const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
+  const filtersButtonDisabled = !loadActivities && !loadEvents;
 
-  const activityListEmpty = loadActivities && !nearby.isLoading && activities.length === 0;
-  const eventListEmpty = loadEvents && !eventsQuery.isLoading && events.length === 0;
+  const activityListEmpty = loadActivities && !nearby.isLoading && filteredActivities.length === 0;
+  const eventListEmpty = loadEvents && !eventsQuery.isLoading && filteredEvents.length === 0;
+  const activityEmptyCopy = hasSearchFilter
+    ? `No activities match "${searchTerm}". Try another name or clear the search.`
+    : "No activities match those filters yet. Try widening your search.";
+  const eventEmptyCopy = hasSearchFilter
+    ? `No events match "${searchTerm}". Try another name or clear the search.`
+    : "No events match those filters yet. Try widening your search.";
 
   if (!center) {
     return (
-      <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-slate-500">
+      <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
         {locationErrored ? "Location unavailable. Using default city…" : "Locating you…"}
       </div>
     );
@@ -515,31 +666,31 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   return (
     <div className="flex h-[calc(100dvh-64px)] flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 text-sm">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-sm border-b border-midnight-border/40 bg-surface/95 px-md py-sm text-sm">
+        <div className="flex flex-wrap items-center gap-xs">
           <button
             type="button"
             onClick={() => changeViewMode("map")}
-            className={`rounded-full px-3 py-1 font-medium ${viewMode === "map" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"} lg:hidden`}
+            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "map" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
           >
             Map
           </button>
           <button
             type="button"
             onClick={() => changeViewMode("list")}
-            className={`rounded-full px-3 py-1 font-medium ${viewMode === "list" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-700"} lg:hidden`}
+            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "list" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
           >
             List
           </button>
-          <div className="hidden text-sm font-semibold text-slate-700 lg:block">{headerTitle}</div>
-          <div className="flex items-center gap-2">
+          <div className="hidden text-sm font-semibold text-ink-strong lg:block">{headerTitle}</div>
+          <div className="flex items-center gap-xs">
             {(['activities', 'events', 'both'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => changeDataMode(mode)}
-                className={`rounded-full px-3 py-1 text-sm font-medium ${
-                  dataMode === mode ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                className={`rounded-full px-sm py-xxs text-sm font-medium ${
+                    dataMode === mode ? 'bg-brand-teal text-white' : 'bg-surface-alt text-ink-strong hover:bg-ink-subtle'
                 }`}
               >
                 {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Events' : 'Both'}
@@ -547,21 +698,21 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="hidden text-xs text-slate-500 lg:block">{headerSummary}</div>
+        <div className="flex items-center gap-sm">
+          <div className="hidden text-xs text-ink-muted lg:block">{headerSummary}</div>
           <button
             type="button"
             onClick={() => {
-              if (!loadActivities) return;
+              if (filtersButtonDisabled) return;
               setFiltersOpen(true);
               track('map_filters_opened');
             }}
-            disabled={!loadActivities}
-            className="inline-flex items-center gap-2 rounded-full border border-emerald-600 px-3 py-1 text-sm font-medium text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={filtersButtonDisabled}
+            className="inline-flex items-center gap-xs rounded-full border border-brand-teal px-sm py-xxs text-sm font-medium text-brand-teal hover:bg-brand-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Filters
             {activeFiltersCount > 0 && (
-              <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-600 px-1 text-xs font-semibold text-white">
+              <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-brand-teal px-xxs text-xs font-semibold text-white">
                 {activeFiltersCount}
               </span>
             )}
@@ -570,7 +721,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       </div>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div
-          className={`${viewMode === "map" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-1 bg-slate-100 lg:flex lg:h-auto`}
+          className={`${viewMode === "map" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-1 bg-surface-alt lg:flex lg:h-auto`}
         >
           <WebMap
             center={center}
@@ -583,46 +734,50 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             onSelectActivity={handleActivitySelect}
             onSelectEvent={handleEventSelect}
             onRequestDetails={handleRequestDetails}
+            onRequestCreateEvent={handleCreateEvent}
             onRequestEventDetails={handleEventDetails}
             activeActivityId={selectedActivityId}
             activeEventId={selectedEventId}
           />
         </div>
         <aside
-          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-slate-200 bg-white lg:flex lg:h-auto lg:w-[420px] lg:border-l`}
+          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-midnight-border/40 bg-surface lg:flex lg:h-auto lg:w-[420px] lg:border-l`}
         >
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 text-xs text-slate-500">
+          <div className="flex items-center justify-between border-b border-midnight-border/40 px-md py-sm text-xs text-ink-muted">
             <span>
               {dataMode === 'events'
-                ? `${events.length} events`
+                ? `${filteredEventsCount} events`
                 : dataMode === 'both'
-                  ? `${activities.length} activities · ${events.length} events`
+                  ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events`
                   : `${sortedActivities.length} activities`}
             </span>
             <span>Radius ~{radiusLabel}</span>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-6">
+          <div className="flex-1 overflow-y-auto px-md py-sm space-y-xl">
             {loadActivities && (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">Activities</h3>
+                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Activities</h3>
                 {nearby.isLoading && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading nearby activities…
                   </div>
                 )}
                 {nearby.isError && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+                  <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
                     {(nearby.error?.message ?? "Failed to load activities")}
                   </div>
                 )}
                 {activityListEmpty && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    No activities match those filters yet. Try widening your search.
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
+                    {activityEmptyCopy}
                   </div>
                 )}
-                <ul className="flex flex-col gap-3">
+                <ul className="flex flex-col gap-sm">
                   {sortedActivities.map((activity) => {
                     const isSelected = activity.id === selectedActivityId;
+                    const savePayload = createMapActivitySavePayload(activity);
+                    const upcomingSessions = activity.upcoming_session_count ?? 0;
+                    const canViewEvents = upcomingSessions > 0;
                     return (
                       <li key={activity.id}>
                         <div
@@ -635,48 +790,65 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               handleFocusActivity(activity);
                             }
                           }}
-                          className={`cursor-pointer rounded-2xl border px-4 py-4 transition ${isSelected ? "border-emerald-500 bg-emerald-50 shadow" : "border-slate-200 bg-white hover:border-emerald-400"}`}
+                          className={`cursor-pointer rounded-2xl border px-md py-md transition ${isSelected ? "border-brand-teal bg-brand-teal/10 shadow" : "border-midnight-border/40 bg-surface hover:border-brand-teal/60"}`}
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-md">
                             <div>
-                              <div className="text-base font-semibold text-slate-900">{activity.name}</div>
-                              {activity.venue && <div className="mt-1 text-xs text-slate-500">📍 {activity.venue}</div>}
+                              <div className="text-base font-semibold text-ink">{activity.name}</div>
+                              {activity.venue && <div className="mt-xxs text-xs text-ink-muted">📍 {activity.venue}</div>}
                               {activity.activity_types && activity.activity_types.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-1">
+                                <div className="mt-xs flex flex-wrap gap-xxs">
                                   {activity.activity_types.slice(0, 3).map((type) => (
                                     <span
                                       key={type}
-                                      className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700"
+                                      className="inline-flex items-center rounded-full bg-brand-teal/15 px-xs py-hairline text-[11px] font-semibold text-brand-teal"
                                     >
                                       {type}
                                     </span>
                                   ))}
                                   {activity.activity_types.length > 3 && (
-                                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
+                                    <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-xs py-hairline text-[11px] text-brand-teal">
                                       +{activity.activity_types.length - 3}
                                     </span>
                                   )}
                                 </div>
                               )}
                             </div>
-                            <div className="text-right text-xs text-slate-500">
+                            <div className="flex flex-col items-end gap-xs text-right text-xs text-ink-muted">
                               {activity.distance_m != null ? `~${formatKilometres(activity.distance_m)}` : null}
+                              {savePayload ? (
+                                <div onClick={(event) => event.stopPropagation()}>
+                                  <SaveToggleButton payload={savePayload} size="sm" />
+                                </div>
+                              ) : null}
                             </div>
                           </div>
-                          <div className="mt-3 flex items-center justify-between text-xs">
+                          <div className="mt-sm flex flex-wrap items-center gap-xs text-xs">
+                            {canViewEvents && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleViewEvents(activity.id);
+                                }}
+                                className="rounded-full border border-brand-teal/40 px-sm py-xxs text-[11px] font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
+                              >
+                                View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                handleRequireAuth(activity.id);
+                                handleCreateEvent(activity);
                               }}
-                              className="text-emerald-600 hover:text-emerald-700"
+                              className="rounded-full bg-brand-teal/90 px-sm py-xxs text-[11px] font-semibold text-surface transition hover:bg-brand-teal"
                             >
-                              View details →
+                              Create event
                             </button>
                             <button
                               type="button"
-                              className="rounded-full border border-slate-200 px-3 py-1 text-[11px] font-medium text-slate-600 hover:border-emerald-400 hover:text-emerald-600"
+                              className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleFocusActivity(activity);
@@ -695,24 +867,24 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
             {loadEvents && (
               <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">Events</h3>
+                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Events</h3>
                 {eventsQuery.isLoading && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading events…
                   </div>
                 )}
                 {eventsQuery.isError && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+                  <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
                     {(eventsQuery.error?.message ?? "Failed to load events")}
                   </div>
                 )}
                 {eventListEmpty && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    No public events found for the next two weeks. Try moving the map or change filters.
+                  <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
+                    {eventEmptyCopy}
                   </div>
                 )}
-                <ul className="flex flex-col gap-3">
-                  {events.map((eventSummary) => {
+                <ul className="flex flex-col gap-sm">
+                  {filteredEvents.map((eventSummary) => {
                     const isSelected = eventSummary.id === selectedEventId;
                     const { start, end } = formatEventTimeRange(eventSummary);
                     return (
@@ -727,40 +899,30 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               handleFocusEvent(eventSummary);
                             }
                           }}
-                          className={`cursor-pointer rounded-2xl border px-4 py-4 transition ${isSelected ? 'border-amber-500 bg-amber-50 shadow' : 'border-slate-200 bg-white hover:border-amber-300'}`}
+                          className={`cursor-pointer rounded-2xl border px-md py-md transition ${
+                            isSelected
+                              ? 'border-feedback-warning bg-feedback-warning/10 shadow'
+                              : 'border-midnight-border/40 bg-surface hover:border-feedback-warning/60'
+                          }`}
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-md">
                             <div>
-                              <div className="text-base font-semibold text-slate-900">{eventSummary.title}</div>
-                              <div className="mt-1 text-xs text-slate-500">
+                              <div className="text-base font-semibold text-ink">{eventSummary.title}</div>
+                              <div className="mt-xxs text-xs text-ink-muted">
                                 {eventTimeFormatter.format(start)}{end ? ` — ${eventTimeFormatter.format(end)}` : ''}
                               </div>
                               {eventSummary.venue_name && (
-                                <div className="mt-1 text-xs text-slate-500">📍 {eventSummary.venue_name}</div>
+                                <div className="mt-xxs text-xs text-ink-muted">📍 {eventSummary.venue_name}</div>
                               )}
-                              <div className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide text-amber-600">
+                              <div className="mt-xs flex flex-wrap gap-xxs text-[10px] uppercase tracking-wide text-feedback-warning">
                                 {eventSummary.tags?.slice(0, 3).map((tag) => (
-                                  <span key={tag} className="rounded bg-amber-100 px-1 py-0.5">
+                                  <span key={tag} className="rounded bg-feedback-warning/20 px-xxs py-hairline">
                                     #{tag}
                                   </span>
                                 ))}
                               </div>
                             </div>
                           </div>
-                          {eventSummary.url && (
-                            <div className="mt-3 flex justify-end">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleEventDetails(eventSummary);
-                                }}
-                                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
-                              >
-                                View details →
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </li>
                     );
@@ -773,12 +935,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       </div>
 
       {filtersOpen && (
-        <div className="fixed inset-0 z-40 flex bg-slate-900/40">
-          <div className="ml-auto flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div className="fixed inset-0 z-40 flex bg-midnight/40">
+          <div className="ml-auto flex h-full w-full max-w-md flex-col bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-midnight-border/40 px-lg py-md">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Filters</h2>
-                <p className="text-xs text-slate-500">Refine by activity and people preferences.</p>
+                <h2 className="text-base font-semibold text-ink">Filters</h2>
+                <p className="text-xs text-ink-muted">Refine by activity and people preferences.</p>
               </div>
               <button
                 type="button"
@@ -786,61 +948,98 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   setFiltersOpen(false);
                   track('map_filters_closed', { via: 'header' });
                 }}
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:border-slate-300"
+                className="rounded-full border border-midnight-border/40 px-sm py-xxs text-xs text-ink-medium hover:border-midnight-border/60"
               >
                 Close
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="flex-1 overflow-y-auto px-lg py-md space-y-xl">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Activity types</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {availableActivityTypes.length === 0 && (
-                    <p className="text-xs text-slate-400">We will populate suggestions as soon as activities load.</p>
+                <label htmlFor="map-filter-search" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  Search by name
+                </label>
+                <div className="mt-xxs flex items-center gap-xs">
+                  <input
+                    id="map-filter-search"
+                    type="search"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Search activities or events"
+                    className="w-full rounded-xl border border-midnight-border/40 bg-surface px-sm py-xs text-sm text-ink focus:border-brand-teal focus:outline-none focus:ring-2 focus:ring-brand-teal/20"
+                  />
+                  {hasSearchFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="text-xs font-medium text-ink-muted underline-offset-2 hover:text-ink-strong"
+                    >
+                      Clear
+                    </button>
                   )}
-                  {availableActivityTypes.map((type) => {
-                    const active = selectedActivityTypes.includes(type);
-                    return (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => toggleActivityType(type)}
-                        className={`rounded-full border px-3 py-1 text-sm ${active ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:border-emerald-400"}`}
-                      >
-                        {type}
-                      </button>
-                    );
-                  })}
                 </div>
+                <p className="mt-xxs text-[11px] text-ink-muted">
+                  Matching results update instantly across the map and list.
+                </p>
               </div>
-              <div className="mt-6">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">People traits</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {availableTraits.length === 0 && (
-                    <p className="text-xs text-slate-400">Traits appear when activities provide preferences.</p>
-                  )}
-                  {availableTraits.map((trait) => {
-                    const active = selectedTraits.includes(trait);
-                    return (
-                      <button
-                        key={trait}
-                        type="button"
-                        onClick={() => toggleTrait(trait)}
-                        className={`rounded-full border px-3 py-1 text-sm ${active ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:border-emerald-400"}`}
-                      >
-                        {trait}
-                      </button>
-                    );
-                  })}
+              {loadActivities ? (
+                <>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activity types</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {availableActivityTypes.length === 0 && (
+                        <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
+                      )}
+                      {availableActivityTypes.map((type) => {
+                        const active = selectedActivityTypes.includes(type);
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => toggleActivityType(type)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            {type}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {availableTraits.length === 0 && (
+                        <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
+                      )}
+                      {availableTraits.map((trait) => {
+                        const active = selectedTraits.includes(trait);
+                        return (
+                          <button
+                            key={trait}
+                            type="button"
+                            onClick={() => toggleTrait(trait)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            {trait}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
+                  Activity-type and trait filters are available when viewing activities. Switch to “Activities” or “Both” to adjust those selections.
                 </div>
-              </div>
+              )}
             </div>
-            <div className="border-t border-slate-200 px-5 py-4 text-sm">
+            <div className="border-t border-midnight-border/40 px-lg py-md text-sm">
               <div className="flex items-center justify-between">
                 <button
                   type="button"
                   onClick={resetFilters}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                  className="text-xs font-medium text-ink-muted hover:text-ink-strong"
                 >
                   Clear all
                 </button>
@@ -850,7 +1049,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     setFiltersOpen(false);
                     track('map_filters_closed', { via: 'apply' });
                   }}
-                  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                  className="rounded-full bg-brand-teal px-md py-xs text-sm font-semibold text-ink-contrast hover:bg-brand-dark"
                 >
                   Apply filters
                 </button>
@@ -862,3 +1061,4 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     </div>
   );
 }
+

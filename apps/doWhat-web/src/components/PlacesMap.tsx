@@ -9,6 +9,9 @@ import type { LayerProps } from "react-map-gl";
 
 import { formatPlaceUpdatedLabel, type PlaceSummary } from "@dowhat/shared";
 
+import SaveToggleButton from "@/components/SaveToggleButton";
+import { buildPlaceSavePayload } from "@/lib/savePayloads";
+
 const MAPBOX_TOKEN =
   process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ||
   process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
@@ -237,18 +240,25 @@ export function PlacesMap({ center, places, selectedPlaceId, onMoveEnd, onSelect
             anchor="bottom"
           >
             <div className="max-w-xs">
-              <h4 className="text-base font-semibold text-slate-900">{selected.name}</h4>
-              {selected.address ? <div className="text-sm text-slate-600">{selected.address}</div> : null}
+              <h4 className="text-base font-semibold text-ink">{selected.name}</h4>
+              {selected.address ? <div className="text-sm text-ink-medium">{selected.address}</div> : null}
               {selected.categories?.length ? (
-                <div className="mt-2 flex flex-wrap gap-1">
+                <div className="mt-xs flex flex-wrap gap-xxs">
                   {selected.categories.slice(0, 4).map((category) => (
-                    <span key={category} className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">
+                    <span key={category} className="rounded-full bg-emerald-100 px-xs py-hairline text-xs text-emerald-800">
                       {category}
                     </span>
                   ))}
                 </div>
               ) : null}
-              <div className="mt-2 text-xs text-slate-500">{formatPlaceUpdatedLabel(selected)}</div>
+              <div className="mt-xs text-xs text-ink-muted">{formatPlaceUpdatedLabel(selected)}</div>
+              <div className="mt-md flex justify-end">
+                <SaveToggleButton
+                  size="sm"
+                  className="w-full justify-center"
+                  payload={buildPlaceSavePayload(selected)}
+                />
+              </div>
             </div>
           </Popup>
         ) : null}

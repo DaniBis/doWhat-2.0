@@ -14,7 +14,6 @@ import { getOptionalServiceClient } from '@/lib/supabase/service';
 import { expandCategoryAliases, NORMALIZED_CATEGORIES, type NormalizedCategory } from './categories';
 import { fetchFoursquarePlaces } from './providers/foursquare';
 import { fetchGooglePlaces } from './providers/google';
-import { fetchOverpassPlaces } from './providers/osm';
 import {
   defaultAttribution,
   ensureArray,
@@ -186,6 +185,17 @@ const matchesRawCategoryKey = (candidate: NormalisedTermSets, key: string): bool
   return candidate.categories.has(normalizedKey) || candidate.tags.has(normalizedKey);
 };
 
+const filterFoursquarePlaces = (places: CanonicalPlace[]): CanonicalPlace[] => {
+  const foursquareOnly = places.filter(
+    (place) => place.aggregatedFrom.includes('foursquare') || Boolean(place.fsqId),
+  );
+  if (foursquareOnly.length > 0) {
+    return foursquareOnly;
+  }
+  // Fallback to whatever providers we have (Google/transient) so the map is never empty in dev
+  return places;
+};
+
 const placeMatchesCategorySelection = (
   candidate: NormalisedTermSets,
   key: string,
@@ -298,17 +308,20 @@ interface PlaceAggregate {
   id?: string;
   slug?: string | null;
   name: string;
+  description?: string;
   lat: number;
   lng: number;
   categories: Set<string>;
   tags: Set<string>;
   address?: string;
+  city?: string;
   locality?: string;
   region?: string;
   country?: string;
   postcode?: string;
   phone?: string;
   website?: string;
+  foursquareId?: string | null;
   ratingSamples: number[];
   ratingCountTotal: number;
   priceLevelSamples: number[];
@@ -342,17 +355,20 @@ const toAggregateFromExisting = (
     id: row.id,
     slug: row.slug,
     name: row.name,
+    description: row.description ?? undefined,
     lat: row.lat,
     lng: row.lng,
     categories: new Set(needsCategoryCleanup ? [] : existingCategories),
     tags: new Set(ensureArray(row.tags ?? [])),
     address: row.address ?? undefined,
-    locality: row.locality ?? undefined,
+    city: row.city ?? row.locality ?? undefined,
+    locality: row.locality ?? row.city ?? undefined,
     region: row.region ?? undefined,
     country: row.country ?? undefined,
     postcode: row.postcode ?? undefined,
     phone: row.phone ?? undefined,
     website: row.website ?? undefined,
+    foursquareId: row.foursquare_id ?? undefined,
     ratingSamples: typeof row.rating === 'number' ? [row.rating] : [],
     ratingCountTotal: typeof row.rating_count === 'number' ? row.rating_count : 0,
     priceLevelSamples: typeof row.price_level === 'number' ? [row.price_level] : [],
@@ -463,13 +479,20 @@ const applyProviderPlace = (
   }
   aggregate.tags = new Set(mergeCategories(Array.from(aggregate.tags), providerPlace.tags));
 
+  if (!aggregate.description && providerPlace.description) {
+    aggregate.description = providerPlace.description;
+  }
   if (!aggregate.address && providerPlace.address) aggregate.address = providerPlace.address;
+  if (!aggregate.city && providerPlace.locality) aggregate.city = providerPlace.locality;
   if (!aggregate.locality && providerPlace.locality) aggregate.locality = providerPlace.locality;
   if (!aggregate.region && providerPlace.region) aggregate.region = providerPlace.region;
   if (!aggregate.country && providerPlace.country) aggregate.country = providerPlace.country;
   if (!aggregate.postcode && providerPlace.postcode) aggregate.postcode = providerPlace.postcode;
   if (!aggregate.phone && providerPlace.phone) aggregate.phone = providerPlace.phone;
   if (!aggregate.website && providerPlace.website) aggregate.website = providerPlace.website;
+  if (providerPlace.provider === 'foursquare') {
+    aggregate.foursquareId = providerPlace.providerId;
+  }
 
   if (typeof providerPlace.rating === 'number') aggregate.ratingSamples.push(providerPlace.rating);
   if (typeof providerPlace.ratingCount === 'number') {
@@ -500,17 +523,20 @@ const toCanonicalPlace = (
     id: aggregate.id ?? slugFromNameAndCoords(aggregate.name, aggregate.lat, aggregate.lng),
     slug: aggregate.slug ?? null,
     name: aggregate.name,
+    description: aggregate.description,
     lat: aggregate.lat,
     lng: aggregate.lng,
     categories: Array.from(aggregate.categories),
     tags: Array.from(aggregate.tags),
     address: aggregate.address,
+    city: aggregate.city ?? aggregate.locality,
     locality: aggregate.locality,
     region: aggregate.region,
     country: aggregate.country,
     postcode: aggregate.postcode,
     phone: aggregate.phone,
     website: aggregate.website,
+    fsqId: aggregate.foursquareId,
     rating: avgRating,
     ratingCount: aggregate.ratingCountTotal || undefined,
     priceLevel: avgPriceLevel,
@@ -628,9 +654,11 @@ const upsertPlaces = async (
     const row: {
       slug: string;
       name: string;
+      description: string | null;
       categories: string[];
       tags: string[];
       address: string | null;
+      city: string | null;
       locality: string | null;
       region: string | null;
       country: string | null;
@@ -652,12 +680,15 @@ const upsertPlaces = async (
       last_seen_at: string;
       geohash6: string | null;
       source_confidence: number | null;
+      foursquare_id: string | null;
     } = {
       slug,
       name: aggregate.name,
+      description: aggregate.description ?? null,
       categories: Array.from(aggregate.categories),
       tags: Array.from(aggregate.tags),
       address: aggregate.address ?? null,
+      city: aggregate.city ?? aggregate.locality ?? null,
       locality: aggregate.locality ?? null,
       region: aggregate.region ?? null,
       country: aggregate.country ?? null,
@@ -679,6 +710,7 @@ const upsertPlaces = async (
       last_seen_at: nowIso,
       geohash6,
       source_confidence: sourceConfidence ?? null,
+      foursquare_id: aggregate.foursquareId ?? null,
     };
 
       return row;
@@ -756,7 +788,7 @@ const fetchExisting = async (
   const { data, error } = await service
     .from('places')
     .select(
-      `id, slug, name, categories, tags, address, locality, region, country, postcode, lat, lng, phone, website, popularity_score, rating, rating_count, price_level, aggregated_from, primary_source, attribution, metadata, cached_at, cache_expires_at, last_seen_at, geohash6, source_confidence`,
+      `id, slug, name, description, categories, tags, address, city, locality, region, country, postcode, lat, lng, phone, website, popularity_score, rating, rating_count, price_level, aggregated_from, primary_source, attribution, metadata, cached_at, cache_expires_at, last_seen_at, geohash6, source_confidence, foursquare_id`,
     )
     .gte('lat', minLat)
     .lte('lat', maxLat)
@@ -903,13 +935,14 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
     });
     const filtered = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
     const ranked = rankPlaces(filtered, centerLat, centerLng, now.getTime());
+    const foursquareRanked = filterFoursquarePlaces(ranked);
     console.info('[places] response', {
       tileKey,
       cacheHit: true,
-      placeCount: ranked.length,
+      placeCount: foursquareRanked.length,
     });
     return {
-      places: ranked,
+      places: foursquareRanked,
       cacheHit: true,
       providerCounts: { openstreetmap: 0, foursquare: 0, google_places: 0 },
     };
@@ -921,21 +954,12 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
 
   const providerResults: ProviderPlace[] = [];
 
-  const overpassCall = await callProvider('openstreetmap', () =>
-    fetchOverpassPlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
-  );
-  if (overpassCall.status === 'fulfilled') {
-    providerResults.push(...overpassCall.value.filter((place) => place.canPersist !== false));
-  }
-
-  const _foursquareCall = await callProvider('foursquare', () =>
+  const foursquareCall = await callProvider('foursquare', () =>
     fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
   );
-  void _foursquareCall;
-  // Temporarily disabled due to deprecated API
-  // if (_foursquareCall.status === 'fulfilled') {
-  //   providerResults.push(..._foursquareCall.value.filter((place) => place.canPersist !== false));
-  // }
+  if (foursquareCall.status === 'fulfilled') {
+    providerResults.push(...foursquareCall.value.filter((place) => place.canPersist !== false));
+  }
 
   const filteredProviderResults = filterPlacesByCategories(
     providerResults,
@@ -1052,16 +1076,17 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
 
   const filteredPlaces = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
   const rankedPlaces = rankPlaces(filteredPlaces, centerLat, centerLng, now.getTime());
+  const foursquareRanked = filterFoursquarePlaces(rankedPlaces);
 
   console.info('[places] response', {
     tileKey,
     cacheHit: false,
     providerCounts,
-    placeCount: rankedPlaces.length,
+    placeCount: foursquareRanked.length,
   });
 
   return {
-    places: rankedPlaces,
+    places: foursquareRanked,
     cacheHit: false,
     providerCounts,
   };

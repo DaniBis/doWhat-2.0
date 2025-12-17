@@ -5,16 +5,23 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 
-import type { MapActivity } from "@dowhat/shared";
+import SaveToggleButton from "@/components/SaveToggleButton";
+import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
+import { buildCreateEventQuery, buildPrefillContextSummary } from "@/lib/adminPrefill";
+import {
+  ACTIVITY_DISTANCE_OPTIONS,
+  type MapActivity,
+} from "@dowhat/shared";
 
 import type { MapMovePayload } from "@/components/WebMap";
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from "@/lib/venues/types";
 import { ACTIVITY_NAMES, type ActivityName, VENUE_SEARCH_DEFAULT_RADIUS } from "@/lib/venues/constants";
+import { buildVenueTaxonomySupport } from "@/lib/venues/taxonomySupport";
+import { buildVenueSavePayload } from "@/lib/venues/savePayload";
 
-const WebMap = dynamic<typeof import("@/components/WebMap").default>(
-  () => import("@/components/WebMap"),
-  { ssr: false },
-);
+const WebMap = dynamic(() => import("@/components/WebMap"), {
+  ssr: false,
+}) as unknown as typeof import("@/components/WebMap").default;
 
 const FALLBACK_CENTER = { lat: 51.5074, lng: -0.1278 };
 const DEFAULT_LIMIT = 60;
@@ -54,8 +61,21 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string; helper: string
   { value: 'ai_only', label: 'AI only', helper: 'Fresh suggestions without votes' },
 ];
 
+const DEFAULT_ACTIVITY_NAME: ActivityName = ACTIVITY_NAMES[0];
+
+const DISTANCE_OPTION_CONFIG = ACTIVITY_DISTANCE_OPTIONS.map((km) => ({
+  km,
+  meters: km * 1000,
+  label: `${km} km`,
+}));
+
 export default function VenueVerificationPage() {
-  const [selectedActivity, setSelectedActivity] = useState<ActivityName>(ACTIVITY_NAMES[0]);
+  const taxonomySupport = useMemo(() => buildVenueTaxonomySupport(), []);
+  const [selectedActivity, setSelectedActivityRaw] = useState<ActivityName>(DEFAULT_ACTIVITY_NAME);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(() => {
+    const entry = taxonomySupport.tier3ByActivity.get(DEFAULT_ACTIVITY_NAME);
+    return entry ? [entry.id] : [];
+  });
   const [summary, setSummary] = useState<ActivityAvailabilitySummary[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -65,11 +85,59 @@ export default function VenueVerificationPage() {
   const [center, setCenter] = useState<MapCenter | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [radiusMeters, setRadiusMeters] = useState<number>(VENUE_SEARCH_DEFAULT_RADIUS);
+  const [selectedDistanceKm, setSelectedDistanceKm] = useState<number | null>(() => {
+    const match = DISTANCE_OPTION_CONFIG.find((option) => option.meters === VENUE_SEARCH_DEFAULT_RADIUS);
+    return match?.km ?? null;
+  });
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [voteLoadingKey, setVoteLoadingKey] = useState<string | null>(null);
   const [voteFeedback, setVoteFeedback] = useState<Record<string, VoteFeedback>>({});
   const [locationDenied, setLocationDenied] = useState(false);
+  const [showTaxonomyPicker, setShowTaxonomyPicker] = useState(false);
+
+  const selectActivity = useCallback((activity: ActivityName) => {
+    setSelectedActivityRaw(activity);
+  }, []);
+
+  useEffect(() => {
+    const entry = taxonomySupport.tier3ByActivity.get(selectedActivity);
+    if (entry) {
+      setSelectedCategoryIds([entry.id]);
+    } else {
+      setSelectedCategoryIds([]);
+    }
+  }, [selectedActivity, taxonomySupport]);
+
+  const handleCategoryToggle = useCallback(
+    (tier3Id: string) => {
+      if (selectedCategoryIds.includes(tier3Id)) {
+        selectActivity(DEFAULT_ACTIVITY_NAME);
+        return;
+      }
+      const activityName = taxonomySupport.activityNameByTier3Id.get(tier3Id);
+      if (activityName) {
+        selectActivity(activityName);
+      }
+    },
+    [selectedCategoryIds, selectActivity, taxonomySupport],
+  );
+
+  const handleDistanceSelect = useCallback(
+    (km: number) => {
+      const config = DISTANCE_OPTION_CONFIG.find((option) => option.km === km);
+      if (!config) return;
+      setSelectedDistanceKm(km);
+      setBounds(null);
+      setRadiusMeters(config.meters);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const match = DISTANCE_OPTION_CONFIG.find((option) => option.meters === radiusMeters);
+    setSelectedDistanceKm(match?.km ?? null);
+  }, [radiusMeters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -256,6 +324,13 @@ export default function VenueVerificationPage() {
   ), [visibleVenues]);
 
   const selectedSummary = summaryMap.get(selectedActivity);
+  const taxonomyAvailable = taxonomySupport.taxonomy.length > 0;
+  const selectedCategoryMeta = selectedCategoryIds.length
+    ? taxonomySupport.tier3ById.get(selectedCategoryIds[0])
+    : null;
+  const selectedCategoryDescription = selectedCategoryMeta
+    ? `${selectedCategoryMeta.label}${selectedCategoryMeta.tier1Label ? ` • ${selectedCategoryMeta.tier1Label}` : selectedCategoryMeta.tier2Label ? ` • ${selectedCategoryMeta.tier2Label}` : ""}`
+    : "All supported activities";
 
   const handleMoveEnd = useCallback((payload: MapMovePayload) => {
     setCenter(payload.center);
@@ -342,6 +417,12 @@ export default function VenueVerificationPage() {
 
   const currentActivityLabel = formatActivityLabel(selectedActivity);
   const selectedVenue = visibleVenues.find((row) => row.venueId === selectedVenueId) ?? null;
+  const selectedVenueSavePayload = selectedVenue ? buildVenueSavePayload(selectedVenue) : null;
+  const selectedVenuePrefillSummary = buildPrefillContextSummary(
+    selectedVenue,
+    currentActivityLabel,
+    selectedCategoryDescription,
+  );
 
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-8">
@@ -375,7 +456,7 @@ export default function VenueVerificationPage() {
               <button
                 key={activity}
                 type="button"
-                onClick={() => setSelectedActivity(activity)}
+                onClick={() => selectActivity(activity)}
                 className={clsx(
                   "min-w-[220px] flex-1 rounded-2xl border px-4 py-3 text-left transition",
                   selectedActivity === activity
@@ -399,6 +480,41 @@ export default function VenueVerificationPage() {
         </div>
       </section>
 
+      {taxonomyAvailable ? (
+        <section className="mb-8 rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Browse via shared taxonomy</h3>
+              <p className="text-sm text-slate-500">
+                Align host verification with the same tier 3 categories used on discovery filters.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTaxonomyPicker((prev) => !prev)}
+              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-semibold text-slate-700 hover:border-slate-400"
+            >
+              {showTaxonomyPicker ? "Hide picker" : "Show picker"}
+            </button>
+          </div>
+          {showTaxonomyPicker ? (
+            <TaxonomyCategoryPicker
+              selectedIds={selectedCategoryIds}
+              onToggle={handleCategoryToggle}
+              taxonomy={taxonomySupport.taxonomy}
+              className="mt-4"
+            />
+          ) : (
+            <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Current selection: <span className="font-semibold text-slate-900">{selectedCategoryDescription}</span>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-slate-500">
+            Selecting a taxonomy category updates the activity chips above so every host workflow shares the same presets as the consumer filters.
+          </p>
+        </section>
+      ) : null}
+
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
         <div className="rounded-3xl border border-slate-200 bg-white/60 p-3 shadow-sm">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -407,6 +523,24 @@ export default function VenueVerificationPage() {
               <p className="text-sm text-slate-500">Drag the map to refresh suggestions.</p>
             </div>
             {searchError ? <span className="text-sm text-rose-600">{searchError}</span> : null}
+          </div>
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="font-semibold uppercase tracking-wide text-slate-500">Radius presets</span>
+            {DISTANCE_OPTION_CONFIG.map((option) => (
+              <button
+                key={option.km}
+                type="button"
+                onClick={() => handleDistanceSelect(option.km)}
+                className={clsx(
+                  "rounded-full border px-3 py-1 text-sm transition",
+                  selectedDistanceKm === option.km
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
           <div className="h-[520px] overflow-hidden rounded-2xl border border-slate-100 bg-slate-100/60">
             {center ? (
@@ -418,8 +552,8 @@ export default function VenueVerificationPage() {
                 radiusMeters={radiusMeters}
                 isLoading={searchLoading}
                 onMoveEnd={handleMoveEnd}
-                onSelectActivity={(activity) => setSelectedVenueId(activity.id)}
-                onRequestDetails={(activity) => setSelectedVenueId(activity.id)}
+                onSelectActivity={(activity: MapActivity) => setSelectedVenueId(activity.id)}
+                onRequestDetails={(activity: MapActivity) => setSelectedVenueId(activity.id)}
                 activeActivityId={selectedVenueId}
                 activeEventId={null}
               />
@@ -473,6 +607,12 @@ export default function VenueVerificationPage() {
                   {visibleVenues.map((venue) => {
                   const key = `${venue.venueId}:${selectedActivity}`;
                   const feedback = voteFeedback[key];
+                  const savePayload = buildVenueSavePayload(venue);
+                  const planPrefillSummary = buildPrefillContextSummary(
+                    venue,
+                    currentActivityLabel,
+                    selectedCategoryDescription,
+                  );
                   return (
                     <li
                       key={venue.venueId}
@@ -486,9 +626,30 @@ export default function VenueVerificationPage() {
                         <div>
                           <p className="text-base font-semibold text-slate-900">{venue.venueName}</p>
                           <p className="text-xs uppercase tracking-wide text-slate-500">Confidence {formatPercent(venue.aiConfidence)}</p>
+                          {venue.displayAddress ? (
+                            <p className="mt-1 text-sm text-slate-600">{venue.displayAddress}</p>
+                          ) : null}
                         </div>
-                        <span className="rounded-full bg-slate-900/90 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">Score {venue.score.toFixed(1)}</span>
+                        <div className="flex flex-col items-end gap-2 text-right">
+                          <span className="rounded-full bg-slate-900/90 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
+                            Score {venue.score.toFixed(1)}
+                          </span>
+                          {savePayload ? (
+                            <div onClick={(event) => event.stopPropagation()}>
+                              <SaveToggleButton payload={savePayload} size="sm" />
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
+                      {venue.primaryCategories.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                          {venue.primaryCategories.map((category) => (
+                            <span key={`${venue.venueId}-${category}`} className="rounded-full bg-slate-100 px-2 py-0.5">
+                              {category}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                         {renderStatusBadge(venue)}
                         {venue.categoryMatch ? (
@@ -497,6 +658,14 @@ export default function VenueVerificationPage() {
                         {venue.keywordMatch ? (
                           <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">Keyword signal</span>
                         ) : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                        {renderOpenStatusPill(venue.openNow)}
+                        {venue.hoursSummary ? <span>{venue.hoursSummary}</span> : null}
+                        {formatPriceLevelLabel(venue.priceLevel) ? (
+                          <span>Price {formatPriceLevelLabel(venue.priceLevel)}</span>
+                        ) : null}
+                        {typeof venue.rating === 'number' ? <span>⭐ {venue.rating.toFixed(1)}</span> : null}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-slate-600">
                         <span>👍 {venue.userYesVotes}</span>
@@ -540,7 +709,26 @@ export default function VenueVerificationPage() {
                             </Link>
                           ) : null}
                         </div>
-                      ) : null}
+                      ) : (
+                        <div className="mt-3">
+                          <Link
+                            href={{
+                              pathname: '/admin/new',
+                              query: buildCreateEventQuery(venue, currentActivityLabel, {
+                                categoryIds: selectedCategoryIds,
+                                source: 'venue_verification_list',
+                              }),
+                            }}
+                            className="inline-flex items-center text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                            title={planPrefillSummary}
+                            aria-label={`Plan an event with ${planPrefillSummary}`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Plan an event here →
+                          </Link>
+                          <p className="mt-1 text-xs text-slate-500">Prefills: {planPrefillSummary}</p>
+                        </div>
+                      )}
                     </li>
                   );
                 })}
@@ -552,8 +740,65 @@ export default function VenueVerificationPage() {
 
       {selectedVenue ? (
         <section className="mt-8 rounded-3xl border border-slate-200 bg-white/90 p-5 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-900">Why this venue matched?</h3>
-          <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+            <div className="flex-1">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">{selectedVenue.venueName}</h3>
+                  {selectedVenue.displayAddress ? (
+                    <p className="mt-1 text-sm text-slate-600">{selectedVenue.displayAddress}</p>
+                  ) : null}
+                </div>
+                {selectedVenueSavePayload ? (
+                  <SaveToggleButton payload={selectedVenueSavePayload} size="md" className="justify-center" />
+                ) : null}
+              </div>
+              {selectedVenue.primaryCategories.length ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                  {selectedVenue.primaryCategories.map((category) => (
+                    <span key={`${selectedVenue.venueId}-detail-${category}`} className="rounded-full bg-slate-100 px-2 py-0.5">
+                      {category}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                {renderOpenStatusPill(selectedVenue.openNow)}
+                {selectedVenue.hoursSummary ? <span>{selectedVenue.hoursSummary}</span> : null}
+                {formatPriceLevelLabel(selectedVenue.priceLevel) ? (
+                  <span>Price {formatPriceLevelLabel(selectedVenue.priceLevel)}</span>
+                ) : null}
+                {typeof selectedVenue.rating === 'number' ? <span>⭐ {selectedVenue.rating.toFixed(1)}</span> : null}
+              </div>
+            </div>
+            <div className="w-full max-w-sm rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <p className="text-sm font-semibold text-emerald-900">Ready to run something here?</p>
+              <p className="mt-1 text-sm text-emerald-800">
+                Prefill the create flow with coordinates plus
+                {selectedCategoryDescription === 'All supported activities'
+                  ? ' the default taxonomy preset.'
+                  : ` ${selectedCategoryDescription} taxonomy tags.`}
+              </p>
+              {selectedVenue ? (
+                <p className="mt-1 text-xs text-emerald-900">Prefills: {selectedVenuePrefillSummary}</p>
+              ) : null}
+              <Link
+                href={{
+                  pathname: '/admin/new',
+                  query: buildCreateEventQuery(selectedVenue, currentActivityLabel, {
+                    categoryIds: selectedCategoryIds,
+                    source: 'venue_verification_detail',
+                  }),
+                }}
+                title={selectedVenuePrefillSummary}
+                aria-label={`Create event with ${selectedVenuePrefillSummary}`}
+                className="mt-3 inline-flex w-full items-center justify-center rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+              >
+                Create event →
+              </Link>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
             <InsightCard title="AI confidence" value={formatPercent(selectedVenue.aiConfidence)} helper="Model score for this activity" />
             <InsightCard title="Community votes" value={`👍 ${selectedVenue.userYesVotes} · 👎 ${selectedVenue.userNoVotes}`} helper="Aggregated yes/no votes" />
             <InsightCard title="Signals" value={buildSignalsSummary(selectedVenue)} helper="Category + keyword cues" />
@@ -594,6 +839,13 @@ function renderStatusBadge(venue: RankedVenueActivity) {
   return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">AI suggestion</span>;
 }
 
+function renderOpenStatusPill(openNow: boolean | null) {
+  if (openNow == null) return null;
+  const label = openNow ? 'Open now' : 'Closed';
+  const styles = openNow ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700';
+  return <span className={`rounded-full px-2 py-0.5 font-semibold ${styles}`}>{label}</span>;
+}
+
 function buildMapTags(venue: RankedVenueActivity) {
   const tags: string[] = [];
   if (venue.verified) tags.push("verified");
@@ -602,6 +854,13 @@ function buildMapTags(venue: RankedVenueActivity) {
   if (venue.keywordMatch) tags.push("keyword");
   return tags;
 }
+
+function formatPriceLevelLabel(value: number | null | undefined) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  const level = Math.min(Math.max(Math.round(value), 1), 4);
+  return '$'.repeat(level);
+}
+
 
 function buildSignalsSummary(venue: RankedVenueActivity) {
   const parts: string[] = [];

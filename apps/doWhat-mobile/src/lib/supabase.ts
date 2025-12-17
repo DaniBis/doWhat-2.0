@@ -34,6 +34,17 @@ const readString = (...keys: string[]): string | undefined => {
   return undefined;
 };
 
+const readEnvString = (...keys: string[]): string | undefined => {
+  for (const key of keys) {
+    const raw = process.env?.[key];
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
+};
+
 const PLACEHOLDER_PATTERNS = [
   /YOUR[_-]?PROJECT/i,
   /YOUR[_-]?SUPABASE/i,
@@ -52,9 +63,12 @@ const sanitize = (value?: string): string | undefined => {
   return trimmed;
 };
 
-// Read from Constants.expoConfig.extra - this is the only reliable source in React Native
-const supabaseUrl = sanitize(readString('supabaseUrl'));
-const supabaseKey = sanitize(readString('supabaseAnonKey'));
+const supabaseUrl = sanitize(
+  readString('supabaseUrl') ?? readEnvString('EXPO_PUBLIC_SUPABASE_URL', 'SUPABASE_URL'),
+);
+const supabaseKey = sanitize(
+  readString('supabaseAnonKey', 'supabaseKey') ?? readEnvString('EXPO_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_KEY'),
+);
 
 console.log('[supabase] resolved env', {
   extra,

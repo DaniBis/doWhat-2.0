@@ -5,11 +5,20 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-  DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  ACTIVITY_DISTANCE_OPTIONS,
+  ACTIVITY_PRICE_FILTER_OPTIONS,
+  ACTIVITY_TIME_FILTER_OPTIONS,
+  DEFAULT_ACTIVITY_RADIUS,
   loadUserPreference,
   normaliseActivityFilterPreferences,
   saveUserPreference,
+  resolvePriceKeyFromRange,
+  resolvePriceRangeForKey,
+  resolveTimeKeyFromValues,
+  resolveTimeValuesFromKey,
   type ActivityFilterPreferences,
+  type ActivityPriceFilterKey,
+  type ActivityTimeFilterKey,
   defaultTier3Index,
   getTier3Ids,
   trackTaxonomyFiltersApplied,
@@ -20,36 +29,18 @@ import {
 import { supabase } from "../lib/supabase";
 import TaxonomyCategoryPicker from "../components/TaxonomyCategoryPicker";
 
-type PriceOptionKey = "all" | "free" | "low" | "medium" | "high";
-type TimeOptionKey = "any" | "early" | "morning" | "afternoon" | "evening" | "night";
 export default function FilterScreen() {
-  const [priceFilter, setPriceFilter] = useState<PriceOptionKey>("all");
-  const [distanceFilter, setDistanceFilter] = useState<number>(10);
-  const [timeFilter, setTimeFilter] = useState<TimeOptionKey>("any");
+  const [priceFilter, setPriceFilter] = useState<ActivityPriceFilterKey>("all");
+  const [distanceFilter, setDistanceFilter] = useState<number>(DEFAULT_ACTIVITY_RADIUS);
+  const [timeFilter, setTimeFilter] = useState<ActivityTimeFilterKey>("any");
   const [showFreeOnly, setShowFreeOnly] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [initialised, setInitialised] = useState(false);
   const [isLoadingPrefs, setIsLoadingPrefs] = useState(true);
-  
-  const priceOptions: Array<{ key: PriceOptionKey; label: string; range: [number, number] }> = [
-    { key: "all", label: "All Prices", range: [0, 100] },
-    { key: "free", label: "Free", range: [0, 0] },
-    { key: "low", label: "$1 - $20", range: [1, 20] },
-    { key: "medium", label: "$21 - $50", range: [21, 50] },
-    { key: "high", label: "$50+", range: [50, 100] }
-  ];
-
-  const distanceOptions: number[] = [5, 10, 15, 25, 50];
-  
-  const timeOptions: Array<{ key: TimeOptionKey; label: string; value: string | null }> = [
-    { key: "any", label: "Anytime", value: null },
-    { key: "early", label: "Early Morning (6-9 AM)", value: "Early Morning (6-9 AM)" },
-    { key: "morning", label: "Morning (9-12 PM)", value: "Morning (9-12 PM)" },
-    { key: "afternoon", label: "Afternoon (12-6 PM)", value: "Afternoon (12-6 PM)" },
-    { key: "evening", label: "Evening (6-9 PM)", value: "Evening (6-9 PM)" },
-    { key: "night", label: "Night (9 PM+)", value: "Night (9 PM+)" }
-  ];
+  const priceOptions = ACTIVITY_PRICE_FILTER_OPTIONS;
+  const distanceOptions = ACTIVITY_DISTANCE_OPTIONS;
+  const timeOptions = ACTIVITY_TIME_FILTER_OPTIONS;
 
   const ACTIVITY_LOCAL_KEY = "activity_filters:v1";
   const taxonomyIdSet = useMemo(() => new Set(getTier3Ids()), []);
@@ -71,30 +62,19 @@ export default function FilterScreen() {
     [selectedCategories, taxonomyIndex],
   );
 
-  const getPriceRange = (key: PriceOptionKey, freeOnly: boolean): [number, number] => {
+  const getPriceRange = (key: ActivityPriceFilterKey, freeOnly: boolean): [number, number] => {
     if (freeOnly) return [0, 0];
-    const option = priceOptions.find((entry) => entry.key === key);
-    return option?.range ?? DEFAULT_ACTIVITY_FILTER_PREFERENCES.priceRange;
+    return resolvePriceRangeForKey(key);
   };
 
-  const priceKeyFromRange = (range: [number, number]): PriceOptionKey => {
-    const option = priceOptions.find(
-      (entry) => entry.range[0] === range[0] && entry.range[1] === range[1],
-    );
-    return option?.key ?? "all";
-  };
+  const priceKeyFromRange = (range: [number, number]): ActivityPriceFilterKey =>
+    resolvePriceKeyFromRange(range);
 
-  const timeValuesFromKey = (key: TimeOptionKey): string[] => {
-    const entry = timeOptions.find((option) => option.key === key);
-    const value = entry?.value;
-    return value ? [value] : [];
-  };
+  const timeValuesFromKey = (key: ActivityTimeFilterKey): string[] =>
+    resolveTimeValuesFromKey(key);
 
-  const timeKeyFromValues = (values: readonly string[]): TimeOptionKey => {
-    if (!values.length) return "any";
-    const match = timeOptions.find((option) => option.value === values[0]);
-    return match?.key ?? "any";
-  };
+  const timeKeyFromValues = (values: readonly string[]): ActivityTimeFilterKey =>
+    resolveTimeKeyFromValues(values);
 
   const applyActivityPreferences = useCallback(
     (prefs: ActivityFilterPreferences) => {
@@ -215,7 +195,7 @@ export default function FilterScreen() {
   const resetFilters = () => {
     setPriceFilter("all");
     setShowFreeOnly(false);
-    setDistanceFilter(DEFAULT_ACTIVITY_FILTER_PREFERENCES.radius);
+    setDistanceFilter(DEFAULT_ACTIVITY_RADIUS);
     setTimeFilter("any");
     setSelectedCategories([]);
     trackTaxonomyFiltersApplied({

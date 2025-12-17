@@ -3,8 +3,8 @@
 // Uses dynamic import for expo-image-picker so bundler won't fail if the
 // native module is temporarily unavailable; shows a graceful error instead.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { Link } = require('expo-router');
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+const { Link, useRouter } = require('expo-router');
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import type { ElementRef } from 'react';
 import { View, Text, TextInput, Pressable, Image, ScrollView, RefreshControl, Modal, ActivityIndicator, Linking, Platform, ActionSheetIOS, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,10 +12,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import * as Location from 'expo-location';
-import { theme } from '@dowhat/shared';
-import type { BadgeStatus } from '@dowhat/shared';
+import {
+  theme,
+  derivePendingOnboardingSteps,
+  ONBOARDING_TRAIT_GOAL,
+  trackOnboardingEntry,
+  getSportLabel,
+  getPlayStyleLabel,
+  isSportType,
+  isPlayStyle,
+  RELIABILITY_BADGE_ORDER,
+  RELIABILITY_BADGE_TOKENS,
+  trackReliabilityAttendanceLogViewed,
+} from '@dowhat/shared';
+import type { BadgeStatus, SportType, PlayStyle, OnboardingStep } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
-import { createWebUrl } from '../lib/web';
+import { searchGeocode, reverseGeocodeCoords } from '../lib/geocode';
 import { emitProfileLocationUpdated } from '../lib/events';
 import { BadgesList, MobileBadgeItem } from '../components/BadgesList';
 
@@ -32,10 +44,15 @@ type ProfileRow = {
   last_lng?: number | null;
   updated_at?: string | null;
   personality_traits?: string[] | null;
+  reliability_pledge_ack_at?: string | null;
+  reliability_pledge_version?: string | null;
+  primary_sport?: SportType | null;
+  play_style?: PlayStyle | null;
 };
 
 type ProfileUpdatePayload = {
   id: string;
+  user_id?: string;
   full_name: string | null;
   avatar_url: string | null;
   updated_at: string;
@@ -76,6 +93,28 @@ type TraitSummary = {
   baseCount: number;
   voteCount: number;
   updatedAt: string;
+};
+
+type ReliabilitySnapshot = {
+  score: number | null;
+  confidence: number | null;
+  components: {
+    AS30?: number | null;
+    AS90?: number | null;
+    reviewScore?: number | null;
+    hostBonus?: number | null;
+  };
+};
+
+type AttendanceSummary = {
+  attended30: number;
+  noShow30: number;
+  lateCancel30: number;
+  excused30: number;
+  attended90: number;
+  noShow90: number;
+  lateCancel90: number;
+  excused90: number;
 };
 
 const FALLBACK_TRAIT_COLOR = '#0EA5E9';
@@ -133,6 +172,11 @@ type ProfileCachePayload = {
   last_lat: number | null;
   last_lng: number | null;
   updated_at?: string | null;
+  reliabilityAckAt?: string | null;
+  reliabilityVersion?: string | null;
+  primarySport?: SportType | null;
+  playStyle?: PlayStyle | null;
+  sportSkillLevel?: string | null;
 };
 
 type LocationSuggestion = {
@@ -144,9 +188,27 @@ type LocationSuggestion = {
 };
 
 const MAX_LOCATION_SUGGESTIONS = 5;
-const NOMINATIM_BASE_URL = 'https://nominatim.openstreetmap.org';
-const GEOCODE_USER_AGENT = `doWhat-mobile/1.0 (${process.env.EXPO_PUBLIC_GEOCODE_EMAIL || 'contact@dowhat.app'})`;
 const MAX_PROFILE_TRAITS = 5;
+const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
+  traits: 'Pick 5 base traits',
+  sport: 'Set your sport & skill',
+  pledge: 'Confirm the reliability pledge',
+};
+const ONBOARDING_STEP_ROUTES: Record<OnboardingStep, string> = {
+  traits: '/onboarding-traits',
+  sport: '/onboarding/sports',
+  pledge: '/onboarding/reliability-pledge',
+};
+
+const formatPledgeAckDate = (timestamp: string | null) => {
+  if (!timestamp) return null;
+  try {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(timestamp));
+  } catch (error) {
+    console.warn('[ProfileSimple] Failed to format pledge date', error);
+    return new Date(timestamp).toDateString();
+  }
+};
 
 const normaliseProfileTrait = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
@@ -184,6 +246,9 @@ const coerceNumber = (value: unknown): number | null => {
   }
   return null;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
 const coerceLabel = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -244,94 +309,31 @@ const dedupeSuggestions = (list: LocationSuggestion[]): LocationSuggestion[] => 
   });
 };
 
-const fetchGeocodeSuggestionsFromBackend = async (
-  query: string,
-  limit: number,
-  signal?: AbortSignal,
-): Promise<LocationSuggestion[]> => {
-  const url = createWebUrl(`/api/geocode?q=${encodeURIComponent(query)}&limit=${limit}`);
-  const res = await fetch(url.toString(), { signal, credentials: 'include' });
-  if (!res.ok) {
-    throw new Error(`Geocode backend request failed (${res.status})`);
-  }
-  const payload = await res.json() as {
-    label?: string;
-    lat?: number;
-    lng?: number;
-    results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
-  };
-  const suggestions: LocationSuggestion[] = [];
-  if (Array.isArray(payload.results)) {
-    payload.results.forEach((entry, index) => {
-      const suggestion = toLocationSuggestion(entry, payload.label, `backend-${index}`);
-      if (suggestion) suggestions.push(suggestion);
-    });
-  }
-  const primary = toLocationSuggestion(payload, payload.label, 'backend-primary');
-  if (primary) suggestions.unshift(primary);
-  return dedupeSuggestions(suggestions).slice(0, limit);
-};
-
-const fetchGeocodeSuggestionsFromNominatim = async (
-  query: string,
-  limit: number,
-  signal?: AbortSignal,
-): Promise<LocationSuggestion[]> => {
-  const url = new URL(`${NOMINATIM_BASE_URL}/search`);
-  url.searchParams.set('format', 'jsonv2');
-  url.searchParams.set('q', query);
-  url.searchParams.set('limit', String(limit));
-  url.searchParams.set('addressdetails', '1');
-  const res = await fetch(url.toString(), {
-    signal,
-    headers: {
-      'User-Agent': GEOCODE_USER_AGENT,
-      Accept: 'application/json',
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Nominatim request failed (${res.status})`);
-  }
-  const payload = (await res.json()) as Array<{
-    lat?: string;
-    lon?: string;
-    display_name?: string;
-    address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
-  }>;
-  const suggestions: LocationSuggestion[] = [];
-  (payload ?? []).forEach((entry, index) => {
-    const addr = entry.address ?? {};
-    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
-    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
-    const label = parts.length ? parts.join(', ') : entry.display_name || query;
-    const suggestion = toLocationSuggestion({
-      label,
-      description: entry.display_name || null,
-      lat: entry.lat,
-      lng: entry.lon,
-    }, label, `nominatim-${index}`);
-    if (suggestion) suggestions.push(suggestion);
-  });
-  return dedupeSuggestions(suggestions).slice(0, limit);
-};
-
 const fetchGeocodeSuggestions = async (
   query: string,
   limit: number,
   signal?: AbortSignal,
 ): Promise<LocationSuggestion[]> => {
   try {
-    const backend = await fetchGeocodeSuggestionsFromBackend(query, limit, signal);
-    if (backend.length) return backend;
+    const results = await searchGeocode(query, { limit, signal });
+    const suggestions = results
+      .map((result, index) =>
+        toLocationSuggestion(
+          {
+            label: result.label,
+            description: result.description,
+            lat: result.lat,
+            lng: result.lng,
+          },
+          result.label,
+          `geocode-${index}`,
+        ),
+      )
+      .filter((entry): entry is LocationSuggestion => Boolean(entry));
+    return dedupeSuggestions(suggestions).slice(0, limit);
   } catch (error) {
     if (signal?.aborted) return [];
-    console.info('[ProfileSimple] backend geocode suggestions failed', error);
-  }
-  try {
-    return await fetchGeocodeSuggestionsFromNominatim(query, limit, signal);
-  } catch (error) {
-    if (signal?.aborted) return [];
-    console.info('[ProfileSimple] nominatim geocode suggestions failed', error);
+    console.info('[ProfileSimple] geocode suggestions failed', error);
     return [];
   }
 };
@@ -342,44 +344,11 @@ const resolveForwardGeocode = async (query: string, signal?: AbortSignal): Promi
 };
 
 const reverseGeocode = async (lat: number, lng: number): Promise<string | null> => {
-  const backendUrl = createWebUrl(`/api/geocode?lat=${lat}&lng=${lng}`);
   try {
-    const res = await fetch(backendUrl.toString(), { credentials: 'include' });
-    if (res.ok) {
-      const payload = await res.json() as { label?: string };
-      if (typeof payload?.label === 'string' && payload.label.trim()) {
-        return payload.label.trim();
-      }
-    }
+    const result = await reverseGeocodeCoords(lat, lng);
+    return result?.label ?? null;
   } catch (error) {
-    console.info('[ProfileSimple] reverse geocode backend failed', error);
-  }
-
-  try {
-    const url = new URL(`${NOMINATIM_BASE_URL}/reverse`);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('lat', String(lat));
-    url.searchParams.set('lon', String(lng));
-    url.searchParams.set('zoom', '10');
-    url.searchParams.set('addressdetails', '1');
-    const res = await fetch(url.toString(), {
-      headers: {
-        'User-Agent': GEOCODE_USER_AGENT,
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) throw new Error(`Nominatim reverse failed (${res.status})`);
-    const payload = await res.json() as {
-      display_name?: string;
-      address?: { city?: string; town?: string; village?: string; hamlet?: string; state?: string; country?: string };
-    };
-    const addr = payload.address ?? {};
-    const locality = addr.city || addr.town || addr.village || addr.hamlet || null;
-    const parts = [locality, addr.state, addr.country].filter(Boolean).slice(0, 3);
-    const label = parts.length ? parts.join(', ') : payload.display_name || `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
-    return label;
-  } catch (error) {
-    console.info('[ProfileSimple] reverse geocode nominatim failed', error);
+    console.info('[ProfileSimple] reverse geocode failed', error);
     return null;
   }
 };
@@ -395,9 +364,6 @@ try {
 }
 
 const BADGE_STATUS_VALUES: readonly BadgeStatus[] = ['unverified', 'verified', 'expired'] as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
 
 const describeError = (error: unknown, fallback = 'Something went wrong'): string => {
   if (error && typeof error === 'object') {
@@ -652,6 +618,7 @@ const ownedToMobileBadge = (badge: OwnedBadge, fallback?: BadgeMeta): MobileBadg
 export default function ProfileSimple() {
   console.log('[ProfileSimple] Mounted');
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
   const [fullName, setFullName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -701,6 +668,20 @@ export default function ProfileSimple() {
   const [locFetchError, setLocFetchError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const userIdRef = useRef<string | null>(null);
+  const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+  const [traitCountLoading, setTraitCountLoading] = useState(false);
+  const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+  const [pledgeVersion, setPledgeVersion] = useState<string | null>(null);
+  const [pledgeHydrated, setPledgeHydrated] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileHydrated, setSportProfileHydrated] = useState(false);
+  const [reliabilitySnapshot, setReliabilitySnapshot] = useState<ReliabilitySnapshot | null>(null);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
+  const [reliabilityLoading, setReliabilityLoading] = useState(false);
+  const [reliabilityError, setReliabilityError] = useState<string | null>(null);
+  const [reliabilityHydrated, setReliabilityHydrated] = useState(false);
 
   const mergeBadges = useCallback((): MobileBadgeItem[] => {
     if (!catalogBadges.length) {
@@ -720,6 +701,70 @@ export default function ProfileSimple() {
       } satisfies MobileBadgeItem;
     });
   }, [catalogBadges, ownedBadges]);
+
+  const formattedPledgeAck = pledgeAckAt ? formatPledgeAckDate(pledgeAckAt) : null;
+  const currentSportLabel = primarySport ? getSportLabel(primarySport) : null;
+  const currentPlayStyleLabel = playStyle ? getPlayStyleLabel(playStyle) : null;
+  const rawPendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      derivePendingOnboardingSteps({
+        traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        primarySport,
+        playStyle,
+        skillLevel: sportSkillLevel,
+        pledgeAckAt,
+      }),
+    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+  );
+  const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      rawPendingOnboardingSteps.filter((step) => {
+        if (step === 'traits') {
+          return !traitCountLoading && baseTraitCount != null;
+        }
+        if (step === 'sport') {
+          return sportProfileHydrated;
+        }
+        if (step === 'pledge') {
+          return pledgeHydrated;
+        }
+        return true;
+      }),
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileHydrated, pledgeHydrated],
+  );
+  const pendingOnboardingCount = pendingOnboardingSteps.length;
+  const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
+  const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding
+    ? Math.max(1, ONBOARDING_TRAIT_GOAL - (baseTraitCount ?? 0))
+    : 0;
+  const prioritizedOnboardingStep = pendingOnboardingSteps[0] ?? null;
+  const prioritizedOnboardingLabel = prioritizedOnboardingStep ? ONBOARDING_STEP_LABELS[prioritizedOnboardingStep] : null;
+  const pendingOnboardingLabel = pendingOnboardingCount === 1 ? '1 step' : `${pendingOnboardingCount} steps`;
+  const onboardingEncouragementCopy =
+    pendingOnboardingCount === 1
+      ? 'Just one more action to unlock full doWhat access.'
+      : `${pendingOnboardingLabel} remain — finish them so hosts prioritize you for open slots.`;
+  const nextOnboardingRoute = prioritizedOnboardingStep ? ONBOARDING_STEP_ROUTES[prioritizedOnboardingStep] : null;
+  const reliabilityScoreDisplay = reliabilitySnapshot?.score != null ? Math.round(reliabilitySnapshot.score) : null;
+  const reliabilityConfidencePercent = (() => {
+    if (reliabilitySnapshot?.confidence == null) return null;
+    const clamped = Math.max(0, Math.min(1, reliabilitySnapshot.confidence));
+    return Math.round(clamped * 100);
+  })();
+  const reliabilityDescriptionCopy =
+    reliabilityScoreDisplay == null
+      ? 'Attend a few confirmed sessions and check in so we can calculate your reliability score.'
+      : 'Show up for confirmed sessions, keep late cancellations rare, and let in-app check-ins confirm you were there to protect your score.';
+  const attended30 = attendanceSummary?.attended30 ?? 0;
+  const total30 = attended30 + (attendanceSummary?.noShow30 ?? 0) + (attendanceSummary?.lateCancel30 ?? 0) + (attendanceSummary?.excused30 ?? 0);
+  const attendanceRate30 = total30 ? Math.round((attended30 / total30) * 100) : null;
+  const noShow90 = attendanceSummary?.noShow90 ?? 0;
+  const total90 = (attendanceSummary?.attended90 ?? 0) + noShow90 + (attendanceSummary?.lateCancel90 ?? 0) + (attendanceSummary?.excused90 ?? 0);
+  const noShowRate90 = total90 ? Math.round((noShow90 / total90) * 100) : null;
+  const attended30Summary = total30 ? `${attended30} / ${total30}${attendanceRate30 != null ? ` · ${attendanceRate30}%` : ''}` : `${attended30}`;
+  const noShow90Summary = total90 ? `${noShow90}${noShowRate90 != null ? ` · ${noShowRate90}%` : ''}` : `${noShow90}`;
 
   const restoreProfileFromCache = useCallback(async (uid: string) => {
     try {
@@ -747,6 +792,17 @@ export default function ProfileSimple() {
       setLocationLabel(locationVal);
       setProfileLat(typeof parsed.last_lat === 'number' ? parsed.last_lat : null);
       setProfileLng(typeof parsed.last_lng === 'number' ? parsed.last_lng : null);
+      if ('reliabilityAckAt' in parsed) {
+        setPledgeAckAt(parsed.reliabilityAckAt ?? null);
+        setPledgeVersion(parsed.reliabilityVersion ?? null);
+        setPledgeHydrated(true);
+      }
+      if ('primarySport' in parsed || 'playStyle' in parsed || 'sportSkillLevel' in parsed) {
+        setPrimarySport(isSportType(parsed.primarySport) ? parsed.primarySport : null);
+        setPlayStyle(isPlayStyle(parsed.playStyle) ? parsed.playStyle : null);
+        setSportSkillLevel(typeof parsed.sportSkillLevel === 'string' ? parsed.sportSkillLevel : null);
+        setSportProfileHydrated(true);
+      }
     } catch (error) {
       console.warn('[ProfileSimple] Failed to restore cached profile', error);
     }
@@ -754,27 +810,60 @@ export default function ProfileSimple() {
 
   const loadBadges = useCallback(async (uid: string) => {
     try {
-      const ownedUrl = createWebUrl(`/api/users/${uid}/badges`);
-      const catalogUrl = createWebUrl('/api/badges/catalog');
-      const [ownedRes, catalogRes] = await Promise.all([
-        fetch(ownedUrl.toString(), { credentials: 'include' }),
-        fetch(catalogUrl.toString(), { credentials: 'include' }),
+      const [ownedResult, catalogResult] = await Promise.all([
+        supabase
+          .from('user_badges')
+          .select('id,badge_id,status,source,created_at,verified_at,expiry_date,badges(*),v_badge_endorsement_counts!left(endorsements)')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('badges')
+          .select('*')
+          .order('category', { ascending: true })
+          .order('tier', { ascending: true }),
       ]);
-      if (ownedRes.ok) {
-        const payload: unknown = await ownedRes.json();
-        const badges = isRecord(payload) ? payload.badges : null;
-        setOwnedBadges(parseOwnedBadges(badges));
-      } else {
-        setOwnedBadges([]);
+
+      if (ownedResult.error) throw ownedResult.error;
+      if (catalogResult.error) throw catalogResult.error;
+
+      const ownedPayload: (Record<string, unknown> & { endorsements: number })[] = (ownedResult.data ?? []).map((row) => {
+        const { v_badge_endorsement_counts, ...rest } = row as Record<string, unknown> & {
+          v_badge_endorsement_counts?: { endorsements?: number } | null;
+        };
+        const endorsements =
+          typeof v_badge_endorsement_counts?.endorsements === 'number'
+            ? v_badge_endorsement_counts.endorsements
+            : 0;
+        return {
+          ...(rest as Record<string, unknown>),
+          endorsements,
+        };
+      });
+
+      setOwnedBadges(parseOwnedBadges(ownedPayload));
+
+      const ownedByBadgeId = new Map<string, Record<string, unknown> & { endorsements: number }>();
+      ownedPayload.forEach((entry) => {
+        const source = (entry as Record<string, unknown>)['badge_id'];
+        const badgeId = typeof source === 'string' ? source : null;
+        if (badgeId) {
+          ownedByBadgeId.set(badgeId, entry);
+        }
+      });
+
+      const catalogPayload = (catalogResult.data ?? []).map((entry) => {
+        const badgeId = isRecord(entry) && typeof entry.id === 'string' ? entry.id : null;
+        return {
+          catalog: entry,
+          owned: badgeId ? ownedByBadgeId.get(badgeId) ?? null : null,
+        };
+      });
+
+      setCatalogBadges(parseCatalogBadges(catalogPayload));
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[ProfileSimple] loadBadges failed', error);
       }
-      if (catalogRes.ok) {
-        const payload: unknown = await catalogRes.json();
-        const badges = isRecord(payload) ? payload.badges : null;
-        setCatalogBadges(parseCatalogBadges(badges));
-      } else {
-        setCatalogBadges([]);
-      }
-    } catch {
       setOwnedBadges([]);
       setCatalogBadges([]);
     }
@@ -784,27 +873,118 @@ export default function ProfileSimple() {
     setTraitSummaryError(null);
     setTraitSummariesLoading(true);
     try {
-      const url = createWebUrl(`/api/profile/${uid}/traits?top=6`);
-      const response = await fetch(url.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        let detail: unknown = null;
-        try {
-          detail = await response.json();
-        } catch {
-          detail = null;
-        }
-        const message = isRecord(detail) && typeof detail.error === 'string'
-          ? detail.error
-          : `Failed to load traits (${response.status})`;
-        throw new Error(message);
-      }
-      const payload: unknown = await response.json();
+      const { data, error } = await supabase
+        .from('user_trait_summary')
+        .select('score,base_count,vote_count,updated_at,traits:trait_id(id,name,color,icon)')
+        .eq('user_id', uid)
+        .order('score', { ascending: false })
+        .limit(6);
+      if (error) throw error;
+      const payload = (data ?? []).map((row) => {
+        const trait = (() => {
+          const source = (row as Record<string, unknown>).traits;
+          if (Array.isArray(source)) return source[0];
+          return source;
+        })();
+        if (!isRecord(trait) || typeof trait.id !== 'string') return null;
+        const color = typeof trait.color === 'string' && trait.color.trim() ? trait.color : null;
+        const icon = typeof trait.icon === 'string' && trait.icon.trim() ? trait.icon : null;
+        const summary: TraitSummary = {
+          id: trait.id,
+          name: typeof trait.name === 'string' && trait.name ? trait.name : trait.id,
+          color,
+          icon,
+          score: typeof row.score === 'number' ? row.score : 0,
+          baseCount: toNonNegativeInt((row as Record<string, unknown>).base_count),
+          voteCount: toNonNegativeInt((row as Record<string, unknown>).vote_count),
+          updatedAt: typeof row.updated_at === 'string' && row.updated_at.trim()
+            ? row.updated_at
+            : new Date().toISOString(),
+        };
+        return summary;
+      }).filter((entry): entry is TraitSummary => Boolean(entry));
       setTraitSummaries(parseTraitSummaries(payload));
     } catch (error) {
       setTraitSummaries([]);
       setTraitSummaryError(describeError(error, 'Traits unavailable right now.'));
     } finally {
       setTraitSummariesLoading(false);
+    }
+  }, []);
+
+  const loadBaseTraitCount = useCallback(async (uid: string) => {
+    setTraitCountLoading(true);
+    try {
+      const { count, error } = await supabase
+        .from('user_base_traits')
+        .select('trait_id', { count: 'exact', head: true })
+        .eq('user_id', uid);
+      if (error) throw error;
+      setBaseTraitCount(typeof count === 'number' ? count : 0);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('[ProfileSimple] base trait count failed', error);
+      }
+      setBaseTraitCount(0);
+    } finally {
+      setTraitCountLoading(false);
+    }
+  }, []);
+
+  const loadReliabilityMetrics = useCallback(async (uid: string) => {
+    setReliabilityLoading(true);
+    setReliabilityError(null);
+    try {
+      const [indexResult, metricsResult] = await Promise.all([
+        supabase
+          .from('reliability_index')
+          .select('score,confidence,components_json')
+          .eq('user_id', uid)
+          .maybeSingle(),
+        supabase
+          .from('reliability_metrics')
+          .select('window_30d_json,window_90d_json')
+          .eq('user_id', uid)
+          .maybeSingle(),
+      ]);
+
+      if (indexResult.error) throw indexResult.error;
+      if (metricsResult.error) throw metricsResult.error;
+
+      const components = (indexResult.data?.components_json ?? {}) as Record<string, unknown>;
+      const reliability: ReliabilitySnapshot = {
+        score: typeof indexResult.data?.score === 'number' ? indexResult.data.score : null,
+        confidence: typeof indexResult.data?.confidence === 'number' ? indexResult.data.confidence : null,
+        components: {
+          AS30: typeof components.AS_30 === 'number' ? components.AS_30 : null,
+          AS90: typeof components.AS_90 === 'number' ? components.AS_90 : null,
+          reviewScore: typeof components.RS === 'number' ? components.RS : null,
+          hostBonus: typeof components.host_bonus === 'number' ? components.host_bonus : null,
+        },
+      };
+
+      const window30 = metricsResult.data?.window_30d_json as Record<string, unknown> | null;
+      const window90 = metricsResult.data?.window_90d_json as Record<string, unknown> | null;
+      const attendance: AttendanceSummary = {
+        attended30: toNonNegativeInt(window30?.attended),
+        noShow30: toNonNegativeInt(window30?.no_shows),
+        lateCancel30: toNonNegativeInt(window30?.late_cancels),
+        excused30: toNonNegativeInt(window30?.excused),
+        attended90: toNonNegativeInt(window90?.attended),
+        noShow90: toNonNegativeInt(window90?.no_shows),
+        lateCancel90: toNonNegativeInt(window90?.late_cancels),
+        excused90: toNonNegativeInt(window90?.excused),
+      };
+
+      setReliabilitySnapshot(reliability);
+      setAttendanceSummary(attendance);
+    } catch (error) {
+      setReliabilitySnapshot(null);
+      setAttendanceSummary(null);
+      setReliabilityError(describeError(error, 'Unable to load reliability right now.'));
+    } finally {
+      setReliabilityHydrated(true);
+      setReliabilityLoading(false);
     }
   }, []);
 
@@ -818,7 +998,7 @@ export default function ProfileSimple() {
       includeLocation: boolean,
       includeTraits: boolean,
     ) => {
-      const baseColumns = ['full_name', 'avatar_url'];
+      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version', 'primary_sport', 'play_style'];
       if (includeInstagram) baseColumns.push('instagram');
       if (includeWhatsapp) baseColumns.push('whatsapp');
       if (includeBio) baseColumns.push('bio');
@@ -905,6 +1085,33 @@ export default function ProfileSimple() {
       }
       if (nextSupportsTraits !== supportsTraits) setSupportsTraits(nextSupportsTraits);
 
+      const normalizedSport = isSportType(row?.primary_sport) ? row?.primary_sport ?? null : null;
+      const normalizedPlayStyle = isPlayStyle(row?.play_style) ? row?.play_style ?? null : null;
+      let computedSkillLevel: string | null = null;
+
+      if (normalizedSport) {
+        try {
+          const { data: sportProfile, error: sportProfileError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', uid)
+            .eq('sport', normalizedSport)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (!sportProfileError || sportProfileError.code === 'PGRST116') {
+            computedSkillLevel = sportProfile?.skill_level ?? null;
+          } else {
+            throw sportProfileError;
+          }
+        } catch (sportError) {
+          if (__DEV__) {
+            console.warn('[ProfileSimple] sport skill lookup failed', sportError);
+          }
+          computedSkillLevel = null;
+        }
+      } else {
+        computedSkillLevel = null;
+      }
+
       const resolved: ProfileCachePayload = {
         id: uid,
         full_name: row?.full_name ?? '',
@@ -922,6 +1129,11 @@ export default function ProfileSimple() {
         last_lng: typeof row?.last_lng === 'number' ? row.last_lng : profileLng,
         updated_at: row?.updated_at ?? null,
         personalityTraits: nextSupportsTraits ? sanitizeProfileTraitList(row?.personality_traits ?? null) : fallbackTraits,
+        reliabilityAckAt: row?.reliability_pledge_ack_at ?? null,
+        reliabilityVersion: row?.reliability_pledge_version ?? null,
+        primarySport: normalizedSport,
+        playStyle: normalizedPlayStyle,
+        sportSkillLevel: computedSkillLevel,
       };
 
       setFullName(resolved.full_name);
@@ -933,6 +1145,13 @@ export default function ProfileSimple() {
       setProfileLat(resolved.last_lat ?? null);
       setProfileLng(resolved.last_lng ?? null);
       setPersonalityTraits(resolved.personalityTraits);
+      setPledgeAckAt(resolved.reliabilityAckAt ?? null);
+      setPledgeVersion(resolved.reliabilityVersion ?? null);
+      setPledgeHydrated(true);
+      setPrimarySport(resolved.primarySport ?? null);
+      setPlayStyle(resolved.playStyle ?? null);
+      setSportSkillLevel(resolved.sportSkillLevel ?? null);
+      setSportProfileHydrated(true);
 
       try {
         await AsyncStorage.setItem(profileCacheKey(uid), JSON.stringify(resolved));
@@ -950,10 +1169,12 @@ export default function ProfileSimple() {
         if (/profiles\.whatsapp/i.test(message)) setSupportsWhatsapp(false);
         if (/profiles\.location/i.test(message)) setSupportsLocation(false);
         setErr(null);
+        setSportProfileHydrated(true);
         return null;
       }
       console.warn('[ProfileSimple] fetchProfile failed', error);
       setErr(message);
+      setSportProfileHydrated(true);
       return null;
     }
   }, [supportsInstagram, supportsWhatsapp, supportsBio, supportsLocation, supportsTraits, instagram, whatsapp, bio, locationLabel, profileLat, profileLng]);
@@ -969,12 +1190,14 @@ export default function ProfileSimple() {
           fetchProfile(uid, { fallbackBio: bio, fallbackTraits }),
           loadBadges(uid),
           loadTraitSummaries(uid),
+          loadBaseTraitCount(uid),
+          loadReliabilityMetrics(uid),
         ]);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [fetchProfile, loadBadges, loadTraitSummaries, bio]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, loadReliabilityMetrics, bio]);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -993,10 +1216,13 @@ export default function ProfileSimple() {
           fetchProfile(uid, { fallbackBio, fallbackTraits }),
           loadBadges(uid),
           loadTraitSummaries(uid),
+          loadBaseTraitCount(uid),
+          loadReliabilityMetrics(uid),
         ]);
       } else {
         userIdRef.current = null;
         setSignedIn(false);
+        setBaseTraitCount(null);
       }
 
       // Listen for future sign-ins (e.g., after a logout/login cycle) and refetch
@@ -1013,6 +1239,8 @@ export default function ProfileSimple() {
             fetchProfile(signedInId, { fallbackBio: metaBio, fallbackTraits: metaTraits }),
             loadBadges(signedInId),
             loadTraitSummaries(signedInId),
+            loadBaseTraitCount(signedInId),
+            loadReliabilityMetrics(signedInId),
           ]);
         } else if (event === 'SIGNED_OUT') {
           userIdRef.current = null;
@@ -1039,12 +1267,22 @@ export default function ProfileSimple() {
           setLocationSuggestionsLoading(false);
           setLocFetchError(null);
           setLocFetchBusy(false);
+          setBaseTraitCount(null);
+          setTraitCountLoading(false);
+          setPledgeAckAt(null);
+          setPledgeVersion(null);
+          setPledgeHydrated(false);
+          setReliabilitySnapshot(null);
+          setAttendanceSummary(null);
+          setReliabilityError(null);
+          setReliabilityHydrated(false);
+          setReliabilityLoading(false);
         }
       });
       unsub = () => listener.subscription.unsubscribe();
     })();
     return () => { if (unsub) unsub(); };
-  }, [fetchProfile, loadBadges, loadTraitSummaries, restoreProfileFromCache]);
+  }, [fetchProfile, loadBadges, loadTraitSummaries, loadBaseTraitCount, loadReliabilityMetrics, restoreProfileFromCache]);
 
   useEffect(() => {
     if (editOpen) return;
@@ -1116,6 +1354,14 @@ export default function ProfileSimple() {
       },
     ]);
   }, [performSignOut, signingOut]);
+
+  const handleOpenAttendanceLog = useCallback(() => {
+    trackReliabilityAttendanceLogViewed({
+      platform: 'mobile',
+      surface: 'profile-reliability-card',
+    });
+    router.push('/profile/attendance-log');
+  }, [router]);
 
   function applyDraftsToState() {
     setFullName(draftFullName);
@@ -1222,6 +1468,7 @@ export default function ProfileSimple() {
 
       const basePayload: ProfileUpdatePayload = {
         id: uid,
+        user_id: uid,
         full_name: draftFullName.trim() || null,
         avatar_url: cleanAvatarUrl,
         updated_at: new Date().toISOString(),
@@ -1251,6 +1498,7 @@ export default function ProfileSimple() {
           setLocationSuggestionsLoading(false);
           const fallbackPayload: ProfileUpdatePayload = {
             id: uid,
+            user_id: uid,
             full_name: basePayload.full_name,
             avatar_url: basePayload.avatar_url,
             updated_at: basePayload.updated_at,
@@ -1856,6 +2104,88 @@ export default function ProfileSimple() {
         {err && <Text style={{ marginTop:8, color:'#b91c1c' }}>{err}</Text>}
       </View>
 
+      {pendingOnboardingSteps.length > 0 && (
+        <View
+          style={{
+            marginTop:12,
+            marginHorizontal:16,
+            backgroundColor:'#ecfdf5',
+            borderRadius:18,
+            borderWidth:1,
+            borderColor:'#a7f3d0',
+            padding:16,
+            gap:10,
+          }}
+        >
+          <View
+            style={{
+              alignSelf:'flex-start',
+              borderRadius:999,
+              borderWidth:1,
+              borderColor:'#a7f3d0',
+              backgroundColor:'#fff',
+              paddingHorizontal:12,
+              paddingVertical:4,
+            }}
+          >
+            <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', letterSpacing:0.5 }}>Step 0 progress</Text>
+          </View>
+          <Text style={{ fontSize:16, fontWeight:'700', color:'#065f46' }}>Finish your doWhat onboarding</Text>
+          <Text style={{ color:'#065f46', fontSize:14 }}>{onboardingEncouragementCopy}</Text>
+          {prioritizedOnboardingLabel && (
+            <Text style={{ color:'#065f46', fontWeight:'600' }}>Next up: {prioritizedOnboardingLabel}</Text>
+          )}
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+            {pendingOnboardingSteps.map((step) => (
+              <View
+                key={step}
+                style={{
+                  borderRadius:999,
+                  borderWidth:1,
+                  borderColor:'#a7f3d0',
+                  backgroundColor:'#fff',
+                  paddingHorizontal:12,
+                  paddingVertical:6,
+                }}
+              >
+                <Text style={{ color:'#064e3b', fontWeight:'600', fontSize:12 }}>{ONBOARDING_STEP_LABELS[step]}</Text>
+              </View>
+            ))}
+          </View>
+          {nextOnboardingRoute && prioritizedOnboardingStep && (
+            <Link
+              href={nextOnboardingRoute}
+              asChild
+              onPress={() =>
+                trackOnboardingEntry({
+                  source: 'profile-progress-banner',
+                  platform: 'mobile',
+                  step: prioritizedOnboardingStep,
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: nextOnboardingRoute,
+                })
+              }
+            >
+              <Pressable
+                style={{
+                  alignSelf:'flex-start',
+                  borderRadius:999,
+                  backgroundColor:'#059669',
+                  paddingHorizontal:18,
+                  paddingVertical:10,
+                  shadowColor:'#059669',
+                  shadowOpacity:0.2,
+                  shadowRadius:6,
+                }}
+              >
+                <Text style={{ color:'#fff', fontWeight:'700' }}>Go to next step</Text>
+              </Pressable>
+            </Link>
+          )}
+        </View>
+      )}
+
       <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
         <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
           <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Location</Text>
@@ -1870,11 +2200,273 @@ export default function ProfileSimple() {
         </View>
       </View>
 
+        {sportProfileHydrated && needsSportOnboarding && (
+          <View
+            style={{
+              marginTop:12,
+              marginHorizontal:16,
+              backgroundColor:'rgba(22,179,163,0.08)',
+              borderRadius:18,
+              borderWidth:1,
+              borderColor:'rgba(22,179,163,0.35)',
+              padding:16,
+              gap:10,
+            }}
+          >
+            <View
+              style={{
+                alignSelf:'flex-start',
+                borderRadius:999,
+                borderWidth:1,
+                borderColor:'rgba(22,179,163,0.3)',
+                backgroundColor:'#fff',
+                paddingHorizontal:12,
+                paddingVertical:4,
+              }}
+            >
+              <Text style={{ fontSize:12, fontWeight:'700', color: theme.colors.brandTeal, letterSpacing:0.5 }}>Sport onboarding</Text>
+            </View>
+            <Text style={{ fontSize:16, fontWeight:'700', color: theme.colors.brandInk }}>Set your sport & skill</Text>
+            <Text style={{ color: theme.colors.ink60, lineHeight:20 }}>
+              Choose your primary sport, play style, and level so we can match you with the right sessions.
+            </Text>
+            {(currentSportLabel || currentPlayStyleLabel || sportSkillLevel) && (
+              <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                {currentSportLabel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Sport: {currentSportLabel}</Text>
+                  </View>
+                )}
+                {currentPlayStyleLabel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Play style: {currentPlayStyleLabel}</Text>
+                  </View>
+                )}
+                {sportSkillLevel && (
+                  <View
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(22,179,163,0.35)',
+                      backgroundColor:'#fff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.brandInk, fontWeight:'600', fontSize:12 }}>Skill: {sportSkillLevel}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+            <Link
+              href="/onboarding/sports"
+              asChild
+              onPress={() =>
+                trackOnboardingEntry({
+                  source: 'sport-banner',
+                  platform: 'mobile',
+                  step: 'sport',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/sports',
+                })
+              }
+            >
+              <Pressable
+                style={{
+                  alignSelf:'flex-start',
+                  borderRadius:999,
+                  backgroundColor: theme.colors.brandTeal,
+                  paddingHorizontal:18,
+                  paddingVertical:10,
+                }}
+              >
+                <Text style={{ color:'#fff', fontWeight:'700' }}>Go to sport onboarding</Text>
+              </Pressable>
+            </Link>
+          </View>
+        )}
+
+      {(reliabilityHydrated || reliabilityLoading) && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Reliability & trust</Text>
+            <Pressable
+              testID="profile-attendance-log-button"
+              accessibilityRole="button"
+              accessibilityLabel="View attendance log"
+              onPress={handleOpenAttendanceLog}
+              disabled={reliabilityLoading}
+              style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:999, borderWidth:1, borderColor:'#0f766e', opacity: reliabilityLoading ? 0.6 : 1 }}
+            >
+              <Text style={{ color:'#0f766e', fontWeight:'600', fontSize:12 }}>
+                {reliabilityLoading ? 'Loading…' : 'View attendance log'}
+              </Text>
+            </Pressable>
+          </View>
+          <View style={{ padding:14, gap:10 }}>
+            {reliabilityLoading ? (
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                <ActivityIndicator size="small" color={theme.colors.brandTeal} />
+                <Text style={{ color:'#475569', fontSize:13 }}>Loading reliability…</Text>
+              </View>
+            ) : reliabilityError ? (
+              <Text style={{ color:'#b91c1c', fontSize:13 }}>{reliabilityError}</Text>
+            ) : (
+              <>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'flex-end' }}>
+                  <View>
+                    <Text style={{ fontSize:12, fontWeight:'700', color:'#475569', textTransform:'uppercase', letterSpacing:0.8 }}>Reliability index</Text>
+                    <View style={{ flexDirection:'row', alignItems:'baseline', gap:6 }}>
+                      <Text style={{ fontSize:32, fontWeight:'700', color: theme.colors.brandInk }}>{reliabilityScoreDisplay ?? '—'}</Text>
+                      <Text style={{ fontSize:12, color:'#94a3b8' }}>score</Text>
+                    </View>
+                  </View>
+                  <View style={{ alignItems:'flex-end' }}>
+                    <Text style={{ fontSize:12, fontWeight:'700', color:'#475569', textTransform:'uppercase', letterSpacing:0.8 }}>Confidence</Text>
+                    <Text style={{ fontSize:16, fontWeight:'600', color: theme.colors.brandTeal }}>
+                      {reliabilityConfidencePercent != null ? `${reliabilityConfidencePercent}%` : '—'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color:'#475569', fontSize:13 }}>{reliabilityDescriptionCopy}</Text>
+                <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                  {RELIABILITY_BADGE_ORDER.map((key) => {
+                    const token = RELIABILITY_BADGE_TOKENS[key];
+                    return (
+                      <View
+                        key={key}
+                        style={{
+                          flexDirection:'row',
+                          alignItems:'center',
+                          gap:4,
+                          borderRadius:999,
+                          borderWidth:1,
+                          borderColor: token.borderColor,
+                          backgroundColor: token.backgroundColor,
+                          paddingHorizontal:12,
+                          paddingVertical:6,
+                        }}
+                      >
+                        {token.icon ? <Text style={{ color: token.textColor }}>{token.icon}</Text> : null}
+                        <Text style={{ color: token.textColor, fontWeight:'600', fontSize:12 }}>{token.label}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', gap:12 }}>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ fontSize:11, fontWeight:'700', color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.8 }}>Attended (30d)</Text>
+                    <Text style={{ marginTop:4, fontSize:16, fontWeight:'600', color: theme.colors.brandInk }}>{attended30Summary}</Text>
+                  </View>
+                  <View style={{ flex:1 }}>
+                    <Text style={{ fontSize:11, fontWeight:'700', color:'#94a3b8', textTransform:'uppercase', letterSpacing:0.8 }}>No-shows (90d)</Text>
+                    <Text style={{ marginTop:4, fontSize:16, fontWeight:'600', color: theme.colors.brandInk }}>{noShow90Summary}</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize:12, color:'#6b7280' }}>
+                  Need to contest a mark? Open the session once it ends and use the “Contest reliability” button to send details.
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+      )}
+
+      {pledgeHydrated && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Reliability pledge</Text>
+          </View>
+          <View style={{ padding:14, gap:8 }}>
+            {needsReliabilityPledge ? (
+              <>
+                <Text style={{ fontSize:14, fontWeight:'700', color:'#0f172a' }}>Lock your reliability pledge</Text>
+                <Text style={{ color:'#475569', fontSize:13 }}>
+                  Confirm the four commitments so hosts know they can count on you for Step 0.
+                </Text>
+                <Link
+                  href="/onboarding/reliability-pledge"
+                  asChild
+                  onPress={() =>
+                    trackOnboardingEntry({
+                      source: 'profile-pledge-banner',
+                      platform: 'mobile',
+                      step: 'pledge',
+                      steps: pendingOnboardingSteps,
+                      pendingSteps: pendingOnboardingCount,
+                      nextStep: '/onboarding/reliability-pledge',
+                    })
+                  }
+                >
+                  <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#0ea5e9', paddingHorizontal:16, paddingVertical:8 }}>
+                    <Text style={{ color:'#fff', fontWeight:'700' }}>Review pledge</Text>
+                  </Pressable>
+                </Link>
+              </>
+            ) : (
+              <Text style={{ color:'#065f46', fontSize:13 }}>
+                You accepted version {pledgeVersion ?? 'v1'} on {formattedPledgeAck ?? 'a previous date'}.
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+
       <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
         <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
           <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Personality traits</Text>
         </View>
         <View style={{ padding:14, gap:10 }}>
+          {needsTraitOnboarding && (
+            <View style={{
+              padding:12,
+              borderRadius:14,
+              borderWidth:1,
+              borderColor:'#a7f3d0',
+              backgroundColor:'#ecfdf5',
+              gap:6,
+            }}>
+              <Text style={{ fontSize:12, fontWeight:'700', color:'#047857', textTransform:'uppercase', letterSpacing:0.8 }}>Finish onboarding</Text>
+              <Text style={{ fontSize:14, color:'#065f46' }}>Add {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to showcase your vibe.</Text>
+              <Link
+                href="/onboarding-traits"
+                asChild
+                onPress={() =>
+                  trackOnboardingEntry({
+                    source: 'profile-traits-banner',
+                    platform: 'mobile',
+                    step: 'traits',
+                    steps: pendingOnboardingSteps,
+                    pendingSteps: pendingOnboardingCount,
+                    nextStep: '/onboarding-traits',
+                  })
+                }
+              >
+                <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#10b981', paddingHorizontal:16, paddingVertical:8 }}>
+                  <Text style={{ color:'#fff', fontWeight:'700' }}>Choose traits</Text>
+                </Pressable>
+              </Link>
+            </View>
+          )}
           {supportsTraits ? (
             traitSummariesLoading ? (
               <Text style={{ color:'#94a3b8', fontSize:13 }}>Loading trait stats…</Text>

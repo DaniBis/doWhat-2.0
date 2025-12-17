@@ -34,6 +34,7 @@ export interface MapActivity {
   activity_types?: string[] | null;
   tags?: string[] | null;
   traits?: string[] | null;
+  upcoming_session_count?: number | null;
 }
 
 export interface MapActivitiesResponse {

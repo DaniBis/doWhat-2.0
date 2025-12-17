@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
-import { createWebUrl } from '../lib/web';
+import { searchGeocode } from '../lib/geocode';
 import { fetchNearbyPlaces, type PlaceSuggestion } from '../lib/placesSearch';
 
 type Option = { id: string; name: string };
@@ -16,10 +16,12 @@ type VenueInsert = { name: string; lat?: number; lng?: number };
 type SessionInsert = {
   activity_id: string;
   venue_id: string;
+  host_user_id: string;
   price_cents: number;
   starts_at: string;
   ends_at: string;
-  created_by: string;
+  max_attendees: number;
+  visibility: 'public' | 'friends' | 'private';
   description?: string;
 };
 
@@ -131,6 +133,8 @@ export default function AddEvent() {
   const [lng, setLng] = useState('');
   const [price, setPrice] = useState('');
   const [startDate, setStartDate] = useState('');
+  const [maxAttendees, setMaxAttendees] = useState('20');
+  const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -168,6 +172,11 @@ export default function AddEvent() {
 
   const dateLabelStyle = { fontSize: 12, color: '#6b7280', marginBottom: 6 } as const;
   const dateValueStyle = { fontSize: 16, fontWeight: '600' as const, color: '#111827' } as const;
+  const visibilityButtons: Array<{ key: 'public' | 'friends' | 'private'; label: string; helper: string }> = [
+    { key: 'public', label: 'Public', helper: 'Visible to everyone' },
+    { key: 'friends', label: 'Friends', helper: 'Only shared connections' },
+    { key: 'private', label: 'Private', helper: 'Invite-only' },
+  ];
 
   const activityQuery = activityName.trim().toLowerCase();
   const matchingActivities = useMemo(() => {
@@ -316,60 +325,29 @@ export default function AddEvent() {
           }
         }
 
-        const url = createWebUrl('/api/geocode');
-        url.searchParams.set('q', query);
-        url.searchParams.set('limit', '5');
-        if (canBias) {
-          url.searchParams.set('nearLat', latNumber.toFixed(6));
-          url.searchParams.set('nearLng', lngNumber.toFixed(6));
-          url.searchParams.set('nearRadius', '2500');
-        }
-
-        const response = await fetch(url.toString(), {
-          method: 'GET',
-          signal: controller.signal,
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
-
-        if (!isActive) return;
-
         let geocodeResults: GeocodeSuggestion[] = [];
-        if (response.ok) {
-          const data = (await response.json()) as {
-            label?: string;
-            description?: string | null;
-            lat?: number;
-            lng?: number;
-            results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
-          };
-
-          const rawResults = Array.isArray(data.results) ? data.results : [];
-          geocodeResults = rawResults
-            .map((item) => {
-              const label = typeof item.label === 'string' ? item.label : null;
-              const description = typeof item.description === 'string' ? item.description : null;
-              const latValue = typeof item.lat === 'number' && Number.isFinite(item.lat) ? item.lat : null;
-              const lngValue = typeof item.lng === 'number' && Number.isFinite(item.lng) ? item.lng : null;
-              if (!label || latValue == null || lngValue == null) return null;
-              return { label, description, lat: latValue, lng: lngValue } satisfies GeocodeSuggestion;
-            })
-            .filter((item): item is GeocodeSuggestion => Boolean(item))
-            .slice(0, 5);
-
-          if (!geocodeResults.length && typeof data.label === 'string' && typeof data.lat === 'number' && typeof data.lng === 'number' && Number.isFinite(data.lat) && Number.isFinite(data.lng)) {
-            geocodeResults.push({
-              label: data.label,
-              description: typeof data.description === 'string' ? data.description : null,
-              lat: data.lat,
-              lng: data.lng,
-            });
-          }
+        try {
+          const results = await searchGeocode(query, {
+            limit: 5,
+            nearLat: canBias ? latNumber : undefined,
+            nearLng: canBias ? lngNumber : undefined,
+            signal: controller.signal,
+          });
+          if (!isActive) return;
+          geocodeResults = results.map((result) => ({
+            label: result.label,
+            description: result.description ?? null,
+            lat: result.lat,
+            lng: result.lng,
+          }));
           setAutocompleteError(null);
-        } else {
-          if (response.status !== 404 && !controller.signal.aborted) {
-            setAutocompleteError('Unable to fetch address suggestions.');
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError' || controller.signal.aborted) {
+            return;
           }
+          if (!isActive) return;
+          console.warn('Geocode suggestions failed', error);
+          setAutocompleteError('Unable to fetch address suggestions.');
         }
         const nearbyLabels = new Set(
           uniqueNearby
@@ -456,39 +434,17 @@ export default function AddEvent() {
     const latValue = Number.isFinite(parseFloat(lat)) ? Number.parseFloat(lat) : null;
     const lngValue = Number.isFinite(parseFloat(lng)) ? Number.parseFloat(lng) : null;
 
-    const response = await fetch(createWebUrl('/api/activities/upsert').toString(), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const { data, error } = await supabase
+      .from('activities')
+      .insert({
         name,
         lat: latValue,
         lng: lngValue,
-      }),
-    });
-
-    if (!response.ok) {
-      let message = 'Failed to save activity.';
-      try {
-        const data = (await response.json()) as { error?: string };
-        if (typeof data.error === 'string' && data.error.trim()) message = data.error;
-      } catch {}
-      throw new Error(message);
-    }
-
-    const payload = (await response.json()) as
-      | { activity?: { id?: string; name?: string | null } | null }
-      | { id?: string; name?: string | null };
-    const createdId =
-      (payload as { activity?: { id?: string | null } })?.activity?.id ??
-      (payload as { id?: string | null })?.id ??
-      null;
-    if (!createdId) {
-      throw new Error('Activity saved but no identifier was returned.');
-    }
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    const createdId = extractId(data);
 
     setActivityId(createdId);
     setSelectedActivityLabel(name);
@@ -530,7 +486,7 @@ export default function AddEvent() {
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth?.user?.id;
       if (!uid) throw new Error('Please sign in.');
-  const act = await ensureActivity();
+      const act = await ensureActivity();
       const ven = await ensureVenue();
 
       const start = parseDateTime(startDate, startTime);
@@ -539,13 +495,20 @@ export default function AddEvent() {
       if (end <= start) throw new Error('End time must be after the start time.');
 
       const cents = Math.round((Number(price) || 0) * 100);
+      const parsedMaxAttendees = Number(maxAttendees);
+      if (!Number.isFinite(parsedMaxAttendees) || parsedMaxAttendees <= 0) {
+        throw new Error('Enter a valid max attendees count (> 0).');
+      }
+
       const payload: SessionInsert = {
         activity_id: act,
         venue_id: ven,
+        host_user_id: uid,
         price_cents: cents,
         starts_at: start.toISOString(),
         ends_at: end.toISOString(),
-        created_by: uid,
+        max_attendees: Math.floor(parsedMaxAttendees),
+        visibility,
       };
 
       if (description.trim()) {
@@ -877,6 +840,59 @@ export default function AddEvent() {
           >
             <Text style={{ color: '#0d9488', fontSize: 12, fontWeight: '500' }}>📍</Text>
           </Pressable>
+        </View>
+
+        <View style={{ marginBottom: 20 }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Capacity</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <TextInput
+                placeholder="Max attendees"
+                keyboardType="number-pad"
+                value={maxAttendees}
+                onChangeText={(value) => {
+                  const cleaned = value.replace(/[^0-9]/g, '');
+                  setMaxAttendees(cleaned);
+                }}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#cbd5f5',
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontWeight: '600',
+                  backgroundColor: '#fff',
+                }}
+              />
+            </View>
+          </View>
+        </View>
+
+        <View style={{ marginBottom: 24 }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 12 }}>Visibility</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {visibilityButtons.map((option) => {
+              const isActive = visibility === option.key;
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setVisibility(option.key)}
+                  style={{
+                    flexGrow: 1,
+                    minWidth: '30%',
+                    borderWidth: 1,
+                    borderColor: isActive ? '#0d9488' : '#e2e8f0',
+                    backgroundColor: isActive ? 'rgba(13,148,136,0.1)' : '#fff',
+                    borderRadius: 12,
+                    padding: 12,
+                  }}
+                >
+                  <Text style={{ fontWeight: '700', color: isActive ? '#0f766e' : '#0f172a' }}>{option.label}</Text>
+                  <Text style={{ color: '#475569', marginTop: 4 }}>{option.helper}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       </View>
 

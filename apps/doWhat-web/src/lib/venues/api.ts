@@ -1,4 +1,4 @@
-import type { Database } from '@/types/database';
+import type { VenueRow } from '@/types/database';
 
 export type SerializedVenue = {
   id: string;
@@ -14,7 +14,7 @@ export type SerializedVenue = {
   needsVerification: boolean;
 };
 
-export function serializeVenueRow(venue: Database['public']['Tables']['venues']['Row']): SerializedVenue {
+export function serializeVenueRow(venue: VenueRow): SerializedVenue {
   return {
     id: venue.id,
     name: venue.name ?? null,

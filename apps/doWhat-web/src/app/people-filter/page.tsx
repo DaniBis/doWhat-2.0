@@ -2,21 +2,43 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 
 import {
+  ACTIVITY_DISTANCE_OPTIONS,
+  ACTIVITY_PRICE_FILTER_OPTIONS,
+  ACTIVITY_TIME_FILTER_OPTIONS,
   DEFAULT_ACTIVITY_FILTER_PREFERENCES,
   DEFAULT_PEOPLE_FILTER_PREFERENCES,
+  activityTaxonomy,
+  canonicaliseTimeOfDayValues,
   countActiveActivityFilters,
   countActivePeopleFilters,
+  derivePendingOnboardingSteps,
+  isPlayStyle,
+  isSportType,
+  ONBOARDING_TRAIT_GOAL,
   loadUserPreference,
   normaliseActivityFilterPreferences,
   normalisePeopleFilterPreferences,
+  resolvePriceKeyFromRange,
+  resolvePriceRangeForKey,
   saveUserPreference,
+  trackOnboardingEntry,
   type ActivityFilterPreferences,
+  type ActivityPriceFilterKey,
+  type ActivityTimeFilterKey,
   type PeopleFilterPreferences,
+  type PlayStyle,
+  type SportType,
+  type OnboardingStep,
+  PEOPLE_FILTER_AGE_RANGES,
+  PEOPLE_FILTER_GROUP_SIZES,
+  PEOPLE_FILTER_SKILL_LEVELS,
 } from '@dowhat/shared';
 
 import { supabase } from '@/lib/supabase/browser';
+import TaxonomyCategoryPicker from '@/components/TaxonomyCategoryPicker';
 
 type UserTrait = {
   trait_name: string;
@@ -25,7 +47,7 @@ type UserTrait = {
   count: number;
 };
 
-const availableTraits = [
+const FALLBACK_TRAITS: ReadonlyArray<{ trait_name: string; icon: string; color: string }> = [
   { trait_name: 'Early Bird', icon: '🌅', color: '#F59E0B' },
   { trait_name: 'Night Owl', icon: '🦉', color: '#7C3AED' },
   { trait_name: 'Social Butterfly', icon: '🦋', color: '#EC4899' },
@@ -37,28 +59,44 @@ const availableTraits = [
   { trait_name: 'Tech Geek', icon: '💻', color: '#059669' },
 ];
 
-const activityCategories = [
-  'Fitness & Sports',
-  'Arts & Culture',
-  'Food & Drink',
-  'Technology',
-  'Outdoor Adventures',
-  'Social Events',
-  'Learning & Education',
-  'Music & Entertainment',
-];
+type PopularTraitResponse = {
+  id: string;
+  name: string;
+  color?: string | null;
+  icon?: string | null;
+  score: number;
+  voteCount: number;
+  baseCount: number;
+  popularity: number;
+};
 
-const timeSlots = [
-  'Early Morning (6-9 AM)',
-  'Morning (9-12 PM)',
-  'Afternoon (12-6 PM)',
-  'Evening (6-9 PM)',
-  'Night (9 PM+)',
-];
+const TRAIT_ICON_EMOJI_MAP: Record<string, string> = {
+  Sparkles: '✨',
+  Megaphone: '📣',
+  Users: '🤝',
+  Lotus: '🪷',
+  Compass: '🧭',
+  Target: '🎯',
+  Gamepad2: '🎮',
+  ClipboardCheck: '✅',
+  Smile: '😊',
+  Shuffle: '🔀',
+  ShieldCheck: '🛡️',
+};
 
-const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
-const ageRanges = ['18-25', '26-35', '36-45', '46-55', '55+'];
-const groupSizes = ['1-5 people', '6-15 people', '16-30 people', '30+ people'];
+const resolveTraitEmoji = (icon?: string | null): string => {
+  if (!icon) return '✨';
+  const trimmed = icon.trim();
+  return TRAIT_ICON_EMOJI_MAP[trimmed] ?? (trimmed.length === 1 ? trimmed : '✨');
+};
+
+const buildFallbackTraitCounts = (): UserTrait[] =>
+  FALLBACK_TRAITS.map((trait, index) => ({
+    trait_name: trait.trait_name,
+    icon: trait.icon,
+    color: trait.color,
+    count: 12 + index * 3,
+  }));
 
 const ACTIVITY_LOCAL_KEY = 'activity_filters:v1';
 const PEOPLE_LOCAL_KEY = 'people_filters:v1';
@@ -75,13 +113,66 @@ export default function PeopleFilterPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [initialised, setInitialised] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+  const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+  const [, setPledgeVersion] = useState<string | null>(null);
+  const [pledgeHydrated, setPledgeHydrated] = useState(false);
+  const [primarySport, setPrimarySport] = useState<SportType | null>(null);
+  const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
+  const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
+  const [sportProfileLoading, setSportProfileLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'activities' | 'people'>('people');
   const [nearbyTraits, setNearbyTraits] = useState<UserTrait[]>([]);
 
+  const traitCountLoading = baseTraitCount === null;
+  const rawPendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      derivePendingOnboardingSteps({
+        traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        primarySport,
+        playStyle,
+        skillLevel: sportSkillLevel,
+        pledgeAckAt,
+      }),
+    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+  );
+  const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
+    () =>
+      rawPendingOnboardingSteps.filter((step) => {
+        if (step === 'traits') {
+          return !traitCountLoading && baseTraitCount != null;
+        }
+        if (step === 'sport') {
+          return !sportProfileLoading;
+        }
+        if (step === 'pledge') {
+          return pledgeHydrated;
+        }
+        return true;
+      }),
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, pledgeHydrated],
+  );
+  const pendingOnboardingCount = pendingOnboardingSteps.length;
+  const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
+  const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
+  const traitShortfall = needsTraitOnboarding
+    ? Math.max(1, ONBOARDING_TRAIT_GOAL - (baseTraitCount ?? 0))
+    : 0;
+
+  const normaliseWithCanonicalTime = useCallback(
+    (prefs: ActivityFilterPreferences): ActivityFilterPreferences =>
+      normaliseActivityFilterPreferences({
+        ...prefs,
+        timeOfDay: canonicaliseTimeOfDayValues(prefs.timeOfDay ?? []),
+      }),
+    [],
+  );
+
   useEffect(() => {
     fetchNearbyTraits();
-  }, []);
+  }, [normaliseWithCanonicalTime]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +182,7 @@ export default function PeopleFilterPage() {
       try {
         const raw = window.localStorage.getItem(ACTIVITY_LOCAL_KEY);
         if (!raw) return null;
-        return normaliseActivityFilterPreferences(JSON.parse(raw) as ActivityFilterPreferences);
+        return normaliseWithCanonicalTime(JSON.parse(raw) as ActivityFilterPreferences);
       } catch (error) {
         console.warn('[people-filters] failed to parse cached activity filters', error);
         return null;
@@ -125,7 +216,7 @@ export default function PeopleFilterPage() {
             ]);
             if (!cancelled) {
               if (remoteActivity) {
-                setActivityFilters(normaliseActivityFilterPreferences(remoteActivity));
+                setActivityFilters(normaliseWithCanonicalTime(remoteActivity));
               } else {
                 const fallback = readLocalActivity();
                 if (fallback) setActivityFilters(fallback);
@@ -164,9 +255,148 @@ export default function PeopleFilterPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadTraitCount = async (uid: string) => {
+      const { count, error } = await supabase
+        .from('user_base_traits')
+        .select('trait_id', { count: 'exact', head: true })
+        .eq('user_id', uid);
+      if (!cancelled) {
+        if (error) {
+          console.warn('[people-filters] failed to fetch base traits', error);
+          setBaseTraitCount(0);
+        } else {
+          setBaseTraitCount(typeof count === 'number' ? count : 0);
+        }
+      }
+    };
+
+    if (!userId) {
+      setBaseTraitCount(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    loadTraitCount(userId);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setPrimarySport(null);
+      setPlayStyle(null);
+      setSportSkillLevel(null);
+      setSportProfileLoading(false);
+      return () => {
+        /* noop */
+      };
+    }
+    let cancelled = false;
+    setSportProfileLoading(true);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('primary_sport, play_style')
+          .eq('id', userId)
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null }>();
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+        const normalizedSport = data?.primary_sport && isSportType(data.primary_sport)
+          ? data.primary_sport
+          : null;
+        const normalizedPlayStyle = data?.play_style && isPlayStyle(data.play_style)
+          ? data.play_style
+          : null;
+        let skillLevel: string | null = null;
+        if (normalizedSport) {
+          const { data: sportRow, error: sportError } = await supabase
+            .from('user_sport_profiles')
+            .select('skill_level')
+            .eq('user_id', userId)
+            .eq('sport', normalizedSport)
+            .maybeSingle<{ skill_level: string | null }>();
+          if (sportError && sportError.code !== 'PGRST116') {
+            throw sportError;
+          }
+          skillLevel = sportRow?.skill_level ?? null;
+        }
+        if (!cancelled) {
+          setPrimarySport(normalizedSport);
+          setPlayStyle(normalizedPlayStyle);
+          setSportSkillLevel(skillLevel);
+        }
+      } catch (error) {
+        console.warn('[people-filters] failed to load sport profile', error);
+        if (!cancelled) {
+          setPrimarySport(null);
+          setPlayStyle(null);
+          setSportSkillLevel(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSportProfileLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!userId) {
+      setPledgeAckAt(null);
+      setPledgeVersion(null);
+      setPledgeHydrated(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setPledgeHydrated(false);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('reliability_pledge_ack_at, reliability_pledge_version')
+          .eq('id', userId)
+          .maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null }>();
+        if (cancelled) return;
+        if (error && error.code !== 'PGRST116') {
+          throw error;
+        }
+        setPledgeAckAt(data?.reliability_pledge_ack_at ?? null);
+        setPledgeVersion(data?.reliability_pledge_version ?? null);
+      } catch (error) {
+        console.warn('[people-filters] failed to fetch reliability pledge state', error);
+        if (!cancelled) {
+          setPledgeAckAt(null);
+          setPledgeVersion(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setPledgeHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   const persistActivity = useCallback(
     async (next: ActivityFilterPreferences) => {
-      const normalised = normaliseActivityFilterPreferences(next);
+      const normalised = normaliseWithCanonicalTime(next);
       if (typeof window !== 'undefined') {
         try {
           window.localStorage.setItem(ACTIVITY_LOCAL_KEY, JSON.stringify(normalised));
@@ -182,7 +412,7 @@ export default function PeopleFilterPage() {
         }
       }
     },
-    [userId],
+    [normaliseWithCanonicalTime, userId],
   );
 
   const persistPeople = useCallback(
@@ -218,9 +448,9 @@ export default function PeopleFilterPage() {
 
   const updateActivityFilters = useCallback(
     (updater: (prev: ActivityFilterPreferences) => ActivityFilterPreferences) => {
-      setActivityFilters((prev) => normaliseActivityFilterPreferences(updater(prev)));
+      setActivityFilters((prev) => normaliseWithCanonicalTime(updater(prev)));
     },
-    [],
+    [normaliseWithCanonicalTime],
   );
 
   const updatePeopleFilters = useCallback(
@@ -232,47 +462,121 @@ export default function PeopleFilterPage() {
 
   const fetchNearbyTraits = async () => {
     try {
-      // For demo, simulate nearby trait data
-      const traitCounts = availableTraits.map(trait => ({
-        ...trait,
-        count: Math.floor(Math.random() * 50) + 5,
-      }));
-      setNearbyTraits(traitCounts.sort((a, b) => b.count - a.count));
+      const response = await fetch('/api/traits/popular?limit=12', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Failed to load traits (${response.status})`);
+      }
+      const payload = (await response.json()) as PopularTraitResponse[];
+      if (!Array.isArray(payload) || payload.length === 0) {
+        setNearbyTraits(buildFallbackTraitCounts());
+        return;
+      }
+      const mapped = payload.map((trait, index) => {
+        const rawCount = trait.popularity || trait.voteCount || trait.baseCount || trait.score || 1;
+        return {
+          trait_name: trait.name ?? `Trait ${index + 1}`,
+          icon: resolveTraitEmoji(trait.icon),
+          color: trait.color ?? FALLBACK_TRAITS[index % FALLBACK_TRAITS.length]?.color ?? '#0EA5E9',
+          count: Math.max(1, Math.round(rawCount)),
+        };
+      });
+      setNearbyTraits(mapped.sort((a, b) => b.count - a.count));
     } catch (error) {
-      console.error('Error fetching nearby traits:', error);
+      console.error('[people-filters] failed to load popular traits', error);
+      setNearbyTraits(buildFallbackTraitCounts());
     }
   };
 
-  const toggleFilter = (
-    category: 'categories' | 'timeOfDay' | PeopleArrayKeys,
-    value: string,
-  ) => {
-    if (category === 'categories') {
-      updateActivityFilters((prev) => ({
-        ...prev,
-        categories: prev.categories.includes(value)
-          ? prev.categories.filter((item) => item !== value)
-          : [...prev.categories, value],
-      }));
-      return;
-    }
-    if (category === 'timeOfDay') {
-      updateActivityFilters((prev) => ({
-        ...prev,
-        timeOfDay: prev.timeOfDay.includes(value)
-          ? prev.timeOfDay.filter((item) => item !== value)
-          : [...prev.timeOfDay, value],
-      }));
-      return;
-    }
+  const toggleCategory = useCallback(
+    (categoryId: string) => {
+      updateActivityFilters((prev) => {
+        const exists = prev.categories.includes(categoryId);
+        return {
+          ...prev,
+          categories: exists
+            ? prev.categories.filter((item) => item !== categoryId)
+            : [...prev.categories, categoryId],
+        };
+      });
+    },
+    [updateActivityFilters],
+  );
 
-    updatePeopleFilters((prev) => ({
-      ...prev,
-      [category]: prev[category].includes(value)
-        ? prev[category].filter((item: string) => item !== value)
-        : [...prev[category], value],
-    }));
-  };
+  const toggleTimeSlot = useCallback(
+    (timeKey: ActivityTimeFilterKey) => {
+      const slot = ACTIVITY_TIME_FILTER_OPTIONS.find((option) => option.key === timeKey);
+      if (!slot) return;
+      updateActivityFilters((prev) => {
+        if (!slot.value) {
+          return { ...prev, timeOfDay: [] };
+        }
+        const exists = prev.timeOfDay.includes(slot.value);
+        const next = exists
+          ? prev.timeOfDay.filter((value) => value !== slot.value)
+          : [...prev.timeOfDay, slot.value];
+        return { ...prev, timeOfDay: next };
+      });
+    },
+    [updateActivityFilters],
+  );
+
+  const togglePeopleFilterArray = useCallback(
+    (category: PeopleArrayKeys, value: string) => {
+      updatePeopleFilters((prev) => ({
+        ...prev,
+        [category]: prev[category].includes(value)
+          ? prev[category].filter((item: string) => item !== value)
+          : [...prev[category], value],
+      }));
+    },
+    [updatePeopleFilters],
+  );
+
+  const handleDistanceSelect = useCallback(
+    (radius: number) => {
+      updateActivityFilters((prev) => ({
+        ...prev,
+        radius,
+      }));
+    },
+    [updateActivityFilters],
+  );
+
+  const pricePresetKey = useMemo<ActivityPriceFilterKey>(
+    () => resolvePriceKeyFromRange(activityFilters.priceRange),
+    [activityFilters.priceRange],
+  );
+
+  const handlePricePreset = useCallback(
+    (preset: ActivityPriceFilterKey) => {
+      updateActivityFilters((prev) => ({
+        ...prev,
+        priceRange: resolvePriceRangeForKey(preset),
+      }));
+    },
+    [updateActivityFilters],
+  );
+
+  const handlePriceInputChange = useCallback(
+    (bound: 'min' | 'max', value: number) => {
+      if (!Number.isFinite(value)) return;
+      updateActivityFilters((prev) => {
+        if (bound === 'min') {
+          const nextMin = Math.max(0, value);
+          return {
+            ...prev,
+            priceRange: [nextMin, Math.max(nextMin, prev.priceRange[1])],
+          };
+        }
+        const nextMax = Math.max(prev.priceRange[0], value);
+        return {
+          ...prev,
+          priceRange: [prev.priceRange[0], nextMax],
+        };
+      });
+    },
+    [updateActivityFilters],
+  );
 
   const clearAllFilters = () => {
     updateActivityFilters(() => DEFAULT_ACTIVITY_FILTER_PREFERENCES);
@@ -296,81 +600,111 @@ export default function PeopleFilterPage() {
     <div className="space-y-8">
       {/* Activity Categories */}
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Activity Categories</h3>
-        <div className="flex flex-wrap gap-2">
-          {activityCategories.map((category) => (
-            <button
-              key={category}
-              className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                activityFilters.categories.includes(category)
-                  ? 'bg-blue-500 border-blue-500 text-white'
-                  : 'bg-white border-gray-300 text-gray-700 hover:border-blue-500 hover:text-blue-500'
-              }`}
-              onClick={() => toggleFilter('categories', category)}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
+        <h3 className="text-lg font-semibold text-gray-900">Activity Categories</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Browse the shared taxonomy so discovery filters stay aligned with the main Activity Filters page.
+        </p>
+        <TaxonomyCategoryPicker
+          taxonomy={activityTaxonomy}
+          selectedIds={activityFilters.categories}
+          onToggle={toggleCategory}
+        />
       </div>
 
       {/* Time of Day */}
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Time Preference</h3>
-        <div className="flex flex-wrap gap-2">
-          {timeSlots.map((time) => (
-            <button
-              key={time}
-              className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
-                activityFilters.timeOfDay.includes(time)
-                  ? 'bg-blue-500 border-blue-500 text-white'
-                  : 'bg-white border-gray-300 text-gray-700 hover:border-blue-500 hover:text-blue-500'
-              }`}
-              onClick={() => toggleFilter('timeOfDay', time)}
-            >
-              {time}
-            </button>
-          ))}
+        <div className="space-y-2">
+          {ACTIVITY_TIME_FILTER_OPTIONS.map((slot) => {
+            const isActive = slot.value
+              ? activityFilters.timeOfDay.includes(slot.value)
+              : activityFilters.timeOfDay.length === 0;
+            return (
+              <button
+                key={slot.key}
+                onClick={() => toggleTimeSlot(slot.key)}
+                className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                  isActive
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                }`}
+              >
+                <div className="flex items-center">
+                  {slot.icon && <span className="text-xl mr-3">{slot.icon}</span>}
+                  <span className="font-medium">{slot.label}</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Distance & Price */}
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Distance & Budget</h3>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-medium text-gray-900">Distance: {activityFilters.radius} miles</span>
-              <div className="flex gap-2">
-                <button 
-                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600"
-                  onClick={() =>
-                    updateActivityFilters((prev) => ({
-                      ...prev,
-                      radius: Math.max(1, prev.radius - 5),
-                    }))
-                  }
+        <div className="space-y-6">
+          <div>
+            <p className="text-sm text-gray-600 mb-3">Select how far you’re willing to travel.</p>
+            <div className="flex flex-wrap gap-2">
+              {ACTIVITY_DISTANCE_OPTIONS.map((radius) => (
+                <button
+                  key={radius}
+                  onClick={() => handleDistanceSelect(radius)}
+                  className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
+                    activityFilters.radius === radius
+                      ? 'bg-blue-500 border-blue-500 text-white'
+                      : 'bg-white border-gray-300 text-gray-700 hover:border-blue-500 hover:text-blue-500'
+                  }`}
                 >
-                  -
+                  {radius} mi
                 </button>
-                <button 
-                  className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600"
-                  onClick={() =>
-                    updateActivityFilters((prev) => ({
-                      ...prev,
-                      radius: Math.min(50, prev.radius + 5),
-                    }))
-                  }
-                >
-                  +
-                </button>
-              </div>
+              ))}
             </div>
           </div>
-          
+
           <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="font-medium text-gray-900 mb-1">Budget: ${activityFilters.priceRange[0]} - ${activityFilters.priceRange[1]}</div>
-            <div className="text-sm text-gray-500">Click to adjust price range</div>
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="flex flex-wrap gap-2">
+                  {ACTIVITY_PRICE_FILTER_OPTIONS.map((option) => (
+                    <button
+                      key={option.key}
+                      onClick={() => handlePricePreset(option.key)}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                        pricePresetKey === option.key
+                          ? 'border-green-500 bg-green-50 text-green-800'
+                          : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm text-gray-500 mt-3">
+                  Current range: ${activityFilters.priceRange[0]} – ${activityFilters.priceRange[1]}
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm text-gray-600">Min ($)</label>
+                  <input
+                    type="number"
+                    value={activityFilters.priceRange[0]}
+                    onChange={(e) => handlePriceInputChange('min', Number(e.target.value))}
+                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600">Max ($)</label>
+                  <input
+                    type="number"
+                    value={activityFilters.priceRange[1]}
+                    onChange={(e) => handlePriceInputChange('max', Number(e.target.value))}
+                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -392,7 +726,7 @@ export default function PeopleFilterPage() {
                   ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-200 bg-white hover:border-blue-300'
               }`}
-              onClick={() => toggleFilter('personalityTraits', trait.trait_name)}
+              onClick={() => togglePeopleFilterArray('personalityTraits', trait.trait_name)}
             >
               <div className="text-2xl mb-2">{trait.icon}</div>
               <div className={`font-medium text-sm mb-1 ${
@@ -410,7 +744,7 @@ export default function PeopleFilterPage() {
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Skill Level</h3>
         <div className="flex flex-wrap gap-2">
-          {skillLevels.map((level) => (
+          {PEOPLE_FILTER_SKILL_LEVELS.map((level) => (
             <button
               key={level}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
@@ -418,7 +752,7 @@ export default function PeopleFilterPage() {
                   ? 'bg-purple-500 border-purple-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-purple-500 hover:text-purple-500'
               }`}
-              onClick={() => toggleFilter('skillLevels', level)}
+              onClick={() => togglePeopleFilterArray('skillLevels', level)}
             >
               {level}
             </button>
@@ -430,7 +764,7 @@ export default function PeopleFilterPage() {
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Age Range</h3>
         <div className="flex flex-wrap gap-2">
-          {ageRanges.map((age) => (
+          {PEOPLE_FILTER_AGE_RANGES.map((age) => (
             <button
               key={age}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
@@ -438,7 +772,7 @@ export default function PeopleFilterPage() {
                   ? 'bg-green-500 border-green-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-green-500 hover:text-green-500'
               }`}
-              onClick={() => toggleFilter('ageRanges', age)}
+              onClick={() => togglePeopleFilterArray('ageRanges', age)}
             >
               {age}
             </button>
@@ -450,7 +784,7 @@ export default function PeopleFilterPage() {
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Group Size Preference</h3>
         <div className="flex flex-wrap gap-2">
-          {groupSizes.map((size) => (
+          {PEOPLE_FILTER_GROUP_SIZES.map((size) => (
             <button
               key={size}
               className={`px-4 py-2 rounded-full border text-sm font-medium transition-colors ${
@@ -458,7 +792,7 @@ export default function PeopleFilterPage() {
                   ? 'bg-orange-500 border-orange-500 text-white'
                   : 'bg-white border-gray-300 text-gray-700 hover:border-orange-500 hover:text-orange-500'
               }`}
-              onClick={() => toggleFilter('groupSizePreference', size)}
+              onClick={() => togglePeopleFilterArray('groupSizePreference', size)}
             >
               {size}
             </button>
@@ -520,6 +854,87 @@ export default function PeopleFilterPage() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         {isLoading && (
           <div className="mb-6 text-sm text-gray-500">Loading your saved preferences…</div>
+        )}
+        {needsSportOnboarding && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-teal-200 bg-teal-50/80 p-4 text-sm text-teal-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-teal-900">Set your sport & skill</p>
+              <p>
+                Choose your primary sport, play style, and level so people filters can surface better matches.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/sports"
+              onClick={() =>
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'sport',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/sports',
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-teal-500"
+            >
+              Go to sport onboarding
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        )}
+        {needsTraitOnboarding && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-emerald-900">Finish your base traits</p>
+              <p>
+                Pick {traitShortfall} more trait{traitShortfall === 1 ? '' : 's'} to unlock personalized people filters and better trait hints.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/traits"
+              onClick={() =>
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'traits',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/traits',
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
+            >
+              Go to onboarding
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        )}
+        {needsReliabilityPledge && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/80 p-4 text-sm text-indigo-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-indigo-900">Confirm the reliability pledge</p>
+              <p>
+                Review the four doWhat commitments so hosts prioritize you for last-minute openings and high-reliability matches.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/reliability-pledge"
+              onClick={() =>
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'pledge',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/reliability-pledge',
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500"
+            >
+              Review pledge
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
         )}
         {activeTab === 'people' ? renderPeopleFilters() : renderActivityFilters()}
       </div>

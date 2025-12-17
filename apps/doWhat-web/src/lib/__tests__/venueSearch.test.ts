@@ -1,5 +1,6 @@
 import { calculateActivityScore, resolveActivityConfidence, isActivityName, withinClassificationTTL } from '@/lib/venues/search';
 import type { ActivityName } from '@/lib/venues/constants';
+import type { Json } from '@/types/database';
 
 describe('venue search helpers', () => {
   test('calculateActivityScore applies weights correctly', () => {
@@ -16,7 +17,7 @@ describe('venue search helpers', () => {
 
   test('resolveActivityConfidence parses numeric values', () => {
     const scores = { climbing: 0.87, yoga: '0.65' } as const;
-    const mixedScores: Record<string, unknown> = { ...scores };
+    const mixedScores: Json = { ...scores };
     const yogaActivity: ActivityName = 'yoga';
     const tennisActivity: ActivityName = 'tennis';
     expect(resolveActivityConfidence(scores, 'climbing')).toBe(0.87);

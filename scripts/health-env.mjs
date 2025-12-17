@@ -12,6 +12,12 @@ const keySpecs = [
   { name: 'EXPO_PUBLIC_SUPABASE_ANON_KEY', optional: true },
   { name: 'SUPABASE_SERVICE_ROLE_KEY' },
   { name: 'SUPABASE_SERVICE_KEY', optional: true },
+  { name: 'TWILIO_ACCOUNT_SID' },
+  { name: 'TWILIO_AUTH_TOKEN' },
+  { name: 'TWILIO_FROM_NUMBER' },
+  { name: 'NOTIFICATION_ADMIN_KEY' },
+  { name: 'NOTIFICATION_TWILIO_STUB', optional: true },
+  { name: 'NOTIFICATION_TWILIO_STUB_TO', optional: true },
   { name: 'FSQ_API_KEY' },
   { name: 'FOURSQUARE_API_KEY', optional: true },
   { name: 'OVERPASS_URL', optional: true },
@@ -53,6 +59,26 @@ const fileData = envFiles.map(({ label, path }) => {
   return { label, ...parsed };
 });
 
+const lookupValue = (name) => {
+  for (const { values } of fileData) {
+    if (values.has(name)) {
+      return values.get(name);
+    }
+  }
+  if (process.env[name]) {
+    return process.env[name];
+  }
+  return undefined;
+};
+
+const twilioStubRaw = lookupValue('NOTIFICATION_TWILIO_STUB');
+const twilioStubEnabled = typeof twilioStubRaw === 'string'
+  && ['true', '1', 'yes', 'on'].includes(twilioStubRaw.trim().toLowerCase());
+
+const stubOptionalKeys = twilioStubEnabled
+  ? new Set(['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'])
+  : new Set();
+
 const rows = keySpecs.map((spec) => {
   const sources = [];
   fileData.forEach(({ label, values }) => {
@@ -63,7 +89,8 @@ const rows = keySpecs.map((spec) => {
   if (process.env[spec.name]) {
     sources.push('process.env');
   }
-  return { ...spec, sources };
+  const optional = spec.optional || stubOptionalKeys.has(spec.name);
+  return { ...spec, optional, sources };
 });
 
 const pad = (str, len) => str.padEnd(len, ' ');

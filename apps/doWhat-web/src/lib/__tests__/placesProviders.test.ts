@@ -3,9 +3,21 @@ import { fetchFoursquarePlaces } from '../places/providers/foursquare';
 import { fetchGooglePlaces } from '../places/providers/google';
 import type { PlacesQuery } from '../places/types';
 
-type MutableGlobal = typeof globalThis & { fetch?: jest.Mock };
+const originalFetch = globalThis.fetch;
 
-const mutableGlobal = globalThis as MutableGlobal;
+function mockFetchJson(payload: unknown, status = 200) {
+  const mock = jest.fn(async (..._args: Parameters<typeof fetch>) => {
+    const body = JSON.stringify(payload);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => payload,
+      text: async () => body,
+    } as unknown as Response;
+  }) as jest.MockedFunction<typeof fetch>;
+  globalThis.fetch = mock;
+  return mock;
+}
 
 describe('places provider adapters', () => {
   const query: PlacesQuery = {
@@ -19,7 +31,11 @@ describe('places provider adapters', () => {
 
   afterEach(() => {
     jest.resetAllMocks();
-    delete mutableGlobal.fetch;
+    if (originalFetch) {
+      globalThis.fetch = originalFetch;
+    } else {
+      delete (globalThis as { fetch?: typeof fetch }).fetch;
+    }
     delete process.env.FOURSQUARE_API_KEY;
     delete process.env.GOOGLE_PLACES_API_KEY;
   });
@@ -51,15 +67,10 @@ describe('places provider adapters', () => {
       ],
     };
 
-    mutableGlobal.fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => payload,
-      }),
-    );
+    const fetchMock = mockFetchJson(payload);
 
     const places = await fetchOverpassPlaces(query);
-    expect(mutableGlobal.fetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(places).toHaveLength(1);
     expect(places[0].name).toBe('Dowhat Gym');
     expect(places[0].categories).toContain('activity');
@@ -79,12 +90,7 @@ describe('places provider adapters', () => {
       ],
     };
 
-    mutableGlobal.fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => payload,
-      }),
-    );
+    mockFetchJson(payload);
 
     const places = await fetchFoursquarePlaces(query);
     expect(places).toHaveLength(1);
@@ -113,12 +119,7 @@ describe('places provider adapters', () => {
       ],
     };
 
-    mutableGlobal.fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => payload,
-      }),
-    );
+    mockFetchJson(payload);
 
     const places = await fetchGooglePlaces(query);
     expect(places).toHaveLength(1);
