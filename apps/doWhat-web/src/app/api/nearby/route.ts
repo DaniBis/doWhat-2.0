@@ -534,11 +534,10 @@ export async function GET(request: Request) {
       activity_types: activity.activity_types ?? null,
       tags: activity.tags ?? null,
       traits: activity.traits ?? null,
-      upcoming_session_count: null,
+      upcoming_session_count: 0,
     });
 
     let activitiesPayload = chosen.map(mapRowToActivity);
-    const baseCount = activitiesPayload.length;
     let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
 
     if (activitiesPayload.length < fallbackLimit) {

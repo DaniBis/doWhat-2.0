@@ -1190,7 +1190,7 @@ export default function MapScreen() {
 
       (async () => {
         try {
-          const coords = await geocodeLabelToCoords(trimmed, controller.signal);
+          const coords = await geocodeLabelToCoords(trimmed, { signal: controller.signal });
           if (!coords) return;
           lastGeocodedLabelRef.current = trimmed;
           lastGeocodedCoordsRef.current = coords;
@@ -1475,10 +1475,11 @@ export default function MapScreen() {
             ? performance.now()
             : Date.now()) - startedAt,
         );
+        const providerCounts: Record<string, number> = { supabase: places.length };
         return {
           cacheHit: true,
           places,
-          providerCounts: { supabase: places.length },
+          providerCounts,
           attribution: [],
           latencyMs,
         };
@@ -1502,10 +1503,11 @@ export default function MapScreen() {
               ? performance.now()
               : Date.now()) - startedAt,
           );
+          const providerCounts: Record<string, number> = { openstreetmap: fallbackPlaces.length };
           return {
             cacheHit: false,
             places: fallbackPlaces,
-            providerCounts: { openstreetmap: fallbackPlaces.length },
+            providerCounts,
             attribution: [OPENSTREETMAP_FALLBACK_ATTRIBUTION],
             latencyMs,
           };

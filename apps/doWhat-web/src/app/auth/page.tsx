@@ -1,11 +1,10 @@
 "use client";
+import type { Route } from 'next';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-type AuthButtonsProps = {
-  variant?: 'panel' | 'inline';
-};
+import type { AuthButtonsProps } from '@/components/AuthButtons';
 
 const AuthButtons = dynamic<AuthButtonsProps>(() => import('@/components/AuthButtons'), { ssr: false });
 
@@ -23,10 +22,10 @@ export default function AuthPage() {
   const subheading = isSignup
     ? 'Set up your account to find local activities, share discoveries, and team up with people nearby.'
     : 'Find experiences nearby, connect with people you vibe with, and plan your next activity together.';
-  const buildIntentLink = (intent: 'signin' | 'signup') => {
+  const buildIntentLink = (intent: 'signin' | 'signup'): Route => {
     const params = new URLSearchParams({ intent });
     if (redirectTo) params.set('redirect', redirectTo);
-    return `/auth?${params.toString()}`;
+    return `/auth?${params.toString()}` as Route;
   };
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-indigo-50 to-slate-100 px-4 py-16">

@@ -19,7 +19,11 @@ const isRowLevelSecurityError = (error: PossibleError): boolean => {
 const isUsersEmailConflict = (error: PossibleError): boolean => {
   const code = typeof error.code === "string" ? error.code : null;
   if (code !== "23505") return false;
-  const markers = [error.message, error.details, error.hint, error.constraint].map((value) =>
+  const constraint =
+    "constraint" in error && typeof (error as { constraint?: string | null }).constraint === "string"
+      ? (error as { constraint?: string | null }).constraint
+      : null;
+  const markers = [error.message, error.details, error.hint, constraint].map((value) =>
     typeof value === "string" ? value : ""
   );
   return markers.some((text) => /users?_email_key/i.test(text));

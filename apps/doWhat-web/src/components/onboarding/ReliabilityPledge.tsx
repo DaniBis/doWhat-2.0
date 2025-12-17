@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShieldCheck, Sparkles } from "lucide-react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -115,7 +116,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
 
   useEffect(() => {
     if (redirectTo) {
-      void router.prefetch(redirectTo);
+      void router.prefetch(redirectTo as Route);
     }
   }, [redirectTo, router]);
 
@@ -161,7 +162,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
           clearTimeout(redirectTimer.current);
         }
         redirectTimer.current = setTimeout(() => {
-          router.push(redirectTo);
+          router.push(redirectTo as Route);
         }, redirectDelayMs);
       } else {
         router.prefetch("/profile");

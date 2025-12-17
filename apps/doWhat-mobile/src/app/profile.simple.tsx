@@ -250,44 +250,6 @@ const coerceNumber = (value: unknown): number | null => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
-const parseReliabilitySnapshot = (input: unknown): ReliabilitySnapshot | null => {
-  if (!isRecord(input)) return null;
-  const componentsRaw = isRecord(input.components) ? (input.components as Record<string, unknown>) : {};
-  const pickComponent = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = coerceNumber(componentsRaw[key]);
-      if (value != null) return value;
-    }
-    return null;
-  };
-  return {
-    score: coerceNumber(input.score),
-    confidence: coerceNumber(input.confidence),
-    components: {
-      AS30: pickComponent('AS30', 'AS_30'),
-      AS90: pickComponent('AS90', 'AS_90'),
-      reviewScore: pickComponent('reviewScore', 'RS'),
-      hostBonus: pickComponent('hostBonus', 'host_bonus'),
-    },
-  };
-};
-
-const parseAttendanceSummary = (input: unknown): AttendanceSummary | null => {
-  if (!isRecord(input)) return null;
-  const record = input as Record<string, unknown>;
-  const value = (key: string) => coerceNumber(record[key]) ?? 0;
-  return {
-    attended30: value('attended30'),
-    noShow30: value('noShow30'),
-    lateCancel30: value('lateCancel30'),
-    excused30: value('excused30'),
-    attended90: value('attended90'),
-    noShow90: value('noShow90'),
-    lateCancel90: value('lateCancel90'),
-    excused90: value('excused90'),
-  };
-};
-
 const coerceLabel = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null;
 
@@ -864,24 +826,26 @@ export default function ProfileSimple() {
       if (ownedResult.error) throw ownedResult.error;
       if (catalogResult.error) throw catalogResult.error;
 
-      const ownedPayload = (ownedResult.data ?? []).map((row) => {
+      const ownedPayload: (Record<string, unknown> & { endorsements: number })[] = (ownedResult.data ?? []).map((row) => {
         const { v_badge_endorsement_counts, ...rest } = row as Record<string, unknown> & {
           v_badge_endorsement_counts?: { endorsements?: number } | null;
         };
+        const endorsements =
+          typeof v_badge_endorsement_counts?.endorsements === 'number'
+            ? v_badge_endorsement_counts.endorsements
+            : 0;
         return {
-          ...rest,
-          endorsements:
-            typeof v_badge_endorsement_counts?.endorsements === 'number'
-              ? v_badge_endorsement_counts.endorsements
-              : 0,
+          ...(rest as Record<string, unknown>),
+          endorsements,
         };
       });
 
       setOwnedBadges(parseOwnedBadges(ownedPayload));
 
-      const ownedByBadgeId = new Map<string, unknown>();
+      const ownedByBadgeId = new Map<string, Record<string, unknown> & { endorsements: number }>();
       ownedPayload.forEach((entry) => {
-        const badgeId = isRecord(entry) && typeof entry.badge_id === 'string' ? entry.badge_id : null;
+        const source = (entry as Record<string, unknown>)['badge_id'];
+        const badgeId = typeof source === 'string' ? source : null;
         if (badgeId) {
           ownedByBadgeId.set(badgeId, entry);
         }
@@ -923,18 +887,21 @@ export default function ProfileSimple() {
           return source;
         })();
         if (!isRecord(trait) || typeof trait.id !== 'string') return null;
-        return {
+        const color = typeof trait.color === 'string' && trait.color.trim() ? trait.color : null;
+        const icon = typeof trait.icon === 'string' && trait.icon.trim() ? trait.icon : null;
+        const summary: TraitSummary = {
           id: trait.id,
           name: typeof trait.name === 'string' && trait.name ? trait.name : trait.id,
-          color: trait.color ?? null,
-          icon: trait.icon ?? null,
+          color,
+          icon,
           score: typeof row.score === 'number' ? row.score : 0,
           baseCount: toNonNegativeInt((row as Record<string, unknown>).base_count),
           voteCount: toNonNegativeInt((row as Record<string, unknown>).vote_count),
           updatedAt: typeof row.updated_at === 'string' && row.updated_at.trim()
             ? row.updated_at
             : new Date().toISOString(),
-        } satisfies TraitSummary;
+        };
+        return summary;
       }).filter((entry): entry is TraitSummary => Boolean(entry));
       setTraitSummaries(parseTraitSummaries(payload));
     } catch (error) {

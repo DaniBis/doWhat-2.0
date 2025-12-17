@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { createServiceClient } from '@/lib/supabase/service';
 import { hydrateSessions, type HydratedSession } from '@/lib/sessions/server';
-import type { EventSummary } from '@dowhat/shared/src/events/types';
+import type { EventSummary } from '@dowhat/shared';
 
 const MAX_LIMIT = 200;
 const EVENT_COLUMNS = [
@@ -55,6 +55,7 @@ const sessionToEventSummary = (session: HydratedSession): EventSummary => {
   const { lat, lng } = getSessionCoordinates(session);
   const title = session.activity?.name ?? session.venue?.name ?? 'Community session';
   const venueName = session.venue?.name ?? session.activity?.venueLabel ?? null;
+  const placeName = session.venue?.name ?? session.activity?.venueLabel ?? session.activity?.name ?? title;
   const metadata: Record<string, unknown> = {
     source: 'session',
     sessionId: session.id,
@@ -64,7 +65,7 @@ const sessionToEventSummary = (session: HydratedSession): EventSummary => {
   const place = session.venue
     ? {
         id: session.venue.id,
-        name: session.venue.name,
+        name: placeName,
         lat: session.venue.lat,
         lng: session.venue.lng,
         address: session.venue.address,
@@ -184,7 +185,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const rows = events ?? [];
+  const rows = (events ?? []) as unknown as EventSummary[];
   const sessionEvents = await fetchSessionEvents({ client, sw, ne, fromIso, toIso, limit });
   const combined = dedupeEvents([...rows, ...sessionEvents]).sort((a, b) =>
     new Date(a.start_at).getTime() - new Date(b.start_at).getTime()

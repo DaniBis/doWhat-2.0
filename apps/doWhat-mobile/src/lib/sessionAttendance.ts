@@ -18,7 +18,7 @@ export type AttendanceSummary = {
   maxAttendees: number;
 };
 
-type AttendanceMutationResult = {
+export type AttendanceMutationResult = {
   sessionId: string;
   userId: string;
   status: AttendanceStatus;

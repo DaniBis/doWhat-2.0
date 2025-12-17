@@ -10,6 +10,7 @@ const mockFrom = jest.fn();
 const mockRouterPush = jest.fn();
 const mockRouterPrefetch = jest.fn().mockResolvedValue(undefined);
 const trackOnboardingEntry = jest.fn();
+const mockEnsureUserRow = jest.fn().mockResolvedValue(true);
 
 jest.mock("@/lib/supabase/browser", () => ({
   supabase: {
@@ -25,6 +26,10 @@ jest.mock("next/navigation", () => ({
     push: (...args: unknown[]) => mockRouterPush(...args),
     prefetch: (...args: unknown[]) => mockRouterPrefetch(...args),
   }),
+}));
+
+jest.mock("@/lib/users/ensureUserRow", () => ({
+  ensureUserRow: (...args: unknown[]) => mockEnsureUserRow(...args),
 }));
 
 jest.mock("@dowhat/shared", () => {
@@ -62,6 +67,8 @@ describe("SportSelector", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouterPrefetch.mockResolvedValue(undefined);
+    mockEnsureUserRow.mockClear();
+    mockEnsureUserRow.mockResolvedValue(true);
     profileQuery = createQueryBuilder();
     sportProfileQuery = createQueryBuilder();
     mockFrom.mockImplementation((table: string) => {

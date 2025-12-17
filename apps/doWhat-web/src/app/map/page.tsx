@@ -68,6 +68,13 @@ const formatKilometres = (meters?: number | null) => {
   return `${Math.round(km * 10) / 10} km`;
 };
 
+const getSessionIdFromMetadata = (metadata: unknown): string | null => {
+  if (!metadata || typeof metadata !== "object") return null;
+  const record = metadata as Record<string, unknown>;
+  const candidate = record.sessionId ?? record.session_id;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+};
+
 type Bounds = ViewBounds;
 type MovePayload = MapMovePayload;
 
@@ -88,11 +95,6 @@ export default function MapPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const buildReturnTo = useCallback(() => {
-    const path = pathname ?? '/map';
-    const query = searchParams?.toString();
-    return query && query.length ? `${path}?${query}` : path;
-  }, [pathname, searchParams]);
   const highlightSessionId = searchParams?.get('highlightSession');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
@@ -382,7 +384,7 @@ export default function MapPage() {
     params.delete('highlightSession');
     const basePath = pathname ?? '/map';
     const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
-    router.replace(nextUrl, { scroll: false });
+    router.replace(nextUrl as Route, { scroll: false });
   }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParams]);
 
   const availableActivityTypes = useMemo(() => {

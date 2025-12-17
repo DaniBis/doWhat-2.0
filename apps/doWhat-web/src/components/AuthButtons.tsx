@@ -12,7 +12,7 @@ const EmailAuth = dynamic(() => import("@/components/EmailAuth"), { ssr: false }
 
 type AuthIntent = "signin" | "signup";
 
-type AuthButtonsProps = {
+export type AuthButtonsProps = {
   variant?: "panel" | "inline";
   intent?: AuthIntent;
   redirectTo?: string | null;
@@ -49,7 +49,7 @@ export default function AuthButtons({ variant = "panel", intent = "signin", redi
 
   useEffect(() => {
     let mounted = true;
-    let sessionCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+    let sessionCheckTimeout: number | null = null;
     hideFallbackLink();
 
     const startSessionTimeout = () => {
@@ -63,7 +63,7 @@ export default function AuthButtons({ variant = "panel", intent = "signin", redi
 
     const clearSessionTimeout = () => {
       if (sessionCheckTimeout != null) {
-        clearTimeout(sessionCheckTimeout);
+        window.clearTimeout(sessionCheckTimeout);
         sessionCheckTimeout = null;
       }
     };

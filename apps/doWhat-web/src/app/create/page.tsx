@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -271,7 +272,7 @@ export default function CreateEventPage() {
       setMsg('Event created successfully!');
       const redirectTarget = buildReturnTarget(prefill.returnTo, sessionId);
       setTimeout(() => {
-        router.push(redirectTarget);
+        router.push(redirectTarget as Route);
       }, 1000);
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
