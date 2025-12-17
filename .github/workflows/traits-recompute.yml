@@ -13,17 +13,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup Node (no cache)
+        uses: actions/setup-node@v4
         with:
-          version: 9
-          run_install: false
+          node-version: '20'
 
-      - name: Setup Node
+      - name: Enable pnpm via corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.7.1 --activate
+
+      - name: Setup Node (pnpm cache)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
+
+      - name: Tool versions
+        run: |
+          node -v
+          pnpm -v
+          which pnpm
 
       - name: Install deps (minimal)
         run: pnpm install --frozen-lockfile
