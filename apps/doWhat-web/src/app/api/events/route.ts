@@ -37,8 +37,7 @@ export async function GET(request: Request) {
   let query = client
     .from('events')
     .select(
-      `id,title,description,start_at,end_at,timezone,venue_name,lat,lng,address,url,image_url,status,tags,place_id,source_id,source_uid,metadata,
-       place:places(id,name,lat,lng,address,locality,region,country,categories)`
+      'id,title,description,start_at,end_at,timezone,venue_name,lat,lng,address,url,image_url,status,tags,place_id,source_id,source_uid,metadata'
     )
     .order('start_at', { ascending: true })
     .limit(limit);
@@ -61,5 +60,38 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ events: data ?? [] });
+  const rows = data ?? [];
+  const placeIds = Array.from(
+    new Set(
+      rows
+        .map((event) => event.place_id)
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+    ),
+  );
+
+  const placeMap = new Map<string, Record<string, unknown>>();
+  if (placeIds.length > 0) {
+    const { data: places, error: placesError } = await client
+      .from('places')
+      .select('id,name,lat,lng,address,locality,region,country,categories')
+      .in('id', placeIds);
+
+    if (placesError) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to hydrate event places, returning base events', placesError.message ?? placesError);
+    } else {
+      for (const place of places ?? []) {
+        if (typeof place.id === 'string') {
+          placeMap.set(place.id, place);
+        }
+      }
+    }
+  }
+
+  const enriched = rows.map((event) => ({
+    ...event,
+    place: event.place_id && placeMap.has(event.place_id) ? placeMap.get(event.place_id) : null,
+  }));
+
+  return NextResponse.json({ events: enriched });
 }
