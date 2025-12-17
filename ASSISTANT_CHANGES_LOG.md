@@ -1,6 +1,9 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2025-12-17
+- Stabilized the People Filter onboarding analytics specs by wrapping both CTA expectations in `waitFor`, ensuring `trackOnboardingEntry` is asserted after Supabase-driven state settles; reran `NEXT_PUBLIC_SUPABASE_URL=… NEXT_PUBLIC_SUPABASE_ANON_KEY=… pnpm test apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx -- -t "tracks onboarding analytics when the pledge CTA is clicked"` (green) to prove the fix.
+
 ## 2025-12-16
 - Hardened the web `/auth` experience so anonymous visitors are no longer stuck on the “Checking your session…” spinner: `AuthButtons` now falls back after a 5s Supabase timeout, threads `redirect` targets into the OAuth/email callback URL (and its `EmailAuth` child), and the page routes keep the redirect query when toggling between sign-in/sign-up. Added regression coverage via `pnpm --filter dowhat-web test -- apps/doWhat-web/src/components/__tests__/AuthButtons.test.tsx`.
 

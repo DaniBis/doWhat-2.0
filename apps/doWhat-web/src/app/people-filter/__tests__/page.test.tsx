@@ -196,14 +196,16 @@ describe('PeopleFilterPage trait onboarding banner', () => {
     const cta = await screen.findByRole('link', { name: /go to onboarding/i });
     await user.click(cta);
 
-    expect(mockTrackOnboardingEntry).toHaveBeenCalledWith({
-      source: 'people-filter-banner',
-      platform: 'web',
-      step: 'traits',
-      steps: ['traits', 'sport'],
-      pendingSteps: 2,
-      nextStep: '/onboarding/traits',
-    });
+    await waitFor(() =>
+      expect(mockTrackOnboardingEntry).toHaveBeenCalledWith({
+        source: 'people-filter-banner',
+        platform: 'web',
+        step: 'traits',
+        steps: ['traits', 'sport'],
+        pendingSteps: 2,
+        nextStep: '/onboarding/traits',
+      }),
+    );
   });
 });
 
@@ -244,14 +246,16 @@ describe('PeopleFilterPage reliability pledge banner', () => {
     const cta = await screen.findByRole('link', { name: /review pledge/i });
     await user.click(cta);
 
-    expect(mockTrackOnboardingEntry).toHaveBeenCalledWith({
-      source: 'people-filter-banner',
-      platform: 'web',
-      step: 'pledge',
-      steps: ['sport', 'pledge'],
-      pendingSteps: 2,
-      nextStep: '/onboarding/reliability-pledge',
-    });
+    await waitFor(() =>
+      expect(mockTrackOnboardingEntry).toHaveBeenCalledWith({
+        source: 'people-filter-banner',
+        platform: 'web',
+        step: 'pledge',
+        steps: ['sport', 'pledge'],
+        pendingSteps: 2,
+        nextStep: '/onboarding/reliability-pledge',
+      }),
+    );
   });
 });
 
