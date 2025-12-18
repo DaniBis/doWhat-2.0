@@ -2,6 +2,7 @@
 import process from "node:process";
 import { randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import loadEnv from "./utils/load-env.mjs";
 import {
   pledgeVersion,
   SEED_ACTIVITIES,
@@ -9,7 +10,9 @@ import {
   SEED_USERS,
   SEED_VENUES,
   uuidFromSeed,
-} from "./social-sweat-shared.mjs";
+} from "./dowhat-shared.mjs";
+
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {
@@ -25,7 +28,7 @@ const supabaseUrl = pickEnv("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "EXPO_PU
 const serviceKey = pickEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY");
 
 if (!supabaseUrl || !serviceKey) {
-  console.error("[seed:social-sweat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  console.error("[seed:dowhat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   process.exit(1);
 }
 
@@ -33,9 +36,33 @@ const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const basePassword = process.env.SOCIAL_SWEAT_SEED_PASSWORD?.trim();
+const ensurePublicUserRow = async (userId, spec) => {
+  const payload = {
+    id: userId,
+    email: spec.email,
+    full_name: spec.fullName,
+  };
+  const { error } = await supabase.from("users").upsert(payload, { onConflict: "id" });
+  if (!error) {
+    return;
+  }
+  const { error: rpcError } = await supabase.rpc("ensure_public_user_row", {
+    p_user: userId,
+    p_email: spec.email,
+    p_full_name: spec.fullName,
+  });
+  if (rpcError) {
+    throw new Error(`[users] ensure_public_user_row failed for ${spec.email}: ${rpcError.message}`);
+  }
+};
 
-const randomPassword = () => `Sweat-${randomBytes(4).toString("hex")}-${Date.now().toString(36)}`;
+const rawPasswordFromEnv = process.env.DOWHAT_SEED_PASSWORD ?? process.env.SOCIAL_SWEAT_SEED_PASSWORD;
+if (process.env.SOCIAL_SWEAT_SEED_PASSWORD && !process.env.DOWHAT_SEED_PASSWORD) {
+  console.warn("[seed:dowhat] SOCIAL_SWEAT_SEED_PASSWORD is deprecated. Use DOWHAT_SEED_PASSWORD instead.");
+}
+const basePassword = rawPasswordFromEnv?.trim();
+
+const randomPassword = () => `doWhat-${randomBytes(4).toString("hex")}-${Date.now().toString(36)}`;
 
 const findUserByEmail = async (email) => {
   const normalized = email.trim().toLowerCase();
@@ -71,14 +98,14 @@ const ensureUser = async (spec) => {
   });
   if (error || !data?.user) {
     if (error) {
-      console.error("[seed:social-sweat] createUser debug", {
+      console.error("[seed:dowhat] createUser debug", {
         message: error.message,
         status: error.status,
         error_description: error.error_description,
         details: error.details,
         hint: error.hint,
       });
-      console.error("[seed:social-sweat] createUser debug raw", error);
+      console.error("[seed:dowhat] createUser debug raw", error);
     }
     throw new Error(
       `[auth] createUser failed for ${spec.email}: ${error?.message ?? "unknown error"}${
@@ -93,6 +120,7 @@ const upsertProfile = async (userId, spec) => {
   const payload = {
     id: userId,
     user_id: userId,
+    email: spec.email,
     full_name: spec.fullName,
     primary_sport: spec.primarySport,
     play_style: spec.playStyle,
@@ -212,6 +240,65 @@ const upsertSession = async (spec, deps) => {
   return { id: sessionId, startsAt, endsAt };
 };
 
+const verifySeedIntegrity = async (userIdByEmail) => {
+  const issues = [];
+
+  for (const spec of SEED_USERS) {
+    const normalized = spec.email.toLowerCase();
+    const userId = userIdByEmail.get(normalized);
+    if (!userId) {
+      issues.push(`Missing auth record for ${spec.email}`);
+      continue;
+    }
+
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .select("id,email")
+      .eq("id", userId)
+      .maybeSingle();
+    if (userError) {
+      issues.push(`[users] lookup failed for ${spec.email}: ${userError.message}`);
+    } else if (!userRow) {
+      issues.push(`[users] row missing for ${spec.email}`);
+    }
+
+    const { data: profileRow, error: profileError } = await supabase
+      .from("profiles")
+      .select("id,email")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profileError) {
+      issues.push(`[profiles] lookup failed for ${spec.email}: ${profileError.message}`);
+    } else if (!profileRow) {
+      issues.push(`[profiles] row missing for ${spec.email}`);
+    }
+  }
+
+  for (const session of SEED_SESSIONS) {
+    const sessionId = uuidFromSeed(`session:${session.slug}`);
+    const hostId = userIdByEmail.get(session.hostEmail.toLowerCase());
+    const { data: sessionRow, error: sessionError } = await supabase
+      .from("sessions")
+      .select("id,host_user_id")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (sessionError) {
+      issues.push(`[sessions] lookup failed for ${session.slug}: ${sessionError.message}`);
+    } else if (!sessionRow) {
+      issues.push(`[sessions] row missing for ${session.slug}`);
+    } else if (hostId && sessionRow.host_user_id !== hostId) {
+      issues.push(
+        `[sessions] host mismatch for ${session.slug} (expected ${hostId}, found ${sessionRow.host_user_id ?? "null"})`,
+      );
+    }
+  }
+
+  if (issues.length) {
+    const detail = issues.map((issue) => ` - ${issue}`).join("\n");
+    throw new Error(`Seed verification failed:\n${detail}`);
+  }
+};
+
 const main = async () => {
   console.info("Seeding doWhat pilot data for Bucharest…\n");
 
@@ -224,6 +311,7 @@ const main = async () => {
     if (result.password) {
       passwordByEmail.set(userSpec.email.toLowerCase(), result.password);
     }
+    await ensurePublicUserRow(result.user.id, userSpec);
     await upsertProfile(result.user.id, userSpec);
     await upsertSportProfiles(result.user.id, userSpec);
   }
@@ -263,6 +351,8 @@ const main = async () => {
     sessionResults.push(result);
   }
 
+  await verifySeedIntegrity(userIdByEmail);
+
   console.info("doWhat seed complete:\n");
   console.info(`• Hosts ensured: ${SEED_USERS.length}`);
   if (passwordByEmail.size) {
@@ -274,6 +364,7 @@ const main = async () => {
   console.info(`• Venues upserted: ${SEED_VENUES.length}`);
   console.info(`• Activities upserted: ${SEED_ACTIVITIES.length}`);
   console.info(`• Sessions active: ${sessionResults.length}`);
+  console.info("• Seed integrity verified: hosts, profiles, and sessions align");
   sessionResults.forEach((session) => {
     console.info(
       `    - ${session.id} | ${session.startsAt.toLocaleString("ro-RO", { hour12: false })} → ${session.endsAt.toLocaleTimeString("ro-RO", { hour12: false })}`,
@@ -284,6 +375,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-  console.error("\n[seed:social-sweat] Failed:", error);
+  console.error("\n[seed:dowhat] Failed:", error);
   process.exit(1);
 });

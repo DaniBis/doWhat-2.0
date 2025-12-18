@@ -24,7 +24,28 @@ Create a `.env.local` at repo root (used by dev helpers):
 NEXT_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 NEXT_PUBLIC_ADMIN_EMAILS=you@example.com,other@example.com
+SUPABASE_URL=YOUR_SUPABASE_URL
+SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_SERVICE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY # optional alias consumed by legacy scripts
 ```
+
+Root scripts automatically call `scripts/utils/load-env.mjs`, so the Supabase credentials above can live in `.env.local` or `.env` without exporting them every time.
+
+### Health + verification scripts
+
+`pnpm -w run health` stitches together env validation, migration checks, `health-trait-policies`, `/api/health`, and the doWhat verifier. Those commands now fail fast unless the root env file exposes:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`)
+
+Optional helpers:
+
+- `DOWHAT_SEED_PASSWORD` – deterministic passwords when seeding hosts
+- `DOWHAT_HEALTH_SKIP=true` – temporarily bypass the doWhat verifier (only while a target environment intentionally omits the seed)
+
+Legacy env vars named `SOCIAL_SWEAT_*` are still accepted but log deprecation warnings; prefer the `DOWHAT_*` equivalents above.
 
 Web also reads env from its own folder; mobile reads EXPO_ variables from its own folder.
 
@@ -142,8 +163,8 @@ The command above runs `node run_migrations.js`, which will:
 After migrations run, you can double-check that required files landed by executing the health script:
 
 ```
-node scripts/health-migrations.mjs                # verifies 025–034 (core migrations)
-node scripts/health-migrations.mjs --social-sweat # extends the check through 034a–037
+node scripts/health-migrations.mjs               # verifies 025–034 (core migrations)
+node scripts/health-migrations.mjs --dowhat      # extends the check through 034a–037
 ```
 
 The `--social-sweat` flag now also confirms the doWhat adoption view plus the notification outbox migration/table required for the Twilio SMS engine.
@@ -296,31 +317,32 @@ export CRON_SECRET=devsecret
 # Optional: export CRON_BASE_URL=https://staging.dowhat.app
 pnpm seed:places:bangkok   # warms ~10 tiles via /api/cron/places/bangkok
 pnpm seed:events:bangkok   # runs ingest once via /api/cron/events/run
-pnpm seed:social-sweat     # provisions Bucharest pilot data (profiles, venues, sessions, open slots)
-pnpm rollback:social-sweat # removes the Bucharest pilot data (sessions/venues/activities/profiles/auth users)
+pnpm seed:dowhat           # provisions Bucharest pilot data (profiles, venues, sessions, open slots)
+pnpm rollback:dowhat       # removes the Bucharest pilot data (sessions/venues/activities/profiles/auth users)
 ```
 
-`seed:social-sweat` talks directly to Supabase (no cron endpoint). Export `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`) before running, optionally `SOCIAL_SWEAT_SEED_PASSWORD` to force a deterministic password for newly created pilot users. The script:
+`seed:dowhat` talks directly to Supabase (no cron endpoint). Provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`), and `SUPABASE_ANON_KEY` via exports or the root `.env.local`/`.env` (the script now loads them automatically). Optionally set `DOWHAT_SEED_PASSWORD` to force a deterministic password for newly created pilot users. Legacy `SOCIAL_SWEAT_*` env vars are still read but emit a warning. The script:
 
-- Ensures the Bucharest pilot hosts exist in Supabase auth, creating accounts when missing and echoing their credentials at the end of the run.
+- Ensures the Bucharest pilot hosts exist in Supabase auth and the mirrored `users` table, creating accounts when missing and echoing their credentials at the end of the run.
 - Upserts the matching `profiles`, `user_sport_profiles`, venues, activities, and sessions tied to the doWhat pilot seed tag.
 - Inserts matching `session_open_slots` rows, so the Find a 4th player carousel immediately has ranked inventory after a mobile refresh.
+- Runs a post-seed verification pass to confirm every host has profile + user rows and each seeded session still points at the expected host (the same invariants `pnpm health` enforces).
 
-Follow up with `pnpm verify:social-sweat` (same env vars) to confirm the hosts, venues, activities, sessions, open-slot rows, and host attendance records exist before running demos.
+Follow up with `pnpm verify:dowhat` (same env vars) to confirm the hosts, venues, activities, sessions, open-slot rows, and host attendance records exist before running demos.
 
 If the seed fails because `auth.admin.createUser` returns a 500 and logs `new row violates row-level security` or `null value in column "user_id" of relation "profiles"`, the Supabase project is missing migration `040_profiles_handle_new_user.sql`. Re-run `pnpm db:migrate` (with `SUPABASE_DB_URL` set) to apply the migration so the trigger writes the `user_id` column before reseeding.
 
-Need to run health or verification commands before the doWhat seed is ready? Set `SOCIAL_SWEAT_HEALTH_SKIP=true` in the same shell (e.g. `SOCIAL_SWEAT_HEALTH_SKIP=true pnpm health`) to temporarily bypass the verifier without editing code. Only rely on the skip flag while staging environments or CI intentionally omit the Bucharest pilot data.
+Need to run health or verification commands before the doWhat seed is ready? Set `DOWHAT_HEALTH_SKIP=true` in the same shell (e.g. `DOWHAT_HEALTH_SKIP=true pnpm health`) to temporarily bypass the verifier without editing code. Only rely on the skip flag while staging environments or CI intentionally omit the Bucharest pilot data.
 
 ### Session share previews (Open Graph)
 
 - Every session page (`/sessions/[id]`) now exposes dynamic Open Graph + Twitter metadata via `generateMetadata` plus a dedicated OG image endpoint at `/sessions/[id]/opengraph-image`. The ImageResponse renders the doWhat gradient, remaining slot count, required skill label, venue, host, and start time so WhatsApp/iMessage previews highlight exactly what the host still needs.
-- Sharing a session link automatically hits the same metadata. To verify manually, open `http://localhost:3002/sessions/<id>/opengraph-image` (replace `<id>` with a real session UUID or one from `pnpm seed:social-sweat`). The PNG output should show the sport name, slot pill, venue, host, and time on the emerald gradient.
+- Sharing a session link automatically hits the same metadata. To verify manually, open `http://localhost:3002/sessions/<id>/opengraph-image` (replace `<id>` with a real session UUID or one from `pnpm seed:dowhat`). The PNG output should show the sport name, slot pill, venue, host, and time on the emerald gradient.
 - When testing on WhatsApp or Slack, make sure the dev server is publicly accessible (e.g., via `ngrok http 3002`) so the crawler can fetch both the HTML metadata and the OG route. No authentication is required for the image endpoint, so avoid leaking private sessions outside trusted tunnels.
 
-Need to tear the pilot data down? Run `pnpm rollback:social-sweat` with the same Supabase env vars. It deletes the seeded sessions, open slots, venues, activities, sport profiles, profiles, and the host auth users so you can reseed from scratch.
+Need to tear the pilot data down? Run `pnpm rollback:dowhat` with the same Supabase env vars. It deletes the seeded sessions, open slots, venues, activities, sport profiles, profiles, and the host auth users so you can reseed from scratch.
 
-See `docs/social_sweat_pilot_validation.md` for the full pilot validation checklist (env vars, seeding, mobile/web verification, and troubleshooting steps).
+See `docs/dowhat_pilot_validation.md` for the full pilot validation checklist (env vars, seeding, mobile/web verification, and troubleshooting steps).
 
 Use these commands before demos to ensure real data for Bangkok appears in both web and mobile map listings.
 

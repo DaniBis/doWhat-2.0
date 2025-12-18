@@ -36,7 +36,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 
 ## 4. Backend & Data Layer
 - **Supabase:** Acts as primary backend (Postgres + auth + storage). Accessed via `@supabase/supabase-js` from both apps and scripts.
-- **Migrations:** Located in `apps/doWhat-web/supabase/migrations/025+`. Managed via `pnpm run db:migrate`. Key doWhat files: `035_social_sweat_core.sql`, `036_attendance_reliability_trigger.sql`, `037_reliability_pledge_ack.sql`, `038_social_sweat_adoption_metrics.sql` (in-progress).
+- **Migrations:** Located in `apps/doWhat-web/supabase/migrations/025+`. Managed via `pnpm run db:migrate`. Key doWhat files: `035_dowhat_core.sql`, `036_attendance_reliability_trigger.sql`, `037_reliability_pledge_ack.sql`, `038_dowhat_adoption_metrics.sql` (in-progress).
 - **Types:** `apps/doWhat-web/src/types/database.ts` auto-generated + manually extended to include new tables/enums.
 
 ## 5. Scripts & Automation
@@ -64,7 +64,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 - `ENGINEERING_ROADMAP_2025.md` — current priorities + history.
 - `docs/current_app_overview_2025-12-03.md` — feature map + guardrails.
 - `docs/migrations_025-031_validation.md` — migration/seed validation steps.
-- `docs/social_sweat_pilot_validation.md` — pilot seeding + verification runbook.
+- `docs/dowhat_pilot_validation.md` — pilot seeding + verification runbook.
 - `ASSISTANT_CHANGES_LOG.md` — AI change log of recent contributions.
 
 ## 9. Environment & Config
@@ -74,7 +74,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 ## 10. Outstanding Work / Next Steps
 1. **Mobile Find a 4th Player hero:** hydrate ranked sessions via shared scorer, ensure CTA flows to session detail, add telemetry/tests.
 2. **Theme token rollout:** continue replacing legacy emerald/amber utility classes across admin/map components with shared palette.
-3. **doWhat adoption metrics:** finalize `038_social_sweat_adoption_metrics.sql` integration (web admin cards + docs).
+3. **doWhat adoption metrics:** finalize `038_dowhat_adoption_metrics.sql` integration (web admin cards + docs).
 4. **Codebase cleanup:** large unstaged diff suggests ongoing edits—stabilize before merging.
 
 This overview should give any AI/dev an immediate sense of architecture, functionality, and roadmap focus. For change-by-change history, reference `ASSISTANT_CHANGES_LOG.md` and commit history on `feature/admin-dashboard-docs`.

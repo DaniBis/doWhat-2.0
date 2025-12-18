@@ -197,7 +197,7 @@ export type UserSportProfileUpdate = {
   updated_at?: string;
 };
 
-export type SocialSweatAdoptionMetricsRow = {
+export type DoWhatAdoptionMetricsRow = {
   total_profiles: number;
   sport_step_complete_count: number;
   sport_skill_member_count: number;
@@ -303,8 +303,8 @@ export type Database = {
         Update: Partial<VenueActivityVoteRow>;
         Relationships: [];
       };
-      social_sweat_adoption_metrics: {
-        Row: SocialSweatAdoptionMetricsRow;
+      dowhat_adoption_metrics: {
+        Row: DoWhatAdoptionMetricsRow;
         Insert: never;
         Update: never;
         Relationships: [];

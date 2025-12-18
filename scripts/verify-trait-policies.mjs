@@ -1,21 +1,9 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { config as loadEnv } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import loadEnv from './utils/load-env.mjs';
 
-const maybeLoadEnvFiles = () => {
-  const envFiles = ['.env.local', '.env'];
-  for (const file of envFiles) {
-    const fullPath = resolve(process.cwd(), file);
-    if (existsSync(fullPath)) {
-      loadEnv({ path: fullPath });
-    }
-  }
-};
-
-maybeLoadEnvFiles();
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {

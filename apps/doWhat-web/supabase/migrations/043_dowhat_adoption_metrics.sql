@@ -1,9 +1,10 @@
--- doWhat adoption metrics view tracks Step 0 completion progress ahead of GA.
+-- Rename the adoption metrics view to remove the Social Sweat codename.
 -- Requires migrations 021 (traits), 031 (user_saved_activities), 035 (user sport profiles), and 037 (reliability pledge).
 
 DROP VIEW IF EXISTS public.social_sweat_adoption_metrics;
+DROP VIEW IF EXISTS public.dowhat_adoption_metrics;
 
-CREATE VIEW public.social_sweat_adoption_metrics AS
+CREATE VIEW public.dowhat_adoption_metrics AS
 WITH trait_goal AS (
   SELECT user_id
   FROM public.user_base_traits
@@ -45,4 +46,4 @@ SELECT
   (SELECT COUNT(*) FROM fully_ready) AS fully_ready_count,
   (SELECT COUNT(*) FROM public.user_sport_profiles) AS user_sport_profile_rows;
 
-COMMENT ON VIEW public.social_sweat_adoption_metrics IS 'Aggregated counts for doWhat onboarding adoption (traits, sport, skill, pledge).';
+COMMENT ON VIEW public.dowhat_adoption_metrics IS 'Aggregated counts for doWhat onboarding adoption (traits, sport, skill, pledge).';

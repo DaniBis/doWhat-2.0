@@ -53,7 +53,7 @@ const VENUES_FIXTURE = [
   },
 ];
 
-const SOCIAL_SWEAT_ADOPTION_ROW = {
+const DOWHAT_ADOPTION_ROW = {
   total_profiles: 10,
   sport_step_complete_count: 4,
   sport_skill_member_count: 3,
@@ -156,9 +156,9 @@ async function mockSupabase(page: Page, email: string) {
     respondJson(route, VENUES_FIXTURE);
   });
 
-  await page.route('**/rest/v1/social_sweat_adoption_metrics*', (route) => {
+  await page.route('**/rest/v1/dowhat_adoption_metrics*', (route) => {
     if (handleCorsPreflight(route)) return;
-    respondJson(route, SOCIAL_SWEAT_ADOPTION_ROW);
+    respondJson(route, DOWHAT_ADOPTION_ROW);
   });
 
   await page.route('**/rest/v1/profiles*', (route) => {

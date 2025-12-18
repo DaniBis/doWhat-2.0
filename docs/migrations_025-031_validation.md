@@ -23,7 +23,7 @@ seed helpers completed, and rollback files are on hand.
 
    ## 10 Dec 2025 prep (doWhat core)
 
-   - [ ] Run `pnpm run db:migrate` against staging to apply `035_social_sweat_core.sql` (plus `036_attendance_reliability_trigger.sql` and `037_reliability_pledge_ack.sql`) after capturing the latest database snapshot/backup.
+   - [ ] Run `pnpm run db:migrate` against staging to apply `035_dowhat_core.sql` (plus `036_attendance_reliability_trigger.sql` and `037_reliability_pledge_ack.sql`) after capturing the latest database snapshot/backup.
    - [ ] Verify `select filename from public.schema_migrations order by 1 desc limit 1;` now returns `037_reliability_pledge_ack.sql`.
    - [ ] Rerun `pnpm --filter dowhat-web run typecheck` and mobile/web test suites after regenerating Supabase types so new enums/tables compile across packages.
    - [ ] Update this checklist with production rollout notes once the doWhat trio lands.
@@ -46,11 +46,11 @@ pnpm seed:places:bangkok
 pnpm seed:events:bangkok
 
 # 4. Quick health check for required migrations (optional but fast).
-node scripts/health-migrations.mjs --social-sweat
+node scripts/health-migrations.mjs --dowhat
 # exits non-zero if core (025–031) or doWhat (034a–035) migrations are missing
 ```
 
-> Note: `scripts/health-migrations.mjs` now also enforces the intermediate 032–034 files by default, so running it without flags guarantees the trait guard fix, event participant cleanup, and admin audit logs migrations are present. Pass `--social-sweat` to extend the check through 034a–037.
+> Note: `scripts/health-migrations.mjs` now also enforces the intermediate 032–034 files by default, so running it without flags guarantees the trait guard fix, event participant cleanup, and admin audit logs migrations are present. Pass `--dowhat` to extend the check through 034a–037.
 
 The runner emits `[migrate] Applied 031_user_saved_activities.sql` when the last migration succeeds.
 Check Supabase logs for DDL statements if you need external confirmation.
@@ -70,7 +70,7 @@ Check Supabase logs for DDL statements if you need external confirmation.
 | 033 | `.../033_remove_event_participants.sql` | Drops the deprecated `event_participants` table + enum so attendance relies solely on `session_attendees`. | Attendance migrations (027–028). | None (recreate table manually if needed). |
 | 034 | `.../034_admin_audit_logs.sql` | Adds `admin_allowlist`, `admin_audit_logs`, and associated RLS so admin tooling can log destructive actions. | Existing admin dashboards (no schema deps). | Drop the tables if rollback required. |
 | 034a | `.../034a_extend_attendance_status.sql` | Extends the `attendance_status` enum with `registered` + `late_cancel` ahead of the doWhat migration. | Enum created in 010 + any remaining references. | Forward-only (enum drops require manual fixes). |
-| 035 | `.../035_social_sweat_core.sql` | Adds profile reliability columns, `user_sport_profiles`, `session_open_slots`, new attendance enums, and sport metadata for the doWhat transformation. | Attendance + profile tables (027–034a). | Forward-only (requires manual cleanup to revert). |
+| 035 | `.../035_dowhat_core.sql` | Adds profile reliability columns, `user_sport_profiles`, `session_open_slots`, new attendance enums, and sport metadata for the doWhat transformation. | Attendance + profile tables (027–034a). | Forward-only (requires manual cleanup to revert). |
 
 ## Validation checklist
 
@@ -108,7 +108,7 @@ Repeat the pattern for `029_remove_rsvps_table.sql` / `029_remove_rsvps_table_ro
 6. **Seed scripts** (optional but recommended on fresh environments)
    - `pnpm seed:taxonomy` populates shared taxonomy tables.
    - `pnpm seed:places:bangkok` + `pnpm seed:events:bangkok` hydrate demo data used by dashboards.
-   - `pnpm seed:social-sweat` spins up the Bucharest pilot data set (profiles, venues, sessions, open slots, and sport profiles). Follow it with `pnpm verify:social-sweat` (same Supabase env vars) to auto-confirm the hosts, venues, activities, sessions, open slots, and host attendance rows are all present. Need to rewind the pilot? Run `pnpm rollback:social-sweat` to delete the same set of records (plus the seeded auth users) before reseeding.
+   - `pnpm seed:dowhat` spins up the Bucharest pilot data set (profiles, venues, sessions, open slots, and sport profiles). Follow it with `pnpm verify:dowhat` (same Supabase env vars) to auto-confirm the hosts, venues, activities, sessions, open slots, and host attendance rows are all present. Need to rewind the pilot? Run `pnpm rollback:dowhat` to delete the same set of records (plus the seeded auth users) before reseeding.
 
 ### Seed validation queries
 
@@ -122,16 +122,16 @@ select version, updated_at from activity_taxonomy_state order by updated_at desc
 select count(*) from places where city = 'Bangkok';
 select count(*) from events where metadata ->> 'seedSource' = 'bangkok-demo';
 
--- doWhat pilot data should exist after pnpm seed:social-sweat
+-- doWhat pilot data should exist after pnpm seed:dowhat
 -- Prefer running the automated verifier for full coverage:
---   pnpm verify:social-sweat
+--   pnpm verify:dowhat
 -- It checks profiles, sport profiles, venues, activities, sessions, open slots, and host attendance rows.
 -- Need to clean up a stale pilot? Use:
---   pnpm rollback:social-sweat
+--   pnpm rollback:dowhat
 -- to remove the seeded sessions/slots/venues/activities/profiles/auth users before reseeding.
 ```
 
-If any query returns zero rows, rerun the corresponding seed command (and re-run `pnpm verify:social-sweat` for the pilot data) after confirming `SUPABASE_DB_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set.
+If any query returns zero rows, rerun the corresponding seed command (and re-run `pnpm verify:dowhat` for the pilot data) after confirming `SUPABASE_DB_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set.
 
 ## Troubleshooting
 

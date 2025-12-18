@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 
 import AdminDashboard from "../page";
 import { buildSessionCloneQuery } from "@/lib/adminPrefill";
-import type { SocialSweatAdoptionMetricsRow } from "@/types/database";
+import type { DoWhatAdoptionMetricsRow } from "@/types/database";
 
 jest.mock("@/components/TaxonomyCategoryPicker", () => ({
   __esModule: true,
@@ -84,7 +84,7 @@ const createProfilesPreviousChain = (count: number) => {
   return chain;
 };
 
-const createAdoptionChain = (row?: SocialSweatAdoptionMetricsRow | null) => {
+const createAdoptionChain = (row?: DoWhatAdoptionMetricsRow | null) => {
   const chain: Record<string, jest.Mock> = {};
   chain.select = jest.fn().mockReturnValue(chain);
   chain.limit = jest.fn().mockReturnValue(chain);
@@ -92,7 +92,7 @@ const createAdoptionChain = (row?: SocialSweatAdoptionMetricsRow | null) => {
   return chain;
 };
 
-const setupSupabaseQueries = (sessions: SessionRow[] = [], adoptionRow?: SocialSweatAdoptionMetricsRow | null) => {
+const setupSupabaseQueries = (sessions: SessionRow[] = [], adoptionRow?: DoWhatAdoptionMetricsRow | null) => {
   let profileCall = 0;
   mockFrom.mockImplementation((table: string) => {
     if (table === "venues") {
@@ -107,7 +107,7 @@ const setupSupabaseQueries = (sessions: SessionRow[] = [], adoptionRow?: SocialS
       if (profileCall === 2) return createProfilesRecentChain(12);
       return createProfilesPreviousChain(9);
     }
-    if (table === "social_sweat_adoption_metrics") {
+    if (table === "dowhat_adoption_metrics") {
       return createAdoptionChain(adoptionRow ?? null);
     }
     return createSelectOrderChain([]);
@@ -206,7 +206,7 @@ describe("AdminDashboard", () => {
   });
 
   it("renders doWhat adoption metrics when Supabase returns data", async () => {
-    const adoptionRow: SocialSweatAdoptionMetricsRow = {
+    const adoptionRow: DoWhatAdoptionMetricsRow = {
       total_profiles: 100,
       sport_step_complete_count: 26,
       sport_skill_member_count: 24,

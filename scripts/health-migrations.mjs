@@ -49,14 +49,20 @@ const REQUIRED_CORE_MIGRATIONS = [
   '034_admin_audit_logs.sql',
 ];
 
-const REQUIRED_SOCIAL_SWEAT_MIGRATIONS = [
+const REQUIRED_DOWHAT_MIGRATIONS = [
   '034a_extend_attendance_status.sql',
-  '035_social_sweat_core.sql',
+  '035_dowhat_core.sql',
   '036_attendance_reliability_trigger.sql',
   '037_reliability_pledge_ack.sql',
-  '038_social_sweat_adoption_metrics.sql',
+  '038_dowhat_adoption_metrics.sql',
   '039_notification_outbox.sql',
+  '043_dowhat_adoption_metrics.sql',
 ];
+
+const LEGACY_MIGRATION_ALIASES = new Map([
+  ['035_dowhat_core.sql', ['035_social_sweat_core.sql']],
+  ['038_dowhat_adoption_metrics.sql', ['038_social_sweat_adoption_metrics.sql']],
+]);
 
 const step = async (label, fn) => {
   process.stdout.write(`- ${label}... `);
@@ -71,7 +77,12 @@ const step = async (label, fn) => {
 
 const main = async () => {
   const { flags, values } = parseArgs(process.argv);
-  const requireSocialSweat = flags.has('--social-sweat') || flags.has('--require-social-sweat');
+  const legacySocialSweatFlag = flags.has('--social-sweat') || flags.has('--require-social-sweat');
+  if (legacySocialSweatFlag) {
+    console.warn('[migrations-health] The --social-sweat flag is deprecated. Use --dowhat instead.');
+  }
+  const requireDowhat =
+    legacySocialSweatFlag || flags.has('--dowhat') || flags.has('--require-dowhat');
   const strict = flags.has('--strict');
 
   const schemaMigrationsTable = values.get('--table') || 'public.schema_migrations';
@@ -86,8 +97,8 @@ const main = async () => {
   await client.connect();
 
   try {
-    const requiredMigrations = requireSocialSweat
-      ? [...REQUIRED_CORE_MIGRATIONS, ...REQUIRED_SOCIAL_SWEAT_MIGRATIONS]
+    const requiredMigrations = requireDowhat
+      ? [...REQUIRED_CORE_MIGRATIONS, ...REQUIRED_DOWHAT_MIGRATIONS]
       : REQUIRED_CORE_MIGRATIONS;
 
     const requiredSet = new Set(requiredMigrations);
@@ -111,7 +122,14 @@ const main = async () => {
       });
     });
 
-    const missing = requiredMigrations.filter((name) => !applied.has(name));
+    const isApplied = (name) => {
+      if (applied.has(name)) return true;
+      const aliases = LEGACY_MIGRATION_ALIASES.get(name);
+      if (!aliases?.length) return false;
+      return aliases.some((alias) => applied.has(alias));
+    };
+
+    const missing = requiredMigrations.filter((name) => !isApplied(name));
 
     if (missing.length) {
       console.error('[migrations-health] Missing required migrations:');
@@ -122,7 +140,7 @@ const main = async () => {
       process.exitCode = 1;
     }
 
-    if (requireSocialSweat) {
+    if (requireDowhat) {
       await step('doWhat tables exist', async () => {
         const { rows } = await client.query(
           `select table_name from information_schema.tables where table_schema='public' and table_name in ('user_sport_profiles','session_open_slots')`,

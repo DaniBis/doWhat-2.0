@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
-import { SEED_ACTIVITIES, SEED_SESSIONS, SEED_USERS, SEED_VENUES, uuidFromSeed } from "./social-sweat-shared.mjs";
+import { SEED_ACTIVITIES, SEED_SESSIONS, SEED_USERS, SEED_VENUES, uuidFromSeed } from "./dowhat-shared.mjs";
 
 const pickEnv = (...keys) => {
   for (const key of keys) {
@@ -17,7 +17,7 @@ const supabaseUrl = pickEnv("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "EXPO_PU
 const serviceKey = pickEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY");
 
 if (!supabaseUrl || !serviceKey) {
-  console.error("[rollback:social-sweat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  console.error("[rollback:dowhat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   process.exit(1);
 }
 
@@ -89,10 +89,10 @@ const main = async () => {
   console.info(`• Sport profiles cleared: ${userIds.length}`);
   console.info(`• Auth users deleted: ${userIds.length}`);
 
-  console.info("\nYou can now rerun pnpm seed:social-sweat to recreate the pilot data.\n");
+  console.info("\nYou can now rerun pnpm seed:dowhat to recreate the pilot data.\n");
 };
 
 main().catch((error) => {
-  console.error("\n[rollback:social-sweat] Failed:", error);
+  console.error("\n[rollback:dowhat] Failed:", error);
   process.exit(1);
 });

@@ -55,14 +55,14 @@ import { createHash } from "node:crypto";
  * @property {string=} description
  */
 
-export const seedTag = "social-sweat:bucuresti";
-export const pledgeVersion = "social-sweat-v1";
+export const seedTag = "dowhat:bucuresti";
+export const pledgeVersion = "dowhat-v1";
 
 /** @type {SeedUser[]} */
 export const SEED_USERS = [
   {
     slug: "padel-host",
-    email: "mara.padel.host@socialsweat.dev",
+    email: "mara.padel.host@dowhat.dev",
     fullName: "Mara Popescu",
     primarySport: "padel",
     playStyle: "competitive",
@@ -76,7 +76,7 @@ export const SEED_USERS = [
   },
   {
     slug: "run-host",
-    email: "alex.run.host@socialsweat.dev",
+    email: "alex.run.host@dowhat.dev",
     fullName: "Alex Ionescu",
     primarySport: "running",
     playStyle: "fun",
@@ -90,7 +90,7 @@ export const SEED_USERS = [
   },
   {
     slug: "climb-host",
-    email: "ioana.climb.host@socialsweat.dev",
+    email: "ioana.climb.host@dowhat.dev",
     fullName: "Ioana Dumitru",
     primarySport: "climbing",
     playStyle: "competitive",
@@ -158,7 +158,7 @@ export const SEED_ACTIVITIES = [
 export const SEED_SESSIONS = [
   {
     slug: "padel-friday-dash",
-    hostEmail: "mara.padel.host@socialsweat.dev",
+    hostEmail: "mara.padel.host@dowhat.dev",
     activitySlug: "sunrise-padel-rally",
     venueSlug: "herastrau-padel",
     startsInHours: 6,
@@ -171,7 +171,7 @@ export const SEED_SESSIONS = [
   },
   {
     slug: "run-saturday-tempo",
-    hostEmail: "alex.run.host@socialsweat.dev",
+    hostEmail: "alex.run.host@dowhat.dev",
     activitySlug: "herastrau-run-crew",
     venueSlug: "tineretului-track",
     startsInHours: 18,
@@ -184,7 +184,7 @@ export const SEED_SESSIONS = [
   },
   {
     slug: "climb-sunday-social",
-    hostEmail: "ioana.climb.host@socialsweat.dev",
+    hostEmail: "ioana.climb.host@dowhat.dev",
     activitySlug: "blocx-boulder-social",
     venueSlug: "blocx-bouldering",
     startsInHours: 32,

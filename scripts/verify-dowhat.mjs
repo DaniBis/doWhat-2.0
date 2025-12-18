@@ -1,22 +1,10 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { config as loadEnv } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import loadEnv from "./utils/load-env.mjs";
 
-const maybeLoadEnvFiles = () => {
-  const envFiles = [".env.local", ".env"];
-  for (const file of envFiles) {
-    const fullPath = resolve(process.cwd(), file);
-    if (existsSync(fullPath)) {
-      loadEnv({ path: fullPath });
-    }
-  }
-};
-
-maybeLoadEnvFiles();
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {
@@ -28,9 +16,13 @@ const pickEnv = (...keys) => {
   return undefined;
 };
 
-const skipFlag = (process.env.SOCIAL_SWEAT_HEALTH_SKIP ?? "").toLowerCase();
+const rawSkipFlag = process.env.DOWHAT_HEALTH_SKIP ?? process.env.SOCIAL_SWEAT_HEALTH_SKIP ?? "";
+if (process.env.SOCIAL_SWEAT_HEALTH_SKIP && !process.env.DOWHAT_HEALTH_SKIP) {
+  console.warn("[verify:dowhat] SOCIAL_SWEAT_HEALTH_SKIP is deprecated. Use DOWHAT_HEALTH_SKIP instead.");
+}
+const skipFlag = rawSkipFlag.toLowerCase();
 if (["1", "true", "yes"].includes(skipFlag)) {
-  console.log("[verify:social-sweat] Skipping doWhat verification (SOCIAL_SWEAT_HEALTH_SKIP set).");
+  console.log("[verify:dowhat] Skipping doWhat verification (DOWHAT_HEALTH_SKIP set).");
   process.exit(0);
 }
 
@@ -38,7 +30,7 @@ const supabaseUrl = pickEnv("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "EXPO_PU
 const serviceKey = pickEnv("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY");
 
 if (!supabaseUrl || !serviceKey) {
-  console.error("[verify:social-sweat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before running this script.");
+  console.error("[verify:dowhat] Missing Supabase environment. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before running this script.");
   process.exit(1);
 }
 
@@ -46,12 +38,12 @@ const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const pledgeVersion = "social-sweat-v1";
+const pledgeVersion = "dowhat-v1";
 
 const HOSTS = [
   {
     slug: "padel-host",
-    email: "mara.padel.host@socialsweat.dev",
+    email: "mara.padel.host@dowhat.dev",
     fullName: "Mara Popescu",
     primarySport: "padel",
     playStyle: "competitive",
@@ -59,7 +51,7 @@ const HOSTS = [
   },
   {
     slug: "run-host",
-    email: "alex.run.host@socialsweat.dev",
+    email: "alex.run.host@dowhat.dev",
     fullName: "Alex Ionescu",
     primarySport: "running",
     playStyle: "fun",
@@ -67,7 +59,7 @@ const HOSTS = [
   },
   {
     slug: "climb-host",
-    email: "ioana.climb.host@socialsweat.dev",
+    email: "ioana.climb.host@dowhat.dev",
     fullName: "Ioana Dumitru",
     primarySport: "climbing",
     playStyle: "competitive",
@@ -347,6 +339,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-  console.error("\n[verify:social-sweat] Failed:", error);
+  console.error("\n[verify:dowhat] Failed:", error);
   process.exit(1);
 });

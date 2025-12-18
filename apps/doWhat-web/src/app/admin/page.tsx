@@ -20,7 +20,7 @@ import { buildSessionCloneQuery } from "@/lib/adminPrefill";
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 import { cn } from "@/lib/utils/cn";
-import type { SocialSweatAdoptionMetricsRow } from "@/types/database";
+import type { DoWhatAdoptionMetricsRow } from "@/types/database";
 
 type VenueRow = {
   id: string;
@@ -297,10 +297,10 @@ export default function AdminDashboard() {
           .gte("created_at", previousWindowStartIso)
           .lt("created_at", currentWindowStartIso),
         supabase
-          .from("social_sweat_adoption_metrics")
+          .from("dowhat_adoption_metrics")
           .select("*")
           .limit(1)
-          .maybeSingle<SocialSweatAdoptionMetricsRow>(),
+          .maybeSingle<DoWhatAdoptionMetricsRow>(),
       ]);
 
       if (venuesRes.error) throw venuesRes.error;

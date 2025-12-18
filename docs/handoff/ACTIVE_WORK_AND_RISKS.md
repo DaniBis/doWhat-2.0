@@ -11,7 +11,7 @@
 - `apps/doWhat-web/tailwind.config.js`, `src/app/globals.css` — Tailwind now imports `@dowhat/shared` theme tokens.
 - `packages/shared/src/theme.ts` — palette + spacing exports, rem helpers.
 - `scripts/seed-social-sweat.mjs`, new `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs` — doWhat pilot tooling refactor.
-- Docs (`README.md`, `docs/migrations_025-031_validation.md`, `docs/social_sweat_pilot_validation.md`) updated with new workflow instructions.
+- Docs (`README.md`, `docs/migrations_025-031_validation.md`, `docs/dowhat_pilot_validation.md`) updated with new workflow instructions.
 
 ## 2. Active Initiatives & Status
 | Initiative | Files | Status | Notes |
@@ -20,7 +20,7 @@
 | Step 0 CTA parity | `apps/doWhat-web/src/components/profile/*`, nav link tests, `packages/shared/src/onboarding/*` | Guardrails in place | Ensure any new CTA uses `trackOnboardingEntry` with `steps`, `pendingSteps`, `nextStep`. |
 | doWhat pilot seeding | `scripts/seed-social-sweat.mjs`, `scripts/social-sweat-shared.mjs`, `scripts/rollback-social-sweat.mjs`, README/docs | Complete & documented | Verify new rollback script in staging; ensure `pnpm health` references stay consistent. |
 | Notification engine (Twilio SMS) | `apps/doWhat-web/supabase/migrations/039_notification_outbox.sql`, `supabase/functions/notify-sms/index.ts`, `supabase/config.toml`, README, `supabase/functions/notify-sms/schedule.sql`, `scripts/health-env.mjs`, `scripts/health-notifications.mjs` | In progress | Outbox table + trigger landed, the Edge Function polls Twilio with per-session rate limiting, JWT enforcement is now disabled via `supabase/config.toml`, pg_cron wiring lives in `supabase/functions/notify-sms/schedule.sql`, and `pnpm health` now jumps through env validation plus a notification-specific health script (stale pending + recent failures) unless `NOTIFICATION_TWILIO_STUB=true` is set for local dry runs. Next follow-ups: run the SQL per-environment and add integration/Twilio mocks as time permits. |
-| doWhat adoption metrics | `apps/doWhat-web/supabase/migrations/038_social_sweat_adoption_metrics.sql`, admin page | Partially landed | Need to confirm migration is applied, admin cards hitting new view, tests updated (`apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`). |
+| doWhat adoption metrics | `apps/doWhat-web/supabase/migrations/038_dowhat_adoption_metrics.sql`, admin page | Partially landed | Need to confirm migration is applied, admin cards hitting new view, tests updated (`apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`). |
 | Mobile onboarding parity | `apps/doWhat-mobile/src/app/onboarding/*`, nav pill/prompt components, RN tests | Recently updated | Re-run `pnpm --filter doWhat-mobile test -- ...` before merge; ensure Expo Router layout changes committed. |
 | Find a 4th Player hero | `apps/doWhat-mobile/src/app/home.tsx`, `components/FindA4thHero.tsx`, `hooks/useRankedOpenSessions.ts` | Complete | Home screen now consumes `useRankedOpenSessions`, renders the hero carousel, emits Find-a-4th impression/tap telemetry, and is guarded by `home.findA4th.test.tsx`. |
 | Release checklist execution | Repo-wide | In progress | `pnpm -w run lint`, `pnpm -w run typecheck`, and the full workspace Jest command (`pnpm test -- --maxWorkers=50%`, 76 suites) are green, and the 10-spec Playwright suite (`pnpm --filter dowhat-web exec playwright test`) passed on 13 Dec; continue rerunning Expo Doctor before releases now that the repo is managed-only. |
@@ -33,7 +33,7 @@
 2. **Expo prebuild workflow:** Native folders are no longer tracked; engineers must run `pnpm --filter doWhat-mobile exec expo prebuild --clean --platform ios android` (or the platform-specific variant) before cutting an EAS build so app config changes propagate to native code.
 4. **Large dirty tree:** Many files modified; ensure targeted commits or stash before context resets. Coordinate merges to avoid conflicts.
 5. **Theme rollout partial:** Mixed palettes can cause inconsistent UI if components still carry tailwind emeralds. Continue auditing after each sweep.
-6. **Supabase migrations:** After editing `038_social_sweat_adoption_metrics.sql`, run `pnpm run db:migrate` against dev DB and update docs with validation queries.
+6. **Supabase migrations:** After editing `038_dowhat_adoption_metrics.sql`, run `pnpm run db:migrate` against dev DB and update docs with validation queries.
 7. **Mobile router changes:** `_layout` and new onboarding components added; ensure navigation works on device/emulator before release.
 
 ## Decision Note: Expo Doctor Workflow (Managed Only)
@@ -71,8 +71,8 @@
 - Always run `pnpm health` before sharing environments—this catches Supabase drift and ensures doWhat pilot data is seeded/verified.
 
 ## Adoption Metrics Validation Checklist (Migration 038)
-- [ ] **Apply migration in dev:** From repo root run `pnpm run db:migrate` with local `DATABASE_URL` pointing to your dev Supabase instance; verify the script reports migration `038_social_sweat_adoption_metrics.sql` applied or already present.
+- [ ] **Apply migration in dev:** From repo root run `pnpm run db:migrate` with local `DATABASE_URL` pointing to your dev Supabase instance; verify the script reports migration `038_dowhat_adoption_metrics.sql` applied or already present.
 - [ ] **Apply migration in staging:** Export `DATABASE_URL` for the staging database and run the same `pnpm run db:migrate` command; capture the migration log in release notes.
-- [ ] **Confirm view output:** In psql (or Supabase SQL editor) execute `SELECT * FROM public.social_sweat_adoption_metrics;` and ensure the single row returns non-null counts for `total_profiles`, `sport_step_complete_count`, and related columns.
+- [ ] **Confirm view output:** In psql (or Supabase SQL editor) execute `SELECT * FROM public.dowhat_adoption_metrics;` and ensure the single row returns non-null counts for `total_profiles`, `sport_step_complete_count`, and related columns.
 - [ ] **Verify admin dashboard cards:** Load `/admin` and confirm the “doWhat Readiness” panel renders the Sport & Skill, Skill Level Saved, Trait Goal (5), Reliability Pledge, and Fully Ready cards using the view data.
 - [ ] **Run Jest coverage:** Execute `pnpm --filter dowhat-web test -- admin` to cover `apps/doWhat-web/src/app/admin/__tests__/page.test.tsx`, specifically the “renders doWhat adoption metrics…” and “shows an empty state…” suites that exercise the view wiring.

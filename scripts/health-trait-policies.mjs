@@ -2,6 +2,9 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import loadEnv from './utils/load-env.mjs';
+
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {
