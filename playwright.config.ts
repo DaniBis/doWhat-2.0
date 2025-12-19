@@ -5,7 +5,12 @@ import { defineConfig, devices } from '@playwright/test';
 import { config as loadEnvConfig } from 'dotenv';
 
 const ROOT_DIR = __dirname;
-const ENV_FILES = ['.env.e2e.local', '.env.e2e'];
+const ENV_FILES = [
+  '.env.playwright.local',
+  '.env.playwright',
+  '.env.e2e.local',
+  '.env.e2e',
+];
 
 for (const fileName of ENV_FILES) {
   const envPath = path.resolve(ROOT_DIR, fileName);

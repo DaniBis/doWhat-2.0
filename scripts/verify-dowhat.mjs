@@ -16,10 +16,7 @@ const pickEnv = (...keys) => {
   return undefined;
 };
 
-const rawSkipFlag = process.env.DOWHAT_HEALTH_SKIP ?? process.env.SOCIAL_SWEAT_HEALTH_SKIP ?? "";
-if (process.env.SOCIAL_SWEAT_HEALTH_SKIP && !process.env.DOWHAT_HEALTH_SKIP) {
-  console.warn("[verify:dowhat] SOCIAL_SWEAT_HEALTH_SKIP is deprecated. Use DOWHAT_HEALTH_SKIP instead.");
-}
+const rawSkipFlag = process.env.DOWHAT_HEALTH_SKIP ?? "";
 const skipFlag = rawSkipFlag.toLowerCase();
 if (["1", "true", "yes"].includes(skipFlag)) {
   console.log("[verify:dowhat] Skipping doWhat verification (DOWHAT_HEALTH_SKIP set).");

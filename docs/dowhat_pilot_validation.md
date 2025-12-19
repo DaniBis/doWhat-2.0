@@ -6,7 +6,7 @@ Use this checklist whenever you need to spin up the Bucharest doWhat pilot data 
 
 - Access to the target Supabase project (URL + service role key). The seed script writes directly to `auth`, `profiles`, `user_sport_profiles`, `venues`, `activities`, `sessions`, `session_open_slots`, and `session_attendees`.
 - Node 20+, pnpm 9+, and the repo dependencies installed (`pnpm install`).
-- Optional: export `DOWHAT_SEED_PASSWORD` to force a deterministic password for any newly created pilot accounts (otherwise the script generates random ones and prints them at the end). The legacy env var `SOCIAL_SWEAT_SEED_PASSWORD` is still understood but now logs a deprecation warning.
+- Optional: export `DOWHAT_SEED_PASSWORD` to force a deterministic password for any newly created pilot accounts (otherwise the script generates random ones and prints them at the end).
 
 ## 1. Seed the Bucharest pilot data
 

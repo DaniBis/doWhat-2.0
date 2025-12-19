@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
+import loadEnv from "./utils/load-env.mjs";
 import { SEED_ACTIVITIES, SEED_SESSIONS, SEED_USERS, SEED_VENUES, uuidFromSeed } from "./dowhat-shared.mjs";
+
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {

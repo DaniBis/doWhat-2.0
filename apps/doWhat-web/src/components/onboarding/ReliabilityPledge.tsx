@@ -15,23 +15,23 @@ const PLEDGE_VERSION = "v1";
 const COMMITMENTS = [
   {
     id: "confirm-attendance",
-    title: "Confirm attendance early",
-    description: "Update your status 12+ hours ahead so hosts can backfill your spot when plans shift.",
+    title: "Confirm plans early",
+    description: "Update your status 12+ hours ahead so hosts can refill the lineup without stress.",
   },
   {
     id: "arrive-on-time",
-    title: "Arrive on time",
-    description: "Aim to reach the venue 10 minutes before first serve for dependable warmups.",
+    title: "Arrive warmed up",
+    description: "Plan to hit the venue 10 minutes before first serve so matches start on time.",
   },
   {
     id: "release-spot",
-    title: "Release your spot",
-    description: "Late cancels sting. Free the slot immediately so another doWhat member can jump in.",
+    title: "Free your spot instantly",
+    description: "Plans change. Drop out the moment you know so another doWhat member can take the slot.",
   },
   {
     id: "respect-crew",
     title: "Respect every crew",
-    description: "Keep play safe, supportive, and positive – the community works when everyone feels welcome.",
+    description: "Keep play safe, encouraging, and inclusive - trust grows when everyone feels welcome.",
   },
 ] as const;
 
@@ -95,7 +95,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
           setCommitments(buildCommitmentState(true));
           setAckTimestamp(profileRow.reliability_pledge_ack_at);
           setAckVersion(profileRow.reliability_pledge_version);
-          setSuccess("Thanks for keeping doWhat reliable – edit anytime.");
+          setSuccess("Thanks for keeping every crew reliable - edit anytime.");
         }
       } catch (err) {
         console.error("[ReliabilityPledge] failed to load state", err);
@@ -156,7 +156,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
       if (profileError) throw profileError;
       setAckTimestamp(timestamp);
       setAckVersion(PLEDGE_VERSION);
-      setSuccess("Reliability pledge saved! We’ll nudge you if expectations change.");
+      setSuccess("Pledge saved! We’ll ping you if expectations ever change.");
       if (redirectTo) {
         if (redirectTimer.current) {
           clearTimeout(redirectTimer.current);
@@ -184,9 +184,9 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
         <div className="inline-flex items-center gap-xs rounded-full border border-amber-300/60 bg-amber-100/40 px-xs py-hairline text-xs font-semibold text-amber-700">
           <ShieldCheck className="h-4 w-4" aria-hidden /> Reliability pledge
         </div>
-        <h2 className="text-2xl font-semibold text-ink">Keep every session trustworthy</h2>
+        <h2 className="text-2xl font-semibold text-ink">Promise every crew you’ll show up</h2>
         <p className="text-sm text-ink-medium">
-          doWhat only works when everyone follows through. Review the commitments below and lock the pledge so hosts know they can count on you.
+          doWhat only works when each member follows through. Review the expectations and lock the pledge so hosts know they can count on you.
         </p>
       </CardHeader>
       <CardContent className="space-y-xl">
@@ -227,7 +227,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
 
         {formattedAck ? (
           <p className="text-sm text-emerald-700">
-            You accepted version {ackVersion ?? PLEDGE_VERSION} on {formattedAck}. Feel free to review or update it anytime.
+            You accepted version {ackVersion ?? PLEDGE_VERSION} on {formattedAck}. Revisit the pledge anytime if something changes.
           </p>
         ) : (
           <p className="text-sm text-ink-muted">Select each commitment to enable the pledge button.</p>
@@ -238,7 +238,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
 
         <div className="flex flex-wrap items-center justify-between gap-sm text-sm">
           <Button onClick={handleSave} disabled={!ready} className="ml-auto min-w-[180px]">
-            {saving ? "Saving…" : ackTimestamp ? "Update pledge" : "Lock the pledge"}
+            {saving ? "Saving…" : ackTimestamp ? "Update pledge" : "Lock your commitment"}
           </Button>
         </div>
       </CardContent>

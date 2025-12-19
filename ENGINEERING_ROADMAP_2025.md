@@ -26,7 +26,7 @@ This roadmap reflects the current state of branch `feature/admin-dashboard-docs`
 	- `scripts/seed-dowhat.mjs` populates Bucharest pilot data for E2E + ranking tests.
 		- ✅ 12 Dec: Fixed the duplicate type definition in the seeder and documented the SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY prerequisites plus password overrides in `README.md`, so anyone can rerun the Bucharest pilot seed with deterministic credentials.
 		- ✅ 13 Dec: Added `docs/dowhat_pilot_validation.md` with the step-by-step seeding + verification checklist and linked it from the README so the pilot runbook stays easy to find.
-		- ✅ 13 Dec: Introduced `scripts/verify-social-sweat.mjs` + `pnpm verify:social-sweat` to automatically confirm the hosts, venues, activities, sessions, open slots, and host attendance rows seeded correctly after each run.
+		- ✅ 13 Dec: Introduced `scripts/verify-dowhat.mjs` + `pnpm verify:dowhat` to automatically confirm the hosts, venues, activities, sessions, open slots, and host attendance rows seeded correctly after each run.
 		- ✅ 13 Dec: Added the Adoption Metrics Validation Checklist for migration `038_dowhat_adoption_metrics.sql` (documented in `docs/handoff/ACTIVE_WORK_AND_RISKS.md`) so engineers know the exact `pnpm run db:migrate` commands, SQL verification, dependent `/admin` cards, and Jest suites to run before sign-off.
 	- ✅ 12 Dec: The `/admin` doWhat readiness grid now includes a dedicated "Skill level saved" card (fed by `sport_skill_member_count`) so ops can track partial sport adoption separately from fully ready members.
 	- Reliability badge components (web + RN) and Skill chips reuse shared tokens; analytics dashboards track adoption before public launch.
@@ -158,7 +158,7 @@ This roadmap reflects the current state of branch `feature/admin-dashboard-docs`
 - Next focus: shift into Step 5 (Supabase migrations hardening) and Step 6 (admin monitoring) now that Step 4 guardrails + documentation are landed.
 
 ## 5. Harden Supabase Migrations & Seeds (Completed · 12 Dec 2025)
-- Validated migrations `025–037` via the updated health script (`scripts/health-migrations.mjs --social-sweat`) and wired the command into `pnpm health` so CI/dev machines enforce the full set automatically.
+- Validated migrations `025–037` via the updated health script (`scripts/health-migrations.mjs --dowhat`) and wired the command into `pnpm health` so CI/dev machines enforce the full set automatically (the `--social-sweat` alias remains for backwards compatibility but logs a warning).
 - Documented rollback dry-run steps plus seed validation queries in `docs/migrations_025-031_validation.md`, covering taxonomy, Bangkok demo, and doWhat pilot data.
 - Refreshed `database_updates.sql`/`README.md` with the latest migration roster and seeding commands, ensuring every environment follows the same pipeline before deploys.
 
@@ -187,11 +187,36 @@ Roadmap execution for Sprint 5 is complete; the entries below simply document th
 - Web Playwright: config now scopes discovery to `apps/doWhat-web/tests/e2e` (with `testMatch`/`testIgnore`), injects Supabase env defaults via dotenv + sane fallbacks, defaults to port 4302 (avoiding clashes with `web:dev` on 3002), and the `/admin/new` open-slot spec intercepts `/sessions/session-e2e-open` so deleting the session during the run no longer spams server errors. Use `npx playwright test --config apps/doWhat-web/playwright.config.ts --list` to verify the 10 admin specs; run `pnpm --filter dowhat-web exec playwright test` for actionable failures (override the port with `PLAYWRIGHT_PORT` only if you really need to share 4302).
 - Mobile unit suites: `pnpm --filter doWhat-mobile test -- --maxWorkers=50%` passed (15 suites). Console noise remains expected due to mocked Home/profile logging.
 - Mobile health: `pnpm --filter doWhat-mobile exec npx expo-doctor` now passes (native folders removed, managed workflow). Add `expo prebuild --clean --platform ios android` to any release prep so EAS builds reflect the latest config.
-- doWhat dry run: `pnpm health` already wires `scripts/verify-social-sweat.mjs`, and we still owe one more staging rehearsal using the refreshed rollback + seed scripts prior to broader pilot access.
+- doWhat dry run: `pnpm health` already wires `scripts/verify-dowhat.mjs`, and we still owe one more staging rehearsal using the refreshed rollback + seed scripts prior to broader pilot access.
+
+## Next Milestone — Final Stabilization & Handoff (Target: 22 Dec 2025)
+With Sprint 5 wrapped and the brand/pledge refresh complete, the final milestone focuses on packaging the work for hand-off and locking telemetry/health evidence. Success criteria:
+
+1. **Final verification sweep** – Run the full guardrail matrix on the latest commit and capture outputs in `ASSISTANT_CHANGES_LOG.md`:
+	- `pnpm -w run lint`
+	- `pnpm -w run typecheck`
+	- `pnpm --filter dowhat-web test -- --runInBand`
+	- `pnpm --filter dowhat-web exec playwright test` (default `PLAYWRIGHT_PORT=4302`)
+	- `pnpm --filter doWhat-mobile test -- --maxWorkers=50%`
+	- `pnpm --filter doWhat-mobile exec npx expo-doctor`
+	- `pnpm test:onboarding-progress`
+	- `pnpm --filter @dowhat/shared test`
+	- `node scripts/verify-trait-policies.mjs`
+	- `pnpm -w run health` (with `SUPABASE_DB_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` set) and `pnpm verify:dowhat`
+
+2. **Document evidence** – For each command above, log timestamp + environment in both `ASSISTANT_CHANGES_LOG.md` and `docs/current_app_overview_2025-12-03.md`, attaching the latest Supabase project ref so future auditors can trace the exact run.
+
+3. **Release packaging** – Slice commits per the existing recommendation list, tag the release plan, and draft a short `RELEASE_NOTES.md` stub (or PR description) summarizing brand cleanup, pledge refresh, Playwright env template, and guardrail verification.
+
+4. **Operational readiness** – Confirm `notify-sms` cron + secrets exist in every target Supabase project, ensure `.env.playwright.local` + managed Expo workflow instructions are merged, and update `docs/handoff/ACTIVE_WORK_AND_RISKS.md` if any environment deviates (e.g., if Twilio creds remain stubbed).
+
+5. **Handoff checklist** – Add a closing section to `docs/handoff/PROJECT_OVERVIEW.md` enumerating the commands/env vars reviewers must run to reproduce the healthy state before accepting the PR (guardrail commands, Supabase creds linkage, notify-sms cron verification).
+
+Once the sweep + documentation land, we can flip todo #6/#7 and move the branch into review.
 
 ## Risks & Watchlist
 - Playwright runner still needs process guardrails: config only targets the 10 admin specs now and defaults to its own port (4302), but `pnpm --filter dowhat-web exec playwright test` will still fail if another process already binds that port. Document freeing 4302 (or exporting a different `PLAYWRIGHT_PORT`) in the release checklist so CI/dev runs spin up the Next server cleanly.
 - Expo Doctor workflow: native folders are no longer tracked; before building with EAS or running native targets locally, run `pnpm --filter doWhat-mobile exec expo prebuild --clean --platform ios android` so `app.config.js` changes propagate.
-- Ranked sessions powering Find-a-4th still depend on timely Supabase data; if seed jobs or background refresh lag, the hero hides entirely. Keep an eye on the `scripts/verify-social-sweat.mjs` output and seed freshness before announcing full availability.
+- Ranked sessions powering Find-a-4th still depend on timely Supabase data; if seed jobs or background refresh lag, the hero hides entirely. Keep an eye on the `scripts/verify-dowhat.mjs` output and seed freshness before announcing full availability.
 - Onboarding telemetry parity spans many surfaces (profile banners, nav pills, people filter, sport selector); any future CTA tweak must re-run the combined regression command or analytics will drift. Highlight this in PR templates to avoid accidental omissions.
 - doWhat pilot automation currently targets Bucharest only; scaling to new cities requires parameterizing the seed + verify scripts and confirming RLS rules before reuse. Track this before declaring Step 0 “done” at the org level.

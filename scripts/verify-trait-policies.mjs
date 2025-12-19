@@ -41,6 +41,8 @@ const state = {
 };
 
 const failures = [];
+const keepDataFlag = (process.env.TRAIT_HEALTH_KEEP_DATA ?? '').toLowerCase();
+const keepData = ['1', 'true', 'yes'].includes(keepDataFlag);
 
 const iso = (date) => date.toISOString();
 
@@ -155,8 +157,8 @@ const maybeInsertLegacyRsvp = async (sessionId, userId, status) => {
   }
 };
 
-const addAttendee = async (sessionId, userId, status = 'going') => {
-  const payload = { session_id: sessionId, user_id: userId, status };
+const addAttendee = async (sessionId, userId, status = 'going', overrides = {}) => {
+  const payload = { session_id: sessionId, user_id: userId, status, ...overrides };
   const { error } = await service
     .from('session_attendees')
     .upsert(payload, { onConflict: 'session_id,user_id' });
@@ -210,6 +212,57 @@ const cleanupTables = async () => {
 
 const summaryKey = (userId, traitId) => `${userId}::${traitId}`;
 
+const debugSessionState = async (label, sessionId, voter, recipient) => {
+  if (!keepData) return;
+  console.log(`\n[trait-policies][debug] ${label} session ${sessionId}`);
+  const { data: sessionRow, error: sessionError } = await service
+    .from('sessions')
+    .select('starts_at, ends_at, visibility')
+    .eq('id', sessionId)
+    .single();
+  if (sessionError) {
+    console.log('  [debug] session fetch error', sessionError.message);
+  } else {
+    console.log('  [debug] session window', sessionRow.starts_at, '→', sessionRow.ends_at, 'visibility', sessionRow.visibility);
+  }
+
+  const { data: attendeeRows } = await service
+    .from('session_attendees')
+    .select('user_id, status, checked_in, attended_at, attendance_status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] session_attendees', attendeeRows);
+
+  const { data: voterAttendees, error: voterAttendeesError } = await voter.client
+    .from('session_attendees')
+    .select('session_id, user_id, status, attendance_status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] voter-visible session_attendees', voterAttendees, voterAttendeesError?.message ?? null);
+
+  const { data: recipientAttendees, error: recipientAttendeesError } = await recipient.client
+    .from('session_attendees')
+    .select('session_id, user_id, status, attendance_status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] recipient-visible session_attendees', recipientAttendees, recipientAttendeesError?.message ?? null);
+
+  const { data: rsvpRows } = await service
+    .from('rsvps')
+    .select('user_id, status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] rsvps', rsvpRows);
+
+  const { data: voterRsvps, error: voterRsvpsError } = await voter.client
+    .from('rsvps')
+    .select('session_id, user_id, status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] voter-visible rsvps', voterRsvps, voterRsvpsError?.message ?? null);
+
+  const { data: recipientRsvps, error: recipientRsvpsError } = await recipient.client
+    .from('rsvps')
+    .select('session_id, user_id, status')
+    .eq('session_id', sessionId);
+  console.log('  [debug] recipient-visible rsvps', recipientRsvps, recipientRsvpsError?.message ?? null);
+};
+
 const main = async () => {
   const now = new Date();
   await fetchTraitIds();
@@ -262,10 +315,16 @@ const main = async () => {
   const pastEnds = new Date(now.getTime() - 48 * 60 * 60 * 1000);
   const pastStarts = new Date(pastEnds.getTime() - 60 * 60 * 1000);
   const sessionFinished = await createSession({ hostUserId: userA.id, startsAt: pastStarts, endsAt: pastEnds });
-  await addAttendee(sessionFinished, userA.id);
-  await addAttendee(sessionFinished, userB.id);
+  const finishedOverrides = {
+    checked_in: true,
+    attended_at: iso(pastEnds),
+    attendance_status: 'attended',
+  };
+  await addAttendee(sessionFinished, userA.id, 'going', finishedOverrides);
+  await addAttendee(sessionFinished, userB.id, 'going', finishedOverrides);
 
   await step('users can vote for traits after a finished session with mutual attendance', async () => {
+    await debugSessionState('finished', sessionFinished, userA, userB);
     const { error } = await userA.client.from('user_trait_votes').insert({
       session_id: sessionFinished,
       from_user: userA.id,
@@ -353,8 +412,12 @@ const main = async () => {
     if (!rpc.error) throw new Error('expected RPC rejection for anonymous caller');
   });
 
-  await cleanupTables();
-  await deleteUsers();
+  if (keepData) {
+    console.log('[trait-policies] TRAIT_HEALTH_KEEP_DATA set; skipping cleanup for inspection.');
+  } else {
+    await cleanupTables();
+    await deleteUsers();
+  }
 
   if (failures.length) {
     console.error('\nTrait policy verification failed:');
@@ -370,11 +433,15 @@ const main = async () => {
 main().catch(async (error) => {
   console.error('\nUnexpected error during trait policy verification:', error);
   failures.push({ label: 'runtime', error });
-  try {
-    await cleanupTables();
-    await deleteUsers();
-  } catch (cleanupError) {
-    console.warn('[cleanup] secondary failure', cleanupError.message);
+  if (keepData) {
+    console.log('[trait-policies] TRAIT_HEALTH_KEEP_DATA set; leaving temporary rows in place for debugging.');
+  } else {
+    try {
+      await cleanupTables();
+      await deleteUsers();
+    } catch (cleanupError) {
+      console.warn('[cleanup] secondary failure', cleanupError.message);
+    }
   }
   process.exit(1);
 });

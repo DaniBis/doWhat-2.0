@@ -1,7 +1,6 @@
--- Rename the adoption metrics view to remove the Social Sweat codename.
+-- Rename the adoption metrics view to remove the legacy codename.
 -- Requires migrations 021 (traits), 031 (user_saved_activities), 035 (user sport profiles), and 037 (reliability pledge).
 
-DROP VIEW IF EXISTS public.social_sweat_adoption_metrics;
 DROP VIEW IF EXISTS public.dowhat_adoption_metrics;
 
 CREATE VIEW public.dowhat_adoption_metrics AS

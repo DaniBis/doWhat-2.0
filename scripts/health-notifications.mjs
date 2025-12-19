@@ -17,10 +17,16 @@ const formatCountRow = (rows) => rows?.[0]?.count ? Number(rows[0].count) : 0;
 const pendingThresholdMinutes = Number(process.env.NOTIFICATION_PENDING_WARN_MINUTES ?? '15');
 const failureWindowMinutes = Number(process.env.NOTIFICATION_FAILURE_WINDOW_MINUTES ?? '60');
 
+const skipFlag = (process.env.NOTIFICATION_HEALTH_SKIP ?? '').toLowerCase();
+if (['1', 'true', 'yes'].includes(skipFlag)) {
+  console.log('[notification-health] Skipping notification health checks (NOTIFICATION_HEALTH_SKIP set).');
+  process.exit(0);
+}
+
 const databaseUrl = pickEnv('SUPABASE_DB_URL', 'DATABASE_URL');
 if (!databaseUrl) {
-  console.log('[notification-health] Skipping: SUPABASE_DB_URL/DATABASE_URL not set.');
-  process.exit(0);
+  console.error('[notification-health] Missing SUPABASE_DB_URL or DATABASE_URL. Provide one or set NOTIFICATION_HEALTH_SKIP=1 to bypass intentionally.');
+  process.exit(1);
 }
 
 const client = new Client({ connectionString: databaseUrl });

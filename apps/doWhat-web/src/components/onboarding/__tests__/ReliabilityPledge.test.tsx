@@ -43,9 +43,9 @@ const buildProfilesBuilder = (): ProfilesBuilder => {
 };
 
 const COMMITMENT_TITLES = [
-  "Confirm attendance early",
-  "Arrive on time",
-  "Release your spot",
+  "Confirm plans early",
+  "Arrive warmed up",
+  "Free your spot instantly",
   "Respect every crew",
 ];
 
@@ -68,7 +68,7 @@ describe("ReliabilityPledge", () => {
 
     await waitFor(() => expect(screen.queryByText(/Preparing your pledge/i)).not.toBeInTheDocument());
 
-    const saveButton = screen.getByRole("button", { name: /Lock the pledge/i });
+    const saveButton = screen.getByRole("button", { name: /Lock your commitment/i });
     expect(saveButton).toBeDisabled();
 
     for (const title of COMMITMENT_TITLES) {
@@ -93,8 +93,8 @@ describe("ReliabilityPledge", () => {
 
     render(<ReliabilityPledge />);
 
-    await waitFor(() => expect(screen.getByText(/Thanks for keeping doWhat reliable/i)).toBeInTheDocument());
-    const firstCommitment = screen.getByRole("button", { name: /Confirm attendance early/i });
+    await waitFor(() => expect(screen.getByText(/Thanks for keeping every crew reliable/i)).toBeInTheDocument());
+    const firstCommitment = screen.getByRole("button", { name: /Confirm plans early/i });
     expect(firstCommitment).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /Update pledge/i })).toBeInTheDocument();
   });

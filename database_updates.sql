@@ -21,7 +21,7 @@
 -- 4. (Optional) Validate that required migrations are applied:
 --      node scripts/health-migrations.mjs
 --      # For doWhat schema checks as well:
---      node scripts/health-migrations.mjs --social-sweat
+--      node scripts/health-migrations.mjs --dowhat
 --
 -- Migration roster (025–034)
 -- ==========================
@@ -38,11 +38,11 @@
 -- 033_remove_event_participants.sql       → Cleans up the deprecated event_participants table + triggers.
 -- 034_admin_audit_logs.sql                → Adds admin_allowlist + admin_audit_logs with RLS-backed inserts/selects.
 -- 034a_extend_attendance_status.sql       → Adds the 'registered' and 'late_cancel' enum values ahead of doWhat.
--- 035_social_sweat_core.sql               → Adds reliability columns, sport metadata, `user_sport_profiles`,
+-- 035_dowhat_core.sql                     → Adds reliability columns, sport metadata, `user_sport_profiles`,
 --                                            `session_open_slots`, and related enums/triggers for the doWhat workstream.
 -- 036_attendance_reliability_trigger.sql  → Moves reliability scoring into Postgres triggers tied to session_attendees.
 -- 037_reliability_pledge_ack.sql          → Adds columns so profiles can track reliability pledge acknowledgements + versions.
--- 038_social_sweat_adoption_metrics.sql   → Creates the `social_sweat_adoption_metrics` view powering the admin readiness cards.
+-- 038_dowhat_adoption_metrics.sql         → Creates the `dowhat_adoption_metrics` view powering the admin readiness cards.
 -- 039_notification_outbox.sql             → Adds the notification_outbox table + trigger that enqueues host SMS events when attendees join.
 -- 040_profiles_handle_new_user.sql        → Updates the `handle_new_user` trigger so Supabase auth inserts populate `profiles.user_id`.
 -- 041_attendance_disputes.sql             → Introduces `attendance_disputes` with RLS so members can contest reliability issues after sessions end.

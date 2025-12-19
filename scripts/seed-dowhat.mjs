@@ -56,11 +56,7 @@ const ensurePublicUserRow = async (userId, spec) => {
   }
 };
 
-const rawPasswordFromEnv = process.env.DOWHAT_SEED_PASSWORD ?? process.env.SOCIAL_SWEAT_SEED_PASSWORD;
-if (process.env.SOCIAL_SWEAT_SEED_PASSWORD && !process.env.DOWHAT_SEED_PASSWORD) {
-  console.warn("[seed:dowhat] SOCIAL_SWEAT_SEED_PASSWORD is deprecated. Use DOWHAT_SEED_PASSWORD instead.");
-}
-const basePassword = rawPasswordFromEnv?.trim();
+const basePassword = process.env.DOWHAT_SEED_PASSWORD?.trim();
 
 const randomPassword = () => `doWhat-${randomBytes(4).toString("hex")}-${Date.now().toString(36)}`;
 

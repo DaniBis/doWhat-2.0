@@ -59,11 +59,6 @@ const REQUIRED_DOWHAT_MIGRATIONS = [
   '043_dowhat_adoption_metrics.sql',
 ];
 
-const LEGACY_MIGRATION_ALIASES = new Map([
-  ['035_dowhat_core.sql', ['035_social_sweat_core.sql']],
-  ['038_dowhat_adoption_metrics.sql', ['038_social_sweat_adoption_metrics.sql']],
-]);
-
 const step = async (label, fn) => {
   process.stdout.write(`- ${label}... `);
   try {
@@ -77,20 +72,21 @@ const step = async (label, fn) => {
 
 const main = async () => {
   const { flags, values } = parseArgs(process.argv);
-  const legacySocialSweatFlag = flags.has('--social-sweat') || flags.has('--require-social-sweat');
-  if (legacySocialSweatFlag) {
-    console.warn('[migrations-health] The --social-sweat flag is deprecated. Use --dowhat instead.');
-  }
-  const requireDowhat =
-    legacySocialSweatFlag || flags.has('--dowhat') || flags.has('--require-dowhat');
+  const requireDowhat = flags.has('--dowhat') || flags.has('--require-dowhat');
   const strict = flags.has('--strict');
 
   const schemaMigrationsTable = values.get('--table') || 'public.schema_migrations';
 
+  const skipFlag = (process.env.MIGRATIONS_HEALTH_SKIP ?? '').toLowerCase();
+  if (['1', 'true', 'yes'].includes(skipFlag)) {
+    console.log('[migrations-health] Skipping required migration checks (MIGRATIONS_HEALTH_SKIP set).');
+    process.exit(0);
+  }
+
   const databaseUrl = pickEnv('SUPABASE_DB_URL', 'DATABASE_URL');
   if (!databaseUrl) {
-    console.log('[migrations-health] Skipping because SUPABASE_DB_URL/DATABASE_URL is missing.');
-    process.exit(0);
+    console.error('[migrations-health] Missing SUPABASE_DB_URL or DATABASE_URL. Provide one or set MIGRATIONS_HEALTH_SKIP=1 to bypass intentionally.');
+    process.exit(1);
   }
 
   const client = new Client({ connectionString: databaseUrl });
@@ -122,12 +118,7 @@ const main = async () => {
       });
     });
 
-    const isApplied = (name) => {
-      if (applied.has(name)) return true;
-      const aliases = LEGACY_MIGRATION_ALIASES.get(name);
-      if (!aliases?.length) return false;
-      return aliases.some((alias) => applied.has(alias));
-    };
+    const isApplied = (name) => applied.has(name);
 
     const missing = requiredMigrations.filter((name) => !isApplied(name));
 

@@ -39,13 +39,14 @@ Root scripts automatically call `scripts/utils/load-env.mjs`, so the Supabase cr
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`)
+- `SUPABASE_DB_URL` (or `DATABASE_URL`)
 
 Optional helpers:
 
 - `DOWHAT_SEED_PASSWORD` – deterministic passwords when seeding hosts
 - `DOWHAT_HEALTH_SKIP=true` – temporarily bypass the doWhat verifier (only while a target environment intentionally omits the seed)
-
-Legacy env vars named `SOCIAL_SWEAT_*` are still accepted but log deprecation warnings; prefer the `DOWHAT_*` equivalents above.
+- `MIGRATIONS_HEALTH_SKIP=true` – explicitly bypass migration ledger checks when a database isn’t available
+- `NOTIFICATION_HEALTH_SKIP=true` – explicitly bypass notification outbox checks when a database isn’t available
 
 Web also reads env from its own folder; mobile reads EXPO_ variables from its own folder.
 
@@ -145,6 +146,21 @@ Gatekeeper: set `NEXT_PUBLIC_ADMIN_EMAILS` to a comma-separated allowlist.
 - Append `?e2e=1` to any admin URL during local/dev runs to auto-enable a temporary bypass (production still requires `NEXT_PUBLIC_E2E_ADMIN_BYPASS=true`).
 - Playwright automatically injects `NEXT_PUBLIC_ADMIN_EMAILS` into the dev server (via `playwright.config.ts`) so the mocked Supabase auth session matches the allow list without touching `.env.local`.
 
+#### Playwright env template
+
+1. Copy the sample file: `cp .env.playwright.example .env.playwright.local`.
+2. Edit `.env.playwright.local` with your Supabase project values:
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `NEXT_PUBLIC_ADMIN_EMAILS` (comma-separated allow list)
+3. Run the e2e pack with the dedicated port so it does not clash with `pnpm dev`:
+
+```
+PLAYWRIGHT_PORT=4302 pnpm --filter dowhat-web exec playwright test
+```
+
+The root `playwright.config.ts` loads `.env.playwright.local` automatically (falling back to legacy `.env.e2e*` files) and forwards the values to the dev server started for the tests.
+
 ## Database notes
 
 All SQL migrations now live in `apps/doWhat-web/supabase/migrations/` and follow the numeric prefix ordering (e.g. `014_places.sql`, `018_activity_taxonomy.sql`). A tiny helper script replays only the migrations that have not been stamped in the target database yet.
@@ -167,7 +183,7 @@ node scripts/health-migrations.mjs               # verifies 025–034 (core migr
 node scripts/health-migrations.mjs --dowhat      # extends the check through 034a–037
 ```
 
-The `--social-sweat` flag now also confirms the doWhat adoption view plus the notification outbox migration/table required for the Twilio SMS engine.
+The `--dowhat` flag now also confirms the doWhat adoption view plus the notification outbox migration/table required for the Twilio SMS engine (the legacy `--social-sweat` alias still works but prints a deprecation warning).
 
 If you prefer the SQL editor, copy/paste individual files from the same folder in ascending order.
 
@@ -321,7 +337,7 @@ pnpm seed:dowhat           # provisions Bucharest pilot data (profiles, venues, 
 pnpm rollback:dowhat       # removes the Bucharest pilot data (sessions/venues/activities/profiles/auth users)
 ```
 
-`seed:dowhat` talks directly to Supabase (no cron endpoint). Provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`), and `SUPABASE_ANON_KEY` via exports or the root `.env.local`/`.env` (the script now loads them automatically). Optionally set `DOWHAT_SEED_PASSWORD` to force a deterministic password for newly created pilot users. Legacy `SOCIAL_SWEAT_*` env vars are still read but emit a warning. The script:
+`seed:dowhat` talks directly to Supabase (no cron endpoint). Provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SERVICE_KEY`), and `SUPABASE_ANON_KEY` via exports or the root `.env.local`/`.env` (the script now loads them automatically). Optionally set `DOWHAT_SEED_PASSWORD` to force a deterministic password for newly created pilot users. The script:
 
 - Ensures the Bucharest pilot hosts exist in Supabase auth and the mirrored `users` table, creating accounts when missing and echoing their credentials at the end of the run.
 - Upserts the matching `profiles`, `user_sport_profiles`, venues, activities, and sessions tied to the doWhat pilot seed tag.

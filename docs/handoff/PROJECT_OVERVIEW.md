@@ -40,9 +40,9 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 - **Types:** `apps/doWhat-web/src/types/database.ts` auto-generated + manually extended to include new tables/enums.
 
 ## 5. Scripts & Automation
-- `scripts/health-env.mjs`, `scripts/health-migrations.mjs`, `scripts/health-trait-policies.mjs`, `scripts/verify-social-sweat.mjs` — form `pnpm health` guardrail.
-- `scripts/seed-social-sweat.mjs` — seeds Bucharest pilot. Shared definitions live in `scripts/social-sweat-shared.mjs`. Deterministic IDs ensure idempotency.
-- `scripts/rollback-social-sweat.mjs` — removes pilot data (sessions, slots, venues, activities, profiles, auth users).
+- `scripts/health-env.mjs`, `scripts/health-migrations.mjs`, `scripts/health-trait-policies.mjs`, `scripts/verify-dowhat.mjs` — form `pnpm health` guardrail.
+- `scripts/seed-dowhat.mjs` — seeds Bucharest pilot. Shared definitions live in `scripts/dowhat-shared.mjs`. Deterministic IDs ensure idempotency.
+- `scripts/rollback-dowhat.mjs` — removes pilot data (sessions, slots, venues, activities, profiles, auth users).
 - `scripts/seed-places-bangkok.mjs`, `scripts/seed-events-bangkok.mjs`, `scripts/seed-activity-taxonomy.mjs` — legacy demo data helpers.
 
 ## 6. Feature Highlights & Status
@@ -69,7 +69,7 @@ Additional top-level assets include docs (roadmap, validation guides), tsconfig,
 
 ## 9. Environment & Config
 - **Env Vars:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_SUPABASE_*`, `NEXT_PUBLIC_ADMIN_EMAILS`, feature flags (`EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS`, `NEXT_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS`).
-- **Scripts:** `dev:web`, `dev:mobile`, `pnpm health`, `pnpm seed:social-sweat / verify / rollback`.
+- **Scripts:** `dev:web`, `dev:mobile`, `pnpm health`, `pnpm seed:dowhat / verify:dowhat / rollback:dowhat`.
 
 ## 10. Outstanding Work / Next Steps
 1. **Mobile Find a 4th Player hero:** hydrate ranked sessions via shared scorer, ensure CTA flows to session detail, add telemetry/tests.

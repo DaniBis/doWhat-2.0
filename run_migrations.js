@@ -17,10 +17,6 @@ const { Client } = require('pg');
 
 const MIGRATIONS_DIR = path.join(__dirname, 'apps', 'doWhat-web', 'supabase', 'migrations');
 const TABLE_NAME = 'public.schema_migrations';
-const MIGRATION_ALIASES = new Map([
-  ['035_dowhat_core.sql', ['035_social_sweat_core.sql']],
-  ['038_dowhat_adoption_metrics.sql', ['038_social_sweat_adoption_metrics.sql']],
-]);
 
 const resolveDatabaseUrl = () => {
   const url = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
@@ -49,8 +45,7 @@ const readMigrations = async () => {
 };
 
 const hasMigrationRun = async (client, filename) => {
-  const candidates = [filename, ...(MIGRATION_ALIASES.get(filename) ?? [])];
-  const result = await client.query(`select 1 from ${TABLE_NAME} where filename = any($1::text[]) limit 1`, [candidates]);
+  const result = await client.query(`select 1 from ${TABLE_NAME} where filename = $1 limit 1`, [filename]);
   return result.rowCount > 0;
 };
 
