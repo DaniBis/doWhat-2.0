@@ -394,6 +394,7 @@ export default function WebMap({
       <Map
         ref={mapRef}
         mapboxAccessToken={MAPBOX_TOKEN}
+        mapLib={mapboxgl}
         mapStyle={MAPBOX_STYLE_URL}
         reuseMaps
         attributionControl

@@ -10,6 +10,14 @@ This monorepo contains a Next.js web app and an Expo (React Native) mobile app t
 - packages/
   - shared/ (format helpers, types)
 
+## Documentation Map
+
+- `PROJECT_OVERVIEW.md` – architecture, workflows, onboarding checklist.
+- `ROADMAP.md` – current priorities and upcoming initiatives.
+- `changes_log.md` / `error_log.md` – running history of feature/config changes and resolved incidents.
+- `docs/activity-taxonomy.md` / `docs/events-ingestion.md` – domain-specific deep dives.
+- Per-app notes live in `apps/doWhat-web/README.md` (pointer) and `apps/doWhat-mobile/README.md` (mobile-specific env + tooling).
+
 ## Prerequisites
 
 - Node 20+

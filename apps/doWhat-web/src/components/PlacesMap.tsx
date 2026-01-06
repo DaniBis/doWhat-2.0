@@ -221,6 +221,7 @@ export function PlacesMap({ center, places, selectedPlaceId, onMoveEnd, onSelect
         onClick={handleMapClick}
         mapStyle={MAPBOX_STYLE_URL}
         mapboxAccessToken={MAPBOX_TOKEN}
+        mapLib={mapboxgl}
         style={{ width: "100%", height: "100%" }}
       >
         <NavigationControl position="bottom-right" />

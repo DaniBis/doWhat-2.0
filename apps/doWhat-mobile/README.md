@@ -1,5 +1,7 @@
 # doWhat Mobile
 
+> The canonical project overview, roadmap, and shared troubleshooting logs live in the repo root (`README.md`, `PROJECT_OVERVIEW.md`, `ROADMAP.md`, `changes_log.md`, `error_log.md`). Refer there for anything beyond mobile-specific workflow notes.
+
 Expo (dev-client) app in the monorepo.
 
 ## Environment Variables
