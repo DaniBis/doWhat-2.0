@@ -30,12 +30,29 @@ import SaveToggleButton from "@/components/SaveToggleButton";
 import type { MapMovePayload, ViewBounds } from "@/components/WebMap";
 import { supabase } from "@/lib/supabase/browser";
 import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
+import {
+  clampReliabilityScore,
+  describeEventOrigin,
+  describeEventState,
+  describeEventVerification,
+  describeReliabilityConfidence,
+  eventPlaceLabel,
+  eventStateClass,
+  eventVerificationClass,
+  reliabilityBarClass,
+  buildEventVerificationProgress,
+  formatReliabilityLabel,
+} from "@/lib/events/presentation";
 
 const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
 const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
+const PLACE_FALLBACK_LABEL = "Location to be confirmed";
+
+const activityPlaceLabel = (activity: MapActivity): string =>
+  activity.place_label ?? activity.venue ?? PLACE_FALLBACK_LABEL;
 
 const readLocalMapFilters = (): MapFilterPreferences | null => {
   if (typeof window === "undefined") return null;
@@ -274,9 +291,9 @@ export default function MapPage() {
   const fetcher = useMemo(
     () =>
       createNearbyActivitiesFetcher({
-        buildUrl: () => {
-          const origin = typeof window !== "undefined" ? window.location.origin : "";
-          if (!origin) throw new Error("Unable to determine origin for nearby fetcher");
+        buildUrl: (_query) => {
+          const origin = typeof window !== 'undefined' ? window.location.origin : '';
+          if (!origin) throw new Error('Unable to determine origin for nearby fetcher');
           return `${origin}/api/nearby`;
         },
         includeCredentials: true,
@@ -353,7 +370,8 @@ export default function MapPage() {
     return activities.filter((activity) => {
       const name = activity.name?.toLowerCase() ?? '';
       const venue = activity.venue?.toLowerCase() ?? '';
-      return name.includes(term) || venue.includes(term);
+      const place = activity.place_label?.toLowerCase() ?? '';
+      return name.includes(term) || venue.includes(term) || place.includes(term);
     });
   }, [activities, searchTerm]);
 
@@ -363,7 +381,8 @@ export default function MapPage() {
     return events.filter((eventSummary) => {
       const title = eventSummary.title?.toLowerCase() ?? '';
       const venue = eventSummary.venue_name?.toLowerCase() ?? '';
-      return title.includes(term) || venue.includes(term);
+      const place = eventSummary.place_label?.toLowerCase() ?? '';
+      return title.includes(term) || venue.includes(term) || place.includes(term);
     });
   }, [events, searchTerm]);
 
@@ -538,7 +557,14 @@ export default function MapPage() {
         params.set('activityId', activity.id);
       }
       if (activity.name) params.set('activityName', activity.name);
-      if (activity.venue) params.set('venueName', activity.venue);
+      const placeLabel = activityPlaceLabel(activity);
+      if (placeLabel) params.set('venueName', placeLabel);
+      if (activity.place_id && isUuid(activity.place_id)) {
+        params.set('placeId', activity.place_id);
+      }
+      if (activity.place_label) {
+        params.set('placeLabel', activity.place_label);
+      }
       if (typeof activity.lat === 'number') params.set('lat', activity.lat.toFixed(6));
       if (typeof activity.lng === 'number') params.set('lng', activity.lng.toFixed(6));
       const target = `/create?${params.toString()}`;
@@ -642,6 +668,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     [],
   );
 
+  const isBothView = dataMode === 'both';
+  const listPanelWidthClass = isBothView ? 'lg:w-[640px]' : 'lg:w-[420px]';
+  const listSectionsClass = isBothView
+    ? 'flex-1 overflow-y-auto px-md py-sm space-y-xl lg:grid lg:grid-cols-2 lg:gap-lg lg:space-y-0'
+    : 'flex-1 overflow-y-auto px-md py-sm space-y-xl';
+  const listSectionCardClass = isBothView
+    ? 'rounded-2xl border border-midnight-border/30 bg-surface px-sm py-sm lg:px-md lg:py-md'
+    : '';
+
   const mapActivities = loadActivities ? filteredActivities : [];
   const mapEvents = loadEvents ? filteredEvents : [];
   const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
@@ -741,7 +776,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           />
         </div>
         <aside
-          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-midnight-border/40 bg-surface lg:flex lg:h-auto lg:w-[420px] lg:border-l`}
+          className={`${viewMode === "list" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-col border-t border-midnight-border/40 bg-surface lg:flex lg:h-auto ${listPanelWidthClass} lg:border-l`}
         >
           <div className="flex items-center justify-between border-b border-midnight-border/40 px-md py-sm text-xs text-ink-muted">
             <span>
@@ -753,10 +788,16 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             </span>
             <span>Radius ~{radiusLabel}</span>
           </div>
-          <div className="flex-1 overflow-y-auto px-md py-sm space-y-xl">
+          <div className={listSectionsClass}>
             {loadActivities && (
-              <section>
-                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Activities</h3>
+              <section className={listSectionCardClass} aria-label="Activities list">
+                <header className="mb-sm flex items-start gap-sm">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-brand-teal/10 text-lg">🏃‍♀️</span>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activities</h3>
+                    <p className="text-xs text-ink-muted">Recurring sessions hosted on doWhat.</p>
+                  </div>
+                </header>
                 {nearby.isLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading nearby activities…
@@ -778,6 +819,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const savePayload = createMapActivitySavePayload(activity);
                     const upcomingSessions = activity.upcoming_session_count ?? 0;
                     const canViewEvents = upcomingSessions > 0;
+                    const placeLabel = activityPlaceLabel(activity);
+                    const activitySubtitle = placeLabel ?? PLACE_FALLBACK_LABEL;
                     return (
                       <li key={activity.id}>
                         <div
@@ -794,8 +837,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         >
                           <div className="flex items-start justify-between gap-md">
                             <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                                Activity · {activitySubtitle}
+                              </div>
                               <div className="text-base font-semibold text-ink">{activity.name}</div>
-                              {activity.venue && <div className="mt-xxs text-xs text-ink-muted">📍 {activity.venue}</div>}
+                              <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up</p>
                               {activity.activity_types && activity.activity_types.length > 0 && (
                                 <div className="mt-xs flex flex-wrap gap-xxs">
                                   {activity.activity_types.slice(0, 3).map((type) => (
@@ -864,10 +910,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 </ul>
               </section>
             )}
-
             {loadEvents && (
-              <section>
-                <h3 className="mb-xs text-xs font-semibold uppercase text-ink-muted">Events</h3>
+              <section className={listSectionCardClass} aria-label="Events list">
+                <header className="mb-sm flex items-start gap-sm">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-feedback-warning/10 text-lg">🎟️</span>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Events</h3>
+                    <p className="text-xs text-ink-muted">One-off happenings around this area.</p>
+                  </div>
+                </header>
                 {eventsQuery.isLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading events…
@@ -887,6 +938,19 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   {filteredEvents.map((eventSummary) => {
                     const isSelected = eventSummary.id === selectedEventId;
                     const { start, end } = formatEventTimeRange(eventSummary);
+                    const placeLabel = eventPlaceLabel(eventSummary);
+                    const eventOrigin = describeEventOrigin(eventSummary);
+                    const verificationLabel = describeEventVerification(eventSummary.status);
+                    const verificationClass = eventVerificationClass(eventSummary.status);
+                    const stateLabel = describeEventState(eventSummary.event_state);
+                    const stateClass = eventStateClass(eventSummary.event_state);
+                    const reliabilityScore = clampReliabilityScore(eventSummary.reliability_score);
+                    const reliabilityLabel = formatReliabilityLabel(reliabilityScore);
+                    const reliabilityConfidence = describeReliabilityConfidence(reliabilityScore);
+                    const reliabilityClass = reliabilityBarClass(reliabilityScore);
+                    const reliabilityWidth = reliabilityScore == null ? 12 : reliabilityScore;
+                    const verificationProgress = buildEventVerificationProgress(eventSummary);
+                    const verificationProgressClass = verificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
                     return (
                       <li key={eventSummary.id}>
                         <div
@@ -907,19 +971,59 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         >
                           <div className="flex items-start justify-between gap-md">
                             <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                                {eventOrigin.label} · {placeLabel ?? PLACE_FALLBACK_LABEL}
+                              </div>
                               <div className="text-base font-semibold text-ink">{eventSummary.title}</div>
+                              <p className="mt-xxs text-[11px] text-ink-muted">{eventOrigin.helper}</p>
                               <div className="mt-xxs text-xs text-ink-muted">
                                 {eventTimeFormatter.format(start)}{end ? ` — ${eventTimeFormatter.format(end)}` : ''}
                               </div>
-                              {eventSummary.venue_name && (
-                                <div className="mt-xxs text-xs text-ink-muted">📍 {eventSummary.venue_name}</div>
-                              )}
-                              <div className="mt-xs flex flex-wrap gap-xxs text-[10px] uppercase tracking-wide text-feedback-warning">
-                                {eventSummary.tags?.slice(0, 3).map((tag) => (
-                                  <span key={tag} className="rounded bg-feedback-warning/20 px-xxs py-hairline">
-                                    #{tag}
-                                  </span>
-                                ))}
+                              <div className="mt-xxs flex flex-wrap gap-xxs text-[11px] font-semibold">
+                                <span className={`rounded-full border px-xs py-hairline ${verificationClass}`}>
+                                  {verificationLabel}
+                                </span>
+                                <span className={`rounded-full border px-xs py-hairline ${stateClass}`}>
+                                  {stateLabel}
+                                </span>
+                              </div>
+                                {verificationProgress && (
+                                  <div className="mt-xxs space-y-xxs">
+                                    <div className="flex items-center justify-between text-[11px] text-ink-muted">
+                                      <span>Community confirmations</span>
+                                      <span className="font-semibold text-ink">
+                                        {verificationProgress.confirmations}/{verificationProgress.required}
+                                      </span>
+                                    </div>
+                                    <div className="h-1 rounded-full bg-midnight-border/20">
+                                      <div
+                                        className={`h-full rounded-full ${verificationProgressClass}`}
+                                        style={{ width: `${verificationProgress.percent}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              {eventSummary.tags?.length ? (
+                                <div className="mt-xs flex flex-wrap gap-xxs text-[10px] uppercase tracking-wide text-feedback-warning">
+                                  {eventSummary.tags.slice(0, 3).map((tag) => (
+                                    <span key={tag} className="rounded bg-feedback-warning/20 px-xxs py-hairline">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="mt-sm space-y-xxs">
+                                <div className="flex items-center justify-between text-[11px] text-ink-muted">
+                                  <span>Reliability</span>
+                                  <span className="font-semibold text-ink">{reliabilityLabel}</span>
+                                </div>
+                                <p className="text-[11px] text-ink-muted">{reliabilityConfidence}</p>
+                                <div className="h-1.5 rounded-full bg-midnight-border/20">
+                                  <div
+                                    className={`h-full rounded-full ${reliabilityClass}`}
+                                    style={{ width: `${reliabilityWidth}%` }}
+                                  />
+                                </div>
                               </div>
                             </div>
                           </div>

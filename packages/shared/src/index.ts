@@ -10,6 +10,8 @@ export * from "./events/api";
 export * from "./events/types";
 export * from "./events/utils";
 export * from "./events/useEvents";
+export * from "./events/reliability";
+export * from "./events/presentation";
 export * from "./analytics";
 export * from "./config/cities";
 export * from "./activities/catalog";

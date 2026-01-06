@@ -31,6 +31,19 @@ import {
 import SaveToggleButton from "./SaveToggleButton";
 import { buildMapActivitySavePayload } from "@/lib/savePayloads";
 import { describeActivityCategories } from "@/lib/activityCategoryLabels";
+import {
+  clampReliabilityScore,
+  describeEventOrigin,
+  describeEventState,
+  describeEventVerification,
+  describeReliabilityConfidence,
+  eventPlaceLabel,
+  eventStateClass,
+  eventVerificationClass,
+  reliabilityBarClass,
+  buildEventVerificationProgress,
+  formatReliabilityLabel,
+} from "@/lib/events/presentation";
 
 export type ViewBounds = {
   sw: MapCoordinates;
@@ -132,6 +145,9 @@ const selectedEventLayer: LayerProps = {
   },
 };
 
+const activityPlaceLabel = (activity: MapActivity | null | undefined): string | null =>
+  activity?.place_label ?? activity?.venue ?? null;
+
 const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -199,6 +215,20 @@ export default function WebMap({
   );
   const selectedActivityUpcomingSessions = selectedActivity?.upcoming_session_count ?? 0;
   const canViewSelectedActivityEvents = selectedActivityUpcomingSessions > 0;
+  const selectedActivityPlaceLabel = activityPlaceLabel(selectedActivity);
+  const selectedEventPlaceLabel = eventPlaceLabel(selectedEvent, { fallback: null });
+  const selectedEventOrigin = selectedEvent ? describeEventOrigin(selectedEvent) : null;
+  const selectedEventVerificationLabel = selectedEvent ? describeEventVerification(selectedEvent.status) : null;
+  const selectedEventVerificationClass = selectedEvent ? eventVerificationClass(selectedEvent.status) : '';
+  const selectedEventStateLabel = selectedEvent ? describeEventState(selectedEvent.event_state) : null;
+  const selectedEventStateClass = selectedEvent ? eventStateClass(selectedEvent.event_state) : '';
+  const selectedEventReliabilityScore = clampReliabilityScore(selectedEvent?.reliability_score);
+  const selectedEventReliabilityLabel = formatReliabilityLabel(selectedEventReliabilityScore);
+  const selectedEventReliabilityHelper = describeReliabilityConfidence(selectedEventReliabilityScore);
+  const selectedEventReliabilityClass = reliabilityBarClass(selectedEventReliabilityScore);
+  const selectedEventReliabilityWidth = selectedEventReliabilityScore == null ? 12 : selectedEventReliabilityScore;
+  const selectedEventVerificationProgress = buildEventVerificationProgress(selectedEvent);
+  const selectedEventVerificationProgressClass = selectedEventVerificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
 
   useEffect(() => {
     setViewState((prev) => ({ ...prev, latitude: center.lat, longitude: center.lng }));
@@ -235,6 +265,11 @@ export default function WebMap({
   const eventFeatures = useMemo(() => activitiesToEventsFeatureCollection(events), [events]);
   const showActivities = mode === 'activities' || mode === 'both';
   const showEvents = mode === 'events' || mode === 'both';
+  const loadingLabel = showActivities && showEvents
+    ? 'Loading activities & events…'
+    : showEvents
+      ? 'Loading nearby events…'
+      : 'Loading nearby activities…';
   const interactiveLayerIds = useMemo(() => {
     const ids: string[] = [];
     if (showActivities) {
@@ -415,7 +450,11 @@ export default function WebMap({
           >
             <div className="space-y-xs text-sm text-ink-strong">
               <div className="font-semibold text-ink">{selectedActivity.name}</div>
-              {selectedActivity.venue && <div>📍 {selectedActivity.venue}</div>}
+              {selectedActivityPlaceLabel && (
+                <div>
+                  <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
+                </div>
+              )}
               {selectedActivityCategories.length ? (
                 <div className="flex flex-wrap gap-xs text-xs text-emerald-700">
                   {selectedActivityCategories.slice(0, 4).map((category) => (
@@ -480,15 +519,65 @@ export default function WebMap({
             onClose={() => setSelectedEvent(null)}
           >
             <div className="space-y-xs text-sm text-ink-strong">
+              {selectedEventOrigin && (
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                  {selectedEventOrigin.label}
+                </div>
+              )}
               <div className="font-semibold text-ink">{selectedEvent.title}</div>
-              {selectedEvent.venue_name && <div>📍 {selectedEvent.venue_name}</div>}
               <EventTimeDisplay event={selectedEvent} />
+              {selectedEventVerificationLabel && (
+                <div className="flex flex-wrap gap-xxs text-[11px] font-semibold">
+                  <span className={`rounded-full border px-xs py-hairline ${selectedEventVerificationClass}`}>
+                    {selectedEventVerificationLabel}
+                  </span>
+                  {selectedEventStateLabel && (
+                    <span className={`rounded-full border px-xs py-hairline ${selectedEventStateClass}`}>
+                      {selectedEventStateLabel}
+                    </span>
+                  )}
+                </div>
+              )}
+              {selectedEventPlaceLabel && (
+                <div className="text-xs text-ink-muted">
+                  <span aria-hidden>📍</span> {selectedEventPlaceLabel}
+                </div>
+              )}
+              {selectedEventVerificationProgress && (
+                <div className="space-y-xxs text-[11px] text-ink-muted">
+                  <div className="flex items-center justify-between">
+                    <span>Community confirmations</span>
+                    <span className="font-semibold text-ink">
+                      {selectedEventVerificationProgress.confirmations}/{selectedEventVerificationProgress.required}
+                    </span>
+                  </div>
+                  <div className="h-1 rounded-full bg-midnight-border/20">
+                    <div
+                      className={`h-full rounded-full ${selectedEventVerificationProgressClass}`}
+                      style={{ width: `${selectedEventVerificationProgress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-xs text-xs text-ink-muted">
                 {selectedEvent.tags?.slice(0, 3).map((tag) => (
                   <span key={tag} className="rounded-full bg-amber-100 px-xs py-hairline text-amber-700">
                     #{tag}
                   </span>
                 ))}
+              </div>
+              <div className="space-y-xxs text-[11px] text-ink-muted">
+                <div className="flex items-center justify-between">
+                  <span>Reliability</span>
+                  <span className="font-semibold text-ink">{selectedEventReliabilityLabel}</span>
+                </div>
+                <p>{selectedEventReliabilityHelper}</p>
+                <div className="h-1.5 rounded-full bg-midnight-border/20">
+                  <div
+                    className={`h-full rounded-full ${selectedEventReliabilityClass}`}
+                    style={{ width: `${selectedEventReliabilityWidth}%` }}
+                  />
+                </div>
               </div>
               <button
                 type="button"
@@ -512,7 +601,7 @@ export default function WebMap({
         )}
         {isLoading && (
           <div className="pointer-events-none absolute left-1/2 top-md -translate-x-1/2 rounded-full bg-surface/90 px-md py-xs text-xs font-medium text-ink-medium shadow">
-            Loading nearby activities…
+            {loadingLabel}
           </div>
         )}
       </Map>

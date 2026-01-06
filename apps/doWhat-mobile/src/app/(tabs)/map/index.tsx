@@ -21,23 +21,28 @@ import {
   DEFAULT_CITY_SLUG,
   OPENSTREETMAP_FALLBACK_ATTRIBUTION,
   buildPlaceSavePayload,
+  createEventsFetcher,
   defaultTier3Index,
+  estimateRadiusFromBounds,
   fetchOverpassPlaceSummaries,
+  formatEventTimeRange,
   getCityCategoryConfigMap,
   getCityConfig,
   getTier3Ids,
   isUuid,
   listCities,
+  sortEventsByStart,
   trackTaxonomyFiltersApplied,
   trackTaxonomyToggle,
+  useEvents,
+  usePlaces,
+  buildEventVerificationProgress,
   type ActivityTier3WithAncestors,
   type CityCategoryConfig,
   type CityConfig,
   type PlacesViewportQuery,
-  usePlaces,
-  estimateRadiusFromBounds,
 } from '@dowhat/shared';
-import type { FetchPlaces, PlaceSummary } from '@dowhat/shared';
+import type { EventSummary, FetchPlaces, PlaceSummary } from '@dowhat/shared';
 
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
 import ngeohash from 'ngeohash';
@@ -45,6 +50,7 @@ import { useRouter } from 'expo-router';
 
 import { geocodeLabelToCoords } from '../../../lib/geocode';
 import { emitMapPlacesUpdated, subscribeProfileLocationUpdated } from '../../../lib/events';
+import { buildWebUrl } from '../../../lib/web';
 import {
   DEFAULT_CATEGORY_APPEARANCE,
   formatCategoryLabel,
@@ -114,6 +120,48 @@ const describeActionError = (error: unknown): string => {
     return (error as { message: string }).message || 'Something went wrong.';
   }
   return 'Something went wrong.';
+};
+
+const getSessionIdFromMetadata = (metadata: unknown): string | null => {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const record = metadata as Record<string, unknown>;
+  const candidate = record.sessionId ?? record.session_id;
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+};
+
+const resolveEventUrl = (value?: string | null): string | null => {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    return buildWebUrl(trimmed.startsWith('/') ? trimmed : `/${trimmed}`);
+  } catch {
+    return null;
+  }
+};
+
+const describeEventPlaceLabel = (event: EventSummary): string | null =>
+  event.place_label ?? event.venue_name ?? event.address ?? 'Location to be confirmed';
+
+const clampEventReliability = (score?: number | null): number | null => {
+  if (typeof score !== 'number' || Number.isNaN(score)) return null;
+  return Math.max(0, Math.min(100, Math.round(score)));
+};
+
+const describeEventReliability = (score: number | null): { label: string; helper: string; color: string } => {
+  if (score == null) {
+    return { label: 'New event', helper: 'Awaiting reliability data', color: 'rgba(248,250,252,0.4)' };
+  }
+  if (score >= 80) {
+    return { label: `${score}% trusted`, helper: 'High confidence', color: '#10B981' };
+  }
+  if (score >= 50) {
+    return { label: `${score}% trusted`, helper: 'Community signal', color: '#FBBF24' };
+  }
+  return { label: `${score}% trusted`, helper: 'Needs confirmations', color: '#F87171' };
 };
 
 type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
@@ -1534,6 +1582,91 @@ export default function MapScreen() {
   const friendlyError = error ? error.replace(/^TypeError:\s*/i, '').trim() || null : null;
   const places = placesQuery.data?.places ?? [];
 
+  const eventsFetcher = useMemo(
+    () =>
+      createEventsFetcher({
+        buildUrl: () => buildWebUrl('/api/events'),
+        includeCredentials: true,
+      }),
+    [],
+  );
+
+  const eventsWindow = useMemo(() => {
+    const start = new Date();
+    const daysAhead = 14;
+    const end = new Date(start.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+    return { from: start.toISOString(), to: end.toISOString() };
+  }, []);
+
+  const eventsQueryArgs = useMemo(() => {
+    if (!query?.bounds) return null;
+    return {
+      sw: query.bounds.sw,
+      ne: query.bounds.ne,
+      from: eventsWindow.from,
+      to: eventsWindow.to,
+      limit: 150,
+    };
+  }, [eventsWindow, query]);
+
+  const eventsQuery = useEvents(eventsQueryArgs, {
+    fetcher: eventsFetcher,
+    enabled: Boolean(eventsQueryArgs),
+    staleTime: 60_000,
+  });
+
+  const events = useMemo(() => sortEventsByStart(eventsQuery.data?.events ?? []), [eventsQuery.data?.events]);
+  const eventHighlights = useMemo(() => events.slice(0, 6), [events]);
+
+  const eventTimeFormatter = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const describeEventTime = useCallback(
+    (eventSummary: EventSummary) => {
+      const { start: startDate, end: endDate } = formatEventTimeRange(eventSummary);
+      const formatValue = (value: Date) => {
+        if (eventTimeFormatter) {
+          return eventTimeFormatter.format(value);
+        }
+        return value.toLocaleString(undefined, {
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+      };
+      const startLabel = formatValue(startDate);
+      return endDate ? `${startLabel} · ${formatValue(endDate)}` : startLabel;
+    },
+    [eventTimeFormatter],
+  );
+
+  const handleOpenEvent = useCallback(
+    (eventSummary: EventSummary) => {
+      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      if (sessionId) {
+        router.push({ pathname: '/sessions/[id]', params: { id: sessionId } });
+        return;
+      }
+      const targetUrl = resolveEventUrl(eventSummary.url);
+      if (targetUrl) {
+        void Linking.openURL(targetUrl);
+      }
+    },
+    [router],
+  );
+
   useEffect(() => {
     if (placesQuery.data?.attribution) {
       setAttributions(placesQuery.data.attribution);
@@ -1705,6 +1838,9 @@ export default function MapScreen() {
     if (!filteredPlaces.length) return null;
     return 'Venues synced from Supabase (fallback: OpenStreetMap).';
   }, [filteredPlaces.length]);
+
+  const shouldShowEventsRail = eventsQuery.isFetching || eventHighlights.length > 0 || eventsQuery.isError;
+  const eventsErrorMessage = eventsQuery.error?.message ?? 'Unable to load nearby events.';
 
   const dismissActivePlace = useCallback(() => setActivePlaceId(null), []);
 
@@ -2087,6 +2223,99 @@ export default function MapScreen() {
           </TouchableOpacity>
         </ScrollView>
       </View>
+      {shouldShowEventsRail ? (
+        <View style={styles.eventsSection}>
+          <View style={styles.eventsSectionHeader}>
+            <View>
+              <Text style={styles.eventsSectionTitle}>Community confirmations nearby</Text>
+              <Text style={styles.eventsSectionSubtitle}>Upcoming events validating places in this view.</Text>
+            </View>
+            {eventsQuery.isFetching ? <ActivityIndicator color="#0F172A" size="small" /> : null}
+          </View>
+          {eventsQuery.isError ? <Text style={styles.eventsSectionError}>{eventsErrorMessage}</Text> : null}
+          {!eventsQuery.isFetching && !eventsQuery.isError && !eventHighlights.length ? (
+            <Text style={styles.eventsEmptyCopy}>No upcoming events here yet. Move the map or zoom out.</Text>
+          ) : null}
+          {eventHighlights.length ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.eventsCarousel}
+            >
+              {eventHighlights.map((eventSummary) => {
+                const timeLabel = describeEventTime(eventSummary);
+                const placeLabel = describeEventPlaceLabel(eventSummary) ?? 'Location to be confirmed';
+                const verificationProgress = buildEventVerificationProgress(eventSummary);
+                const verificationColor = verificationProgress?.complete ? '#059669' : '#F59E0B';
+                const reliabilityScore = clampEventReliability(eventSummary.reliability_score);
+                const reliabilityMeta = describeEventReliability(reliabilityScore);
+                const reliabilityWidth = reliabilityScore == null ? 12 : reliabilityScore;
+                return (
+                  <TouchableOpacity
+                    key={eventSummary.id}
+                    accessibilityRole="button"
+                    onPress={() => handleOpenEvent(eventSummary)}
+                    style={styles.eventCard}
+                    activeOpacity={0.88}
+                  >
+                    <Text style={styles.eventCardTitle} numberOfLines={2}>
+                      {eventSummary.title}
+                    </Text>
+                    <Text style={styles.eventCardTime}>{timeLabel}</Text>
+                    <Text style={styles.eventCardPlace} numberOfLines={1}>
+                      {placeLabel}
+                    </Text>
+                    {verificationProgress ? (
+                      <View style={styles.eventProgressBlock}>
+                        <View style={styles.eventProgressHeader}>
+                          <Text style={styles.eventProgressLabel}>Community confirmations</Text>
+                          <Text style={styles.eventProgressValue}>
+                            {verificationProgress.confirmations}/{verificationProgress.required}
+                          </Text>
+                        </View>
+                        <View style={styles.eventProgressBarBackground}>
+                          <View
+                            style={[
+                              styles.eventProgressBarFill,
+                              { width: `${verificationProgress.percent}%`, backgroundColor: verificationColor },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                    ) : (
+                      <Text style={styles.eventProgressPending}>Awaiting confirmations</Text>
+                    )}
+                    <View style={styles.eventProgressBlock}>
+                      <View style={styles.eventProgressHeader}>
+                        <Text style={styles.eventProgressLabel}>Reliability</Text>
+                        <Text style={styles.eventProgressValue}>{reliabilityMeta.label}</Text>
+                      </View>
+                      <Text style={styles.eventReliabilityHelper}>{reliabilityMeta.helper}</Text>
+                      <View style={styles.eventProgressBarBackground}>
+                        <View
+                          style={[
+                            styles.eventProgressBarFill,
+                            { width: `${reliabilityWidth}%`, backgroundColor: reliabilityMeta.color },
+                          ]}
+                        />
+                      </View>
+                    </View>
+                    {eventSummary.tags?.length ? (
+                      <View style={styles.eventTagRow}>
+                        {eventSummary.tags.slice(0, 2).map((tag) => (
+                          <Text key={tag} style={styles.eventTag}>
+                            #{tag}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
@@ -2321,6 +2550,123 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 10,
+  },
+  eventsSection: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingBottom: 4,
+  },
+  eventsSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 6,
+  },
+  eventsSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  eventsSectionSubtitle: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#475569',
+  },
+  eventsSectionError: {
+    marginTop: 4,
+    paddingHorizontal: 4,
+    fontSize: 12,
+    color: '#DC2626',
+  },
+  eventsEmptyCopy: {
+    marginTop: 2,
+    paddingHorizontal: 4,
+    fontSize: 12,
+    color: '#475569',
+  },
+  eventsCarousel: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  eventCard: {
+    width: 240,
+    padding: 16,
+    borderRadius: 18,
+    marginRight: 12,
+    backgroundColor: '#0F172A',
+  },
+  eventCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  eventCardTime: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#E2E8F0',
+  },
+  eventCardPlace: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#93C5FD',
+  },
+  eventProgressBlock: {
+    marginTop: 12,
+  },
+  eventProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  eventProgressLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+    color: 'rgba(226,232,240,0.8)',
+  },
+  eventProgressValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  eventReliabilityHelper: {
+    marginTop: 2,
+    fontSize: 11,
+    color: 'rgba(226,232,240,0.75)',
+  },
+  eventProgressBarBackground: {
+    marginTop: 4,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(148,163,184,0.35)',
+  },
+  eventProgressBarFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#F59E0B',
+  },
+  eventProgressPending: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#FDE68A',
+  },
+  eventTagRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  eventTag: {
+    marginRight: 6,
+    marginBottom: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(248,250,252,0.08)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    color: '#FCD34D',
   },
   headerRow: {
     flexDirection: 'row',

@@ -4,9 +4,21 @@ import { notFound } from 'next/navigation';
 import type { Metadata, Route } from 'next';
 
 import { formatEventTimeRange, type EventSummary } from '@dowhat/shared';
-
-const humaniseStatus = (status: EventSummary['status']) =>
-  status === 'canceled' ? 'Cancelled' : 'Scheduled';
+import {
+  clampReliabilityScore,
+  describeEventOrigin,
+  describeEventState,
+  describeEventVerification,
+  describeReliabilityConfidence,
+  eventPlaceLabel,
+  eventStateClass,
+  eventVerificationClass,
+  reliabilityBarClass,
+  buildEventVerificationProgress,
+  formatReliabilityLabel,
+} from '@/lib/events/presentation';
+import { EventAttendanceCard } from '@/components/events/EventAttendanceCard';
+import { EventVerificationCard } from '@/components/events/EventVerificationCard';
 
 const formatDateTime = (date: Date) =>
   new Intl.DateTimeFormat(undefined, {
@@ -76,12 +88,23 @@ export default async function EventDetailPage({ params }: EventPageProps) {
   const { start, end } = formatEventTimeRange(event);
 
   const eventTags = event.tags && event.tags.length > 0 ? event.tags.slice(0, 6) : [];
+  const eventOrigin = describeEventOrigin(event);
   const startLabel = formatDateTime(start);
   const endLabel = end ? formatDateTime(end) : null;
-  const venueLabel = event.venue_name ?? event.address ?? 'Venue TBC';
+  const venueLabel = eventPlaceLabel(event, { fallback: 'Venue TBC' });
   const sourceLink = (event.metadata && typeof event.metadata.sourceUrl === 'string')
     ? event.metadata.sourceUrl
     : event.url ?? null;
+  const stateLabel = describeEventState(event.event_state);
+  const stateClass = eventStateClass(event.event_state);
+  const verificationLabel = describeEventVerification(event.status);
+  const verificationClass = eventVerificationClass(event.status);
+  const reliabilityScore = clampReliabilityScore(event.reliability_score);
+  const reliabilityLabel = formatReliabilityLabel(reliabilityScore);
+  const reliabilityClass = reliabilityBarClass(reliabilityScore);
+  const reliabilityConfidence = describeReliabilityConfidence(reliabilityScore);
+  const reliabilityBarWidth = reliabilityScore == null ? 12 : reliabilityScore;
+  const verificationProgress = buildEventVerificationProgress(event);
 
   const createActivityHref = event.place_id
     ? `/create?placeId=${encodeURIComponent(event.place_id)}`
@@ -97,10 +120,12 @@ export default async function EventDetailPage({ params }: EventPageProps) {
 
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            {humaniseStatus(event.status)}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{eventOrigin.label}</p>
+          <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${stateClass}`}>
+            {stateLabel}
           </div>
           <h1 className="text-3xl font-bold text-slate-900">{event.title}</h1>
+          <p className="text-sm text-slate-500">{eventOrigin.helper}</p>
           <p className="text-sm text-slate-500">
             {startLabel}
             {endLabel ? ` – ${endLabel}` : ''}
@@ -109,6 +134,14 @@ export default async function EventDetailPage({ params }: EventPageProps) {
             <span role="img" aria-hidden>📍</span>
             <span>{venueLabel}</span>
           </p>
+          <div className="flex flex-wrap gap-2 text-xs font-semibold">
+            <span className={`rounded-full border px-2 py-0.5 ${verificationClass}`}>
+              {verificationLabel}
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
+              {reliabilityConfidence}
+            </span>
+          </div>
           {eventTags.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {eventTags.map((tag) => (
@@ -165,7 +198,46 @@ export default async function EventDetailPage({ params }: EventPageProps) {
               )}
               <div>
                 <dt className="text-xs text-slate-500">Status</dt>
-                <dd className="font-medium text-slate-900">{humaniseStatus(event.status)}</dd>
+                <dd className="font-medium text-slate-900">{stateLabel}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Verification</dt>
+                <dd>
+                  <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${verificationClass}`}>
+                    {verificationLabel}
+                  </span>
+                </dd>
+              </div>
+              {verificationProgress && (
+                <div>
+                  <dt className="text-xs text-slate-500">Community confirmations</dt>
+                  <dd className="mt-1">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>
+                        {verificationProgress.confirmations}/{verificationProgress.required} complete
+                      </span>
+                      <span className="font-semibold text-slate-900">{verificationProgress.percent}%</span>
+                    </div>
+                    <div className="mt-1 h-2 rounded-full bg-slate-200">
+                      <div
+                        className={`h-full rounded-full ${verificationProgress.complete ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                        style={{ width: `${verificationProgress.percent}%` }}
+                      />
+                    </div>
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-xs text-slate-500">Reliability</dt>
+                <dd className="mt-1">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>{reliabilityConfidence}</span>
+                    <span className="font-semibold text-slate-900">{reliabilityLabel}</span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-slate-200">
+                    <div className={`h-full rounded-full ${reliabilityClass}`} style={{ width: `${reliabilityBarWidth}%` }} />
+                  </div>
+                </dd>
               </div>
               {event.place?.name && (
                 <div>
@@ -187,6 +259,11 @@ export default async function EventDetailPage({ params }: EventPageProps) {
           )}
         </aside>
       </section>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <EventAttendanceCard eventId={event.id} />
+        <EventVerificationCard eventId={event.id} />
+      </div>
     </div>
   );
 }
