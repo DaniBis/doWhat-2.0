@@ -1,8 +1,8 @@
 "use client";
 
 import mapboxgl from "mapbox-gl";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MapLayerMouseEvent, MapRef, ViewStateChangeEvent } from "react-map-gl";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MapLayerMouseEvent, MapRef } from "react-map-gl";
 import Map, { Layer, NavigationControl, Popup, Source } from "react-map-gl";
 import type { LayerProps } from "react-map-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -31,6 +31,7 @@ import {
 import SaveToggleButton from "./SaveToggleButton";
 import { buildMapActivitySavePayload } from "@/lib/savePayloads";
 import { describeActivityCategories } from "@/lib/activityCategoryLabels";
+import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from "@/lib/places/labels";
 import {
   clampReliabilityScore,
   describeEventOrigin,
@@ -145,8 +146,11 @@ const selectedEventLayer: LayerProps = {
   },
 };
 
-const activityPlaceLabel = (activity: MapActivity | null | undefined): string | null =>
-  activity?.place_label ?? activity?.venue ?? null;
+const activityPlaceLabel = (activity: MapActivity | null | undefined): string | null => {
+  if (!activity) return null;
+  const label = normalizePlaceLabel(activity.place_label, activity.venue);
+  return label === PLACE_FALLBACK_LABEL ? null : label;
+};
 
 const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371000;
@@ -184,7 +188,7 @@ type Props = {
   activeEventId?: string | null;
 };
 
-export default function WebMap({
+function WebMap({
   center,
   activities,
   events,
@@ -200,7 +204,7 @@ export default function WebMap({
   activeActivityId,
   activeEventId,
 }: Props) {
-  const [viewState, setViewState] = useState<MapViewState>({
+  const initialViewStateRef = useRef<MapViewState>({
     latitude: center.lat,
     longitude: center.lng,
     zoom: 12,
@@ -215,8 +219,12 @@ export default function WebMap({
   );
   const selectedActivityUpcomingSessions = selectedActivity?.upcoming_session_count ?? 0;
   const canViewSelectedActivityEvents = selectedActivityUpcomingSessions > 0;
-  const selectedActivityPlaceLabel = activityPlaceLabel(selectedActivity);
-  const selectedEventPlaceLabel = eventPlaceLabel(selectedEvent, { fallback: null });
+  const selectedActivityPlaceLabel = selectedActivity
+    ? activityPlaceLabel(selectedActivity) ?? PLACE_FALLBACK_LABEL
+    : null;
+  const selectedEventPlaceLabel = selectedEvent
+    ? eventPlaceLabel(selectedEvent, { fallback: PLACE_FALLBACK_LABEL })
+    : null;
   const selectedEventOrigin = selectedEvent ? describeEventOrigin(selectedEvent) : null;
   const selectedEventVerificationLabel = selectedEvent ? describeEventVerification(selectedEvent.status) : null;
   const selectedEventVerificationClass = selectedEvent ? eventVerificationClass(selectedEvent.status) : '';
@@ -231,7 +239,13 @@ export default function WebMap({
   const selectedEventVerificationProgressClass = selectedEventVerificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
 
   useEffect(() => {
-    setViewState((prev) => ({ ...prev, latitude: center.lat, longitude: center.lng }));
+    const map = mapRef.current?.getMap?.();
+    if (!map) return;
+    const current = map.getCenter();
+    const deltaLat = Math.abs(current.lat - center.lat);
+    const deltaLng = Math.abs(current.lng - center.lng);
+    if (deltaLat < 0.0001 && deltaLng < 0.0001) return;
+    map.easeTo({ center: [center.lng, center.lat] });
   }, [center.lat, center.lng]);
 
   useEffect(() => {
@@ -296,11 +310,6 @@ export default function WebMap({
     [selectedEvent],
   );
 
-  const handleMove = useCallback((event: ViewStateChangeEvent) => {
-    const { viewState: vs } = event;
-    setViewState({ latitude: vs.latitude, longitude: vs.longitude, zoom: vs.zoom });
-  }, []);
-
   const handleMoveEnd = useCallback(() => {
       const map = mapRef.current;
       if (!map) return;
@@ -364,7 +373,8 @@ export default function WebMap({
             ? (feature.geometry.coordinates as [number, number])
             : ([event.lngLat.lng, event.lngLat.lat] as [number, number]);
           const [lng, lat] = coords;
-          setViewState({ latitude: lat, longitude: lng, zoom });
+          const mapInstance = mapRef.current?.getMap?.();
+          mapInstance?.easeTo({ center: [lng, lat], zoom });
         });
         return;
       }
@@ -399,8 +409,7 @@ export default function WebMap({
         reuseMaps
         attributionControl
         interactiveLayerIds={interactiveLayerIds}
-        {...viewState}
-        onMove={handleMove}
+        initialViewState={initialViewStateRef.current}
         onMoveEnd={handleMoveEnd}
         onClick={handleMapClick}
         style={{ width: "100%", height: "100%" }}
@@ -439,7 +448,7 @@ export default function WebMap({
           </Source>
         )}
         {selectedActivity && (
-          <Popup
+              <Popup
             closeButton
             closeOnClick={false}
             focusAfterOpen={false}
@@ -451,11 +460,9 @@ export default function WebMap({
           >
             <div className="space-y-xs text-sm text-ink-strong">
               <div className="font-semibold text-ink">{selectedActivity.name}</div>
-              {selectedActivityPlaceLabel && (
-                <div>
-                  <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
-                </div>
-              )}
+              <div>
+                <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
+              </div>
               {selectedActivityCategories.length ? (
                 <div className="flex flex-wrap gap-xs text-xs text-emerald-700">
                   {selectedActivityCategories.slice(0, 4).map((category) => (
@@ -539,11 +546,9 @@ export default function WebMap({
                   )}
                 </div>
               )}
-              {selectedEventPlaceLabel && (
-                <div className="text-xs text-ink-muted">
-                  <span aria-hidden>📍</span> {selectedEventPlaceLabel}
-                </div>
-              )}
+              <div className="text-xs text-ink-muted">
+                <span aria-hidden>📍</span> {selectedEventPlaceLabel}
+              </div>
               {selectedEventVerificationProgress && (
                 <div className="space-y-xxs text-[11px] text-ink-muted">
                   <div className="flex items-center justify-between">
@@ -612,6 +617,8 @@ export default function WebMap({
     </div>
   );
 }
+
+export default memo(WebMap);
 
 function EventTimeDisplay({ event }: { event: EventSummary }) {
   const { start, end } = formatEventTimeRange(event);

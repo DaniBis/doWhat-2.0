@@ -1,4 +1,5 @@
 import { fetchOverpassPlaceSummaries } from '@dowhat/shared';
+import { isMissingColumnError } from './supabaseErrors';
 import { supabase } from './supabase';
 
 export interface PlaceSuggestion {
@@ -43,6 +44,8 @@ const MIN_RADIUS_METERS = 100;
 const SAMPLE_MULTIPLIER = 4;
 const MAX_SAMPLE_SIZE = 60;
 
+let loggedMissingUpdatedAtWarning = false;
+
 const fetchFromSupabase = async (
 	lat: number,
 	lng: number,
@@ -54,19 +57,48 @@ const fetchFromSupabase = async (
 	const ne = { lat: lat + delta, lng: lng + delta };
 	const queryLimit = Math.min(Math.max(limit * SAMPLE_MULTIPLIER, limit), MAX_SAMPLE_SIZE);
 
-	const { data, error } = await supabase
-		.from('venues')
-		.select('id,name,address,lat,lng,verified_activities,ai_activity_tags,updated_at')
-		.gte('lat', sw.lat)
-		.lte('lat', ne.lat)
-		.gte('lng', sw.lng)
-		.lte('lng', ne.lng)
-		.order('updated_at', { ascending: false })
-		.limit(queryLimit);
+	const buildQuery = (includeUpdatedAt: boolean) => {
+		let query = supabase
+			.from('venues')
+			.select(
+				includeUpdatedAt
+					? 'id,name,address,lat,lng,verified_activities,ai_activity_tags,updated_at'
+					: 'id,name,address,lat,lng,verified_activities,ai_activity_tags',
+			)
+			.gte('lat', sw.lat)
+			.lte('lat', ne.lat)
+			.gte('lng', sw.lng)
+			.lte('lng', ne.lng);
 
-	if (error) throw error;
+		if (includeUpdatedAt) {
+			query = query.order('updated_at', { ascending: false });
+		}
 
-	const rows = (data as VenueRow[] | null) ?? [];
+		return query.limit(queryLimit);
+	};
+
+	let includeUpdatedAt = true;
+	let rows: VenueRow[] = [];
+
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		const { data, error } = await buildQuery(includeUpdatedAt);
+		if (!error) {
+			rows = (data as VenueRow[] | null) ?? [];
+			break;
+		}
+
+		if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
+			includeUpdatedAt = false;
+			if (!loggedMissingUpdatedAtWarning) {
+				// eslint-disable-next-line no-console
+				console.info('[placesSearch] missing updated_at column, retrying without recency ordering');
+				loggedMissingUpdatedAtWarning = true;
+			}
+			continue;
+		}
+
+		throw error;
+	}
 	const deduped = new Map<string, { score: number; place: PlaceSuggestion }>();
 
 	rows.forEach((row) => {

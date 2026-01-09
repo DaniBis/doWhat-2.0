@@ -46,6 +46,12 @@
 -- 039_notification_outbox.sql             → Adds the notification_outbox table + trigger that enqueues host SMS events when attendees join.
 -- 040_profiles_handle_new_user.sql        → Updates the `handle_new_user` trigger so Supabase auth inserts populate `profiles.user_id`.
 -- 041_attendance_disputes.sql             → Introduces `attendance_disputes` with RLS so members can contest reliability issues after sessions end.
+-- 042_public_users_duplicate_cleanup.sql  → Updates the `ensure_public_user_row` helper to remove duplicate emails before inserting, unblocking onboarding saves.
+-- 043_dowhat_adoption_metrics.sql         → Refreshes the admin readiness materialized view with the canonical adoption metrics projection.
+-- 044_trait_vote_guard_session_attendees.sql → Tightens trait vote policies so only linked `session_attendees` rows pass the verification gate.
+-- 045_places_canonical_enforcement.sql    → Adds canonical place enforcement columns + triggers to keep session/activity place data in sync.
+-- 046_events_event_state.sql              → Extends the events ingestion tables with `event_state`/verification metadata so `/api/events` can degrade gracefully.
+-- 047_venues_updated_timestamp.sql        → Adds an `updated_at` column + trigger to `public.venues` so Supabase queries (mobile/web) can order venues by recency without schema drift errors.
 --
 -- Validation + rollback guidance now lives in docs/migrations_025-031_validation.md.
 -- Run `git diff -- apps/doWhat-web/supabase/migrations` before/after releases to confirm

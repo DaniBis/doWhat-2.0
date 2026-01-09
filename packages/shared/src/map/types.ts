@@ -24,6 +24,8 @@ export interface MapActivity {
   id: string;
   name: string;
   venue?: string | null;
+  place_label?: string | null;
+  place_id?: string | null;
   lat: number;
   lng: number;
   distance_m?: number | null;

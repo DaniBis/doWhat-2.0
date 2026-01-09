@@ -5,6 +5,7 @@ import { filterOutSeedActivities, hasSeedMarker } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { parseNearbyQuery } from '@/lib/filters';
+import { hydratePlaceLabel, normalizePlaceLabel } from '@/lib/places/labels';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 interface NearbyQuery {
@@ -15,6 +16,7 @@ interface NearbyActivityRow {
   id: string;
   name: string;
   venue: string | null;
+  place_id?: string | null;
   lat: number | null;
   lng: number | null;
   activity_types?: string[] | null;
@@ -26,6 +28,7 @@ interface RpcNearbyRow {
   id: string;
   name: string;
   venue: string | null;
+  place_id?: string | null;
   lat?: number;
   lng?: number;
   lat_out?: number;
@@ -45,12 +48,15 @@ type PublicNearbyActivity = {
   id: string;
   name: string;
   venue: string | null;
+  place_id: string | null;
+  place_label: string | null;
   lat: number;
   lng: number;
   distance_m: number;
   activity_types: string[] | null;
   tags: string[] | null;
   traits: string[] | null;
+  upcoming_session_count?: number;
 };
 
 type VenueFallbackRow = {
@@ -62,6 +68,18 @@ type VenueFallbackRow = {
   ai_activity_tags?: string[] | null;
   verified_activities?: string[] | null;
   updated_at?: string | null;
+};
+
+type PlaceRow = {
+  id: string;
+  name: string | null;
+};
+
+const isMissingColumnError = (error: { code?: string | null; message?: string | null; hint?: string | null }, columnName: string) => {
+  if (!error) return false;
+  if (error.code === '42703') return true;
+  const haystack = `${error.message ?? ''} ${error.hint ?? ''}`.toLowerCase();
+  return haystack.includes(columnName.toLowerCase());
 };
 
 const sanitizeCoordinate = (value: unknown): number | null => {
@@ -88,10 +106,13 @@ const toMapActivityFromVenue = (
   const lat = sanitizeCoordinate(row.lat);
   const lng = sanitizeCoordinate(row.lng);
   if (lat == null || lng == null) return null;
+  const placeLabel = normalizePlaceLabel(row.name, row.address);
   return {
     id: `venue:${row.id}`,
     name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby venue',
     venue: row.address ?? null,
+    place_id: null,
+    place_label: placeLabel,
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
@@ -174,6 +195,59 @@ const dedupeById = <T extends { id: string | number }>(items: T[]): T[] => {
   return result;
 };
 
+const fetchPlaceMap = async (client: ReturnType<typeof db>, placeIds: string[]) => {
+  const map = new Map<string, PlaceRow>();
+  if (!placeIds.length) return map;
+  const { data, error } = await client
+    .from('places')
+    .select('id,name')
+    .in('id', placeIds);
+  if (error) {
+    console.warn('[nearby] failed to hydrate place labels', error.message ?? error);
+    return map;
+  }
+  for (const row of data ?? []) {
+    if (row?.id) {
+      map.set(row.id, { id: row.id, name: row.name ?? null });
+    }
+  }
+  return map;
+};
+
+const applyPlaceLabels = (
+  activities: PublicNearbyActivity[],
+  placeMap: Map<string, PlaceRow>,
+): PublicNearbyActivity[] =>
+  activities.map((activity) => {
+    if (!activity.place_id) {
+      const fallback = hydratePlaceLabel({ venue: activity.venue ?? null });
+      return { ...activity, place_label: activity.place_label ?? fallback };
+    }
+    const place = placeMap.get(activity.place_id) ?? null;
+    return {
+      ...activity,
+      place_label: hydratePlaceLabel({
+        place,
+        venue: activity.venue ?? null,
+      }),
+    };
+  });
+
+const hydrateActivitiesWithPlaces = async (
+  client: ReturnType<typeof db>,
+  activities: PublicNearbyActivity[],
+) => {
+  const placeIds = Array.from(
+    new Set(
+      activities
+        .map((activity) => activity.place_id)
+        .filter((placeId): placeId is string => typeof placeId === 'string' && placeId.trim().length > 0),
+    ),
+  );
+  const placeMap = await fetchPlaceMap(client, placeIds);
+  return applyPlaceLabels(activities, placeMap);
+};
+
 const fetchVenueFallbackActivities = async (
   client: ReturnType<typeof db>,
   query: NearbyQuery,
@@ -186,16 +260,32 @@ const fetchVenueFallbackActivities = async (
   const neLat = query.lat + latDelta;
   const swLng = query.lng - lngDelta;
   const neLng = query.lng + lngDelta;
-  const { data, error } = await client
-    .from('venues')
-    .select('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
-    .gte('lat', swLat)
-    .lte('lat', neLat)
-    .gte('lng', swLng)
-    .lte('lng', neLng)
-    .order('updated_at', { ascending: false })
-    .limit(Math.max(limit * 2, 40))
-    .returns<VenueFallbackRow[]>();
+  const buildVenueQuery = (columns: string) =>
+    client
+      .from('venues')
+      .select(columns)
+      .gte('lat', swLat)
+      .lte('lat', neLat)
+      .gte('lng', swLng)
+      .lte('lng', neLng)
+      .limit(Math.max(limit * 2, 40))
+      .returns<VenueFallbackRow[]>();
+
+  let data: VenueFallbackRow[] | null = null;
+  let error: { code?: string | null; message?: string | null; hint?: string | null } | null = null;
+
+  const primary = await buildVenueQuery('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
+    .order('updated_at', { ascending: false });
+
+  data = primary.data;
+  error = primary.error;
+
+  if (error && isMissingColumnError(error, 'updated_at')) {
+    console.warn('[nearby] venues.updated_at missing, re-running fallback query without column');
+    const fallback = await buildVenueQuery('id,name,address,lat,lng,ai_activity_tags,verified_activities');
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     throw error;
@@ -254,6 +344,8 @@ const fetchOverpassActivities = async (
     const amenities = parseTagList(tags.amenity);
     const label =
       tags.name || sports[0] || leisure[0] || amenities[0] || tags['club'] || 'Local activity';
+    const venueDescription = describeVenue(tags);
+    const placeLabel = normalizePlaceLabel(venueDescription, label);
 
     const distance = haversineMeters(query.lat, query.lng, lat, lng);
 
@@ -280,7 +372,9 @@ const fetchOverpassActivities = async (
     activities.push({
       id: `${element.type}:${element.id}`,
       name: label,
-      venue: describeVenue(tags),
+      venue: venueDescription,
+      place_id: null,
+      place_label: placeLabel,
       lat,
       lng,
       activity_types: sports.length ? sports : leisure.length ? leisure : null,
@@ -344,23 +438,34 @@ export async function GET(request: Request) {
         if (!rpcError && rpcData) {
           const cleaned = (rpcData as RpcNearbyRow[]).filter((row) => !hasSeedMarker(row));
           if (cleaned.length) {
-          return Response.json({
-            center: { lat: q.lat, lng: q.lng },
-            radiusMeters: q.radiusMeters || 2000,
-            count: cleaned.length,
-            activities: cleaned.map(r => ({
-              id: r.id,
-              name: r.name,
-              venue: r.venue,
-              lat: (r.lat_out ?? r.lat) ?? null,
-              lng: (r.lng_out ?? r.lng) ?? null,
-              distance_m: r.distance_m,
-              activity_types: r.activity_types ?? null,
-              tags: r.tags ?? null,
-              traits: r.traits ?? null,
-            })),
-            source: 'postgis',
-          });
+            const rpcActivities = cleaned
+              .map((row): PublicNearbyActivity | null => {
+                const lat = row.lat_out ?? row.lat;
+                const lng = row.lng_out ?? row.lng;
+                if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+                return {
+                  id: row.id,
+                  name: row.name,
+                  venue: row.venue,
+                  place_id: row.place_id ?? null,
+                  place_label: null,
+                  lat,
+                  lng,
+                  distance_m: row.distance_m ?? 0,
+                  activity_types: row.activity_types ?? null,
+                  tags: row.tags ?? null,
+                  traits: row.traits ?? null,
+                };
+              })
+              .filter((row): row is PublicNearbyActivity => Boolean(row));
+            const hydratedActivities = await hydrateActivitiesWithPlaces(supabase, rpcActivities);
+            return Response.json({
+              center: { lat: q.lat, lng: q.lng },
+              radiusMeters: q.radiusMeters || 2000,
+              count: hydratedActivities.length,
+              activities: hydratedActivities,
+              source: 'postgis',
+            });
           }
         }
         // eslint-disable-next-line no-console
@@ -385,15 +490,18 @@ export async function GET(request: Request) {
         tags
       `;
 
-    const buildSelect = ({ includePreferences, includeTraits }: { includePreferences: boolean; includeTraits: boolean }) => {
-      const fields = includeTraits ? `${baseSelectCore}, traits` : baseSelectCore;
+    const buildSelect = ({ includePreferences, includeTraits, includePlaceMetadata }: { includePreferences: boolean; includeTraits: boolean; includePlaceMetadata: boolean }) => {
+      let fields = includeTraits ? `${baseSelectCore}, traits` : baseSelectCore;
+      if (includePlaceMetadata) {
+        fields = `${fields}, place_id`;
+      }
       if (includePreferences) {
         return `${fields}, participant_preferences:activity_participant_preferences(preferred_traits)`;
       }
       return fields;
     };
 
-    const executeActivitiesSelect = async (options: { includePreferences: boolean; includeTraits: boolean }) =>
+    const executeActivitiesSelect = async (options: { includePreferences: boolean; includeTraits: boolean; includePlaceMetadata: boolean }) =>
       supabase
         .from('activities')
         .select(buildSelect(options))
@@ -402,7 +510,8 @@ export async function GET(request: Request) {
 
     let includePreferences = Boolean(q.traits?.length);
     let includeTraits = true;
-    let rawRowsResult = await executeActivitiesSelect({ includePreferences, includeTraits });
+    let includePlaceMetadata = true;
+    let rawRowsResult = await executeActivitiesSelect({ includePreferences, includeTraits, includePlaceMetadata });
     let rawRows = rawRowsResult.data ?? null;
 
     for (let attempt = 0; rawRowsResult.error && attempt < 3; attempt += 1) {
@@ -411,11 +520,13 @@ export async function GET(request: Request) {
         includePreferences = false;
       } else if (includeTraits && message.includes('does not exist')) {
         includeTraits = false;
+      } else if (includePlaceMetadata && isMissingColumnError(rawRowsResult.error, 'place_id')) {
+        includePlaceMetadata = false;
       } else {
         break;
       }
 
-      rawRowsResult = await executeActivitiesSelect({ includePreferences, includeTraits });
+      rawRowsResult = await executeActivitiesSelect({ includePreferences, includeTraits, includePlaceMetadata });
       rawRows = rawRowsResult.data ?? null;
     }
 
@@ -500,7 +611,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const mapRowToActivity = (row: (typeof chosen)[number]) => {
+    const mapRowToActivity = (row: (typeof chosen)[number]): PublicNearbyActivity => {
       const prefTraits = (row.participant_preferences ?? []).flatMap((pref) =>
         (pref?.preferred_traits ?? []).filter((trait): trait is string => typeof trait === 'string'),
       );
@@ -514,8 +625,10 @@ export async function GET(request: Request) {
         id: row.id,
         name: row.name,
         venue: row.venue,
-        lat: row.lat,
-        lng: row.lng,
+        place_id: row.place_id ?? null,
+        place_label: null,
+        lat: row.lat as number,
+        lng: row.lng as number,
         distance_m: row.distance,
         activity_types: row.activity_types ?? null,
         tags: row.tags ?? null,
@@ -524,10 +637,12 @@ export async function GET(request: Request) {
       };
     };
 
-    const mapFallbackActivity = (activity: PublicNearbyActivity) => ({
+    const mapFallbackActivity = (activity: PublicNearbyActivity): PublicNearbyActivity => ({
       id: activity.id,
       name: activity.name,
       venue: activity.venue,
+      place_id: activity.place_id ?? null,
+      place_label: activity.place_label,
       lat: activity.lat,
       lng: activity.lng,
       distance_m: activity.distance_m,
@@ -537,7 +652,7 @@ export async function GET(request: Request) {
       upcoming_session_count: 0,
     });
 
-    let activitiesPayload = chosen.map(mapRowToActivity);
+    let activitiesPayload: PublicNearbyActivity[] = chosen.map(mapRowToActivity);
     let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
 
     if (activitiesPayload.length < fallbackLimit) {
@@ -578,15 +693,16 @@ export async function GET(request: Request) {
       }
     }
 
-    const source = activitiesPayload.length === 0
+    const hydratedActivities = await hydrateActivitiesWithPlaces(supabase, activitiesPayload);
+    const source = hydratedActivities.length === 0
       ? (fallbackMeta.degraded ? 'degraded' : 'empty')
       : fallbackMeta.fallbackSource ?? 'client-filter';
 
     return Response.json({
       center: { lat: q.lat, lng: q.lng },
       radiusMeters,
-      count: activitiesPayload.length,
-      activities: activitiesPayload,
+      count: hydratedActivities.length,
+      activities: hydratedActivities,
       source,
       ...fallbackMeta,
     });

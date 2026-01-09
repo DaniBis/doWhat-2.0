@@ -85,7 +85,7 @@ export default async function OnboardingHomePage() {
       .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>(),
     supabase
       .from("user_base_traits")
-      .select("id", { count: "exact", head: true })
+      .select("trait_id", { count: "exact", head: true })
       .eq("user_id", user.id),
   ]);
 

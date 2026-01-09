@@ -7,6 +7,7 @@ export function db() {
 export type ActivityRow = {
   id: string
   name: string
+  place_id?: string | null
   description?: string | null
   venue?: string | null
   activity_types?: string[] | null
@@ -24,4 +25,3 @@ export type ActivityRow = {
   created_at?: string
   updated_at?: string
 };
-

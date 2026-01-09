@@ -7,6 +7,7 @@ import {
   ensureVenue,
   extractSessionPayload,
   hydrateSessions,
+  resolveSessionPlaceId,
   resolveApiUser,
   SessionValidationError,
 } from '@/lib/sessions/server';
@@ -55,12 +56,20 @@ export async function POST(req: Request) {
     });
 
     const service = createServiceClient();
+    const placeId = await resolveSessionPlaceId(service, {
+      activityId: payload.activityId,
+      lat: payload.lat,
+      lng: payload.lng,
+      labelHint: payload.venueName ?? payload.activityName ?? null,
+    });
+
     const activityId = await ensureActivity(service, {
       activityId: payload.activityId,
       activityName: payload.activityName,
       lat: payload.lat,
       lng: payload.lng,
       venueName: payload.venueName,
+      placeId,
     });
     const venueId = await ensureVenue(service, {
       venueId: payload.venueId,
@@ -79,6 +88,7 @@ export async function POST(req: Request) {
       max_attendees: payload.maxAttendees ?? 20,
       visibility: payload.visibility ?? 'public',
       description: payload.description ?? null,
+      place_id: placeId,
     };
 
     const { data: sessionRow, error: sessionError } = await service

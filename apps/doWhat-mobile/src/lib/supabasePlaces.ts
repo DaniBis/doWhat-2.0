@@ -1,7 +1,9 @@
+import { isMissingColumnError } from './supabaseErrors';
 import { supabase } from './supabase';
 import type { PlaceSummary, PlacesViewportQuery } from '@dowhat/shared';
 
 const SUPABASE_DEFAULT_LIMIT = 60;
+let loggedMissingUpdatedAtWarning = false;
 
 export type SupabasePlacesRow = {
   id: string | null;
@@ -75,20 +77,54 @@ export const fetchSupabasePlacesWithinBounds = async (
 ): Promise<PlaceSummary[]> => {
   const { bounds, citySlug, limit } = options;
   const queryLimit = Math.max(1, Math.min(limit ?? SUPABASE_DEFAULT_LIMIT, 400));
-  const { data, error } = await supabase
-    .from('venues')
-    .select('id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at')
-    .gte('lat', bounds.sw.lat)
-    .lte('lat', bounds.ne.lat)
-    .gte('lng', bounds.sw.lng)
-    .lte('lng', bounds.ne.lng)
-    .order('updated_at', { ascending: false })
-    .limit(queryLimit);
+  const buildQuery = (includeUpdatedAt: boolean) => {
+    let query = supabase
+      .from('venues')
+      .select(
+        includeUpdatedAt
+          ? 'id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at'
+          : 'id,name,address,lat,lng,ai_activity_tags,verified_activities',
+      )
+      .gte('lat', bounds.sw.lat)
+      .lte('lat', bounds.ne.lat)
+      .gte('lng', bounds.sw.lng)
+      .lte('lng', bounds.ne.lng);
 
-  if (error) throw error;
+    if (includeUpdatedAt) {
+      query = query.order('updated_at', { ascending: false });
+    }
+
+    return query.limit(queryLimit);
+  };
+
+  let includeUpdatedAt = true;
+  let rows: SupabasePlacesRow[] | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { data, error } = await buildQuery(includeUpdatedAt);
+    if (!error) {
+      rows = (data as SupabasePlacesRow[] | null) ?? null;
+      break;
+    }
+
+    if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
+      includeUpdatedAt = false;
+      // eslint-disable-next-line no-console
+      if (!loggedMissingUpdatedAtWarning) {
+        // eslint-disable-next-line no-console
+        console.info('[supabase-places] missing updated_at column, retrying without recency ordering');
+        loggedMissingUpdatedAtWarning = true;
+      }
+      continue;
+    }
+
+    throw error;
+  }
+
+  const dataset = rows ?? [];
 
   const deduped = new Map<string, PlaceSummary>();
-  ((data as SupabasePlacesRow[] | null) ?? []).forEach((row) => {
+  dataset.forEach((row) => {
     const summary = mapVenueRowToPlaceSummary(row, citySlug);
     if (!summary) return;
     if (!deduped.has(summary.id)) {

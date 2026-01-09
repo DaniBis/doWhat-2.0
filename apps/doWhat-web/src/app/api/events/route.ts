@@ -1,43 +1,18 @@
 import { NextResponse } from 'next/server';
 
+import { normalizeEventState } from '@/lib/events/state';
+import { hydratePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 import { createServiceClient } from '@/lib/supabase/service';
 import { hydrateSessions, type HydratedSession } from '@/lib/sessions/server';
 import type { EventSummary } from '@dowhat/shared';
 
-const MAX_LIMIT = 200;
-const EVENT_COLUMNS = [
-  'id',
-  'title',
-  'description',
-  'start_at',
-  'end_at',
-  'timezone',
-  'venue_name',
-  'lat',
-  'lng',
-  'address',
-  'url',
-  'image_url',
-  'status',
-  'tags',
-  'place_id',
-  'source_id',
-  'source_uid',
-  'metadata'
-];
-const EVENT_COLUMNS_FALLBACK = EVENT_COLUMNS.map((column) =>
-  column === 'title' ? 'title:normalized_title' : column
-);
+import { queryEventsWithFallback } from './queryEventsWithFallback';
 
-const missingColumn = (message: string | null | undefined, column: string) => {
-  if (typeof message !== 'string') return false;
-  const lower = message.toLowerCase();
-  return lower.includes('column') && lower.includes(column.toLowerCase());
-};
+const MAX_LIMIT = 200;
 
 const getSessionCoordinates = (session: HydratedSession) => {
-  const lat = session.venue?.lat ?? session.activity?.lat ?? null;
-  const lng = session.venue?.lng ?? session.activity?.lng ?? null;
+  const lat = session.place?.lat ?? session.venue?.lat ?? session.activity?.lat ?? null;
+  const lng = session.place?.lng ?? session.venue?.lng ?? session.activity?.lng ?? null;
   return { lat, lng };
 };
 
@@ -53,28 +28,45 @@ const isWithinBounds = (
 
 const sessionToEventSummary = (session: HydratedSession): EventSummary => {
   const { lat, lng } = getSessionCoordinates(session);
-  const title = session.activity?.name ?? session.venue?.name ?? 'Community session';
-  const venueName = session.venue?.name ?? session.activity?.venueLabel ?? null;
-  const placeName = session.venue?.name ?? session.activity?.venueLabel ?? session.activity?.name ?? title;
+  const placeLabel = hydratePlaceLabel({
+    place: session.place,
+    venue: session.venue?.name ?? session.activity?.venueLabel ?? null,
+    address: session.venue?.address ?? null,
+    fallbackLabel: session.activity?.name ?? null,
+  });
+  const title = session.activity?.name ?? (placeLabel === PLACE_FALLBACK_LABEL ? 'Community session' : placeLabel);
+  const placeId = session.placeId ?? session.place?.id ?? session.venueId ?? null;
   const metadata: Record<string, unknown> = {
     source: 'session',
     sessionId: session.id,
     activityId: session.activityId,
     venueId: session.venueId,
   };
-  const place = session.venue
+  const place = session.place
     ? {
-        id: session.venue.id,
-        name: placeName,
-        lat: session.venue.lat,
-        lng: session.venue.lng,
-        address: session.venue.address,
-        locality: null,
-        region: null,
-        country: null,
-        categories: null,
+        id: session.place.id,
+        name: session.place.name ?? placeLabel,
+        lat: session.place.lat,
+        lng: session.place.lng,
+        address: session.place.address,
+        locality: session.place.locality,
+        region: session.place.region,
+        country: session.place.country,
+        categories: session.place.categories,
       }
-    : null;
+    : session.venue
+      ? {
+          id: session.venue.id,
+          name: placeLabel,
+          lat: session.venue.lat,
+          lng: session.venue.lng,
+          address: session.venue.address,
+          locality: null,
+          region: null,
+          country: null,
+          categories: null,
+        }
+      : null;
 
   return {
     id: session.id,
@@ -83,17 +75,20 @@ const sessionToEventSummary = (session: HydratedSession): EventSummary => {
     start_at: session.startsAt,
     end_at: session.endsAt,
     timezone: 'UTC',
-    venue_name: venueName,
+    venue_name: placeLabel,
+    place_label: placeLabel,
     lat,
     lng,
-    address: session.venue?.address ?? null,
+    address: session.place?.address ?? session.venue?.address ?? null,
     url: `/sessions/${session.id}`,
     image_url: null,
     status: 'scheduled',
+    event_state: 'scheduled',
     tags: ['community'],
-    place_id: session.venueId ?? null,
+    place_id: placeId,
     source_id: null,
     source_uid: session.id,
+    reliability_score: session.reliabilityScore,
     metadata,
     place,
   };
@@ -167,25 +162,34 @@ export async function GET(request: Request) {
     return next;
   };
 
-  const execute = async (columns: string[]) => applyFilters(buildQuery(columns));
+  const execute = async (columns: string[]) => {
+    const result = await applyFilters(buildQuery(columns));
+    return {
+      data: result.data as EventSummary[] | null,
+      error: (result.error as { message?: string | null } | null) ?? null,
+    };
+  };
 
-  let { data: events, error } = await execute(EVENT_COLUMNS);
-  let attemptedFallback = false;
-  if (error && missingColumn(error.message, 'title')) {
-    attemptedFallback = true;
-    ({ data: events, error } = await execute(EVENT_COLUMNS_FALLBACK));
-  }
+  const {
+    events,
+    error,
+    omittedEventState,
+    omittedReliabilityScore,
+    omittedVerificationConfirmations,
+    omittedVerificationRequired,
+  } = await queryEventsWithFallback(execute);
 
   if (error) {
-    if (attemptedFallback && missingColumn(error.message, 'normalized_title')) {
-      console.warn('[events-api] missing both title and normalized_title columns, returning empty dataset');
-      events = [];
-    } else {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (events ?? []) as unknown as EventSummary[];
+  const rows = events.map((event) => ({
+    ...event,
+    event_state: normalizeEventState(omittedEventState ? null : event.event_state),
+    reliability_score: omittedReliabilityScore ? null : event.reliability_score ?? null,
+    verification_confirmations: omittedVerificationConfirmations ? null : event.verification_confirmations ?? null,
+    verification_required: omittedVerificationRequired ? null : event.verification_required ?? null,
+  }));
   const sessionEvents = await fetchSessionEvents({ client, sw, ne, fromIso, toIso, limit });
   const combined = dedupeEvents([...rows, ...sessionEvents]).sort(
     (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
@@ -237,7 +241,16 @@ export async function GET(request: Request) {
     return { ...event, place: placeMap.get(event.place_id) ?? null };
   });
 
-  return NextResponse.json({ events: enriched });
+  const normalizedEvents = enriched.map((event) => ({
+    ...event,
+    place_label: hydratePlaceLabel({
+      place: event.place ?? null,
+      venue_name: event.venue_name ?? null,
+      address: event.address ?? null,
+    }),
+  }));
+
+  return NextResponse.json({ events: normalizedEvents });
 }
 
 async function fetchSessionEvents({

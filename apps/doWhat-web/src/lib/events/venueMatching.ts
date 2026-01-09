@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { haversineMeters } from '@/lib/places/utils';
+import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 
 import type { EventSourceRow, NormalizedEvent, VenueMatchResult } from './types';
 import { cleanString, computeGeoHash } from './utils';
@@ -110,6 +111,29 @@ export const matchVenueForEvent = async (
         address: best.place.address,
         geohash7: computeGeoHash(best.place.lat, best.place.lng),
       };
+    }
+  }
+
+  if (event.lat != null && event.lng != null) {
+    try {
+      const resolved = await resolvePlaceFromCoordsWithClient(client, {
+        lat: event.lat,
+        lng: event.lng,
+        labelHint: event.venueName ?? source.venue_hint ?? event.title,
+        source: 'event-ingest',
+      });
+      const resolvedLat = resolved.place.lat ?? event.lat;
+      const resolvedLng = resolved.place.lng ?? event.lng;
+      return {
+        placeId: resolved.placeId,
+        venueName: resolved.label,
+        lat: resolvedLat,
+        lng: resolvedLng,
+        address: resolved.place.address ?? event.address ?? null,
+        geohash7: computeGeoHash(resolvedLat, resolvedLng),
+      };
+    } catch (error) {
+      console.warn('Failed to resolve place for event', event.title, error);
     }
   }
 

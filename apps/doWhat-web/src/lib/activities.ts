@@ -1,10 +1,34 @@
 import { db, ActivityRow } from '@/lib/db';
+import { resolvePlaceFromCoords } from '@/lib/places/resolver';
 
 export type UpsertActivityInput = Partial<ActivityRow> & {
   name: string
   lat?: number | null
   lng?: number | null
+  place_id?: string | null
 };
+
+const ACTIVITY_SELECT_COLUMNS = [
+  'id',
+  'name',
+  'description',
+  'venue',
+  'activity_types',
+  'tags',
+  'phone_text',
+  'opening_hours',
+  'photos',
+  'external_urls',
+  'rating',
+  'rating_count',
+  'price_cents',
+  'lat',
+  'lng',
+  'place_id',
+  'geom',
+  'created_at',
+  'updated_at',
+].join(',');
 
 function normName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -26,17 +50,30 @@ function mergeArray<T>(base?: T[] | null, extra?: T[] | null): T[] | null {
 export async function upsertActivity(input: UpsertActivityInput) {
   const supabase = db();
   const nameKey = normName(input.name);
+  const hasCoordinates = typeof input.lat === 'number' && Number.isFinite(input.lat) && typeof input.lng === 'number' && Number.isFinite(input.lng);
+  let cachedResolvedPlace: Awaited<ReturnType<typeof resolvePlaceFromCoords>> | null = null;
+  const ensureResolvedPlace = async () => {
+    if (cachedResolvedPlace || !hasCoordinates) return cachedResolvedPlace;
+    cachedResolvedPlace = await resolvePlaceFromCoords({
+      lat: input.lat!,
+      lng: input.lng!,
+      labelHint: input.venue ?? input.name,
+      source: 'activity-upsert',
+    });
+    return cachedResolvedPlace;
+  };
 
   // Try to find an existing record by name and close coordinates
   let existing: ActivityRow | null = null;
   {
     const { data } = await supabase
       .from('activities')
-      .select('*')
+      .select(ACTIVITY_SELECT_COLUMNS)
       .ilike('name', input.name)
-      .limit(10);
+      .limit(10)
+      .returns<ActivityRow[]>();
     if (data && data.length) {
-      for (const row of data as ActivityRow[]) {
+      for (const row of data) {
         if (
           input.lat != null && input.lng != null &&
           near(row.lat ?? null, input.lat ?? null, 50) &&
@@ -54,6 +91,8 @@ export async function upsertActivity(input: UpsertActivityInput) {
   }
 
   if (!existing) {
+    const resolvedPlace = input.place_id ? null : await ensureResolvedPlace();
+    const insertPlaceId = input.place_id ?? resolvedPlace?.placeId ?? null;
     // Insert new
     const insert: Partial<ActivityRow> = {
       name: input.name,
@@ -71,9 +110,14 @@ export async function upsertActivity(input: UpsertActivityInput) {
       lat: input.lat ?? null,
       lng: input.lng ?? null,
     };
-    const { data, error } = await supabase.from('activities').insert(insert).select('*').single();
+    if (insertPlaceId) insert.place_id = insertPlaceId;
+    const { data, error } = await supabase
+      .from('activities')
+      .insert(insert)
+      .select(ACTIVITY_SELECT_COLUMNS)
+      .single<ActivityRow>();
     if (error) throw error;
-    return { action: 'inserted', activity: data as ActivityRow };
+    return { action: 'inserted', activity: data };
   }
 
   // Merge metadata into existing
@@ -95,14 +139,22 @@ export async function upsertActivity(input: UpsertActivityInput) {
   merged.lat = prefer(existing.lat ?? null, input.lat ?? null);
   merged.lng = prefer(existing.lng ?? null, input.lng ?? null);
 
+  const needsPlaceUpdate = !existing.place_id || input.place_id;
+  if (needsPlaceUpdate) {
+    const resolvedPlace = existing.place_id ? null : await ensureResolvedPlace();
+    const nextPlaceId = input.place_id ?? existing.place_id ?? resolvedPlace?.placeId ?? null;
+    if (nextPlaceId && nextPlaceId !== existing.place_id) {
+      merged.place_id = nextPlaceId;
+    }
+  }
+
   const { data, error } = await supabase
     .from('activities')
     .update(merged)
     .eq('id', existing.id)
-    .select('*')
-    .single();
+    .select(ACTIVITY_SELECT_COLUMNS)
+    .single<ActivityRow>();
   if (error) throw error;
 
-  return { action: 'updated', activity: data as ActivityRow };
+  return { action: 'updated', activity: data };
 }
-

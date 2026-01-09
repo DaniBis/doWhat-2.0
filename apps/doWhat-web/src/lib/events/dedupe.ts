@@ -30,6 +30,7 @@ export interface ExistingEventRow {
   url: string | null;
   image_url: string | null;
   status: 'scheduled' | 'canceled';
+  event_state?: 'scheduled' | 'canceled' | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -69,6 +70,7 @@ export const toUpsertRecord = (
     url: event.url ?? null,
     image_url: event.imageUrl ?? null,
     status: event.status,
+    event_state: event.status,
     metadata: incomingMetadata,
   };
 };
@@ -98,6 +100,10 @@ export const mergeExistingEvent = (
     description: longerDescription(existing.description, incoming.description),
     image_url: incoming.image_url ?? existing.image_url ?? null,
     status: incoming.status === 'canceled' || existing.status === 'canceled' ? 'canceled' : 'scheduled',
+    event_state:
+      incoming.event_state === 'canceled' || existing.event_state === 'canceled' || existing.status === 'canceled'
+        ? 'canceled'
+        : 'scheduled',
     tags: ensureTagArray([...(existing.tags ?? []), ...(incoming.tags ?? [])]),
     metadata: {
       ...existingMetadata,
@@ -113,6 +119,9 @@ export const mergeExistingEvent = (
     merged.lng = existing.lng;
     merged.geohash7 = existing.geohash7;
     merged.address = existing.address;
+    if (existing.event_state) {
+      merged.event_state = existing.event_state;
+    }
   }
 
   // Ensure dedupe key unchanged.

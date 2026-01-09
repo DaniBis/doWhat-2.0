@@ -1,7 +1,10 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { isUuid } from '@dowhat/shared';
+import { hydratePlaceLabel } from '@/lib/places/labels';
+import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { isMissingColumnError } from '@/lib/supabase/errors';
 import type { ProfileRow, SessionAttendeeRow, SessionRow } from '@/types/database';
 
 export type SessionVisibility = SessionRow['visibility'];
@@ -23,6 +26,19 @@ export type VenueSummary = {
   lng: number | null;
 };
 
+export type PlaceSummary = {
+  id: string;
+  name: string | null;
+  lat: number | null;
+  lng: number | null;
+  address: string | null;
+  locality: string | null;
+  region: string | null;
+  country: string | null;
+  categories: string[] | null;
+  kind: string | null;
+};
+
 export type ProfileSummary = {
   id: string;
   username: string | null;
@@ -34,6 +50,7 @@ export type HydratedSession = {
   id: string;
   activityId: string | null;
   venueId: string | null;
+  placeId: string | null;
   hostUserId: string;
   startsAt: string;
   endsAt: string;
@@ -44,6 +61,9 @@ export type HydratedSession = {
   description: string | null;
   createdAt: string;
   updatedAt: string;
+  placeLabel: string | null;
+  place: PlaceSummary | null;
+  reliabilityScore: number | null;
   activity: ActivitySummary | null;
   venue: VenueSummary | null;
   host: ProfileSummary | null;
@@ -78,6 +98,25 @@ export type SessionPayloadOptions = {
   defaultVisibility?: SessionVisibility;
   defaultMaxAttendees?: number;
   defaultPriceCents?: number;
+};
+
+type ActivityPlaceColumnState = 'unknown' | 'available' | 'missing';
+let activitiesPlaceColumnSupport: ActivityPlaceColumnState = 'unknown';
+let loggedMissingActivitiesPlaceColumnWarning = false;
+
+const canUseActivitiesPlaceColumn = () => activitiesPlaceColumnSupport !== 'missing';
+const markActivitiesPlaceColumnAvailable = () => {
+  if (activitiesPlaceColumnSupport === 'unknown') {
+    activitiesPlaceColumnSupport = 'available';
+  }
+};
+const markActivitiesPlaceColumnMissing = () => {
+  if (activitiesPlaceColumnSupport === 'missing') return;
+  activitiesPlaceColumnSupport = 'missing';
+  if (!loggedMissingActivitiesPlaceColumnWarning) {
+    loggedMissingActivitiesPlaceColumnWarning = true;
+    console.warn('activities.place_id column missing; rerun migrations 045+ to restore canonical place linkage.');
+  }
 };
 
 export class SessionValidationError extends Error {
@@ -201,23 +240,46 @@ export async function ensureActivity(service: SupabaseClient, input: {
   lat?: number | null;
   lng?: number | null;
   venueName?: string | null;
+  placeId?: string | null;
 }): Promise<string> {
   const candidateId = isUuid(input.activityId ?? null) ? input.activityId : null;
   if (candidateId) return candidateId;
   const activityName = sanitizeRequiredText(input.activityName, 'Activity name is required.');
 
+  const includePlaceColumn = canUseActivitiesPlaceColumn();
+  const selectColumns = includePlaceColumn ? 'id, place_id' : 'id';
+
   const { data: existing, error: fetchError } = await service
     .from('activities')
-    .select('id')
+    .select(selectColumns)
     .eq('name', activityName)
-    .maybeSingle<{ id: string }>();
-  if (fetchError) throw fetchError;
-  if (existing?.id) return existing.id;
+    .maybeSingle<{ id: string; place_id?: string | null }>();
+  if (fetchError) {
+    if (includePlaceColumn && isMissingColumnError(fetchError, 'place_id')) {
+      markActivitiesPlaceColumnMissing();
+      return ensureActivity(service, input);
+    }
+    throw fetchError;
+  }
+  if (includePlaceColumn) {
+    markActivitiesPlaceColumnAvailable();
+  }
+  if (existing?.id) {
+    const updates: Record<string, unknown> = {};
+    if (includePlaceColumn && !existing.place_id && input.placeId) {
+      updates.place_id = input.placeId;
+    }
+    if (Object.keys(updates).length) {
+      await service.from('activities').update(updates).eq('id', existing.id);
+    }
+    return existing.id;
+  }
 
   const insert: Record<string, unknown> = { name: activityName };
   if (typeof input.lat === 'number') insert.lat = input.lat;
   if (typeof input.lng === 'number') insert.lng = input.lng;
   if (input.venueName) insert.venue = input.venueName;
+  if (includePlaceColumn && input.placeId) insert.place_id = input.placeId;
 
   const { data: inserted, error: insertError } = await service
     .from('activities')
@@ -276,38 +338,124 @@ export async function ensureVenue(service: SupabaseClient, input: {
   return inserted.id;
 }
 
+export async function resolveSessionPlaceId(
+  service: SupabaseClient,
+  input: {
+    activityId?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    labelHint?: string | null;
+  },
+): Promise<string | null> {
+  const activityId = isUuid(input.activityId ?? null) ? input.activityId : null;
+  let activityPlaceId: string | null = null;
+
+  if (activityId && canUseActivitiesPlaceColumn()) {
+    const { data, error } = await service
+      .from('activities')
+      .select('id, place_id')
+      .eq('id', activityId)
+      .maybeSingle<{ id: string; place_id?: string | null }>();
+    if (error) {
+      if (isMissingColumnError(error, 'place_id')) {
+        markActivitiesPlaceColumnMissing();
+      } else {
+        throw error;
+      }
+    } else {
+      markActivitiesPlaceColumnAvailable();
+      activityPlaceId = data?.place_id ?? null;
+    }
+  }
+
+  if (activityPlaceId) return activityPlaceId;
+
+  const hasCoords = typeof input.lat === 'number' && Number.isFinite(input.lat)
+    && typeof input.lng === 'number' && Number.isFinite(input.lng);
+  if (!hasCoords) return null;
+
+  const resolvedPlace = await resolvePlaceFromCoordsWithClient(service, {
+    lat: input.lat!,
+    lng: input.lng!,
+    labelHint: input.labelHint ?? null,
+    source: 'session-api',
+  });
+
+  if (activityId && canUseActivitiesPlaceColumn()) {
+    const { error: updateError } = await service
+      .from('activities')
+      .update({ place_id: resolvedPlace.placeId })
+      .eq('id', activityId);
+    if (updateError) {
+      if (isMissingColumnError(updateError, 'place_id')) {
+        markActivitiesPlaceColumnMissing();
+      } else {
+        throw updateError;
+      }
+    }
+  }
+
+  return resolvedPlace.placeId ?? null;
+}
+
 export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[]): Promise<HydratedSession[]> {
   if (!rows.length) return [];
 
   const activityIds = dedupe(rows.map((row) => row.activity_id).filter(Boolean) as string[]);
   const venueIds = dedupe(rows.map((row) => row.venue_id).filter(Boolean) as string[]);
   const hostIds = dedupe(rows.map((row) => row.host_user_id));
+  const placeIds = dedupe(rows.map((row) => row.place_id).filter(Boolean) as string[]);
 
-  const [activityMap, venueMap, profileMap] = await Promise.all([
+  const [activityMap, venueMap, profileMap, placeMap] = await Promise.all([
     loadActivities(service, activityIds),
     loadVenues(service, venueIds),
     loadProfiles(service, hostIds),
+    loadPlaces(service, placeIds),
   ]);
 
-  return rows.map((row) => ({
-    id: row.id,
-    activityId: row.activity_id,
-    venueId: row.venue_id,
-    hostUserId: row.host_user_id,
-    startsAt: row.starts_at,
-    endsAt: row.ends_at,
-    priceCents: row.price_cents ?? 0,
-    price: (row.price_cents ?? 0) / 100,
-    maxAttendees: row.max_attendees,
-    visibility: row.visibility,
-    description: row.description ?? null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    activity: row.activity_id ? activityMap.get(row.activity_id) ?? null : null,
-    venue: row.venue_id ? venueMap.get(row.venue_id) ?? null : null,
-    host: profileMap.get(row.host_user_id) ?? null,
-  }));
+  return rows.map((row) => {
+    const activity = row.activity_id ? activityMap.get(row.activity_id) ?? null : null;
+    const venue = row.venue_id ? venueMap.get(row.venue_id) ?? null : null;
+    const placeId = typeof row.place_id === 'string' ? row.place_id : null;
+    const place = placeId ? placeMap.get(placeId) ?? null : null;
+    const placeLabel = hydratePlaceLabel({
+      place,
+      venue: venue?.name ?? activity?.venueLabel ?? null,
+      address: venue?.address ?? null,
+      fallbackLabel: activity?.name ?? null,
+    });
+
+    return {
+      id: row.id,
+      activityId: row.activity_id,
+      venueId: row.venue_id,
+      placeId,
+      hostUserId: row.host_user_id,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      priceCents: row.price_cents ?? 0,
+      price: (row.price_cents ?? 0) / 100,
+      maxAttendees: row.max_attendees,
+      visibility: row.visibility,
+      description: row.description ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      placeLabel,
+      place,
+      reliabilityScore: normalizeReliabilityScore(row.reliability_score),
+      activity,
+      venue,
+      host: profileMap.get(row.host_user_id) ?? null,
+    } satisfies HydratedSession;
+  });
 }
+
+export const __sessionServerTesting = {
+  resetActivitiesPlaceColumnDetection() {
+    activitiesPlaceColumnSupport = 'unknown';
+    loggedMissingActivitiesPlaceColumnWarning = false;
+  },
+};
 
 function hasKey(source: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(source, key);
@@ -475,6 +623,41 @@ async function loadVenues(service: SupabaseClient, ids: string[]): Promise<Map<s
   return map;
 }
 
+async function loadPlaces(service: SupabaseClient, ids: string[]): Promise<Map<string, PlaceSummary>> {
+  const map = new Map<string, PlaceSummary>();
+  if (!ids.length) return map;
+  const { data, error } = await service
+    .from('places')
+    .select('id, name, address, locality, region, country, lat, lng, categories, metadata')
+    .in('id', ids);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    if (!row?.id) continue;
+    const rawRow = row as Record<string, unknown>;
+    const metadata = (typeof row.metadata === 'object' && row.metadata !== null)
+      ? (row.metadata as Record<string, unknown>)
+      : null;
+    const kind = typeof rawRow.kind === 'string'
+      ? String(rawRow.kind)
+      : typeof metadata?.kind === 'string'
+        ? String(metadata.kind)
+        : null;
+    map.set(row.id, {
+      id: row.id,
+      name: row.name ?? null,
+      address: typeof row.address === 'string' ? row.address : null,
+      locality: typeof row.locality === 'string' ? row.locality : null,
+      region: typeof row.region === 'string' ? row.region : null,
+      country: typeof row.country === 'string' ? row.country : null,
+      lat: typeof row.lat === 'number' ? row.lat : null,
+      lng: typeof row.lng === 'number' ? row.lng : null,
+      categories: Array.isArray(row.categories) ? row.categories : null,
+      kind,
+    });
+  }
+  return map;
+}
+
 async function loadProfiles(service: SupabaseClient, ids: string[]): Promise<Map<string, ProfileSummary>> {
   const map = new Map<string, ProfileSummary>();
   if (!ids.length) return map;
@@ -496,6 +679,12 @@ async function loadProfiles(service: SupabaseClient, ids: string[]): Promise<Map
 
 function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
+}
+
+function normalizeReliabilityScore(value: unknown): number | null {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return clamped;
 }
 
 export async function getSessionOrThrow(service: SupabaseClient, sessionId: string): Promise<SessionRow> {

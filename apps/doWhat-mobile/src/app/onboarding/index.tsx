@@ -118,7 +118,7 @@ const OnboardingHomeScreen: React.FC = () => {
       }
 
       const [traitsResult, profileResult] = await Promise.all([
-        supabase.from("user_base_traits").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("user_base_traits").select("trait_id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase
           .from("profiles")
           .select("primary_sport, play_style, reliability_pledge_ack_at")

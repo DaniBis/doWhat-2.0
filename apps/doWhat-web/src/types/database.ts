@@ -54,6 +54,9 @@ export type SessionRow = {
   id: string;
   venue_id: string | null;
   activity_id: string | null;
+  place_id?: string | null;
+  place_label?: string | null;
+  reliability_score?: number | null;
   host_user_id: string;
   starts_at: string;
   ends_at: string;
@@ -69,6 +72,9 @@ export type SessionInsert = {
   id?: string;
   venue_id?: string | null;
   activity_id?: string | null;
+  place_id?: string | null;
+  place_label?: string | null;
+  reliability_score?: number | null;
   host_user_id: string;
   starts_at: string;
   ends_at: string;
@@ -84,6 +90,9 @@ export type SessionUpdate = {
   id?: string;
   venue_id?: string | null;
   activity_id?: string | null;
+  place_id?: string | null;
+  place_label?: string | null;
+  reliability_score?: number | null;
   host_user_id?: string;
   starts_at?: string;
   ends_at?: string;

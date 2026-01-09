@@ -810,12 +810,16 @@ export default function ProfileSimple() {
 
   const loadBadges = useCallback(async (uid: string) => {
     try {
-      const [ownedResult, catalogResult] = await Promise.all([
+      const [ownedResult, endorsementResult, catalogResult] = await Promise.all([
         supabase
           .from('user_badges')
-          .select('id,badge_id,status,source,created_at,verified_at,expiry_date,badges(*),v_badge_endorsement_counts!left(endorsements)')
+          .select('id,badge_id,status,source,created_at,verified_at,expiry_date,badges(*)')
           .eq('user_id', uid)
           .order('created_at', { ascending: false }),
+        supabase
+          .from('v_badge_endorsement_counts')
+          .select('badge_id,user_id,endorsements')
+          .eq('user_id', uid),
         supabase
           .from('badges')
           .select('*')
@@ -826,16 +830,26 @@ export default function ProfileSimple() {
       if (ownedResult.error) throw ownedResult.error;
       if (catalogResult.error) throw catalogResult.error;
 
+      const endorsementsByBadgeId = new Map<string, number>();
+      if (!endorsementResult.error) {
+        (endorsementResult.data ?? []).forEach((entry) => {
+          const badgeId = typeof entry?.badge_id === 'string' ? entry.badge_id : null;
+          if (!badgeId) return;
+          const endorsements = typeof entry?.endorsements === 'number' ? entry.endorsements : 0;
+          endorsementsByBadgeId.set(badgeId, endorsements);
+        });
+      } else if (__DEV__) {
+        console.warn('[ProfileSimple] endorsement view unavailable, defaulting counts to 0', endorsementResult.error);
+      }
+
       const ownedPayload: (Record<string, unknown> & { endorsements: number })[] = (ownedResult.data ?? []).map((row) => {
-        const { v_badge_endorsement_counts, ...rest } = row as Record<string, unknown> & {
-          v_badge_endorsement_counts?: { endorsements?: number } | null;
-        };
-        const endorsements =
-          typeof v_badge_endorsement_counts?.endorsements === 'number'
-            ? v_badge_endorsement_counts.endorsements
-            : 0;
+        const endorsements = (() => {
+          const badgeId = isRecord(row) && typeof row.badge_id === 'string' ? row.badge_id : null;
+          if (!badgeId) return 0;
+          return endorsementsByBadgeId.get(badgeId) ?? 0;
+        })();
         return {
-          ...(rest as Record<string, unknown>),
+          ...(row as Record<string, unknown>),
           endorsements,
         };
       });

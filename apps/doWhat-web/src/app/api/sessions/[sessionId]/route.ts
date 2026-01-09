@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
+import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 import {
   ensureActivity,
   ensureVenue,
@@ -52,6 +53,18 @@ export async function PATCH(req: Request, context: RouteContext) {
     const body = await req.json();
     const payload = extractSessionPayload(body);
 
+    const canResolvePlace =
+      typeof payload.lat === 'number' && Number.isFinite(payload.lat) &&
+      typeof payload.lng === 'number' && Number.isFinite(payload.lng);
+    const placeResolution = canResolvePlace
+      ? await resolvePlaceFromCoordsWithClient(service, {
+          lat: payload.lat!,
+          lng: payload.lng!,
+          labelHint: payload.venueName ?? payload.activityName ?? null,
+          source: 'session-api',
+        })
+      : null;
+
     const updates: Record<string, unknown> = {};
     if (payload.startsAt) updates.starts_at = payload.startsAt;
     if (payload.endsAt) updates.ends_at = payload.endsAt;
@@ -59,6 +72,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (payload.maxAttendees != null) updates.max_attendees = payload.maxAttendees;
     if (payload.visibility) updates.visibility = payload.visibility;
     if (payload.description !== undefined) updates.description = payload.description;
+    if (placeResolution) {
+      updates.place_id = placeResolution.placeId;
+    }
 
     if (payload.startsAt || payload.endsAt) {
       const nextStartsAt = payload.startsAt ?? session.starts_at;
@@ -76,6 +92,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         lat: payload.lat,
         lng: payload.lng,
         venueName: payload.venueName,
+        placeId: placeResolution?.placeId,
       });
       updates.activity_id = activityId;
     }

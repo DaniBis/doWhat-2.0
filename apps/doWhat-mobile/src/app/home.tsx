@@ -90,7 +90,7 @@ const resolveSaveBadgePalette = (variant: SaveBadgeVariant, saved: boolean) => {
   return {
     container: {
       borderColor: saved ? 'rgba(4,120,87,0.32)' : 'rgba(15,23,42,0.08)',
-      backgroundColor: saved ? 'rgba(5,150,105,0.12)' : '#FFFFFF',
+      backgroundColor: saved ? '#D1FAE5' : '#FFFFFF',
       shadowColor: 'rgba(15,23,42,0.08)',
       shadowOpacity: 1,
       shadowRadius: 6,

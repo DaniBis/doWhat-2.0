@@ -93,6 +93,7 @@ export default function CreateEventPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>(prefill.lat && prefill.lng ? 'success' : 'idle');
+  const resolvedLocationLabel = venueName.trim() ? venueName.trim() : 'Location to be confirmed';
 
   const { defaultStart, defaultEnd } = useMemo(() => {
     const tomorrow = new Date();
@@ -396,6 +397,9 @@ export default function CreateEventPage() {
               handleMapSelect(nextLat, nextLng);
             }}
           />
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            <span className="font-semibold text-gray-700">Location label:</span> {resolvedLocationLabel}
+          </div>
         </div>
 
         {/* Location */}

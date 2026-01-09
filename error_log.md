@@ -1,5 +1,26 @@
 # Error Log
 
+## 2026-01-07 – Next dev server crashed compiling `globals.css` (RESOLVED)
+- **Surface**: `pnpm --filter dowhat-web dev` when hitting `/map`.
+- **Symptom**: The dev server threw `TypeError: Cannot read properties of undefined (reading 'family')` while importing `src/app/globals.css`, returning HTTP 500 for `/map` and `/favicon.ico`.
+- **Root cause**: `apps/doWhat-web/tailwind.config.js` expects `sharedTheme.typography.family`, but `packages/shared/dist/theme.js` had not been rebuilt since the file gained the new typography export. The stale dist meant the runtime export lacked `typography`, so Tailwind’s PostCSS loader crashed during compilation.
+- **Fix**: Rebuilt the shared package (`pnpm --filter @dowhat/shared build`) so the dist bundle exposes the typography metadata referenced by Tailwind.
+- **Status**: Restarted `pnpm --filter dowhat-web dev`; `/api/nearby` and `/map` compile successfully with only the known npm config warnings.
+
+## 2026-01-07 – Expo dev client redbox: Supabase env missing (RESOLVED)
+- **Surface**: `pnpm --filter doWhat-mobile exec expo start -c` on iOS dev client.
+- **Symptom**: The bundle redboxed with `Error: Supabase environment variables are not configured. URL=missing, Key=missing`, and `AuthGate` logged `TypeError: Cannot read property 'supabase' of undefined`.
+- **Root cause**: Neither the root `.env.local` nor `apps/doWhat-mobile/.env.local` defined `EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_ANON_KEY`, so `expo config` emitted empty strings and the runtime Supabase helper aborted.
+- **Fix**: Added `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, and `EXPO_PUBLIC_WEB_URL` to both env files, then restarted `expo start -c`.
+- **Status**: Expo logs now show `[supabase] resolved env { chosenUrl: 'https://kdviydoftmjuglaglsmm.supabase.co', hasKey: true }` and the app loads with only the existing shadow-style warning.
+
+## 2026-01-07 – `/api/nearby` venue fallback crashed on `venues.updated_at` (RESOLVED)
+- **Surface**: Web map fallback path (`/api/nearby`) whenever Overpass timed out and the Supabase `venues` table lacked an `updated_at` column.
+- **Symptom**: Console spammed `[nearby] venue fallback failed { code: '42703', ... }`, so Activities stayed empty after Overpass failures instead of showing Supabase venues.
+- **Root cause**: `fetchVenueFallbackActivities` always selected and ordered by `updated_at`. Databases that hadn’t added the column rejected the query with `42703`, causing the fallback to abort.
+- **Fix**: Added `isMissingColumnError` detection that retries the query without `updated_at` and logs a warning instead of propagating the error.
+- **Status**: `curl http://localhost:3002/api/nearby?...` now returns 200 with populated Activities, and the dev server logs no column-missing errors (Overpass 504 warnings are still possible when the external API times out).
+
 ## 2025-12-16 – Map only showed chess & mislabeled activities (RESOLVED)
 - **Surface**: Web map `/map` when toggling “Activities” or “Both” with no filters.
 - **Symptoms**: The Activities column (and map pins) only ever displayed the user-created “chess” location, while the Events list looked correct—giving the impression that events and activities were swapped.

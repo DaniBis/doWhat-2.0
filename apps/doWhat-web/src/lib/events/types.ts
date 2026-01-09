@@ -74,6 +74,7 @@ export interface EventUpsertRecord {
   url: string | null;
   image_url: string | null;
   status: RawEventStatus;
+  event_state: RawEventStatus;
   metadata: Record<string, Json>;
 }
 

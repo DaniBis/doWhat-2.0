@@ -1,6 +1,6 @@
 import type { EventSummary } from '@dowhat/shared';
 
-const FALLBACK_PLACE_LABEL = 'Location to be confirmed';
+import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
 
 const eventMetadata = (event: EventSummary | null | undefined): Record<string, unknown> | null => {
   if (!event || !event.metadata || typeof event.metadata !== 'object') {
@@ -75,8 +75,13 @@ export const eventPlaceLabel = (
   event: EventSummary | null | undefined,
   options?: { fallback?: string | null },
 ): string | null => {
-  const fallback = options?.fallback === undefined ? FALLBACK_PLACE_LABEL : options.fallback;
-  return event?.place_label ?? event?.venue_name ?? event?.address ?? fallback ?? null;
+  const fallback = options?.fallback === undefined ? PLACE_FALLBACK_LABEL : options.fallback;
+  if (!event) return fallback ?? null;
+  const label = normalizePlaceLabel(event.place_label, event.venue_name, event.address);
+  if (label === PLACE_FALLBACK_LABEL && fallback && fallback !== PLACE_FALLBACK_LABEL) {
+    return fallback;
+  }
+  return label ?? fallback ?? null;
 };
 
 export type { EventVerificationProgress } from '@dowhat/shared';

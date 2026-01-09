@@ -208,6 +208,12 @@ The seed script reads `packages/shared/src/taxonomy/activityTaxonomy.ts`, upsert
 
 The health endpoint `/api/health` still reports missing core tables (`badges`, `traits_catalog`, `places`, etc.) so you can double-check the schema after running migrations.
 
+### Map place resolution
+
+The map UI expects **Activities** (`public.activities`), **Events** (`public.events`), and **Sessions** (`public.sessions`) to persist canonical `place_id` + `place_label` so every pin/list item has a stable location label (fallback: `Unnamed spot`). Events also expose `event_state` (`scheduled`/`canceled`) for scheduling status without overloading verification fields.
+
+Server-side upserts that have coordinates but are missing `place_id`/`place_label` run reverse geocoding (Mapbox when `MAPBOX_TOKEN` is set, otherwise OpenStreetMap fallbacks) and cache the result in `public.places`.
+
 ### Cron jobs & seed helpers
 
 All scheduled endpoints require an `Authorization: Bearer $CRON_SECRET` header. Set `CRON_SECRET` in both your deployment environment and wherever the job is triggered from (GitHub Actions, Fly cron, etc.).

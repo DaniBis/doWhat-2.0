@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DEFAULT_RADIUS_METERS,
@@ -28,6 +28,8 @@ import {
 import SaveToggleButton from "@/components/SaveToggleButton";
 
 import type { MapMovePayload, ViewBounds } from "@/components/WebMap";
+import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
+import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { supabase } from "@/lib/supabase/browser";
 import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
 import {
@@ -48,11 +50,15 @@ const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
+const EMPTY_EVENTS: EventSummary[] = [];
 const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
-const PLACE_FALLBACK_LABEL = "Location to be confirmed";
+const MOVE_END_DEBOUNCE_MS = 250;
+const CENTER_UPDATE_THRESHOLD = 0.0005;
 
-const activityPlaceLabel = (activity: MapActivity): string =>
-  activity.place_label ?? activity.venue ?? PLACE_FALLBACK_LABEL;
+const activityPlaceLabel = (activity: MapActivity): string => {
+  const label = normalizePlaceLabel(activity.place_label, activity.venue);
+  return label === PLACE_FALLBACK_LABEL ? PLACE_FALLBACK_LABEL : label;
+};
 
 const readLocalMapFilters = (): MapFilterPreferences | null => {
   if (typeof window === "undefined") return null;
@@ -97,8 +103,33 @@ type MovePayload = MapMovePayload;
 
 type ToggleOption = "map" | "list";
 
+const roundCoordinate = (value: number, precision = 6) =>
+  Number.isFinite(value) ? Number(value.toFixed(precision)) : 0;
+
+const normaliseBounds = (value: Bounds): Bounds => ({
+  sw: { lat: roundCoordinate(value.sw.lat, 5), lng: roundCoordinate(value.sw.lng, 5) },
+  ne: { lat: roundCoordinate(value.ne.lat, 5), lng: roundCoordinate(value.ne.lng, 5) },
+});
+
+const boundsEqual = (a: Bounds | null, b: Bounds | null): boolean => {
+  if (!a || !b) return false;
+  return (
+    a.sw.lat === b.sw.lat
+    && a.sw.lng === b.sw.lng
+    && a.ne.lat === b.ne.lat
+    && a.ne.lng === b.ne.lng
+  );
+};
+
+const normaliseRadiusMeters = (value: number) => {
+  const clamped = Math.max(300, Math.min(25_000, Number.isFinite(value) ? value : DEFAULT_RADIUS_METERS));
+  const bucket = 250;
+  return Math.round(clamped / bucket) * bucket;
+};
+
 export default function MapPage() {
   const [center, setCenter] = useState<MapCoordinates | null>(null);
+  const [queryCenter, setQueryCenter] = useState<MapCoordinates | null>(null);
   const [radiusMeters, setRadiusMeters] = useState<number>(DEFAULT_RADIUS_METERS);
   const [viewMode, setViewMode] = useState<ToggleOption>("map");
   const [dataMode, setDataMode] = useState<'activities' | 'events' | 'both'>("activities");
@@ -116,6 +147,17 @@ export default function MapPage() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
   const [preferencesInitialised, setPreferencesInitialised] = useState(false);
+  const centerRef = useRef<MapCoordinates | null>(center);
+  const queryCenterRef = useRef<MapCoordinates | null>(queryCenter);
+  const radiusRef = useRef(radiusMeters);
+  const boundsRef = useRef<Bounds | null>(bounds);
+  const dataModeRef = useRef(dataMode);
+  const primeCenter = useCallback((next: MapCoordinates) => {
+    centerRef.current = next;
+    queryCenterRef.current = next;
+    setCenter(next);
+    setQueryCenter(next);
+  }, []);
   const updateFilters = useCallback(
     (updater: (prev: MapFilterPreferences) => MapFilterPreferences) => {
       setFilters((prev) => normaliseMapFilterPreferences(updater(prev)));
@@ -148,7 +190,7 @@ export default function MapPage() {
     [updateFilters],
   );
 
-  const filtersForQuery = mapPreferencesToQueryFilters(filters);
+  const filtersForQuery = useMemo(() => mapPreferencesToQueryFilters(filters), [filters]);
 
   const hydrateAnonymousPreferences = useCallback(() => {
     const next = readLocalMapFilters() ?? DEFAULT_MAP_FILTER_PREFERENCES;
@@ -208,13 +250,15 @@ export default function MapPage() {
   useEffect(() => {
     let cancelled = false;
     const fallback = () => {
-      if (!cancelled) setCenter((prev) => prev ?? FALLBACK_CENTER);
+      if (!cancelled && !centerRef.current) {
+        primeCenter(FALLBACK_CENTER);
+      }
     };
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (p) => {
           if (cancelled) return;
-          setCenter({ lat: Number(p.coords.latitude.toFixed(6)), lng: Number(p.coords.longitude.toFixed(6)) });
+          primeCenter({ lat: Number(p.coords.latitude.toFixed(6)), lng: Number(p.coords.longitude.toFixed(6)) });
         },
         () => {
           setLocationErrored(true);
@@ -230,7 +274,7 @@ export default function MapPage() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, []);
+  }, [primeCenter]);
 
   useEffect(() => {
     if (!center) return;
@@ -288,10 +332,30 @@ export default function MapPage() {
     };
   }, [hydrateAnonymousPreferences, loadPreferencesForUser, preferencesUserId]);
 
+  useEffect(() => {
+    centerRef.current = center;
+  }, [center]);
+
+  useEffect(() => {
+    queryCenterRef.current = queryCenter;
+  }, [queryCenter]);
+
+  useEffect(() => {
+    radiusRef.current = radiusMeters;
+  }, [radiusMeters]);
+
+  useEffect(() => {
+    boundsRef.current = bounds;
+  }, [bounds]);
+
+  useEffect(() => {
+    dataModeRef.current = dataMode;
+  }, [dataMode]);
+
   const fetcher = useMemo(
     () =>
       createNearbyActivitiesFetcher({
-        buildUrl: (_query) => {
+        buildUrl: () => {
           const origin = typeof window !== 'undefined' ? window.location.origin : '';
           if (!origin) throw new Error('Unable to determine origin for nearby fetcher');
           return `${origin}/api/nearby`;
@@ -321,14 +385,18 @@ export default function MapPage() {
     [],
   );
 
-  const query = center
-    ? {
-        center,
-        radiusMeters,
-        limit: 150,
-        ...(filtersForQuery ? { filters: filtersForQuery } : {}),
-      }
-    : null;
+  const query = useMemo(
+    () =>
+      queryCenter
+        ? {
+            center: queryCenter,
+            radiusMeters,
+            limit: 150,
+            filters: filtersForQuery,
+          }
+        : null,
+    [queryCenter, radiusMeters, filtersForQuery],
+  );
 
   const loadActivities = dataMode !== 'events';
   const loadEvents = dataMode !== 'activities';
@@ -336,6 +404,18 @@ export default function MapPage() {
   const nearby = useNearbyActivities(query, {
     fetcher,
     enabled: Boolean(query) && loadActivities,
+    placeholderData: (previous) => previous,
+    staleTime: 2 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    retry: (failureCount, error) => {
+      const message = error?.message?.toLowerCase() ?? '';
+      if (message.includes('lat and lng') || message.includes('required') || message.includes('not defined')) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
 
   const activities = nearby.data?.activities ?? EMPTY_ACTIVITIES;
@@ -360,6 +440,18 @@ export default function MapPage() {
   const eventsQuery = useEvents(eventsQueryArgs, {
     fetcher: eventsFetcher,
     enabled: Boolean(eventsQueryArgs) && loadEvents,
+    placeholderData: (previous) => previous,
+    staleTime: 2 * 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    retry: (failureCount, error) => {
+      const message = error?.message?.toLowerCase() ?? '';
+      if (message.includes('lat and lng') || message.includes('required') || message.includes('not defined')) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
 
   const events = useMemo(() => sortEventsByStart(eventsQuery.data?.events ?? []), [eventsQuery.data?.events]);
@@ -460,35 +552,68 @@ export default function MapPage() {
     [track],
   );
 
-  const handleMoveEnd = useCallback(
+  const applyMoveEnd = useCallback(
     ({ center: nextCenter, radiusMeters: nextRadius, bounds: nextBounds, zoom: nextZoom }: MovePayload) => {
+      const prevCenter = centerRef.current;
+      const prevQueryCenter = queryCenterRef.current;
+      const prevRadius = radiusRef.current;
+      const prevBounds = boundsRef.current;
+
+      const normalizedCenter: MapCoordinates = {
+        lat: roundCoordinate(nextCenter.lat, 6),
+        lng: roundCoordinate(nextCenter.lng, 6),
+      };
+      const normalizedRadius = normaliseRadiusMeters(nextRadius);
+      const normalizedBounds = normaliseBounds(nextBounds);
+
       const centerChanged =
-        !center ||
-        Math.abs(center.lat - nextCenter.lat) > 0.0005 ||
-        Math.abs(center.lng - nextCenter.lng) > 0.0005;
-      setCenter((prev) => {
-        if (!prev) return nextCenter;
-        const deltaLat = Math.abs(prev.lat - nextCenter.lat);
-        const deltaLng = Math.abs(prev.lng - nextCenter.lng);
-        return deltaLat > 0.0005 || deltaLng > 0.0005 ? nextCenter : prev;
-      });
-      const normalizedRadius = Number.isFinite(nextRadius)
-        ? Math.max(300, Math.min(25_000, Math.round(nextRadius)))
-        : radiusMeters;
-      const radiusChanged = Math.abs(normalizedRadius - radiusMeters) > 250;
-      setRadiusMeters((prev) => (radiusChanged ? normalizedRadius : prev));
-      setBounds(nextBounds);
+        !prevCenter ||
+        Math.abs(prevCenter.lat - normalizedCenter.lat) > CENTER_UPDATE_THRESHOLD ||
+        Math.abs(prevCenter.lng - normalizedCenter.lng) > CENTER_UPDATE_THRESHOLD;
+      const queryCenterChanged =
+        !prevQueryCenter ||
+        Math.abs(prevQueryCenter.lat - normalizedCenter.lat) > CENTER_UPDATE_THRESHOLD ||
+        Math.abs(prevQueryCenter.lng - normalizedCenter.lng) > CENTER_UPDATE_THRESHOLD;
+      const radiusChanged = normalizedRadius !== prevRadius;
+      const boundsChanged = !boundsEqual(prevBounds, normalizedBounds);
+
+      if (centerChanged) {
+        centerRef.current = normalizedCenter;
+        setCenter(normalizedCenter);
+      }
+      if (queryCenterChanged) {
+        queryCenterRef.current = normalizedCenter;
+        setQueryCenter(normalizedCenter);
+      }
+      if (radiusChanged) {
+        radiusRef.current = normalizedRadius;
+        setRadiusMeters(normalizedRadius);
+      }
+      if (boundsChanged) {
+        boundsRef.current = normalizedBounds;
+        setBounds(normalizedBounds);
+      }
+
       if (centerChanged || radiusChanged) {
         track('map_region_change', {
-          lat: Number(nextCenter.lat.toFixed(5)),
-          lng: Number(nextCenter.lng.toFixed(5)),
+          lat: Number(normalizedCenter.lat.toFixed(5)),
+          lng: Number(normalizedCenter.lng.toFixed(5)),
           radiusMeters: normalizedRadius,
           zoom: nextZoom,
-          dataMode,
+          dataMode: dataModeRef.current,
         });
       }
     },
-    [center, radiusMeters, dataMode, track],
+    [track],
+  );
+
+  const { debounced: scheduleMoveEnd } = useDebouncedCallback(applyMoveEnd, MOVE_END_DEBOUNCE_MS);
+
+  const handleMoveEnd = useCallback(
+    (payload: MovePayload) => {
+      scheduleMoveEnd(payload);
+    },
+    [scheduleMoveEnd],
   );
 
   const handleActivitySelect = useCallback(
@@ -561,9 +686,6 @@ export default function MapPage() {
       if (placeLabel) params.set('venueName', placeLabel);
       if (activity.place_id && isUuid(activity.place_id)) {
         params.set('placeId', activity.place_id);
-      }
-      if (activity.place_label) {
-        params.set('placeLabel', activity.place_label);
       }
       if (typeof activity.lat === 'number') params.set('lat', activity.lat.toFixed(6));
       if (typeof activity.lng === 'number') params.set('lng', activity.lng.toFixed(6));
@@ -677,8 +799,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     ? 'rounded-2xl border border-midnight-border/30 bg-surface px-sm py-sm lg:px-md lg:py-md'
     : '';
 
-  const mapActivities = loadActivities ? filteredActivities : [];
-  const mapEvents = loadEvents ? filteredEvents : [];
+  const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
+  const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
   const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
   const filtersButtonDisabled = !loadActivities && !loadEvents;
 
@@ -838,7 +960,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                           <div className="flex items-start justify-between gap-md">
                             <div>
                               <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                                Activity · {activitySubtitle}
+                                Activity
+                              </div>
+                              <div className="mt-xxs flex items-center gap-xxs text-xs text-ink-muted">
+                                <span aria-hidden>📍</span>
+                                <span>{activitySubtitle}</span>
                               </div>
                               <div className="text-base font-semibold text-ink">{activity.name}</div>
                               <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up</p>
@@ -939,6 +1065,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const isSelected = eventSummary.id === selectedEventId;
                     const { start, end } = formatEventTimeRange(eventSummary);
                     const placeLabel = eventPlaceLabel(eventSummary);
+                    const placeSubtitle = placeLabel ?? PLACE_FALLBACK_LABEL;
                     const eventOrigin = describeEventOrigin(eventSummary);
                     const verificationLabel = describeEventVerification(eventSummary.status);
                     const verificationClass = eventVerificationClass(eventSummary.status);
@@ -972,7 +1099,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                           <div className="flex items-start justify-between gap-md">
                             <div>
                               <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                                {eventOrigin.label} · {placeLabel ?? PLACE_FALLBACK_LABEL}
+                                {eventOrigin.label}
+                              </div>
+                              <div className="mt-xxs flex items-center gap-xxs text-xs text-ink-muted">
+                                <span aria-hidden>📍</span>
+                                <span>{placeSubtitle}</span>
                               </div>
                               <div className="text-base font-semibold text-ink">{eventSummary.title}</div>
                               <p className="mt-xxs text-[11px] text-ink-muted">{eventOrigin.helper}</p>
@@ -1165,4 +1296,3 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     </div>
   );
 }
-
