@@ -5,16 +5,18 @@ import type { PlacesQuery } from '../places/types';
 
 const originalFetch = globalThis.fetch;
 
+const buildMockResponse = (payload: unknown, status = 200) => {
+  const body = JSON.stringify(payload);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => payload,
+    text: async () => body,
+  } as unknown as Response;
+};
+
 function mockFetchJson(payload: unknown, status = 200) {
-  const mock = jest.fn(async (..._args: Parameters<typeof fetch>) => {
-    const body = JSON.stringify(payload);
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => payload,
-      text: async () => body,
-    } as unknown as Response;
-  }) as jest.MockedFunction<typeof fetch>;
+  const mock = jest.fn(async () => buildMockResponse(payload, status)) as jest.MockedFunction<typeof fetch>;
   globalThis.fetch = mock;
   return mock;
 }
@@ -125,5 +127,72 @@ describe('places provider adapters', () => {
     expect(places).toHaveLength(1);
     expect(places[0].provider).toBe('google_places');
     expect(places[0].canPersist).toBe(false);
+  });
+
+  test('fetchGooglePlaces follows pagination tokens', async () => {
+    process.env.GOOGLE_PLACES_API_KEY = 'test-key';
+    const firstPayload = {
+      results: [
+        {
+          place_id: 'page-1',
+          name: 'First Page Gym',
+          geometry: { location: { lat: 13.75, lng: 100.55 } },
+        },
+      ],
+      next_page_token: 'token123',
+    };
+    const secondPayload = {
+      results: [
+        {
+          place_id: 'page-2',
+          name: 'Second Page Gym',
+          geometry: { location: { lat: 13.76, lng: 100.56 } },
+        },
+      ],
+    };
+
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(buildMockResponse(firstPayload))
+      .mockResolvedValueOnce(buildMockResponse(secondPayload));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const places = await fetchGooglePlaces({ ...query, categories: undefined });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('pagetoken=token123');
+    expect(places.map((place) => place.providerId)).toEqual(['page-1', 'page-2']);
+  });
+
+  test('fetchGooglePlaces runs text search fallback for climbing queries', async () => {
+    process.env.GOOGLE_PLACES_API_KEY = 'test-key';
+    const climbingQuery: PlacesQuery = {
+      ...query,
+      categories: ['climbing_bouldering'],
+    };
+
+    const fetchMock = jest.fn((url: string) => {
+      if (url.includes('textsearch')) {
+        return Promise.resolve(
+          buildMockResponse({
+            results: [
+              {
+                place_id: 'text-hit',
+                name: 'Natural High',
+                geometry: { location: { lat: 44.442, lng: 26.086 } },
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(buildMockResponse({ results: [] }));
+    }) as jest.MockedFunction<typeof fetch>;
+    globalThis.fetch = fetchMock;
+
+    const places = await fetchGooglePlaces(climbingQuery);
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('textsearch'), expect.anything());
+    expect(places.map((place) => place.providerId)).toContain('text-hit');
+    expect(places[0].name).toBe('Natural High');
   });
 });

@@ -12,12 +12,14 @@ import {
   ACTIVITY_DISTANCE_OPTIONS,
   type MapActivity,
 } from "@dowhat/shared";
+import { normalizePlaceLabel } from '@/lib/places/labels';
 
 import type { MapMovePayload } from "@/components/WebMap";
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from "@/lib/venues/types";
 import { ACTIVITY_NAMES, type ActivityName, VENUE_SEARCH_DEFAULT_RADIUS } from "@/lib/venues/constants";
 import { buildVenueTaxonomySupport } from "@/lib/venues/taxonomySupport";
 import { buildVenueSavePayload } from "@/lib/venues/savePayload";
+import { filterVenuesBySignals, filterVenuesByStatus, type StatusFilter } from "@/lib/venues/filters";
 
 const WebMap = dynamic(() => import("@/components/WebMap"), {
   ssr: false,
@@ -26,13 +28,45 @@ const WebMap = dynamic(() => import("@/components/WebMap"), {
 const FALLBACK_CENTER = { lat: 51.5074, lng: -0.1278 };
 const DEFAULT_LIMIT = 60;
 
+const sanitizeCoordinate = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
 type ListActivitiesResponse = {
   activities: ActivityAvailabilitySummary[];
+};
+
+type SearchFilterSupport = {
+  activityTypes: boolean;
+  tags: boolean;
+  traits: boolean;
+  taxonomyCategories: boolean;
+  priceLevels: boolean;
+  capacityKey: boolean;
+  timeWindow: boolean;
 };
 
 type SearchVenuesResponse = {
   activity: ActivityName;
   results: RankedVenueActivity[];
+  items?: MapActivity[];
+  filterSupport?: SearchFilterSupport;
+  facets?: {
+    activityTypes: { value: string; count: number }[];
+    tags: { value: string; count: number }[];
+    traits: { value: string; count: number }[];
+    taxonomyCategories: { value: string; count: number }[];
+    priceLevels: { value: string; count: number }[];
+    capacityKey: { value: string; count: number }[];
+    timeWindow: { value: string; count: number }[];
+  };
+  sourceBreakdown?: Record<string, number>;
+  cache?: { key: string; hit: boolean };
   debug?: { limitApplied: number; venueCount: number };
 };
 
@@ -52,13 +86,20 @@ type Bounds = { sw: { lat: number; lng: number }; ne: { lat: number; lng: number
 type MapCenter = { lat: number; lng: number };
 
 type VoteIntent = "yes" | "no";
-type StatusFilter = 'all' | 'verified' | 'needs_review' | 'ai_only';
-
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string; helper: string }> = [
   { value: 'all', label: 'All matches', helper: 'Every AI + verified venue' },
   { value: 'verified', label: 'Verified', helper: 'Community-confirmed spots' },
   { value: 'needs_review', label: 'Needs votes', helper: 'AI confident but awaiting people' },
   { value: 'ai_only', label: 'AI only', helper: 'Fresh suggestions without votes' },
+];
+
+const CATEGORY_FILTERS: Array<{ value: string; label: string; keywords: string[] }> = [
+  { value: 'all', label: 'All types', keywords: [] },
+  { value: 'climbing', label: 'Climbing · Bouldering', keywords: ['climb', 'boulder'] },
+  { value: 'gym', label: 'Gyms · Fitness', keywords: ['gym', 'fitness', 'studio'] },
+  { value: 'sports', label: 'Sports centers', keywords: ['sport', 'stadium', 'arena'] },
+  { value: 'cafe', label: 'Cafes · Coffee', keywords: ['cafe', 'coffee'] },
+  { value: 'bar', label: 'Bars · Nightlife', keywords: ['bar', 'pub', 'club'] },
 ];
 
 const DEFAULT_ACTIVITY_NAME: ActivityName = ACTIVITY_NAMES[0];
@@ -82,6 +123,7 @@ export default function VenueVerificationPage() {
   const [results, setResults] = useState<RankedVenueActivity[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchNotice, setSearchNotice] = useState<string | null>(null);
   const [center, setCenter] = useState<MapCenter | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [radiusMeters, setRadiusMeters] = useState<number>(VENUE_SEARCH_DEFAULT_RADIUS);
@@ -91,6 +133,13 @@ export default function VenueVerificationPage() {
   });
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [onlyOpenNow, setOnlyOpenNow] = useState(false);
+  const [onlyWithVotes, setOnlyWithVotes] = useState(false);
+  const [categorySignalOnly, setCategorySignalOnly] = useState(false);
+  const [keywordSignalOnly, setKeywordSignalOnly] = useState(false);
+  const [priceLevelFilters, setPriceLevelFilters] = useState<number[]>([]);
+  const [nameSearch, setNameSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState(CATEGORY_FILTERS[0]?.value ?? 'all');
   const [voteLoadingKey, setVoteLoadingKey] = useState<string | null>(null);
   const [voteFeedback, setVoteFeedback] = useState<Record<string, VoteFeedback>>({});
   const [locationDenied, setLocationDenied] = useState(false);
@@ -133,6 +182,23 @@ export default function VenueVerificationPage() {
     },
     [],
   );
+
+  const resetAdvancedFilters = useCallback(() => {
+    setOnlyOpenNow(false);
+    setOnlyWithVotes(false);
+    setCategorySignalOnly(false);
+    setKeywordSignalOnly(false);
+    setPriceLevelFilters([]);
+  }, []);
+
+  const handlePriceLevelToggle = useCallback((level: number) => {
+    setPriceLevelFilters((prev) => {
+      if (prev.includes(level)) {
+        return prev.filter((value) => value !== level);
+      }
+      return [...prev, level];
+    });
+  }, []);
 
   useEffect(() => {
     const match = DISTANCE_OPTION_CONFIG.find((option) => option.meters === radiusMeters);
@@ -239,6 +305,7 @@ export default function VenueVerificationPage() {
     const controller = new AbortController();
     setSearchLoading(true);
     setSearchError(null);
+    setSearchNotice(null);
 
     const params = new URLSearchParams({
       activity: selectedActivity,
@@ -264,6 +331,10 @@ export default function VenueVerificationPage() {
       })
       .then((data) => {
         setResults(Array.isArray(data.results) ? data.results : []);
+        const support = data.filterSupport ?? null;
+        if (support && !support.activityTypes) {
+          setSearchNotice('Activity filters are unavailable right now; showing unclassified venues.');
+        }
       })
       .catch((error) => {
         if (error?.name === "AbortError") return;
@@ -278,18 +349,82 @@ export default function VenueVerificationPage() {
     return () => controller.abort();
   }, [selectedActivity, centerLat, centerLng, boundsSnapshot, radiusMeters]);
 
-  const visibleVenues = useMemo(() => {
-    switch (statusFilter) {
-      case 'verified':
-        return results.filter((venue) => venue.verified);
-      case 'needs_review':
-        return results.filter((venue) => venue.needsVerification);
-      case 'ai_only':
-        return results.filter((venue) => !venue.verified && !venue.needsVerification);
-      default:
-        return results;
-    }
-  }, [results, statusFilter]);
+  const availablePriceLevels = useMemo(() => {
+    const levels = new Set<number>();
+    results.forEach((venue) => {
+      if (typeof venue.priceLevel === 'number' && Number.isFinite(venue.priceLevel)) {
+        const level = Math.min(Math.max(Math.round(venue.priceLevel), 1), 4);
+        levels.add(level);
+      }
+    });
+    return Array.from(levels).sort((a, b) => a - b);
+  }, [results]);
+
+  useEffect(() => {
+    setPriceLevelFilters((prev) => prev.filter((level) => availablePriceLevels.includes(level)));
+  }, [availablePriceLevels]);
+
+  const priceLevelCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    results.forEach((venue) => {
+      if (typeof venue.priceLevel === 'number' && Number.isFinite(venue.priceLevel)) {
+        const level = Math.min(Math.max(Math.round(venue.priceLevel), 1), 4);
+        counts.set(level, (counts.get(level) ?? 0) + 1);
+      }
+    });
+    return counts;
+  }, [results]);
+
+  const searchFilteredVenues = useMemo(() => {
+    const term = nameSearch.trim().toLowerCase();
+    const categoryOption = CATEGORY_FILTERS.find((option) => option.value === categoryFilter) ?? CATEGORY_FILTERS[0];
+    const categoryKeywords = categoryOption?.keywords ?? [];
+
+    const matchesCategory = (venue: RankedVenueActivity) => {
+      if (!categoryKeywords.length || categoryOption?.value === 'all') return true;
+      const normalizedCategories = venue.primaryCategories.map((value) => value.toLowerCase());
+      const normalizedActivity = venue.activity.toLowerCase();
+      return categoryKeywords.some((keyword) => {
+        if (!keyword) return false;
+        const lower = keyword.toLowerCase();
+        return (
+          normalizedCategories.some((category) => category.includes(lower))
+          || normalizedActivity.includes(lower)
+        );
+      });
+    };
+
+    return results.filter((venue) => {
+      const matchesSearch = !term
+        || venue.venueName.toLowerCase().includes(term)
+        || (venue.displayAddress?.toLowerCase().includes(term) ?? false);
+      return matchesSearch && matchesCategory(venue);
+    });
+  }, [results, nameSearch, categoryFilter]);
+
+  const statusFilteredVenues = useMemo(
+    () => filterVenuesByStatus(searchFilteredVenues, statusFilter),
+    [searchFilteredVenues, statusFilter],
+  );
+
+  const visibleVenues = useMemo(
+    () =>
+      filterVenuesBySignals(statusFilteredVenues, {
+        onlyOpenNow,
+        onlyWithVotes,
+        categorySignalOnly,
+        keywordSignalOnly,
+        priceLevelFilters,
+      }),
+    [
+      statusFilteredVenues,
+      onlyOpenNow,
+      onlyWithVotes,
+      categorySignalOnly,
+      keywordSignalOnly,
+      priceLevelFilters,
+    ],
+  );
 
   useEffect(() => {
     if (!visibleVenues.length) {
@@ -311,16 +446,20 @@ export default function VenueVerificationPage() {
   }, [summary]);
 
   const mapActivities = useMemo<MapActivity[]>(() => (
-    visibleVenues
-      .filter((row) => typeof row.lat === "number" && typeof row.lng === "number")
-      .map((row) => ({
+    visibleVenues.flatMap((row) => {
+      const lat = sanitizeCoordinate(row.lat);
+      const lng = sanitizeCoordinate(row.lng);
+      if (lat == null || lng == null) return [];
+      return [{
         id: row.venueId,
         name: row.venueName,
         venue: formatActivityLabel(row.activity),
-        lat: row.lat as number,
-        lng: row.lng as number,
+        place_label: normalizePlaceLabel(row.venueName, row.displayAddress, formatActivityLabel(row.activity)),
+        lat,
+        lng,
         tags: buildMapTags(row),
-      }))
+      }];
+    })
   ), [visibleVenues]);
 
   const selectedSummary = summaryMap.get(selectedActivity);
@@ -423,6 +562,12 @@ export default function VenueVerificationPage() {
     currentActivityLabel,
     selectedCategoryDescription,
   );
+  const hasAdvancedFilters =
+    onlyOpenNow ||
+    onlyWithVotes ||
+    categorySignalOnly ||
+    keywordSignalOnly ||
+    priceLevelFilters.length > 0;
 
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-8">
@@ -522,7 +667,8 @@ export default function VenueVerificationPage() {
               <h3 className="text-lg font-semibold text-slate-900">Map view</h3>
               <p className="text-sm text-slate-500">Drag the map to refresh suggestions.</p>
             </div>
-            {searchError ? <span className="text-sm text-rose-600">{searchError}</span> : null}
+            {searchError ? <span className="text-sm text-rose-600">{searchError}</span>
+              : searchNotice ? <span className="text-sm text-amber-600">{searchNotice}</span> : null}
           </div>
           <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
             <span className="font-semibold uppercase tracking-wide text-slate-500">Radius presets</span>
@@ -578,6 +724,55 @@ export default function VenueVerificationPage() {
           <p className="mt-2 text-xs text-slate-500">
             Votes require a free account. We will prompt you to sign in if needed.
           </p>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+            <div>
+              <label htmlFor="venues-search" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Search venues
+              </label>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  id="venues-search"
+                  type="search"
+                  value={nameSearch}
+                  onChange={(event) => setNameSearch(event.target.value)}
+                  placeholder="e.g. Natural High"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none"
+                />
+                {nameSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => setNameSearch('')}
+                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category focus</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {CATEGORY_FILTERS.map((option) => {
+                  const active = option.value === categoryFilter;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setCategoryFilter(option.value)}
+                      className={clsx(
+                        'rounded-full border px-3 py-1 text-sm font-semibold transition',
+                        active
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {STATUS_FILTERS.map((option) => (
               <button
@@ -595,6 +790,129 @@ export default function VenueVerificationPage() {
                 <span className="text-xs text-slate-500">{option.helper}</span>
               </button>
             ))}
+          </div>
+          <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Signal filters</p>
+                <p className="text-xs text-slate-500">Stack cues to focus review-ready venues.</p>
+              </div>
+              <button
+                type="button"
+                onClick={resetAdvancedFilters}
+                disabled={!hasAdvancedFilters}
+                className={clsx(
+                  "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                  hasAdvancedFilters
+                    ? "border-emerald-500 text-emerald-700 hover:bg-emerald-50"
+                    : "border-slate-200 text-slate-400",
+                )}
+              >
+                Reset filters
+              </button>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setOnlyOpenNow((prev) => !prev)}
+                aria-pressed={onlyOpenNow}
+                className={clsx(
+                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                  onlyOpenNow
+                    ? "border-emerald-500 bg-white shadow"
+                    : "border-slate-200 bg-white/80 hover:border-slate-300",
+                )}
+              >
+                <span className="block font-semibold text-slate-900">Open now</span>
+                <span className="text-xs text-slate-500">Requires live hours data</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setOnlyWithVotes((prev) => !prev)}
+                aria-pressed={onlyWithVotes}
+                className={clsx(
+                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                  onlyWithVotes
+                    ? "border-emerald-500 bg-white shadow"
+                    : "border-slate-200 bg-white/80 hover:border-slate-300",
+                )}
+              >
+                <span className="block font-semibold text-slate-900">Has votes</span>
+                <span className="text-xs text-slate-500">Only venues with community input</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCategorySignalOnly((prev) => !prev)}
+                aria-pressed={categorySignalOnly}
+                className={clsx(
+                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                  categorySignalOnly
+                    ? "border-emerald-500 bg-white shadow"
+                    : "border-slate-200 bg-white/80 hover:border-slate-300",
+                )}
+              >
+                <span className="block font-semibold text-slate-900">Category match</span>
+                <span className="text-xs text-slate-500">Use taxonomy overlap as a gate</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setKeywordSignalOnly((prev) => !prev)}
+                aria-pressed={keywordSignalOnly}
+                className={clsx(
+                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                  keywordSignalOnly
+                    ? "border-emerald-500 bg-white shadow"
+                    : "border-slate-200 bg-white/80 hover:border-slate-300",
+                )}
+              >
+                <span className="block font-semibold text-slate-900">Keyword signal</span>
+                <span className="text-xs text-slate-500">Require AI text cues</span>
+              </button>
+            </div>
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price focus</p>
+              {availablePriceLevels.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPriceLevelFilters([])}
+                    aria-pressed={priceLevelFilters.length === 0}
+                    className={clsx(
+                      "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                      priceLevelFilters.length === 0
+                        ? "border-emerald-500 bg-white text-emerald-900"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                    )}
+                  >
+                    All prices
+                  </button>
+                  {availablePriceLevels.map((level) => {
+                    const active = priceLevelFilters.includes(level);
+                    const label = formatPriceLevelLabel(level) ?? "";
+                    const count = priceLevelCounts.get(level) ?? 0;
+                    return (
+                      <button
+                        key={`price-${level}`}
+                        type="button"
+                        onClick={() => handlePriceLevelToggle(level)}
+                        aria-pressed={active}
+                        className={clsx(
+                          "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold transition",
+                          active
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                        )}
+                      >
+                        <span>{label || `Level ${level}`}</span>
+                        <span className="text-xs font-normal text-slate-500">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">Price data is limited for this batch.</p>
+              )}
+            </div>
           </div>
           <div className="mt-4 flex-1 overflow-y-auto">
             {visibleVenues.length === 0 ? (

@@ -1,5 +1,8 @@
+type ActivityMetadataChip = { key: string; label: string; icon?: string };
+type MapToast = { message: string; tone: 'success' | 'info' | 'error' };
 "use client";
 
+import { useQueryClient } from '@tanstack/react-query';
 import dynamic from "next/dynamic";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -15,6 +18,7 @@ import {
   type EventSummary,
   type MapActivity,
   type MapCoordinates,
+  mapActivitiesQueryKey,
   useEvents,
   useNearbyActivities,
   DEFAULT_MAP_FILTER_PREFERENCES,
@@ -24,6 +28,8 @@ import {
   loadUserPreference,
   saveUserPreference,
   isUuid,
+  type CapacityFilterKey,
+  type TimeWindowKey,
 } from "@dowhat/shared";
 import SaveToggleButton from "@/components/SaveToggleButton";
 
@@ -54,6 +60,98 @@ const EMPTY_EVENTS: EventSummary[] = [];
 const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
 const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
+
+type CapacityOption = { key: CapacityFilterKey; label: string };
+type TimeWindowOption = { key: TimeWindowKey; label: string };
+
+const PRICE_LEVEL_OPTIONS: Array<{ level: number; label: string }> = [
+  { level: 1, label: '$' },
+  { level: 2, label: '$$' },
+  { level: 3, label: '$$$' },
+  { level: 4, label: '$$$$' },
+];
+
+const CAPACITY_OPTIONS: CapacityOption[] = [
+  { key: 'any', label: 'Any group size' },
+  { key: 'couple', label: '2+ people' },
+  { key: 'small', label: '5+ people' },
+  { key: 'medium', label: '8+ people' },
+  { key: 'large', label: '10+ people' },
+];
+
+const TIME_WINDOW_OPTIONS: TimeWindowOption[] = [
+  { key: 'any', label: 'Any time' },
+  { key: 'open_now', label: 'Open now' },
+  { key: 'morning', label: 'Morning' },
+  { key: 'afternoon', label: 'Afternoon' },
+  { key: 'evening', label: 'Evening' },
+  { key: 'late', label: 'Late night' },
+];
+
+const CAPACITY_OPTION_BY_KEY = new Map<CapacityFilterKey, CapacityOption>(
+  CAPACITY_OPTIONS.map((option) => [option.key, option]),
+);
+
+const TIME_WINDOW_OPTION_BY_KEY = new Map<TimeWindowKey, TimeWindowOption>(
+  TIME_WINDOW_OPTIONS.map((option) => [option.key, option]),
+);
+
+const formatPriceLevelLabel = (level: number): string => {
+  const clamped = Math.min(Math.max(1, Math.round(level)), PRICE_LEVEL_OPTIONS.length);
+  const match = PRICE_LEVEL_OPTIONS.find((option) => option.level === clamped);
+  return match?.label ?? '$'.repeat(clamped);
+};
+
+const formatTaxonomyLabel = (value: string): string =>
+  value
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const normalizePriceLevels = (values?: readonly (number | null | undefined)[]): number[] => {
+  if (!values || !values.length) return [];
+  return Array.from(
+    new Set(
+      values
+        .map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(Math.max(Math.round(value), 1), PRICE_LEVEL_OPTIONS.length) : null))
+        .filter((value): value is number => value != null),
+    ),
+  ).sort((a, b) => a - b);
+};
+
+const buildActivityMetadataChips = (activity: MapActivity): ActivityMetadataChip[] => {
+  const chips: ActivityMetadataChip[] = [];
+  const priceLevels = normalizePriceLevels(activity.price_levels ?? undefined);
+  if (priceLevels.length) {
+    const minLabel = formatPriceLevelLabel(priceLevels[0]);
+    const maxLabel = formatPriceLevelLabel(priceLevels[priceLevels.length - 1]);
+    const label = priceLevels.length === 1 ? `Price ${minLabel}` : `Price ${minLabel} – ${maxLabel}`;
+    chips.push({ key: 'price', label, icon: '💸' });
+  }
+  if (activity.capacity_key && activity.capacity_key !== 'any') {
+    const option = CAPACITY_OPTION_BY_KEY.get(activity.capacity_key as CapacityFilterKey);
+    const label = option?.label ?? `Group ${activity.capacity_key}`;
+    chips.push({ key: `capacity:${activity.capacity_key}`, label, icon: '👥' });
+  }
+  if (activity.time_window && activity.time_window !== 'any') {
+    const option = TIME_WINDOW_OPTION_BY_KEY.get(activity.time_window as TimeWindowKey);
+    const label = option?.label ?? formatTaxonomyLabel(activity.time_window);
+    chips.push({ key: `time:${activity.time_window}`, label, icon: '🕒' });
+  }
+  const taxonomy = (activity.taxonomy_categories ?? [])
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .map((value) => value.trim());
+  if (taxonomy.length) {
+    taxonomy.slice(0, 2).forEach((value, index) => {
+      chips.push({ key: `taxonomy:${value}:${index}`, label: formatTaxonomyLabel(value), icon: '🏷️' });
+    });
+    if (taxonomy.length > 2) {
+      chips.push({ key: 'taxonomy:overflow', label: `+${taxonomy.length - 2} more categories` });
+    }
+  }
+  return chips;
+};
 
 const activityPlaceLabel = (activity: MapActivity): string => {
   const label = normalizePlaceLabel(activity.place_label, activity.venue);
@@ -102,6 +200,17 @@ type Bounds = ViewBounds;
 type MovePayload = MapMovePayload;
 
 type ToggleOption = "map" | "list";
+type FilterChip = { key: string; label: string; onRemove: () => void };
+type UnsupportedFilterNotice = { id: string; label: string; onClear: () => void };
+type FilterSupportFlags = {
+  activityTypes: boolean;
+  tags: boolean;
+  traits: boolean;
+  taxonomyCategories: boolean;
+  priceLevels: boolean;
+  capacityKey: boolean;
+  timeWindow: boolean;
+};
 
 const roundCoordinate = (value: number, precision = 6) =>
   Number.isFinite(value) ? Number(value.toFixed(precision)) : 0;
@@ -136,22 +245,30 @@ export default function MapPage() {
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [copiedActivityLink, setCopiedActivityLink] = useState(false);
+  const [toastMessage, setToastMessage] = useState<MapToast | null>(null);
   const [filters, setFilters] = useState<MapFilterPreferences>(DEFAULT_MAP_FILTER_PREFERENCES);
+  const [useTagsForActivityTypes, setUseTagsForActivityTypes] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [locationErrored, setLocationErrored] = useState(false);
+  const [lastFilterSupport, setLastFilterSupport] = useState<FilterSupportFlags | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const searchParamsString = useMemo(() => searchParams?.toString() ?? '', [searchParams]);
   const highlightSessionId = searchParams?.get('highlightSession');
+  const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
   const [preferencesInitialised, setPreferencesInitialised] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const centerRef = useRef<MapCoordinates | null>(center);
   const queryCenterRef = useRef<MapCoordinates | null>(queryCenter);
   const radiusRef = useRef(radiusMeters);
   const boundsRef = useRef<Bounds | null>(bounds);
   const dataModeRef = useRef(dataMode);
+  const lastSyncedActivityIdRef = useRef<string | null>(searchParams?.get('activity') ?? null);
   const primeCenter = useCallback((next: MapCoordinates) => {
     centerRef.current = next;
     queryCenterRef.current = next;
@@ -165,13 +282,46 @@ export default function MapPage() {
     [],
   );
 
+  type FocusHistoryMode = 'replace' | 'push';
+
+  const syncFocusedActivityParam = useCallback(
+    (nextId: string | null, mode: FocusHistoryMode = 'replace') => {
+      if (!pathname) return;
+      const params = new URLSearchParams(searchParamsString);
+      const previous = params.get('activity');
+      const noChange = nextId ? previous === nextId : previous == null;
+      if (noChange && lastSyncedActivityIdRef.current === nextId) {
+        return;
+      }
+      if (nextId) {
+        params.set('activity', nextId);
+      } else {
+        params.delete('activity');
+      }
+      const nextUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+      const navigate = mode === 'push' ? router.push : router.replace;
+      lastSyncedActivityIdRef.current = nextId;
+      navigate(nextUrl as Route, { scroll: false });
+    },
+    [pathname, router, searchParamsString],
+  );
+
+  const showToast = useCallback((message: string, tone: MapToast['tone'] = 'success') => {
+    setToastMessage({ message, tone });
+  }, []);
+
   const selectedActivityTypes = filters.activityTypes;
   const selectedTraits = filters.traits;
+  const selectedTaxonomyCategories = filters.taxonomyCategories;
+  const selectedPriceLevels = filters.priceLevels;
+  const selectedCapacityKey = filters.capacityKey;
+  const selectedTimeWindow = filters.timeWindow;
 
-  type ListUpdater = string[] | ((prev: string[]) => string[]);
+  type StringListUpdater = string[] | ((prev: string[]) => string[]);
+  type NumberListUpdater = number[] | ((prev: number[]) => number[]);
 
   const setSelectedActivityTypes = useCallback(
-    (updater: ListUpdater) => {
+    (updater: StringListUpdater) => {
       updateFilters((prev) => ({
         ...prev,
         activityTypes: typeof updater === 'function' ? (updater as (prev: string[]) => string[])(prev.activityTypes) : updater,
@@ -181,7 +331,7 @@ export default function MapPage() {
   );
 
   const setSelectedTraits = useCallback(
-    (updater: ListUpdater) => {
+    (updater: StringListUpdater) => {
       updateFilters((prev) => ({
         ...prev,
         traits: typeof updater === 'function' ? (updater as (prev: string[]) => string[])(prev.traits) : updater,
@@ -190,7 +340,98 @@ export default function MapPage() {
     [updateFilters],
   );
 
-  const filtersForQuery = useMemo(() => mapPreferencesToQueryFilters(filters), [filters]);
+  const setSelectedTaxonomyCategories = useCallback(
+    (updater: StringListUpdater) => {
+      updateFilters((prev) => ({
+        ...prev,
+        taxonomyCategories:
+          typeof updater === 'function' ? (updater as (prev: string[]) => string[])(prev.taxonomyCategories) : updater,
+      }));
+    },
+    [updateFilters],
+  );
+
+  const setSelectedPriceLevels = useCallback(
+    (updater: NumberListUpdater) => {
+      updateFilters((prev) => ({
+        ...prev,
+        priceLevels: typeof updater === 'function' ? (updater as (prev: number[]) => number[])(prev.priceLevels) : updater,
+      }));
+    },
+    [updateFilters],
+  );
+
+  const setCapacityKey = useCallback(
+    (next: CapacityFilterKey) => {
+      updateFilters((prev) => ({
+        ...prev,
+        capacityKey: next,
+      }));
+    },
+    [updateFilters],
+  );
+
+  const setTimeWindow = useCallback(
+    (next: TimeWindowKey) => {
+      updateFilters((prev) => ({
+        ...prev,
+        timeWindow: next,
+      }));
+    },
+    [updateFilters],
+  );
+
+  const filtersForQuery = useMemo(() => {
+    const mapped = mapPreferencesToQueryFilters(filters);
+    if (!mapped) return undefined;
+
+    let result: typeof mapped | undefined = mapped;
+    if (useTagsForActivityTypes && mapped.activityTypes?.length) {
+      const { activityTypes, ...rest } = mapped;
+      result = {
+        ...rest,
+        tags: activityTypes,
+      };
+    }
+
+    if (lastFilterSupport && result) {
+      const next = { ...result };
+      let changed = false;
+      if (next.activityTypes && lastFilterSupport.activityTypes === false) {
+        delete next.activityTypes;
+        changed = true;
+      }
+      if (next.tags && lastFilterSupport.tags === false) {
+        delete next.tags;
+        changed = true;
+      }
+      if (next.traits && lastFilterSupport.traits === false) {
+        delete next.traits;
+        changed = true;
+      }
+      if (next.taxonomyCategories && lastFilterSupport.taxonomyCategories === false) {
+        delete next.taxonomyCategories;
+        changed = true;
+      }
+      if (next.priceLevels && lastFilterSupport.priceLevels === false) {
+        delete next.priceLevels;
+        changed = true;
+      }
+      if (next.capacityKey && lastFilterSupport.capacityKey === false) {
+        delete next.capacityKey;
+        changed = true;
+      }
+      if (next.timeWindow && lastFilterSupport.timeWindow === false) {
+        delete next.timeWindow;
+        changed = true;
+      }
+      if (changed) {
+        result = Object.keys(next).length ? next : undefined;
+      }
+    }
+
+    return result;
+  }, [filters, lastFilterSupport, useTagsForActivityTypes]);
 
   const hydrateAnonymousPreferences = useCallback(() => {
     const next = readLocalMapFilters() ?? DEFAULT_MAP_FILTER_PREFERENCES;
@@ -352,6 +593,18 @@ export default function MapPage() {
     dataModeRef.current = dataMode;
   }, [dataMode]);
 
+  useEffect(() => {
+    if (!copiedActivityLink) return;
+    const timeout = setTimeout(() => setCopiedActivityLink(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [copiedActivityLink]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timeout = setTimeout(() => setToastMessage(null), 3200);
+    return () => clearTimeout(timeout);
+  }, [toastMessage]);
+
   const fetcher = useMemo(
     () =>
       createNearbyActivitiesFetcher({
@@ -393,9 +646,10 @@ export default function MapPage() {
             radiusMeters,
             limit: 150,
             filters: filtersForQuery,
+            bounds: bounds ?? undefined,
           }
         : null,
-    [queryCenter, radiusMeters, filtersForQuery],
+    [queryCenter, radiusMeters, filtersForQuery, bounds],
   );
 
   const loadActivities = dataMode !== 'events';
@@ -419,6 +673,32 @@ export default function MapPage() {
   });
 
   const activities = nearby.data?.activities ?? EMPTY_ACTIVITIES;
+  const filterSupport = nearby.data?.filterSupport ?? null;
+  const facets = nearby.data?.facets ?? null;
+  const facetActivityTypes = facets?.activityTypes ?? [];
+  const facetTags = facets?.tags ?? [];
+  const facetTraits = facets?.traits ?? [];
+  const facetTaxonomyCategories = facets?.taxonomyCategories ?? [];
+  const facetPriceLevels = facets?.priceLevels ?? [];
+  const facetCapacityKey = facets?.capacityKey ?? [];
+  const facetTimeWindow = facets?.timeWindow ?? [];
+  const activityTypesSupported = filterSupport?.activityTypes ?? true;
+  const tagsSupported = filterSupport?.tags ?? true;
+  const traitsSupported = filterSupport?.traits ?? true;
+  const taxonomyCategoriesSupported = filterSupport?.taxonomyCategories ?? false;
+  const priceLevelsSupported = filterSupport?.priceLevels ?? false;
+  const capacitySupported = filterSupport?.capacityKey ?? false;
+  const timeWindowSupported = filterSupport?.timeWindow ?? false;
+
+  useEffect(() => {
+    if (!filterSupport) return;
+    setLastFilterSupport(filterSupport);
+    if (!filterSupport.activityTypes && filterSupport.tags) {
+      setUseTagsForActivityTypes(true);
+    } else if (filterSupport.activityTypes) {
+      setUseTagsForActivityTypes(false);
+    }
+  }, [filterSupport]);
 
   const eventsRangeDays = dataMode === 'events' ? 21 : 14;
   const eventsWindow = useMemo(() => {
@@ -491,24 +771,62 @@ export default function MapPage() {
       setDataMode('both');
     }
     setViewMode('list');
-    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    const params = new URLSearchParams(searchParamsString);
     params.delete('highlightSession');
     const basePath = pathname ?? '/map';
     const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
     router.replace(nextUrl as Route, { scroll: false });
-  }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParams]);
+  }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParamsString]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParamsString);
+    const requestedId = params.get('activity');
+    lastSyncedActivityIdRef.current = requestedId;
+    if (!requestedId) {
+      if (selectedActivityId) {
+        setSelectedActivityId(null);
+      }
+      return;
+    }
+    if (requestedId === selectedActivityId) return;
+    setSelectedActivityId(requestedId);
+    setSelectedEventId(null);
+    setViewMode('list');
+  }, [searchParamsString, selectedActivityId]);
 
   const availableActivityTypes = useMemo(() => {
+    if (useTagsForActivityTypes && facetTags.length) {
+      return facetTags.map((entry) => entry.value);
+    }
+    if (activityTypesSupported && facetActivityTypes.length) {
+      return facetActivityTypes.map((entry) => entry.value);
+    }
+    if (!activityTypesSupported && tagsSupported && facetTags.length) {
+      return facetTags.map((entry) => entry.value);
+    }
     const set = new Set<string>();
-    for (const activity of activities) {
-      for (const type of activity.activity_types ?? []) {
-        if (typeof type === "string" && type.trim()) set.add(type.trim());
+    if (activityTypesSupported) {
+      for (const activity of activities) {
+        for (const type of activity.activity_types ?? []) {
+          if (typeof type === "string" && type.trim()) set.add(type.trim());
+        }
+      }
+    }
+    if (!set.size && tagsSupported) {
+      for (const activity of activities) {
+        for (const tag of activity.tags ?? []) {
+          if (typeof tag === "string" && tag.trim()) set.add(tag.trim());
+        }
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [activities]);
+  }, [activities, activityTypesSupported, facetActivityTypes, facetTags, tagsSupported, useTagsForActivityTypes]);
 
   const availableTraits = useMemo(() => {
+    if (!traitsSupported) return [];
+    if (facetTraits.length) {
+      return facetTraits.map((entry) => entry.value);
+    }
     const set = new Set<string>();
     for (const activity of activities) {
       for (const trait of activity.traits ?? []) {
@@ -516,29 +834,158 @@ export default function MapPage() {
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [activities]);
+  }, [activities, facetTraits, traitsSupported]);
 
-  const toggleActivityType = (value: string) => {
-    setSelectedActivityTypes((prev) => {
-      const active = prev.includes(value);
-      const next = active ? prev.filter((v) => v !== value) : [...prev, value];
-      track('map_filter_activity', { value, active: !active });
-      return next;
+  const availableTaxonomyCategories = useMemo(() => {
+    if (!taxonomyCategoriesSupported) return [];
+    if (facetTaxonomyCategories.length) {
+      return facetTaxonomyCategories.map((entry) => entry.value);
+    }
+    const set = new Set<string>();
+    for (const activity of activities) {
+      for (const category of activity.taxonomy_categories ?? []) {
+        if (typeof category === 'string' && category.trim()) set.add(category.trim());
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [activities, facetTaxonomyCategories, taxonomyCategoriesSupported]);
+
+  const taxonomyFacetCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    facetTaxonomyCategories.forEach((entry) => {
+      if (entry.value) {
+        map.set(entry.value, entry.count);
+      }
     });
-  };
-  const toggleTrait = (value: string) => {
-    setSelectedTraits((prev) => {
-      const active = prev.includes(value);
-      const next = active ? prev.filter((v) => v !== value) : [...prev, value];
-      track('map_filter_trait', { value, active: !active });
-      return next;
+    return map;
+  }, [facetTaxonomyCategories]);
+
+  const availablePriceLevels = useMemo(() => {
+    if (!priceLevelsSupported) return [];
+    const values: number[] = [];
+    if (facetPriceLevels.length) {
+      facetPriceLevels.forEach((entry) => {
+        const parsed = Number(entry.value);
+        if (Number.isFinite(parsed)) values.push(Math.round(parsed));
+      });
+    } else {
+      for (const activity of activities) {
+        for (const level of activity.price_levels ?? []) {
+          if (typeof level === 'number' && Number.isFinite(level)) values.push(Math.round(level));
+        }
+      }
+    }
+    const unique = Array.from(new Set(values.map((value) => Math.min(Math.max(value, 1), PRICE_LEVEL_OPTIONS.length))));
+    return unique.sort((a, b) => a - b);
+  }, [activities, facetPriceLevels, priceLevelsSupported]);
+
+  const priceLevelFacetCounts = useMemo(() => {
+    const map = new Map<number, number>();
+    facetPriceLevels.forEach((entry) => {
+      const parsed = Number(entry.value);
+      if (Number.isFinite(parsed)) {
+        map.set(Math.min(Math.max(Math.round(parsed), 1), PRICE_LEVEL_OPTIONS.length), entry.count);
+      }
     });
-  };
+    return map;
+  }, [facetPriceLevels]);
+
+  const availablePriceLevelSet = useMemo(() => new Set(availablePriceLevels), [availablePriceLevels]);
+
+  const capacityFacetCounts = useMemo(() => {
+    const map = new Map<CapacityFilterKey, number>();
+    facetCapacityKey.forEach((entry) => {
+      if (entry.value) {
+        map.set(entry.value as CapacityFilterKey, entry.count);
+      }
+    });
+    return map;
+  }, [facetCapacityKey]);
+
+  const timeWindowFacetCounts = useMemo(() => {
+    const map = new Map<TimeWindowKey, number>();
+    facetTimeWindow.forEach((entry) => {
+      if (entry.value) {
+        map.set(entry.value as TimeWindowKey, entry.count);
+      }
+    });
+    return map;
+  }, [facetTimeWindow]);
+
+  const toggleActivityType = useCallback(
+    (value: string) => {
+      setSelectedActivityTypes((prev) => {
+        const active = prev.includes(value);
+        const next = active ? prev.filter((v) => v !== value) : [...prev, value];
+        track('map_filter_activity', { value, active: !active });
+        return next;
+      });
+    },
+    [setSelectedActivityTypes, track],
+  );
+
+  const toggleTrait = useCallback(
+    (value: string) => {
+      setSelectedTraits((prev) => {
+        const active = prev.includes(value);
+        const next = active ? prev.filter((v) => v !== value) : [...prev, value];
+        track('map_filter_trait', { value, active: !active });
+        return next;
+      });
+    },
+    [setSelectedTraits, track],
+  );
+
+  const toggleTaxonomyCategory = useCallback(
+    (value: string) => {
+      setSelectedTaxonomyCategories((prev) => {
+        const active = prev.includes(value);
+        const next = active ? prev.filter((entry) => entry !== value) : [...prev, value];
+        track('map_filter_taxonomy', { value, active: !active });
+        return next;
+      });
+    },
+    [setSelectedTaxonomyCategories, track],
+  );
+
+  const togglePriceLevel = useCallback(
+    (level: number) => {
+      setSelectedPriceLevels((prev) => {
+        const active = prev.includes(level);
+        const next = active ? prev.filter((entry) => entry !== level) : [...prev, level];
+        track('map_filter_price', { level, active: !active });
+        return next;
+      });
+    },
+    [setSelectedPriceLevels, track],
+  );
+
+  const toggleCapacityKey = useCallback(
+    (key: CapacityFilterKey) => {
+      const next = selectedCapacityKey === key && key !== 'any' ? 'any' : key;
+      setCapacityKey(next);
+      track('map_filter_capacity', { key, active: next === key && key !== 'any' });
+    },
+    [selectedCapacityKey, setCapacityKey, track],
+  );
+
+  const toggleTimeWindow = useCallback(
+    (key: TimeWindowKey) => {
+      const next = selectedTimeWindow === key && key !== 'any' ? 'any' : key;
+      setTimeWindow(next);
+      track('map_filter_time', { key, active: next === key && key !== 'any' });
+    },
+    [selectedTimeWindow, setTimeWindow, track],
+  );
 
   const resetFilters = () => {
     track('map_filters_reset', {
       activityTypes: selectedActivityTypes.length,
       traits: selectedTraits.length,
+      taxonomyCategories: selectedTaxonomyCategories.length,
+      priceLevels: selectedPriceLevels.length,
+      capacityKey: selectedCapacityKey,
+      timeWindow: selectedTimeWindow,
     });
     setSearchTerm('');
     updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
@@ -621,8 +1068,9 @@ export default function MapPage() {
       setSelectedActivityId(activity.id);
       setSelectedEventId(null);
       track('map_activity_focus', { activityId: activity.id, source: 'map' });
+      syncFocusedActivityParam(activity.id, 'push');
     },
-    [track],
+    [syncFocusedActivityParam, track],
   );
 
   const handleEventSelect = useCallback(
@@ -630,8 +1078,9 @@ export default function MapPage() {
       setSelectedEventId(eventSummary.id);
       setSelectedActivityId(null);
       track('map_event_focus', { eventId: eventSummary.id, source: 'map' });
+      syncFocusedActivityParam(null, 'push');
     },
-    [track],
+    [syncFocusedActivityParam, track],
   );
 
   const handleFocusActivity = useCallback(
@@ -642,8 +1091,9 @@ export default function MapPage() {
       track('map_activity_focus', { activityId: activity.id, source: 'list' });
       changeViewMode('map');
       setCenter({ lat: activity.lat, lng: activity.lng });
+      syncFocusedActivityParam(activity.id, 'push');
     },
-    [changeViewMode, track],
+    [changeViewMode, syncFocusedActivityParam, track],
   );
 
   const handleFocusEvent = useCallback(
@@ -655,8 +1105,9 @@ export default function MapPage() {
       setSelectedActivityId(null);
       track('map_event_focus', { eventId: eventSummary.id, source: 'list' });
       changeViewMode('map');
+      syncFocusedActivityParam(null, 'push');
     },
-    [changeViewMode, track],
+    [changeViewMode, syncFocusedActivityParam, track],
   );
 
   const handleViewEvents = useCallback(
@@ -715,10 +1166,26 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     eventId: eventSummary.id,
     hasUrl: Boolean(eventSummary.url),
   });
+
+  const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+  if (sessionId) {
+    router.push(`/sessions/${sessionId}` as Route);
+    return;
+  }
+
+  const internalUrl = typeof eventSummary.url === 'string' && eventSummary.url.startsWith('/')
+    ? (eventSummary.url as Route)
+    : null;
+  if (internalUrl) {
+    router.push(internalUrl);
+    return;
+  }
+
   if (eventSummary.id) {
     router.push(`/events/${eventSummary.id}` as Route);
     return;
   }
+
   if (eventSummary.url) {
     window.open(eventSummary.url, '_blank', 'noopener,noreferrer');
   }
@@ -733,10 +1200,181 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   );
 
   const hasSearchFilter = searchTerm.trim().length > 0;
-  const activeFiltersCount =
-    selectedActivityTypes.length +
-    selectedTraits.length +
-    (hasSearchFilter ? 1 : 0);
+  const activeFilterChips = useMemo<FilterChip[]>(() => {
+    const chips: FilterChip[] = [];
+    if (hasSearchFilter) {
+      const term = searchTerm.trim();
+      chips.push({
+        key: 'search',
+        label: `Search “${term}”`,
+        onRemove: () => setSearchTerm(''),
+      });
+    }
+    selectedActivityTypes.forEach((type) => {
+      chips.push({
+        key: `type:${type}`,
+        label: type,
+        onRemove: () => toggleActivityType(type),
+      });
+    });
+    selectedTraits.forEach((trait) => {
+      chips.push({
+        key: `trait:${trait}`,
+        label: trait,
+        onRemove: () => toggleTrait(trait),
+      });
+    });
+    selectedTaxonomyCategories.forEach((category) => {
+      chips.push({
+        key: `taxonomy:${category}`,
+        label: formatTaxonomyLabel(category),
+        onRemove: () => toggleTaxonomyCategory(category),
+      });
+    });
+    [...selectedPriceLevels]
+      .sort((a, b) => a - b)
+      .forEach((level) => {
+        chips.push({
+          key: `price:${level}`,
+          label: `Price ${formatPriceLevelLabel(level)}`,
+          onRemove: () => togglePriceLevel(level),
+        });
+      });
+    if (selectedCapacityKey !== 'any') {
+      const option = CAPACITY_OPTION_BY_KEY.get(selectedCapacityKey);
+      const label = option?.label ?? `Group ${selectedCapacityKey}`;
+      chips.push({
+        key: `capacity:${selectedCapacityKey}`,
+        label,
+        onRemove: () => toggleCapacityKey(selectedCapacityKey),
+      });
+    }
+    if (selectedTimeWindow !== 'any') {
+      const option = TIME_WINDOW_OPTION_BY_KEY.get(selectedTimeWindow);
+      const label = option?.label ?? `Time ${selectedTimeWindow}`;
+      chips.push({
+        key: `time:${selectedTimeWindow}`,
+        label,
+        onRemove: () => toggleTimeWindow(selectedTimeWindow),
+      });
+    }
+    return chips;
+  }, [
+    hasSearchFilter,
+    searchTerm,
+    selectedActivityTypes,
+    selectedTraits,
+    selectedTaxonomyCategories,
+    selectedPriceLevels,
+    selectedCapacityKey,
+    selectedTimeWindow,
+    setSearchTerm,
+    toggleActivityType,
+    toggleTrait,
+    toggleTaxonomyCategory,
+    togglePriceLevel,
+    toggleCapacityKey,
+    toggleTimeWindow,
+  ]);
+
+  const activeFiltersCount = activeFilterChips.length;
+
+  const handleRefreshSearch = useCallback(async () => {
+    if (!query) return;
+    setIsRefreshing(true);
+    track('map_refresh_search', {
+      radiusMeters,
+      filtersApplied: activeFiltersCount,
+      dataMode,
+    });
+    try {
+      const refreshed = await fetcher({ ...query, refresh: true });
+      queryClient.setQueryData(mapActivitiesQueryKey(query), refreshed);
+      if (loadEvents) {
+        void eventsQuery.refetch();
+      }
+      showToast('Search updated', 'info');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to refresh search';
+      showToast(message, 'error');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [
+    query,
+    radiusMeters,
+    activeFiltersCount,
+    dataMode,
+    fetcher,
+    queryClient,
+    showToast,
+    track,
+    loadEvents,
+    eventsQuery,
+  ]);
+
+  const unsupportedFilters = useMemo<UnsupportedFilterNotice[]>(() => {
+    if (!filterSupport) return [];
+    const notices: UnsupportedFilterNotice[] = [];
+    const activityFiltersUnavailable = !filterSupport.activityTypes && !filterSupport.tags;
+    if (activityFiltersUnavailable && selectedActivityTypes.length) {
+      notices.push({
+        id: 'activityTypes',
+        label: 'Activity types',
+        onClear: () => setSelectedActivityTypes([]),
+      });
+    }
+    if (!filterSupport.traits && selectedTraits.length) {
+      notices.push({
+        id: 'traits',
+        label: 'People traits',
+        onClear: () => setSelectedTraits([]),
+      });
+    }
+    if (!filterSupport.taxonomyCategories && selectedTaxonomyCategories.length) {
+      notices.push({
+        id: 'taxonomy',
+        label: 'Taxonomy categories',
+        onClear: () => setSelectedTaxonomyCategories([]),
+      });
+    }
+    if (!filterSupport.priceLevels && selectedPriceLevels.length) {
+      notices.push({
+        id: 'priceLevels',
+        label: 'Price levels',
+        onClear: () => setSelectedPriceLevels([]),
+      });
+    }
+    if (!filterSupport.capacityKey && selectedCapacityKey !== 'any') {
+      notices.push({
+        id: 'capacity',
+        label: 'Group size',
+        onClear: () => setCapacityKey('any'),
+      });
+    }
+    if (!filterSupport.timeWindow && selectedTimeWindow !== 'any') {
+      notices.push({
+        id: 'timeWindow',
+        label: 'Time window',
+        onClear: () => setTimeWindow('any'),
+      });
+    }
+    return notices;
+  }, [
+    filterSupport,
+    selectedActivityTypes,
+    selectedTraits,
+    selectedTaxonomyCategories,
+    selectedPriceLevels,
+    selectedCapacityKey,
+    selectedTimeWindow,
+    setCapacityKey,
+    setSelectedActivityTypes,
+    setSelectedPriceLevels,
+    setSelectedTaxonomyCategories,
+    setSelectedTraits,
+    setTimeWindow,
+  ]);
 
   useEffect(() => {
     if (!nearby.data) return;
@@ -759,15 +1397,82 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   useEffect(() => {
     if (dataMode === 'events') {
       setSelectedActivityId(null);
+      syncFocusedActivityParam(null, 'replace');
     }
     if (dataMode === 'activities') {
       setSelectedEventId(null);
     }
-  }, [dataMode]);
+  }, [dataMode, syncFocusedActivityParam]);
 
   const sortedActivities = useMemo(() => {
     return [...filteredActivities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
   }, [filteredActivities]);
+
+  const selectedActivity = useMemo(() => {
+    if (!selectedActivityId) return null;
+    return activities.find((activity) => activity.id === selectedActivityId) ?? null;
+  }, [activities, selectedActivityId]);
+
+  const selectedActivitySummary = useMemo(() => {
+    if (!selectedActivity) return null;
+    const place = activityPlaceLabel(selectedActivity) ?? PLACE_FALLBACK_LABEL;
+    const types = (selectedActivity.activity_types ?? [])
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value) => value.trim());
+    const traitsList = (selectedActivity.traits ?? [])
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value) => value.trim());
+    const taxonomy = (selectedActivity.taxonomy_categories ?? [])
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value) => value.trim());
+    const chips = buildActivityMetadataChips(selectedActivity);
+    return {
+      id: selectedActivity.id,
+      name: selectedActivity.name ?? 'Activity',
+      place,
+      types: types.slice(0, 3),
+      traits: traitsList.slice(0, 3),
+      taxonomy: taxonomy.slice(0, 3),
+      chips,
+      upcomingSessions: selectedActivity.upcoming_session_count ?? 0,
+      source: selectedActivity.source ?? null,
+    };
+  }, [selectedActivity]);
+
+  const focusedActivityId = selectedActivitySummary?.id ?? null;
+
+  const handleCopyFocusedActivityLink = useCallback(async () => {
+    if (!focusedActivityId) return;
+    if (typeof window === 'undefined') return;
+    const href = window.location.href;
+    if (!href) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(href);
+      } else if (typeof document !== 'undefined') {
+        const textarea = document.createElement('textarea');
+        textarea.value = href;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedActivityLink(true);
+      track('map_activity_link_copied', { activityId: focusedActivityId });
+      showToast('Link copied to clipboard');
+    } catch (error) {
+      console.warn('[map] failed to copy focused activity link', error);
+      showToast('Unable to copy link', 'error');
+    }
+  }, [focusedActivityId, showToast, track]);
+
+  const clearSelectedActivity = useCallback(() => {
+    setSelectedActivityId(null);
+    syncFocusedActivityParam(null, 'push');
+  }, [setSelectedActivityId, syncFocusedActivityParam]);
 
   const radiusLabel = formatKilometres(radiusMeters);
   const headerTitle = dataMode === 'events' ? 'Nearby events' : dataMode === 'both' ? 'Activities & events nearby' : 'Nearby activities';
@@ -802,6 +1507,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
   const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
   const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
+  const refreshDisabled = !query || isRefreshing || nearby.isFetching;
   const filtersButtonDisabled = !loadActivities && !loadEvents;
 
   const activityListEmpty = loadActivities && !nearby.isLoading && filteredActivities.length === 0;
@@ -859,6 +1565,14 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           <div className="hidden text-xs text-ink-muted lg:block">{headerSummary}</div>
           <button
             type="button"
+            onClick={handleRefreshSearch}
+            disabled={refreshDisabled}
+            className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/40 px-sm py-xxs text-sm font-medium text-ink hover:border-brand-teal/60 hover:text-brand-teal disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isRefreshing ? 'Refreshing…' : 'Refresh search'}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               if (filtersButtonDisabled) return;
               setFiltersOpen(true);
@@ -876,6 +1590,55 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           </button>
         </div>
       </div>
+      {activeFilterChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-xs border-b border-midnight-border/30 bg-surface px-md py-xxs text-[11px] text-ink-muted">
+          <span className="font-semibold uppercase tracking-wide text-ink">Active filters</span>
+          <div className="flex flex-wrap gap-xs">
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={chip.onRemove}
+                className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/40 bg-surface-alt px-xs py-hairline text-[11px] font-medium text-ink hover:border-brand-teal/60 hover:text-brand-teal"
+              >
+                <span>{chip.label}</span>
+                <span aria-hidden className="text-xs">×</span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="ml-auto text-[11px] font-semibold uppercase tracking-wide text-brand-teal hover:text-brand-dark"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+      {unsupportedFilters.length > 0 && (
+        <div className="border-b border-amber-200 bg-amber-50 px-md py-sm text-xs text-amber-900">
+          <p className="font-semibold text-amber-800">Some filters aren&apos;t applied right now</p>
+          <p className="mt-xxs">
+            {unsupportedFilters.length === 1
+              ? `${unsupportedFilters[0]?.label} is temporarily disabled because fallback sources in this area do not include that metadata.`
+              : `The following filters are temporarily disabled because fallback sources in this area do not include that metadata: ${unsupportedFilters
+                  .map((filter) => filter.label)
+                  .join(', ')}.`}
+          </p>
+          <div className="mt-xxs flex flex-wrap gap-xs">
+            {unsupportedFilters.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={filter.onClear}
+                className="rounded-full border border-amber-300 bg-white/70 px-sm py-hairline text-[11px] font-semibold text-amber-800 hover:border-amber-400"
+              >
+                Clear {filter.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div
           className={`${viewMode === "map" ? "flex" : "hidden"} h-[50vh] min-h-[320px] flex-1 bg-surface-alt lg:flex lg:h-auto`}
@@ -910,6 +1673,77 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             </span>
             <span>Radius ~{radiusLabel}</span>
           </div>
+          {selectedActivitySummary && loadActivities && (
+            <div className="border-b border-midnight-border/40 px-md py-sm text-[11px] text-ink-muted">
+              <div className="flex items-start justify-between gap-sm">
+                <div>
+                  <div className="font-semibold uppercase tracking-wide text-brand-teal">Focused activity</div>
+                  <div className="text-sm font-semibold text-ink">{selectedActivitySummary.name}</div>
+                  <div className="mt-hairline flex items-center gap-xxs">
+                    <span aria-hidden>📍</span>
+                    <span>{selectedActivitySummary.place}</span>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-xxs text-right">
+                  {selectedActivitySummary.source ? (
+                    <span className="rounded-full bg-surface-alt px-xs py-hairline text-[10px] uppercase tracking-wide text-ink-muted">
+                      {selectedActivitySummary.source}
+                    </span>
+                  ) : null}
+                  <div className="flex flex-wrap items-center justify-end gap-xxs">
+                    <button
+                      type="button"
+                      onClick={handleCopyFocusedActivityLink}
+                      disabled={!focusedActivityId}
+                      className="rounded-full border border-midnight-border/40 px-xs py-hairline text-[10px] font-semibold uppercase tracking-wide text-ink-muted hover:border-brand-teal/60 hover:text-brand-teal disabled:opacity-50"
+                    >
+                      {copiedActivityLink ? 'Copied!' : 'Copy link'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSelectedActivity}
+                      className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted hover:text-brand-teal"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {selectedActivitySummary.chips.length > 0 && (
+                <div className="mt-xs flex flex-wrap gap-xxs text-[11px] text-ink">
+                  {selectedActivitySummary.chips.map((chip) => (
+                    <span
+                      key={`summary-${chip.key}`}
+                      className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline"
+                    >
+                      {chip.icon ? <span aria-hidden>{chip.icon}</span> : null}
+                      <span>{chip.label}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="mt-xs grid gap-xxs text-[11px] text-ink">
+                {selectedActivitySummary.types.length ? (
+                  <div>
+                    <span className="font-semibold text-ink-strong">Types:</span> {selectedActivitySummary.types.join(', ')}
+                  </div>
+                ) : null}
+                {selectedActivitySummary.traits.length ? (
+                  <div>
+                    <span className="font-semibold text-ink-strong">Traits:</span> {selectedActivitySummary.traits.join(', ')}
+                  </div>
+                ) : null}
+                {selectedActivitySummary.taxonomy.length ? (
+                  <div>
+                    <span className="font-semibold text-ink-strong">Taxonomy:</span> {selectedActivitySummary.taxonomy.map((value) => formatTaxonomyLabel(value)).join(', ')}
+                  </div>
+                ) : null}
+                <div>
+                  <span className="font-semibold text-ink-strong">Upcoming sessions:</span> {selectedActivitySummary.upcomingSessions}
+                </div>
+              </div>
+            </div>
+          )}
           <div className={listSectionsClass}>
             {loadActivities && (
               <section className={listSectionCardClass} aria-label="Activities list">
@@ -943,6 +1777,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const canViewEvents = upcomingSessions > 0;
                     const placeLabel = activityPlaceLabel(activity);
                     const activitySubtitle = placeLabel ?? PLACE_FALLBACK_LABEL;
+                    const metadataChips = buildActivityMetadataChips(activity);
                     return (
                       <li key={activity.id}>
                         <div
@@ -983,6 +1818,21 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                       +{activity.activity_types.length - 3}
                                     </span>
                                   )}
+                                </div>
+                              )}
+                              {metadataChips.length > 0 && (
+                                <div className="mt-xs flex flex-wrap gap-xxs text-[11px] text-ink-muted">
+                                  {metadataChips.map((chip) => (
+                                    <span
+                                      key={chip.key}
+                                      className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline"
+                                    >
+                                      {chip.icon ? (
+                                        <span aria-hidden>{chip.icon}</span>
+                                      ) : null}
+                                      <span>{chip.label}</span>
+                                    </span>
+                                  ))}
                                 </div>
                               )}
                             </div>
@@ -1175,7 +2025,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             <div className="flex items-center justify-between border-b border-midnight-border/40 px-lg py-md">
               <div>
                 <h2 className="text-base font-semibold text-ink">Filters</h2>
-                <p className="text-xs text-ink-muted">Refine by activity and people preferences.</p>
+                <p className="text-xs text-ink-muted">Refine by activity, taxonomy, price, and people preferences.</p>
               </div>
               <button
                 type="button"
@@ -1221,11 +2071,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               {loadActivities ? (
                 <>
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Activity types</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{activityTypesSupported ? 'Activity types' : tagsSupported ? 'Activity tags' : 'Activity types'}</div>
                     <div className="mt-sm flex flex-wrap gap-xs">
-                      {availableActivityTypes.length === 0 && (
-                        <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
-                      )}
+                      {!availableActivityTypes.length ? (
+                        !activityTypesSupported && !tagsSupported ? (
+                          <p className="text-xs text-ink-muted">Activity types are temporarily unavailable.</p>
+                        ) : (
+                          <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
+                        )
+                      ) : null}
                       {availableActivityTypes.map((type) => {
                         const active = selectedActivityTypes.includes(type);
                         return (
@@ -1244,9 +2098,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
                     <div className="mt-sm flex flex-wrap gap-xs">
-                      {availableTraits.length === 0 && (
+                      {!traitsSupported ? (
+                        <p className="text-xs text-ink-muted">People traits are temporarily unavailable.</p>
+                      ) : availableTraits.length === 0 ? (
                         <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
-                      )}
+                      ) : null}
                       {availableTraits.map((trait) => {
                         const active = selectedTraits.includes(trait);
                         return (
@@ -1262,10 +2118,115 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                       })}
                     </div>
                   </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Taxonomy categories</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {!taxonomyCategoriesSupported ? (
+                        <p className="text-xs text-ink-muted">Taxonomy filters are temporarily unavailable.</p>
+                      ) : availableTaxonomyCategories.length === 0 ? (
+                        <p className="text-xs text-ink-muted">Categories appear once activities report taxonomy metadata.</p>
+                      ) : null}
+                      {taxonomyCategoriesSupported && availableTaxonomyCategories.map((category) => {
+                        const active = selectedTaxonomyCategories.includes(category);
+                        const count = taxonomyFacetCounts.get(category);
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => toggleTaxonomyCategory(category)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                            title={formatTaxonomyLabel(category)}
+                          >
+                            <span>{formatTaxonomyLabel(category)}</span>
+                            {typeof count === 'number' ? (
+                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Price levels</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {!priceLevelsSupported ? (
+                        <p className="text-xs text-ink-muted">Price filters are temporarily unavailable.</p>
+                      ) : availablePriceLevels.length === 0 ? (
+                        <p className="text-xs text-ink-muted">We will populate suggestions as soon as price metadata is available.</p>
+                      ) : null}
+                      {priceLevelsSupported && PRICE_LEVEL_OPTIONS.filter((option) => availablePriceLevelSet.has(option.level)).map((option) => {
+                        const active = selectedPriceLevels.includes(option.level);
+                        const count = priceLevelFacetCounts.get(option.level);
+                        return (
+                          <button
+                            key={option.level}
+                            type="button"
+                            onClick={() => togglePriceLevel(option.level)}
+                            className={`min-w-[3rem] rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            <span>{option.label}</span>
+                            {typeof count === 'number' ? (
+                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Group size</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {!capacitySupported ? (
+                        <p className="text-xs text-ink-muted">Group size filters appear when activities share capacity.</p>
+                      ) : null}
+                      {capacitySupported && CAPACITY_OPTIONS.map((option) => {
+                        const active = selectedCapacityKey === option.key;
+                        const count = capacityFacetCounts.get(option.key);
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            onClick={() => toggleCapacityKey(option.key)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            <span>{option.label}</span>
+                            {option.key !== 'any' && typeof count === 'number' ? (
+                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Time window</div>
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {!timeWindowSupported ? (
+                        <p className="text-xs text-ink-muted">Time-of-day filters appear when activities expose schedule metadata.</p>
+                      ) : null}
+                      {timeWindowSupported && TIME_WINDOW_OPTIONS.map((option) => {
+                        const active = selectedTimeWindow === option.key;
+                        const count = timeWindowFacetCounts.get(option.key);
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            onClick={() => toggleTimeWindow(option.key)}
+                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
+                          >
+                            <span>{option.label}</span>
+                            {option.key !== 'any' && typeof count === 'number' ? (
+                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               ) : (
                 <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
-                  Activity-type and trait filters are available when viewing activities. Switch to “Activities” or “Both” to adjust those selections.
+                  Activity filters (types, taxonomy, price, capacity, and time) are available when viewing activities. Switch to “Activities” or “Both” to adjust those selections.
                 </div>
               )}
             </div>
@@ -1290,6 +2251,28 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {toastMessage && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-40 flex justify-center px-md">
+          <div
+            className={`pointer-events-auto inline-flex items-center gap-xs rounded-full px-md py-xs text-sm font-semibold shadow-lg transition ${
+              toastMessage.tone === 'error'
+                ? 'bg-feedback-danger text-white'
+                : toastMessage.tone === 'info'
+                  ? 'bg-midnight-border text-ink-strong'
+                  : 'bg-brand-teal text-white'
+            }`}
+          >
+            <span>{toastMessage.message}</span>
+            <button
+              type="button"
+              onClick={() => setToastMessage(null)}
+              className="text-xs font-semibold uppercase tracking-wide text-current opacity-80 hover:opacity-100"
+            >
+              Dismiss
+            </button>
           </div>
         </div>
       )}

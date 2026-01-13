@@ -82,4 +82,24 @@ order by expires_at asc
 limit 50;
 ```
 Look for expired entries (expiry in the past) and purge them if the list grows.
+
+## 6. Venue verification workflow sanity check
+
+Use the host verification page (`/venues`) to exercise the advanced filters before shipping discovery changes:
+
+1. Load any activity and confirm the `Signal filters` panel renders Open now, Has votes, Category match, Keyword signal, and Price focus controls.
+2. Toggle each control and verify the list/map shrink appropriately (Open now hides closed venues, Has votes enforces community data, etc.).
+3. Apply stacked filters (e.g., Open now + Has votes + Category match + Keyword signal + specific price levels) and ensure at least one venue remains; otherwise relax filters and record gaps.
+4. Click `Reset filters` and confirm all toggles/chips clear, restoring the full list.
+
+Document any anomalies (like missing price data or stale hours) directly in the verification task so the discovery team can re-train or patch upstream providers.
+
+## 7. Natural High / climbing coverage verification
+
+Run this quick loop whenever we touch the discovery providers for climbing/bouldering venues:
+
+1. Export the environment variable `DEBUG_GOOGLE_PLACES=1` (both `pnpm --filter dowhat-web dev` and the API route inherit it) so backend logs print per-strategy summaries.
+2. In the Map page, pan/zoom so the viewport covers Bucharest (Natural High at 44.4419°N, 26.0864°E) and click the **Refresh search** button.
+3. Confirm the console output includes a `strategy summary` entry listing each Nearby/Text strategy, the endpoint (`nearbysearch` vs `textsearch`), how many results each returned, and whether a `naturalHigh` place_id match was found.
+4. If Natural High fails to appear on the map, collect the logged payload (strategy list + place counts) and attach it to the issue so we can determine whether Google omitted the venue or our filters removed it.
 ```}
