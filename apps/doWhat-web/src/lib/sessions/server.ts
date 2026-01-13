@@ -69,6 +69,27 @@ export type HydratedSession = {
   host: ProfileSummary | null;
 };
 
+export function resolveSessionTitle(session: HydratedSession): string {
+  const candidates = [
+    session.activity?.name,
+    session.description,
+    session.venue?.name,
+    session.placeLabel,
+    session.activity?.venueLabel,
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+
+  return 'Community session';
+}
+
 export type AttendanceCounts = {
   going: number;
   interested: number;
@@ -117,6 +138,84 @@ const markActivitiesPlaceColumnMissing = () => {
     loggedMissingActivitiesPlaceColumnWarning = true;
     console.warn('activities.place_id column missing; rerun migrations 045+ to restore canonical place linkage.');
   }
+};
+
+
+type ActivityPlaceLabelColumnState = 'unknown' | 'available' | 'missing';
+let activitiesPlaceLabelColumnSupport: ActivityPlaceLabelColumnState = 'unknown';
+let loggedMissingActivitiesPlaceLabelWarning = false;
+
+const canUseActivitiesPlaceLabelColumn = () => activitiesPlaceLabelColumnSupport !== 'missing';
+const markActivitiesPlaceLabelColumnAvailable = () => {
+  if (activitiesPlaceLabelColumnSupport === 'unknown') {
+    activitiesPlaceLabelColumnSupport = 'available';
+  }
+};
+const markActivitiesPlaceLabelColumnMissing = () => {
+  if (activitiesPlaceLabelColumnSupport === 'missing') return;
+  activitiesPlaceLabelColumnSupport = 'missing';
+  if (!loggedMissingActivitiesPlaceLabelWarning) {
+    loggedMissingActivitiesPlaceLabelWarning = true;
+    console.warn('activities.place_label column missing; rerun migrations 048+ to restore canonical place labels.');
+  }
+};
+
+const SESSION_PLACE_LABEL_FALLBACK = 'Unknown location';
+
+const trimLabel = (value: string | null | undefined): string => {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : '';
+};
+
+const loadPlaceName = async (service: SupabaseClient, placeId?: string | null): Promise<string> => {
+  if (!placeId) return '';
+  const { data, error } = await service
+    .from('places')
+    .select('name')
+    .eq('id', placeId)
+    .maybeSingle<{ name: string | null }>();
+  if (error) {
+    return '';
+  }
+  return trimLabel(data?.name ?? null);
+};
+
+const loadActivityPlaceLabel = async (
+  service: SupabaseClient,
+  activityId?: string | null,
+): Promise<string> => {
+  const candidateId = isUuid(activityId ?? null) ? activityId : null;
+  if (!candidateId) return '';
+  const { data, error } = await service
+    .from('activities')
+    .select('place_label')
+    .eq('id', candidateId)
+    .maybeSingle<{ place_label?: string | null }>();
+  if (error) {
+    return '';
+  }
+  return trimLabel(data?.place_label ?? null);
+};
+
+export const deriveSessionPlaceLabel = async (
+  service: SupabaseClient,
+  input: {
+    placeId?: string | null;
+    activityId?: string | null;
+    venueName?: string | null;
+  },
+): Promise<string> => {
+  const placeLabel = await loadPlaceName(service, input.placeId ?? null);
+  if (placeLabel) return placeLabel;
+
+  const activityLabel = await loadActivityPlaceLabel(service, input.activityId ?? null);
+  if (activityLabel) return activityLabel;
+
+  const venueLabel = trimLabel(input.venueName ?? null);
+  if (venueLabel) return venueLabel;
+
+  return SESSION_PLACE_LABEL_FALLBACK;
 };
 
 export class SessionValidationError extends Error {
@@ -234,6 +333,34 @@ export function extractSessionPayload(body: unknown, options: SessionPayloadOpti
   return parsed;
 }
 
+type PlaceLabelRow = { name: string | null };
+
+const resolveActivityPlaceLabel = async (
+  service: SupabaseClient,
+  input: {
+    placeId?: string | null;
+    venueName?: string | null;
+    fallbackLabel?: string | null;
+  },
+): Promise<string> => {
+  let place: { name?: string | null } | null = null;
+  if (input.placeId) {
+    const { data, error } = await service
+      .from('places')
+      .select('name')
+      .eq('id', input.placeId)
+      .maybeSingle<PlaceLabelRow>();
+    if (!error && data?.name) {
+      place = { name: data.name };
+    }
+  }
+  return hydratePlaceLabel({
+    place,
+    venue: input.venueName ?? null,
+    fallbackLabel: input.fallbackLabel ?? null,
+  });
+};
+
 export async function ensureActivity(service: SupabaseClient, input: {
   activityId?: string | null;
   activityName?: string | null;
@@ -247,16 +374,23 @@ export async function ensureActivity(service: SupabaseClient, input: {
   const activityName = sanitizeRequiredText(input.activityName, 'Activity name is required.');
 
   const includePlaceColumn = canUseActivitiesPlaceColumn();
-  const selectColumns = includePlaceColumn ? 'id, place_id' : 'id';
+  const includePlaceLabelColumn = canUseActivitiesPlaceLabelColumn();
+  const selectColumns = ['id'];
+  if (includePlaceColumn) selectColumns.push('place_id');
+  if (includePlaceLabelColumn) selectColumns.push('place_label');
 
   const { data: existing, error: fetchError } = await service
     .from('activities')
-    .select(selectColumns)
+    .select(selectColumns.join(', '))
     .eq('name', activityName)
-    .maybeSingle<{ id: string; place_id?: string | null }>();
+    .maybeSingle<{ id: string; place_id?: string | null; place_label?: string | null }>();
   if (fetchError) {
     if (includePlaceColumn && isMissingColumnError(fetchError, 'place_id')) {
       markActivitiesPlaceColumnMissing();
+      return ensureActivity(service, input);
+    }
+    if (includePlaceLabelColumn && isMissingColumnError(fetchError, 'place_label')) {
+      markActivitiesPlaceLabelColumnMissing();
       return ensureActivity(service, input);
     }
     throw fetchError;
@@ -264,10 +398,27 @@ export async function ensureActivity(service: SupabaseClient, input: {
   if (includePlaceColumn) {
     markActivitiesPlaceColumnAvailable();
   }
+  if (includePlaceLabelColumn) {
+    markActivitiesPlaceLabelColumnAvailable();
+  }
   if (existing?.id) {
     const updates: Record<string, unknown> = {};
+    const nextPlaceId = input.placeId ?? existing.place_id ?? null;
     if (includePlaceColumn && !existing.place_id && input.placeId) {
       updates.place_id = input.placeId;
+    }
+    if (includePlaceLabelColumn) {
+      const existingLabel = existing.place_label ?? null;
+      const labelMissing = !existingLabel || !existingLabel.trim();
+      const shouldUpdateLabel = labelMissing || Boolean(updates.place_id);
+      if (shouldUpdateLabel) {
+        const placeLabel = await resolveActivityPlaceLabel(service, {
+          placeId: (updates.place_id as string | null | undefined) ?? nextPlaceId,
+          venueName: input.venueName ?? null,
+          fallbackLabel: activityName,
+        });
+        updates.place_label = placeLabel;
+      }
     }
     if (Object.keys(updates).length) {
       await service.from('activities').update(updates).eq('id', existing.id);
@@ -280,6 +431,14 @@ export async function ensureActivity(service: SupabaseClient, input: {
   if (typeof input.lng === 'number') insert.lng = input.lng;
   if (input.venueName) insert.venue = input.venueName;
   if (includePlaceColumn && input.placeId) insert.place_id = input.placeId;
+  if (includePlaceLabelColumn) {
+    const placeLabel = await resolveActivityPlaceLabel(service, {
+      placeId: input.placeId ?? null,
+      venueName: input.venueName ?? null,
+      fallbackLabel: activityName,
+    });
+    insert.place_label = placeLabel;
+  }
 
   const { data: inserted, error: insertError } = await service
     .from('activities')
@@ -355,7 +514,7 @@ export async function resolveSessionPlaceId(
       .from('activities')
       .select('id, place_id')
       .eq('id', activityId)
-      .maybeSingle<{ id: string; place_id?: string | null }>();
+      .maybeSingle<{ id: string; place_id?: string | null; place_label?: string | null }>();
     if (error) {
       if (isMissingColumnError(error, 'place_id')) {
         markActivitiesPlaceColumnMissing();
@@ -382,12 +541,30 @@ export async function resolveSessionPlaceId(
   });
 
   if (activityId && canUseActivitiesPlaceColumn()) {
+    const updates: Record<string, unknown> = { place_id: resolvedPlace.placeId };
+    if (canUseActivitiesPlaceLabelColumn()) {
+      const placeLabel = await resolveActivityPlaceLabel(service, {
+        placeId: resolvedPlace.placeId,
+        venueName: input.labelHint ?? null,
+        fallbackLabel: input.labelHint ?? null,
+      });
+      updates.place_label = placeLabel;
+    }
     const { error: updateError } = await service
       .from('activities')
-      .update({ place_id: resolvedPlace.placeId })
+      .update(updates)
       .eq('id', activityId);
     if (updateError) {
-      if (isMissingColumnError(updateError, 'place_id')) {
+      if (isMissingColumnError(updateError, 'place_label')) {
+        markActivitiesPlaceLabelColumnMissing();
+        const { error: retryError } = await service
+          .from('activities')
+          .update({ place_id: resolvedPlace.placeId })
+          .eq('id', activityId);
+        if (retryError && !isMissingColumnError(retryError, 'place_id')) {
+          throw retryError;
+        }
+      } else if (isMissingColumnError(updateError, 'place_id')) {
         markActivitiesPlaceColumnMissing();
       } else {
         throw updateError;
@@ -454,6 +631,8 @@ export const __sessionServerTesting = {
   resetActivitiesPlaceColumnDetection() {
     activitiesPlaceColumnSupport = 'unknown';
     loggedMissingActivitiesPlaceColumnWarning = false;
+    activitiesPlaceLabelColumnSupport = 'unknown';
+    loggedMissingActivitiesPlaceLabelWarning = false;
   },
 };
 

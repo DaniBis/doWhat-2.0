@@ -1,5 +1,11 @@
 import { resolvePlaceFromCoordsWithClient } from "@/lib/places/resolver";
-import { __sessionServerTesting, ensureActivity, hydrateSessions, resolveSessionPlaceId } from "../server";
+import {
+  __sessionServerTesting,
+  ensureActivity,
+  hydrateSessions,
+  resolveSessionPlaceId,
+  deriveSessionPlaceLabel,
+} from "../server";
 import type { SessionRow } from "@/types/database";
 
 jest.mock('@/lib/places/resolver', () => ({
@@ -131,12 +137,13 @@ describe("ensureActivity", () => {
     });
 
     expect(id).toBe("activity-new");
-    expect(activities.maybeSingle).toHaveBeenCalledTimes(2);
+    expect(activities.maybeSingle).toHaveBeenCalledTimes(3);
     expect(activities.insert).toHaveBeenCalledTimes(1);
     expect(activities.insert.mock.calls[0][0]).toEqual({
       name: "Chess",
       lat: 44.43384,
       lng: 26.04346,
+      place_label: "Chess",
     });
   });
 });
@@ -176,7 +183,70 @@ describe("resolveSessionPlaceId", () => {
 
     expect(placeId).toBe("place-9");
     expect(resolvePlaceMock).toHaveBeenCalledTimes(1);
-    expect(activities.update).toHaveBeenCalledWith({ place_id: "place-9" });
+    expect(activities.update).toHaveBeenCalledWith({ place_id: "place-9", place_label: "Central Court" });
+  });
+});
+
+describe("deriveSessionPlaceLabel", () => {
+  it("prefers canonical place name when available", async () => {
+    const service = createSingleRowService({
+      places: { name: "Central Park" },
+      activities: null,
+    });
+
+    const label = await deriveSessionPlaceLabel(service as never, {
+      placeId: "place-42",
+      activityId: "c1f7a0af-1f3a-4e16-9e3d-7e6dc3cc5b7a",
+      venueName: "Backup Venue",
+    });
+
+    expect(label).toBe("Central Park");
+    expect(service.from).toHaveBeenCalledWith("places");
+  });
+
+  it("falls back to the activity place label when canonical place data is missing", async () => {
+    const service = createSingleRowService({
+      places: null,
+      activities: { place_label: "  Activity Label  " },
+    });
+
+    const label = await deriveSessionPlaceLabel(service as never, {
+      placeId: "missing-place",
+      activityId: "d52e6b7f-9f5a-4acb-b444-fef4ed59a5c1",
+      venueName: "Gym",
+    });
+
+    expect(label).toBe("Activity Label");
+  });
+
+  it("uses the venue label when no canonical data is available", async () => {
+    const service = createSingleRowService({
+      places: null,
+      activities: null,
+    });
+
+    const label = await deriveSessionPlaceLabel(service as never, {
+      placeId: null,
+      activityId: null,
+      venueName: "   Rooftop Gym   ",
+    });
+
+    expect(label).toBe("Rooftop Gym");
+  });
+
+  it("falls back to the default label when everything else is empty", async () => {
+    const service = createSingleRowService({
+      places: null,
+      activities: null,
+    });
+
+    const label = await deriveSessionPlaceLabel(service as never, {
+      placeId: null,
+      activityId: null,
+      venueName: null,
+    });
+
+    expect(label).toBe("Unknown location");
   });
 });
 
@@ -274,4 +344,28 @@ function createActivityPlaceBuilder(placeId: string | null) {
     update: jest.fn((_payload: Record<string, unknown>) => builder),
   };
   return builder;
+}
+
+type SingleRowService = {
+  from: jest.Mock<SingleRowQuery, [string]>;
+};
+
+type SingleRowQuery = {
+  select: jest.Mock<SingleRowQuery, [string]>;
+  eq: jest.Mock<SingleRowQuery, [string, string?]>;
+  maybeSingle: jest.Mock<Promise<{ data: Record<string, unknown> | null; error: null }>, []>;
+};
+
+function createSingleRowService(rows: Record<string, Record<string, unknown> | null>): SingleRowService {
+  return {
+    from: jest.fn((table: string) => {
+      const queryRow = rows[table] ?? null;
+      const query: SingleRowQuery = {
+        select: jest.fn(() => query),
+        eq: jest.fn(() => query),
+        maybeSingle: jest.fn(async () => ({ data: queryRow, error: null })),
+      };
+      return query;
+    }),
+  };
 }

@@ -51,6 +51,7 @@ import {
   buildEventVerificationProgress,
   formatReliabilityLabel,
 } from "@/lib/events/presentation";
+import { useStableNearbyData } from './useStableNearbyData';
 
 const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
 
@@ -672,9 +673,12 @@ export default function MapPage() {
     },
   });
 
-  const activities = nearby.data?.activities ?? EMPTY_ACTIVITIES;
-  const filterSupport = nearby.data?.filterSupport ?? null;
-  const facets = nearby.data?.facets ?? null;
+  const stableNearby = useStableNearbyData(nearby);
+  const nearbyData = stableNearby.data ?? nearby.data ?? null;
+
+  const activities = nearbyData?.activities ?? EMPTY_ACTIVITIES;
+  const filterSupport = nearbyData?.filterSupport ?? null;
+  const facets = nearbyData?.facets ?? null;
   const facetActivityTypes = facets?.activityTypes ?? [];
   const facetTags = facets?.tags ?? [];
   const facetTraits = facets?.traits ?? [];
@@ -1506,11 +1510,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
   const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
-  const mapLoading = (loadActivities && nearby.isLoading) || (loadEvents && eventsQuery.isLoading);
-  const refreshDisabled = !query || isRefreshing || nearby.isFetching;
+  const mapLoading = (loadActivities && stableNearby.isInitialLoading) || (loadEvents && eventsQuery.isLoading);
+  const refreshDisabled = !query || isRefreshing || stableNearby.isRefreshing;
   const filtersButtonDisabled = !loadActivities && !loadEvents;
 
-  const activityListEmpty = loadActivities && !nearby.isLoading && filteredActivities.length === 0;
+  const activityListEmpty = loadActivities && !stableNearby.isInitialLoading && filteredActivities.length === 0;
   const eventListEmpty = loadEvents && !eventsQuery.isLoading && filteredEvents.length === 0;
   const activityEmptyCopy = hasSearchFilter
     ? `No activities match "${searchTerm}". Try another name or clear the search.`
@@ -1754,9 +1758,14 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     <p className="text-xs text-ink-muted">Recurring sessions hosted on doWhat.</p>
                   </div>
                 </header>
-                {nearby.isLoading && (
+                {stableNearby.isInitialLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading nearby activities…
+                  </div>
+                )}
+                {stableNearby.isRefreshing && !stableNearby.isInitialLoading && (
+                  <div className="rounded-lg border border-midnight-border/30 bg-surface-alt p-xs text-[11px] text-ink-muted">
+                    Refreshing results…
                   </div>
                 )}
                 {nearby.isError && (

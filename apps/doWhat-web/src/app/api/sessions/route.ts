@@ -5,6 +5,7 @@ import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 import {
   ensureActivity,
   ensureVenue,
+  deriveSessionPlaceLabel,
   extractSessionPayload,
   hydrateSessions,
   resolveSessionPlaceId,
@@ -77,6 +78,11 @@ export async function POST(req: Request) {
       lat: payload.lat,
       lng: payload.lng,
     });
+    const placeLabel = await deriveSessionPlaceLabel(service, {
+      placeId,
+      activityId,
+      venueName: payload.venueName ?? null,
+    });
 
     const sessionInsert = {
       activity_id: activityId,
@@ -89,6 +95,7 @@ export async function POST(req: Request) {
       visibility: payload.visibility ?? 'public',
       description: payload.description ?? null,
       place_id: placeId,
+      place_label: placeLabel,
     };
 
     const { data: sessionRow, error: sessionError } = await service
