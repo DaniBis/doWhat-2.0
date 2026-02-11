@@ -1,9 +1,9 @@
-type ActivityMetadataChip = { key: string; label: string; icon?: string };
-type MapToast = { message: string; tone: 'success' | 'info' | 'error' };
 "use client";
 
+type ActivityMetadataChip = { key: string; label: string; icon?: string };
+type MapToast = { message: string; tone: 'success' | 'info' | 'error' };
+
 import { useQueryClient } from '@tanstack/react-query';
-import dynamic from "next/dynamic";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -32,8 +32,9 @@ import {
   type TimeWindowKey,
 } from "@dowhat/shared";
 import SaveToggleButton from "@/components/SaveToggleButton";
+import AuthGate from "@/components/AuthGate";
 
-import type { MapMovePayload, ViewBounds } from "@/components/WebMap";
+import WebMap, { type MapMovePayload, type ViewBounds } from "@/components/WebMap";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { supabase } from "@/lib/supabase/browser";
@@ -53,12 +54,14 @@ import {
 } from "@/lib/events/presentation";
 import { useStableNearbyData } from './useStableNearbyData';
 
-const WebMap = dynamic(() => import("@/components/WebMap"), { ssr: false });
-
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
 const EMPTY_EVENTS: EventSummary[] = [];
+const EMPTY_STRING_LIST: string[] = [];
+const EMPTY_NUMBER_LIST: number[] = [];
+const EMPTY_FACETS: Array<{ value: string; count: number }> = [];
 const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
+const MAP_FILTERS_VERSION = 2;
 const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
 
@@ -159,12 +162,23 @@ const activityPlaceLabel = (activity: MapActivity): string => {
   return label === PLACE_FALLBACK_LABEL ? PLACE_FALLBACK_LABEL : label;
 };
 
+type StoredMapFilters = MapFilterPreferences & { version?: number };
+
+const isCurrentMapFilters = (value: unknown): value is StoredMapFilters => {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const version = (value as StoredMapFilters).version ?? null;
+  return version === MAP_FILTERS_VERSION;
+};
+
 const readLocalMapFilters = (): MapFilterPreferences | null => {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(MAP_FILTERS_LOCAL_KEY);
     if (!raw) return null;
-    return normaliseMapFilterPreferences(JSON.parse(raw) as MapFilterPreferences);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isCurrentMapFilters(parsed)) return null;
+    return normaliseMapFilterPreferences(parsed as MapFilterPreferences);
   } catch (error) {
     console.warn("[map] unable to parse cached map filters", error);
     return null;
@@ -174,13 +188,17 @@ const readLocalMapFilters = (): MapFilterPreferences | null => {
 const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      MAP_FILTERS_LOCAL_KEY,
-      JSON.stringify(normaliseMapFilterPreferences(prefs)),
-    );
+    const normalised = normaliseMapFilterPreferences(prefs);
+    const payload = { ...normalised, version: MAP_FILTERS_VERSION };
+    window.localStorage.setItem(MAP_FILTERS_LOCAL_KEY, JSON.stringify(payload));
   } catch (error) {
     console.warn("[map] unable to cache map filters locally", error);
   }
+};
+
+const resolveStoredMapFilters = (value: unknown): MapFilterPreferences | null => {
+  if (!isCurrentMapFilters(value)) return null;
+  return normaliseMapFilterPreferences(value as MapFilterPreferences);
 };
 
 const formatKilometres = (meters?: number | null) => {
@@ -258,6 +276,10 @@ export default function MapPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = useMemo(() => searchParams?.toString() ?? '', [searchParams]);
+  const redirectTarget = useMemo(() => {
+    if (!pathname) return '/map';
+    return searchParamsString ? `${pathname}?${searchParamsString}` : pathname;
+  }, [pathname, searchParamsString]);
   const highlightSessionId = searchParams?.get('highlightSession');
   const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -311,12 +333,24 @@ export default function MapPage() {
     setToastMessage({ message, tone });
   }, []);
 
-  const selectedActivityTypes = filters.activityTypes;
-  const selectedTraits = filters.traits;
-  const selectedTaxonomyCategories = filters.taxonomyCategories;
-  const selectedPriceLevels = filters.priceLevels;
-  const selectedCapacityKey = filters.capacityKey;
-  const selectedTimeWindow = filters.timeWindow;
+  const selectedActivityTypes = useMemo(
+    () => filters.activityTypes ?? EMPTY_STRING_LIST,
+    [filters.activityTypes],
+  );
+  const selectedTraits = useMemo(
+    () => filters.traits ?? EMPTY_STRING_LIST,
+    [filters.traits],
+  );
+  const selectedTaxonomyCategories = useMemo(
+    () => filters.taxonomyCategories ?? EMPTY_STRING_LIST,
+    [filters.taxonomyCategories],
+  );
+  const selectedPriceLevels = useMemo(
+    () => filters.priceLevels ?? EMPTY_NUMBER_LIST,
+    [filters.priceLevels],
+  );
+  const selectedCapacityKey = filters.capacityKey ?? 'any';
+  const selectedTimeWindow = filters.timeWindow ?? 'any';
 
   type StringListUpdater = string[] | ((prev: string[]) => string[]);
   type NumberListUpdater = number[] | ((prev: number[]) => number[]);
@@ -444,11 +478,11 @@ export default function MapPage() {
   const loadPreferencesForUser = useCallback(
     async (userId: string) => {
       try {
-        const remote = await loadUserPreference<MapFilterPreferences>(supabase, userId, "map_filters");
-        if (remote) {
-          const normalised = normaliseMapFilterPreferences(remote);
-          updateFilters(() => normalised);
-          writeLocalMapFilters(normalised);
+        const remote = await loadUserPreference<StoredMapFilters>(supabase, userId, "map_filters");
+        const resolvedRemote = resolveStoredMapFilters(remote);
+        if (resolvedRemote) {
+          updateFilters(() => resolvedRemote);
+          writeLocalMapFilters(resolvedRemote);
         } else {
           const fallback = readLocalMapFilters();
           const next = fallback ?? DEFAULT_MAP_FILTER_PREFERENCES;
@@ -475,7 +509,8 @@ export default function MapPage() {
       writeLocalMapFilters(normalised);
       if (preferencesUserId) {
         try {
-          await saveUserPreference(supabase, preferencesUserId, "map_filters", normalised);
+          const payload = { ...normalised, version: MAP_FILTERS_VERSION };
+          await saveUserPreference(supabase, preferencesUserId, "map_filters", payload);
         } catch (error) {
           console.warn("[map] failed to persist map filters", error);
         }
@@ -490,6 +525,7 @@ export default function MapPage() {
   }, [filters, persistPreferences, preferencesInitialised]);
 
   useEffect(() => {
+    if (isAuthenticated !== true) return;
     let cancelled = false;
     const fallback = () => {
       if (!cancelled && !centerRef.current) {
@@ -516,7 +552,7 @@ export default function MapPage() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [primeCenter]);
+  }, [isAuthenticated, primeCenter]);
 
   useEffect(() => {
     if (!center) return;
@@ -639,9 +675,10 @@ export default function MapPage() {
     [],
   );
 
+  const accessAllowed = isAuthenticated === true;
   const query = useMemo(
     () =>
-      queryCenter
+      accessAllowed && queryCenter
         ? {
             center: queryCenter,
             radiusMeters,
@@ -650,11 +687,11 @@ export default function MapPage() {
             bounds: bounds ?? undefined,
           }
         : null,
-    [queryCenter, radiusMeters, filtersForQuery, bounds],
+    [accessAllowed, queryCenter, radiusMeters, filtersForQuery, bounds],
   );
 
-  const loadActivities = dataMode !== 'events';
-  const loadEvents = dataMode !== 'activities';
+  const loadActivities = accessAllowed && dataMode !== 'events';
+  const loadEvents = accessAllowed && dataMode !== 'activities';
 
   const nearby = useNearbyActivities(query, {
     fetcher,
@@ -679,13 +716,34 @@ export default function MapPage() {
   const activities = nearbyData?.activities ?? EMPTY_ACTIVITIES;
   const filterSupport = nearbyData?.filterSupport ?? null;
   const facets = nearbyData?.facets ?? null;
-  const facetActivityTypes = facets?.activityTypes ?? [];
-  const facetTags = facets?.tags ?? [];
-  const facetTraits = facets?.traits ?? [];
-  const facetTaxonomyCategories = facets?.taxonomyCategories ?? [];
-  const facetPriceLevels = facets?.priceLevels ?? [];
-  const facetCapacityKey = facets?.capacityKey ?? [];
-  const facetTimeWindow = facets?.timeWindow ?? [];
+  const facetActivityTypes = useMemo(
+    () => facets?.activityTypes ?? EMPTY_FACETS,
+    [facets?.activityTypes],
+  );
+  const facetTags = useMemo(
+    () => facets?.tags ?? EMPTY_FACETS,
+    [facets?.tags],
+  );
+  const facetTraits = useMemo(
+    () => facets?.traits ?? EMPTY_FACETS,
+    [facets?.traits],
+  );
+  const facetTaxonomyCategories = useMemo(
+    () => facets?.taxonomyCategories ?? EMPTY_FACETS,
+    [facets?.taxonomyCategories],
+  );
+  const facetPriceLevels = useMemo(
+    () => facets?.priceLevels ?? EMPTY_FACETS,
+    [facets?.priceLevels],
+  );
+  const facetCapacityKey = useMemo(
+    () => facets?.capacityKey ?? EMPTY_FACETS,
+    [facets?.capacityKey],
+  );
+  const facetTimeWindow = useMemo(
+    () => facets?.timeWindow ?? EMPTY_FACETS,
+    [facets?.timeWindow],
+  );
   const activityTypesSupported = filterSupport?.activityTypes ?? true;
   const tagsSupported = filterSupport?.tags ?? true;
   const traitsSupported = filterSupport?.traits ?? true;
@@ -742,14 +800,104 @@ export default function MapPage() {
 
   const filteredActivities = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return activities;
+    const hasSearch = term.length > 0;
+    const normalizeSet = (values?: (string | null | undefined)[] | null) => {
+      const set = new Set<string>();
+      (values ?? []).forEach((value) => {
+        if (typeof value !== 'string') return;
+        const trimmed = value.trim().toLowerCase();
+        if (trimmed) set.add(trimmed);
+      });
+      return set;
+    };
+
+    const selectedTypes = selectedActivityTypes
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    const selectedTraitsList = selectedTraits.map((value) => value.trim().toLowerCase()).filter(Boolean);
+    const selectedTaxonomies = selectedTaxonomyCategories
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    const selectedPriceSet = new Set(
+      selectedPriceLevels
+        .map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null))
+        .filter((value): value is number => value != null),
+    );
+    const capacityFilter = selectedCapacityKey !== 'any' ? selectedCapacityKey : null;
+    const timeWindowFilter = selectedTimeWindow !== 'any' ? selectedTimeWindow : null;
+
+    const filterActivityTypes = selectedTypes.length > 0 && (activityTypesSupported || tagsSupported);
+    const filterTraits = selectedTraitsList.length > 0 && traitsSupported;
+    const filterTaxonomy = selectedTaxonomies.length > 0 && taxonomyCategoriesSupported;
+    const filterPrice = selectedPriceSet.size > 0 && priceLevelsSupported;
+    const filterCapacity = Boolean(capacityFilter && capacitySupported);
+    const filterTimeWindow = Boolean(timeWindowFilter && timeWindowSupported);
+
+    if (
+      !hasSearch &&
+      !filterActivityTypes &&
+      !filterTraits &&
+      !filterTaxonomy &&
+      !filterPrice &&
+      !filterCapacity &&
+      !filterTimeWindow
+    ) {
+      return activities;
+    }
+
     return activities.filter((activity) => {
-      const name = activity.name?.toLowerCase() ?? '';
-      const venue = activity.venue?.toLowerCase() ?? '';
-      const place = activity.place_label?.toLowerCase() ?? '';
-      return name.includes(term) || venue.includes(term) || place.includes(term);
+      if (filterActivityTypes) {
+        const haystack = useTagsForActivityTypes || (!activityTypesSupported && tagsSupported)
+          ? normalizeSet(activity.tags)
+          : normalizeSet(activity.activity_types);
+        if (!selectedTypes.some((value) => haystack.has(value))) return false;
+      }
+
+      if (filterTraits) {
+        const traits = normalizeSet(activity.traits);
+        if (!selectedTraitsList.some((value) => traits.has(value))) return false;
+      }
+
+      if (filterTaxonomy) {
+        const categories = normalizeSet(activity.taxonomy_categories);
+        if (!selectedTaxonomies.some((value) => categories.has(value))) return false;
+      }
+
+      if (filterPrice) {
+        const levels = normalizePriceLevels(activity.price_levels ?? undefined);
+        if (!levels.some((value) => selectedPriceSet.has(value))) return false;
+      }
+
+      if (filterCapacity && activity.capacity_key !== capacityFilter) return false;
+      if (filterTimeWindow && activity.time_window !== timeWindowFilter) return false;
+
+      if (hasSearch) {
+        const name = activity.name?.toLowerCase() ?? '';
+        const venue = activity.venue?.toLowerCase() ?? '';
+        const place = activity.place_label?.toLowerCase() ?? '';
+        return name.includes(term) || venue.includes(term) || place.includes(term);
+      }
+
+      return true;
     });
-  }, [activities, searchTerm]);
+  }, [
+    activities,
+    searchTerm,
+    selectedActivityTypes,
+    selectedTraits,
+    selectedTaxonomyCategories,
+    selectedPriceLevels,
+    selectedCapacityKey,
+    selectedTimeWindow,
+    activityTypesSupported,
+    tagsSupported,
+    traitsSupported,
+    taxonomyCategoriesSupported,
+    priceLevelsSupported,
+    capacitySupported,
+    timeWindowSupported,
+    useTagsForActivityTypes,
+  ]);
 
   const filteredEvents = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -1502,11 +1650,9 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   const isBothView = dataMode === 'both';
   const listPanelWidthClass = isBothView ? 'lg:w-[640px]' : 'lg:w-[420px]';
   const listSectionsClass = isBothView
-    ? 'flex-1 overflow-y-auto px-md py-sm space-y-xl lg:grid lg:grid-cols-2 lg:gap-lg lg:space-y-0'
-    : 'flex-1 overflow-y-auto px-md py-sm space-y-xl';
-  const listSectionCardClass = isBothView
-    ? 'rounded-2xl border border-midnight-border/30 bg-surface px-sm py-sm lg:px-md lg:py-md'
-    : '';
+    ? 'flex-1 overflow-y-auto px-4 py-4 space-y-6 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0'
+    : 'flex-1 overflow-y-auto px-4 py-4 space-y-6';
+  const listSectionCardClass = isBothView ? 'soft-card px-sm py-sm lg:px-md lg:py-md' : '';
 
   const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
   const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
@@ -1523,6 +1669,26 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     ? `No events match "${searchTerm}". Try another name or clear the search.`
     : "No events match those filters yet. Try widening your search.";
 
+  if (isAuthenticated === null) {
+    return (
+      <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
+        Checking your account…
+      </div>
+    );
+  }
+
+  if (isAuthenticated === false) {
+    return (
+      <main className="mx-auto flex min-h-[calc(100dvh-64px)] max-w-3xl items-center px-4 py-12">
+        <AuthGate
+          title="Sign in to use the map"
+          description="The discovery map is personalized for members only. Sign in to see nearby activity and event data."
+          redirectTo={redirectTarget}
+        />
+      </main>
+    );
+  }
+
   if (!center) {
     return (
       <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
@@ -1532,20 +1698,20 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-sm border-b border-midnight-border/40 bg-surface/95 px-md py-sm text-sm">
+    <div className="flex h-[calc(100dvh-64px)] flex-col bg-surface-canvas/80">
+      <div className="flex flex-wrap items-center justify-between gap-sm border-b border-white/40 bg-white/80 px-4 py-3 text-sm shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center gap-xs">
           <button
             type="button"
             onClick={() => changeViewMode("map")}
-            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "map" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
+            className={`rounded-full px-3 py-1 text-sm font-semibold transition ${viewMode === "map" ? "bg-brand-teal text-white shadow-sm" : "bg-white/80 text-ink-strong hover:bg-white"} lg:hidden`}
           >
             Map
           </button>
           <button
             type="button"
             onClick={() => changeViewMode("list")}
-            className={`rounded-full px-sm py-xxs font-medium ${viewMode === "list" ? "bg-brand-teal text-white" : "bg-surface-alt text-ink-strong"} lg:hidden`}
+            className={`rounded-full px-3 py-1 text-sm font-semibold transition ${viewMode === "list" ? "bg-brand-teal text-white shadow-sm" : "bg-white/80 text-ink-strong hover:bg-white"} lg:hidden`}
           >
             List
           </button>
@@ -1556,8 +1722,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 key={mode}
                 type="button"
                 onClick={() => changeDataMode(mode)}
-                className={`rounded-full px-sm py-xxs text-sm font-medium ${
-                    dataMode === mode ? 'bg-brand-teal text-white' : 'bg-surface-alt text-ink-strong hover:bg-ink-subtle'
+                className={`rounded-full px-3 py-1 text-sm font-semibold transition ${
+                    dataMode === mode ? 'bg-brand-teal text-white shadow-sm' : 'bg-white/80 text-ink-strong hover:bg-white'
                 }`}
               >
                 {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Events' : 'Both'}

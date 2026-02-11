@@ -441,7 +441,7 @@ function HomeScreen() {
     return () => { sub?.remove(); };
   }, [fetchNearbyActivities, fetchPlacesViewport]);
 
-  // Simulate search suggestions (replace with real API)
+  // Derive search suggestions from real nearby activity names.
   const searchSuggestions = activities ? activities
     .filter(activity =>
       activity.name.toLowerCase().includes(searchQuery.toLowerCase()) &&

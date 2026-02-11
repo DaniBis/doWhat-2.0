@@ -1,12 +1,9 @@
 "use client";
 import type { Route } from 'next';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-import type { AuthButtonsProps } from '@/components/AuthButtons';
-
-const AuthButtons = dynamic<AuthButtonsProps>(() => import('@/components/AuthButtons'), { ssr: false });
+import AuthButtons from '@/components/AuthButtons';
 
 export default function AuthPage() {
   const searchParams = useSearchParams();

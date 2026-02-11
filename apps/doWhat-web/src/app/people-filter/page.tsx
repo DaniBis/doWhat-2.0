@@ -253,7 +253,7 @@ export default function PeopleFilterPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [normaliseWithCanonicalTime]);
 
   useEffect(() => {
     let cancelled = false;

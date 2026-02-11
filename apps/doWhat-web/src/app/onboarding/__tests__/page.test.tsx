@@ -19,7 +19,16 @@ jest.mock("@dowhat/shared", () => {
 });
 
 jest.mock("next/link", () => {
-  return ({ children, href, onClick, ...rest }: { children: React.ReactNode; href: string; onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void }) => (
+  const MockLink = ({
+    children,
+    href,
+    onClick,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    href: string;
+    onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  }) => (
     <a
       href={href}
       onClick={(event) => {
@@ -31,6 +40,8 @@ jest.mock("next/link", () => {
       {children}
     </a>
   );
+  MockLink.displayName = "MockLink";
+  return MockLink;
 });
 
 const { createClient: createClientMock } = jest.requireMock("@/lib/supabase/server") as {
@@ -45,7 +56,7 @@ type MockSupabaseClient = {
   auth: {
     getUser: jest.MockedFunction<() => Promise<{ data: { user: { id: string } | null } }>>;
   };
-  from: jest.MockedFunction<(table: string) => any>;
+  from: jest.MockedFunction<(table: string) => unknown>;
 };
 
 type BuildClientOptions = {

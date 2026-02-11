@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
 import React from 'react';
 
+process.env.BROWSERSLIST_IGNORE_OLD_DATA = '1';
+
 // Mock Next.js modules
 jest.mock('next/navigation', () => ({
   useRouter: () => ({

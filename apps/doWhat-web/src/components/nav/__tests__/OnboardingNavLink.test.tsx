@@ -31,7 +31,7 @@ const { trackOnboardingEntry } = jest.requireMock("@dowhat/shared") as {
 };
 
 const createProfilesQuery = (data: { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }) => {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
   builder.maybeSingle = jest.fn(async () => ({ data, error: null }));
@@ -46,7 +46,7 @@ const createTraitsQuery = (count: number) => {
 };
 
 const createSportProfileQuery = (skillLevel: string | null) => {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
   builder.maybeSingle = jest.fn(async () => ({ data: { skill_level: skillLevel }, error: null }));

@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import ActivityCard from "@/components/ActivityCard";
+import AuthGate from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase/browser";
 import type { RecommendationResponse, RecommendationSession, RecommendationVenueRef } from "@/types/recommendations";
 
@@ -44,8 +46,17 @@ export default function RecommendationsPage() {
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<"loading" | "authed" | "anon">("loading");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const redirectTarget = useMemo(() => {
+    const params = searchParams?.toString() ?? "";
+    if (!pathname) return "/discover";
+    return params ? `${pathname}?${params}` : pathname;
+  }, [pathname, searchParams]);
 
   useEffect(() => {
+    if (authStatus !== "authed") return;
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -58,26 +69,49 @@ export default function RecommendationsPage() {
         // Silent fail
       }
     );
+  }, [authStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveAuth = async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const uid = auth?.user?.id ?? null;
+        setUserId(uid);
+        setAuthStatus(uid ? "authed" : "anon");
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[discover] unable to resolve auth session", error);
+          setUserId(null);
+          setAuthStatus("anon");
+        }
+      }
+    };
+    resolveAuth();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadData = async () => {
+      if (authStatus !== "authed") {
+        if (!cancelled) {
+          setLoading(false);
+        }
+        return;
+      }
       setLoading(true);
       try {
-        const { data: auth } = await supabase.auth.getUser();
-        const uid = auth?.user?.id ?? null;
-        if (!cancelled) {
-          setUserId(uid);
-        }
-
         let userActivityTypes: string[] = [];
-        if (uid) {
+        if (userId) {
           const { data: userAttendance } = await supabase
             .from("session_attendees")
             .select("sessions(activity_id)")
-            .eq("user_id", uid)
+            .eq("user_id", userId)
             .neq("status", "declined");
           const typed = (userAttendance || []) as unknown as AttendanceSessionRef[];
           userActivityTypes = typed
@@ -132,7 +166,7 @@ export default function RecommendationsPage() {
         }
 
         const fetchRecommendationSessions = async (): Promise<Event[] | null> => {
-          if (!uid) return null;
+          if (!userId) return null;
           try {
             const params = new URLSearchParams();
             params.set("limit", "12");
@@ -240,7 +274,7 @@ export default function RecommendationsPage() {
     return () => {
       cancelled = true;
     };
-  }, [userLocation, userLocation?.lat, userLocation?.lng]);
+  }, [authStatus, userId, userLocation, userLocation?.lat, userLocation?.lng]);
 
   // Calculate distance between two points using Haversine formula
   function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -253,6 +287,33 @@ export default function RecommendationsPage() {
       Math.sin(dLng/2) * Math.sin(dLng/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+  }
+
+  if (authStatus === "loading") {
+    return (
+      <main className="mx-auto max-w-7xl px-md py-xxl">
+        <div className="animate-pulse">
+          <div className="h-8 w-64 rounded bg-ink-subtle mb-xl"></div>
+          <div className="grid gap-xl sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-48 rounded-lg bg-ink-subtle"></div>
+            ))}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (authStatus === "anon") {
+    return (
+      <main className="mx-auto max-w-4xl px-md py-xxl">
+        <AuthGate
+          title="Sign in to discover events"
+          description="Discovery is personalized for members only. Sign in to see nearby events and recommendations."
+          redirectTo={redirectTarget}
+        />
+      </main>
+    );
   }
 
   if (loading) {
@@ -397,15 +458,15 @@ export default function RecommendationsPage() {
 
       {recommendations.length === 0 && popularEvents.length === 0 && nearbyEvents.length === 0 && (
         <div className="rounded-lg border border-ink-subtle bg-surface-alt p-gutter text-center">
-          <h3 className="mb-xs text-lg font-semibold text-ink-strong">No events found</h3>
+          <h3 className="mb-xs text-lg font-semibold text-ink-strong">No events nearby yet</h3>
           <p className="mb-sm text-ink-medium">
-            There are no upcoming events to recommend right now.
+            Check back soon or be the first to host something in your area.
           </p>
           <Link 
             href="/create"
             className="inline-block rounded-lg bg-brand-teal px-xxl py-sm text-white transition hover:bg-brand-dark"
           >
-            Create the First Event
+            Create an Event
           </Link>
         </div>
       )}

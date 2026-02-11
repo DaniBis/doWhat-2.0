@@ -173,7 +173,7 @@ export function ReliabilityPledge({ className, redirectTo = null, redirectDelayM
     } finally {
       setSaving(false);
     }
-  }, [allConfirmed, router, userId]);
+  }, [allConfirmed, redirectDelayMs, redirectTo, router, userId]);
 
   const ready = Boolean(userId && allConfirmed && !saving);
   const formattedAck = formatAck(ackTimestamp);

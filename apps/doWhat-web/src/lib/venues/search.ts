@@ -138,30 +138,36 @@ export async function listActivitiesSummary(params: ActivitySummaryParams): Prom
 
   const summaryMap = new Map<ActivityName, ActivityAvailabilitySummary & { confidenceSum: number; confidenceCount: number }>();
 
-  ACTIVITY_NAMES.forEach((activity) => {
-    summaryMap.set(activity, {
-      activity,
-      verifiedCount: 0,
-      likelyCount: 0,
-      possibleCount: 0,
-      needsReviewCount: 0,
-      averageConfidence: null,
-      confidenceSum: 0,
-      confidenceCount: 0,
-    });
-  });
+  const ensureEntry = (activity: ActivityName) => {
+    let entry = summaryMap.get(activity);
+    if (!entry) {
+      entry = {
+        activity,
+        verifiedCount: 0,
+        likelyCount: 0,
+        possibleCount: 0,
+        needsReviewCount: 0,
+        averageConfidence: null,
+        confidenceSum: 0,
+        confidenceCount: 0,
+      };
+      summaryMap.set(activity, entry);
+    }
+    return entry;
+  };
 
   rows.forEach((venue) => {
     const verifiedSet = new Set(filterActivityNames(venue.verified_activities));
     const aiTags = new Set(filterActivityNames(venue.ai_activity_tags));
+    const activities = new Set<ActivityName>([...verifiedSet, ...aiTags]);
 
-    ACTIVITY_NAMES.forEach((activity) => {
+    activities.forEach((activity) => {
       const confidence = resolveActivityConfidence(venue.ai_confidence_scores, activity);
-      if (!verifiedSet.has(activity) && (!aiTags.has(activity) || confidence == null)) {
+      if (!verifiedSet.has(activity) && confidence == null) {
         return;
       }
 
-      const entry = summaryMap.get(activity)!;
+      const entry = ensureEntry(activity);
       if (verifiedSet.has(activity)) {
         entry.verifiedCount += 1;
       } else if (confidence != null && confidence >= 0.8) {

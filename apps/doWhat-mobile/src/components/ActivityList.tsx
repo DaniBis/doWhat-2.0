@@ -11,6 +11,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import EmptyState from './EmptyState';
+import { theme } from '@dowhat/shared';
 
 type Activity = {
   id: string;
@@ -90,7 +91,7 @@ const ActivityList: React.FC<ActivityListProps> = ({
             
             <View style={styles.details}>
               <View style={styles.detailRow}>
-                <MaterialCommunityIcons name="map-marker" size={16} color="#6B7280" />
+                <MaterialCommunityIcons name="map-marker" size={16} color={theme.colors.ink60} />
                 <Text style={styles.venue} numberOfLines={1}>{item.venue.name}</Text>
                 {showDistance && item.distance !== undefined && (
                   <Text style={styles.distance}>{item.distance.toFixed(1)} km</Text>
@@ -98,7 +99,7 @@ const ActivityList: React.FC<ActivityListProps> = ({
               </View>
               
               <View style={styles.detailRow}>
-                <MaterialCommunityIcons name="calendar" size={16} color="#6B7280" />
+                <MaterialCommunityIcons name="calendar" size={16} color={theme.colors.ink60} />
                 <Text style={styles.dateTime}>{item.date} • {item.time}</Text>
               </View>
               
@@ -130,14 +131,16 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   card: {
-    backgroundColor: 'white',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 18,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
     overflow: 'hidden',
   },
   image: {
@@ -146,7 +149,7 @@ const styles = StyleSheet.create({
     resizeMode: 'cover',
   },
   contentContainer: {
-    padding: 12,
+    padding: 14,
   },
   header: {
     flexDirection: 'row',
@@ -157,23 +160,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#111827',
+    color: theme.colors.brandInk,
     marginBottom: 2,
   },
   category: {
     fontSize: 14,
-    color: '#6B7280',
+    color: theme.colors.ink60,
   },
   price: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#111827',
+    color: theme.colors.brandInk,
   },
   freeTag: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#10B981',
-    backgroundColor: '#ECFDF5',
+    color: theme.colors.success,
+    backgroundColor: 'rgba(16,185,129,0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -188,19 +191,19 @@ const styles = StyleSheet.create({
   },
   venue: {
     fontSize: 14,
-    color: '#374151',
+    color: theme.colors.ink80,
     marginLeft: 6,
     flex: 1,
   },
   distance: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#6B7280',
+    color: theme.colors.ink40,
     marginLeft: 8,
   },
   dateTime: {
     fontSize: 14,
-    color: '#374151',
+    color: theme.colors.ink80,
     marginLeft: 6,
   },
   footer: {
@@ -214,18 +217,18 @@ const styles = StyleSheet.create({
   },
   attendees: {
     fontSize: 14,
-    color: '#4B5563',
+    color: theme.colors.ink60,
     marginBottom: 4,
   },
   progressBarContainer: {
     height: 4,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: theme.colors.ink20,
     borderRadius: 2,
     overflow: 'hidden',
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#2C7BF6',
+    backgroundColor: theme.colors.brandTeal,
   },
 });
 

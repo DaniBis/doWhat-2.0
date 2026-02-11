@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { FlatList, Pressable, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Link } from 'expo-router';
+import { theme } from '@dowhat/shared';
 
 export type FindA4thHeroSession = {
   id: string;
@@ -58,57 +59,50 @@ const FindA4thHero = ({
   }
 
   return (
-    <View testID="find-a-4th-hero" style={{ gap: 12 }}>
-      <View style={{ paddingHorizontal: 20 }}>
-        <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>{title}</Text>
-        {subtitle ? (
-          <Text style={{ color: '#475569', marginTop: 4 }}>{subtitle}</Text>
-        ) : null}
+    <View testID="find-a-4th-hero" style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>{title}</Text>
+        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
       <FlatList
         horizontal
         data={listData}
         showsHorizontalScrollIndicator={false}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingHorizontal: 20, gap: 16 }}
+        contentContainerStyle={styles.list}
         renderItem={({ item }) => {
           const startsIn = formatStartsAt(item.startsAt ?? null);
           const slotsLabel = formatSlotsLabel(item.openSlots ?? null);
-          const venueLabel = item.venueLabel || 'Venue TBD';
-          const sportLabel = item.sportLabel || 'Open session';
+          const venueLabel = item.venueLabel?.trim();
+          const sportLabel = item.sportLabel?.trim() || 'Session';
           return (
             <Link href={`/(tabs)/sessions/${item.id}`} asChild>
               <Pressable
                 accessibilityRole="button"
-                style={{
-                  width: CARD_WIDTH,
-                  borderRadius: 20,
-                  backgroundColor: '#FFFFFF',
-                  padding: 18,
-                  shadowColor: '#000',
-                  shadowOpacity: 0.08,
-                  shadowRadius: 12,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: 3,
-                  gap: 10,
-                }}
+                style={styles.card}
                 onPress={() => {
                   if (typeof onPress === 'function') {
                     onPress(item);
                   }
                 }}
               >
-                <View style={{ gap: 4 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle} numberOfLines={1}>
                     {sportLabel}
                   </Text>
-                  <Text style={{ color: '#475569' }} numberOfLines={1}>
-                    {venueLabel}
-                  </Text>
+                  {venueLabel ? (
+                    <Text style={styles.cardSubtitle} numberOfLines={1}>
+                      {venueLabel}
+                    </Text>
+                  ) : null}
                 </View>
-                <View style={{ gap: 6 }}>
-                  <Text style={{ color: '#0F172A', fontWeight: '600' }}>{startsIn}</Text>
-                  <Text style={{ color: '#059669', fontWeight: '600' }}>{slotsLabel}</Text>
+                <View style={styles.metaRow}>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaText}>{startsIn}</Text>
+                  </View>
+                  <View style={styles.slotsPill}>
+                    <Text style={styles.slotsText}>{slotsLabel}</Text>
+                  </View>
                 </View>
               </Pressable>
             </Link>
@@ -118,5 +112,81 @@ const FindA4thHero = ({
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    gap: 12,
+  },
+  header: {
+    paddingHorizontal: 20,
+    gap: 4,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: theme.colors.brandInk,
+  },
+  subtitle: {
+    color: theme.colors.ink60,
+  },
+  list: {
+    paddingHorizontal: 20,
+    gap: 16,
+    paddingBottom: 6,
+  },
+  card: {
+    width: CARD_WIDTH,
+    borderRadius: 20,
+    backgroundColor: theme.colors.surface,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    gap: 12,
+  },
+  cardHeader: {
+    gap: 4,
+  },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.brandInk,
+  },
+  cardSubtitle: {
+    color: theme.colors.ink60,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  metaPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: theme.colors.surfaceAlt,
+  },
+  metaText: {
+    color: theme.colors.ink60,
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  slotsPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+  },
+  slotsText: {
+    color: theme.colors.success,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+});
 
 export default FindA4thHero;

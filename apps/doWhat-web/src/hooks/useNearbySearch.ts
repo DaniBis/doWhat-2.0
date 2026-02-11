@@ -45,7 +45,7 @@ export function useNearbySearch() {
     );
   }, []);
 
-  // load activity names (fallback to a static list)
+  // load activity names
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -56,18 +56,7 @@ export function useNearbySearch() {
       if (cancelled) return;
 
       if (error) {
-        setActivityOptions([
-          "Archery",
-          "Board Games",
-          "Bowling",
-          "Dance",
-          "Hiking",
-          "Ice Skating",
-          "Rock Climbing",
-          "Running",
-          "Tennis",
-          "Yoga",
-        ]);
+        setActivityOptions([]);
       } else {
         setActivityOptions((data ?? []).map((r: { name: string }) => r.name));
       }

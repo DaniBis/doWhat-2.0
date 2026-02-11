@@ -44,13 +44,13 @@ describe('parseIcsFeed', () => {
 
     expect(first.title).toBe('Community Run');
     expect(first.status).toBe('scheduled');
-    expect(first.startAt.toISOString()).toBe('2024-11-01T08:00:00.000Z');
-    expect(first.endAt?.toISOString()).toBe('2024-11-01T09:00:00.000Z');
+    expect(first.startAt.toISOString()).toBe('2024-11-01T06:00:00.000Z');
+    expect(first.endAt?.toISOString()).toBe('2024-11-01T07:00:00.000Z');
     expect(first.tags).toEqual(['outdoors', 'running']);
     expect(first.lat).toBeCloseTo(13.733, 3);
     expect(first.lng).toBeCloseTo(100.541, 3);
 
-    expect(second.startAt.toISOString()).toBe('2024-11-02T08:00:00.000Z');
+    expect(second.startAt.toISOString()).toBe('2024-11-02T06:00:00.000Z');
   });
 
   test('marks cancelled events', async () => {

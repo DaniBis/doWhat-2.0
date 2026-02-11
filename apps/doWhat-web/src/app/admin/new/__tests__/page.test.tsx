@@ -228,6 +228,8 @@ describe("AdminNewSessionPage prefills", () => {
     const expectedEnd = new Date(defaultStart.getTime() + 2 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 16);
+    const expectedPrefillStart = new Date("2025-12-10T10:00").toISOString().slice(0, 16);
+    const expectedPrefillEnd = new Date("2025-12-10T12:30").toISOString().slice(0, 16);
 
     mockUseSearchParams.mockReturnValue(
       buildSearchParams({
@@ -251,8 +253,8 @@ describe("AdminNewSessionPage prefills", () => {
       const latInput = screen.getByPlaceholderText("51.5074") as HTMLInputElement;
       const lngInput = screen.getByPlaceholderText("-0.1278") as HTMLInputElement;
       const priceInput = screen.getByDisplayValue("35") as HTMLInputElement;
-      const startInput = screen.getByDisplayValue("2025-12-10T08:00") as HTMLInputElement;
-      const endInput = screen.getByDisplayValue("2025-12-10T10:30") as HTMLInputElement;
+      const startInput = screen.getByDisplayValue(expectedPrefillStart) as HTMLInputElement;
+      const endInput = screen.getByDisplayValue(expectedPrefillEnd) as HTMLInputElement;
 
       expect(activityInput).toHaveValue("Cloned Activity");
       expect(venueInput).toHaveValue("Borrowed Venue");

@@ -6,8 +6,8 @@ import { useStableNearbyData } from '../useStableNearbyData';
 
 type QuerySnapshot = Partial<UseQueryResult<MapActivitiesResponse, Error>>;
 
-const makeQuery = (overrides: QuerySnapshot = {}): UseQueryResult<MapActivitiesResponse, Error> =>
-  ({
+const makeQuery = (overrides: QuerySnapshot = {}): UseQueryResult<MapActivitiesResponse, Error> => {
+  const base: QuerySnapshot = {
     data: undefined,
     isLoading: false,
     isFetching: false,
@@ -16,21 +16,18 @@ const makeQuery = (overrides: QuerySnapshot = {}): UseQueryResult<MapActivitiesR
     error: undefined,
     isError: false,
     refetch: jest.fn(),
-    remove: jest.fn(),
     isStale: false,
     failureCount: 0,
     failureReason: null,
     isPaused: false,
     dataUpdatedAt: 0,
     errorUpdatedAt: 0,
-    dataUpdateCount: 0,
-    errorUpdateCount: 0,
     isPlaceholderData: false,
     isFetched: Boolean(overrides.data),
     isFetchedAfterMount: Boolean(overrides.data),
-    isFetchPending: false,
-    ...overrides,
-  } as UseQueryResult<MapActivitiesResponse, Error>);
+  };
+  return { ...base, ...overrides } as unknown as UseQueryResult<MapActivitiesResponse, Error>;
+};
 
 const sampleResponse: MapActivitiesResponse = {
   center: { lat: 0, lng: 0 },

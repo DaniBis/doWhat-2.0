@@ -17,7 +17,7 @@ const { trackReliabilityAttendanceLogViewed } = jest.requireMock("@dowhat/shared
 };
 
 jest.mock("next/link", () => {
-  return ({
+  const MockLink = ({
     children,
     href,
     onClick,
@@ -38,6 +38,8 @@ jest.mock("next/link", () => {
       {children}
     </a>
   );
+  MockLink.displayName = "MockLink";
+  return MockLink;
 });
 
 describe("ReliabilityExplainer", () => {

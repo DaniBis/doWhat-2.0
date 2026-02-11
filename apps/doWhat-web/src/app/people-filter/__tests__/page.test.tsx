@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase/browser';
 import { loadUserPreference, saveUserPreference, trackOnboardingEntry } from '@dowhat/shared';
 
 jest.mock('next/link', () => {
-  return ({
+  const MockLink = ({
     children,
     href,
     onClick,
@@ -28,6 +28,8 @@ jest.mock('next/link', () => {
       {children}
     </a>
   );
+  MockLink.displayName = 'MockLink';
+  return MockLink;
 });
 
 jest.mock('@/lib/supabase/browser', () => {
@@ -50,10 +52,14 @@ jest.mock('@dowhat/shared', () => {
   };
 });
 
-jest.mock('@/components/TaxonomyCategoryPicker', () => ({
-  __esModule: true,
-  default: () => <div data-testid="taxonomy-picker" />,
-}));
+jest.mock('@/components/TaxonomyCategoryPicker', () => {
+  const MockPicker = () => <div data-testid="taxonomy-picker" />;
+  MockPicker.displayName = 'TaxonomyCategoryPicker';
+  return {
+    __esModule: true,
+    default: MockPicker,
+  };
+});
 
 const mockSupabase = supabase as unknown as {
   auth: { getUser: jest.Mock };
@@ -86,14 +92,14 @@ const setPledgeState = ({ ackAt, version }: { ackAt: string | null; version?: st
 };
 
 const createTraitCountBuilder = () => {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => Promise.resolve({ count: supabaseState.traitCount, error: null }));
   return builder;
 };
 
 const createProfileBuilder = () => {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
   builder.maybeSingle = jest.fn(() =>

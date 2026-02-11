@@ -103,7 +103,7 @@ export const fetchSupabasePlacesWithinBounds = async (
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { data, error } = await buildQuery(includeUpdatedAt);
     if (!error) {
-      rows = (data as SupabasePlacesRow[] | null) ?? null;
+      rows = Array.isArray(data) ? (data as unknown as SupabasePlacesRow[]) : null;
       break;
     }
 

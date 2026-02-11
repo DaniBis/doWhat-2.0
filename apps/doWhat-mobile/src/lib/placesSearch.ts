@@ -83,7 +83,7 @@ const fetchFromSupabase = async (
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		const { data, error } = await buildQuery(includeUpdatedAt);
 		if (!error) {
-			rows = (data as VenueRow[] | null) ?? [];
+			rows = Array.isArray(data) ? (data as unknown as VenueRow[]) : [];
 			break;
 		}
 

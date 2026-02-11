@@ -16,9 +16,11 @@ const buildMockResponse = (payload: unknown, status = 200) => {
 };
 
 function mockFetchJson(payload: unknown, status = 200) {
-  const mock = jest.fn(async () => buildMockResponse(payload, status)) as jest.MockedFunction<typeof fetch>;
-  globalThis.fetch = mock;
-  return mock;
+  const mock = jest.fn<Promise<Response>, Parameters<typeof fetch>>(
+    async () => buildMockResponse(payload, status),
+  );
+  globalThis.fetch = mock as unknown as typeof fetch;
+  return mock as jest.MockedFunction<typeof fetch>;
 }
 
 describe('places provider adapters', () => {

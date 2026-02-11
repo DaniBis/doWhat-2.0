@@ -13,23 +13,23 @@ let GET: typeof import('../route').GET;
 beforeAll(async () => {
   if (!globalThis.TextEncoder || !globalThis.TextDecoder) {
     const { TextEncoder, TextDecoder } = await import('node:util');
-    globalThis.TextEncoder = TextEncoder;
-    globalThis.TextDecoder = globalThis.TextDecoder ?? TextDecoder;
+    globalThis.TextEncoder = TextEncoder as unknown as typeof globalThis.TextEncoder;
+    globalThis.TextDecoder = (globalThis.TextDecoder ?? TextDecoder) as unknown as typeof globalThis.TextDecoder;
   }
   if (!globalThis.ReadableStream) {
     const { ReadableStream } = await import('node:stream/web');
-    globalThis.ReadableStream = ReadableStream;
+    globalThis.ReadableStream = ReadableStream as unknown as typeof globalThis.ReadableStream;
   }
   if (!globalThis.MessagePort || !globalThis.MessageChannel) {
     const { MessagePort, MessageChannel } = await import('node:worker_threads');
-    globalThis.MessagePort = globalThis.MessagePort ?? MessagePort;
-    globalThis.MessageChannel = globalThis.MessageChannel ?? MessageChannel;
+    globalThis.MessagePort = (globalThis.MessagePort ?? MessagePort) as unknown as typeof globalThis.MessagePort;
+    globalThis.MessageChannel = (globalThis.MessageChannel ?? MessageChannel) as unknown as typeof globalThis.MessageChannel;
   }
   if (!globalThis.Request || !globalThis.Response || !globalThis.Headers) {
     const { Request, Response, Headers } = await import('undici');
-    globalThis.Request = globalThis.Request ?? Request;
-    globalThis.Response = globalThis.Response ?? Response;
-    globalThis.Headers = globalThis.Headers ?? Headers;
+    globalThis.Request = (globalThis.Request ?? Request) as unknown as typeof globalThis.Request;
+    globalThis.Response = (globalThis.Response ?? Response) as unknown as typeof globalThis.Response;
+    globalThis.Headers = (globalThis.Headers ?? Headers) as unknown as typeof globalThis.Headers;
   }
   const route = await import('../route');
   GET = route.GET;

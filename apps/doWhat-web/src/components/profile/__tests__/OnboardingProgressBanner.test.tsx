@@ -18,7 +18,16 @@ const { trackOnboardingEntry } = jest.requireMock("@dowhat/shared") as {
 };
 
 jest.mock("next/link", () => {
-  return ({ children, href, onClick, ...rest }: { children: React.ReactNode; href: string; onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void }) => (
+  const MockLink = ({
+    children,
+    href,
+    onClick,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    href: string;
+    onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  }) => (
     <a
       href={href}
       onClick={(event) => {
@@ -30,6 +39,8 @@ jest.mock("next/link", () => {
       {children}
     </a>
   );
+  MockLink.displayName = "MockLink";
+  return MockLink;
 });
 
 describe("OnboardingProgressBanner", () => {

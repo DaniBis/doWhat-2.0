@@ -76,7 +76,20 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load places';
+    const latency = Date.now() - start;
+    const isFetchFailure = message.toLowerCase().includes('fetch failed');
     console.error('Places endpoint error', error);
+    if (isFetchFailure && process.env.NODE_ENV !== 'production') {
+      return Response.json({
+        cacheHit: false,
+        places: [],
+        providerCounts: { openstreetmap: 0, foursquare: 0, google_places: 0 },
+        attribution: [],
+        latencyMs: latency,
+        degraded: true,
+        error: message,
+      });
+    }
     if (process.env.NODE_ENV !== 'production') {
       return Response.json(
         {

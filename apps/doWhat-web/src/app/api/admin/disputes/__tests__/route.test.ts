@@ -246,7 +246,7 @@ function createPatchRequest(body: Record<string, unknown>): Request {
 
 function createListBuilder(rows: unknown[]) {
   const response = Promise.resolve({ data: rows, error: null, count: rows.length });
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.order = jest.fn(() => builder);
   builder.limit = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
@@ -257,14 +257,14 @@ function createListBuilder(rows: unknown[]) {
 }
 
 function createSingleBuilder(row: unknown) {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.eq = jest.fn(() => builder);
   builder.maybeSingle = jest.fn(async () => ({ data: row, error: null }));
   return builder;
 }
 
 function createStatusCountBuilder(counts: Record<string, number>) {
-  const builder: any = {};
+  const builder: Record<string, unknown> = {};
   builder.eq = jest.fn((_, status: string) => {
     const response = Promise.resolve({ data: null, error: null, count: counts[status] ?? 0 });
     builder.then = response.then.bind(response);

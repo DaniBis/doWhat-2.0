@@ -300,11 +300,14 @@ type ActivitiesBuilder = {
 
 function createActivitiesBuilder() {
   let failForPlaceColumn = true;
-  const insert: ActivitiesBuilder['insert'] = jest.fn((payload: Record<string, unknown>) => ({
-    select: () => ({
-      single: async () => ({ data: { id: "activity-new" }, error: null }),
-    }),
-  }));
+  const insert: ActivitiesBuilder['insert'] = jest.fn((_payload: Record<string, unknown>) => {
+    void _payload;
+    return {
+      select: () => ({
+        single: async () => ({ data: { id: "activity-new" }, error: null }),
+      }),
+    };
+  });
 
   const builder: ActivitiesBuilder = {
     lastSelect: "",
@@ -335,13 +338,23 @@ type ActivityPlaceBuilder = {
 
 function createActivityPlaceBuilder(placeId: string | null) {
   const builder: ActivityPlaceBuilder = {
-    select: jest.fn((_columns: string) => builder),
-    eq: jest.fn((_column: string, _value?: string) => builder),
+    select: jest.fn((_columns: string) => {
+      void _columns;
+      return builder;
+    }),
+    eq: jest.fn((_column: string, _value?: string) => {
+      void _column;
+      void _value;
+      return builder;
+    }),
     maybeSingle: jest.fn(async () => ({
       data: { id: "activity-1", place_id: placeId },
       error: null,
     })),
-    update: jest.fn((_payload: Record<string, unknown>) => builder),
+    update: jest.fn((_payload: Record<string, unknown>) => {
+      void _payload;
+      return builder;
+    }),
   };
   return builder;
 }
@@ -361,8 +374,15 @@ function createSingleRowService(rows: Record<string, Record<string, unknown> | n
     from: jest.fn((table: string) => {
       const queryRow = rows[table] ?? null;
       const query: SingleRowQuery = {
-        select: jest.fn(() => query),
-        eq: jest.fn(() => query),
+        select: jest.fn((_column: string) => {
+          void _column;
+          return query;
+        }),
+        eq: jest.fn((_column: string, _value?: string) => {
+          void _column;
+          void _value;
+          return query;
+        }),
         maybeSingle: jest.fn(async () => ({ data: queryRow, error: null })),
       };
       return query;

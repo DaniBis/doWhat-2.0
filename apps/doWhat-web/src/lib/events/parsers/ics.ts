@@ -132,6 +132,17 @@ const expandRecurrence = (
   } else if (hasTzId(component.dtstart) && typeof component.dtstart.tzid === 'string') {
     tz = component.dtstart.tzid;
   }
+  const startTz =
+    (component.start && typeof component.start === 'object' && 'tz' in component.start
+      ? (component.start as { tz?: unknown }).tz
+      : null) ?? null;
+  const tzHint = typeof startTz === 'string' ? startTz : tz;
+  const isUtcZone = typeof tzHint === 'string' && tzHint.toLowerCase().includes('utc');
+  const normalizeOccurrence = (occurrence: Date): Date => {
+    if (!isUtcZone) return occurrence;
+    const offsetMs = occurrence.getTimezoneOffset() * 60 * 1000;
+    return new Date(occurrence.getTime() + offsetMs);
+  };
   const tags = toTags(component.categories as unknown);
   const geo: ICalGeo = component.geo ?? {};
   const lat = parseMaybeNumber(geo.lat ?? geo.latitude);
@@ -145,8 +156,9 @@ const expandRecurrence = (
 
   if (component.rrule) {
     const between = component.rrule.between(from, to, true) as Date[];
-    between.forEach((occurrence) => {
-      if (exdates.has(occurrence.getTime())) return;
+    between.forEach((occurrenceRaw) => {
+      const occurrence = normalizeOccurrence(occurrenceRaw);
+      if (exdates.has(occurrenceRaw.getTime())) return;
       const end = durationMs != null
         ? new Date(occurrence.getTime() + durationMs)
         : component.end

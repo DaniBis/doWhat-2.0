@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { RELIABILITY_BADGE_ORDER, RELIABILITY_BADGE_TOKENS, type ReliabilityBadgeKey } from "@dowhat/shared";
 
@@ -53,16 +53,13 @@ export default function SessionAttendanceBadges({ sessionId }: Props) {
     return () => window.clearInterval(timer);
   }, [refresh, sessionId]);
 
-  if (!sessionId) return null;
+  const badgeValues: Record<ReliabilityBadgeKey, number | string> = {
+    going: typeof counts?.going === "number" ? counts.going : "—",
+    interested: typeof counts?.interested === "number" ? counts.interested : "—",
+    verified: typeof counts?.verified === "number" ? counts.verified : "—",
+  };
 
-  const badgeValues = useMemo<Record<ReliabilityBadgeKey, number | string>>(
-    () => ({
-      going: typeof counts?.going === "number" ? counts.going : "—",
-      interested: typeof counts?.interested === "number" ? counts.interested : "—",
-      verified: typeof counts?.verified === "number" ? counts.verified : "—",
-    }),
-    [counts?.going, counts?.interested, counts?.verified],
-  );
+  if (!sessionId) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-xs text-xs font-semibold">

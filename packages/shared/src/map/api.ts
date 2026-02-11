@@ -11,6 +11,7 @@ export interface CreateNearbyActivitiesFetcherOptions {
 
 export interface FetchNearbyActivitiesArgs extends MapActivitiesQuery {
   signal?: AbortSignal;
+  refresh?: boolean;
 }
 
 export type FetchNearbyActivities = (query: FetchNearbyActivitiesArgs) => Promise<MapActivitiesResponse>;
@@ -21,12 +22,13 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
   if (!http) {
     throw new Error('Global fetch API is not available. Pass fetchImpl explicitly.');
   }
-  return async ({ signal, ...query }: FetchNearbyActivitiesArgs) => {
+  return async ({ signal, refresh, ...query }: FetchNearbyActivitiesArgs) => {
     const url = new URL(buildUrl(query));
     url.searchParams.set('lat', String(query.center.lat));
     url.searchParams.set('lng', String(query.center.lng));
     url.searchParams.set('radius', String(Math.max(100, Math.round(query.radiusMeters))));
     if (query.limit) url.searchParams.set('limit', String(Math.max(1, query.limit)));
+    if (refresh) url.searchParams.set('refresh', '1');
 
     const normalizedFilters = normalizeFilters(query.filters);
     const filterParams = serializeFiltersToSearchParams(normalizedFilters);

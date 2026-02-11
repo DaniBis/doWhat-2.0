@@ -77,7 +77,7 @@ export const maybeResetInvalidSession = async (error: unknown): Promise<boolean>
   try {
     await supabase.auth.signOut({ scope: 'local' });
   } catch (signOutError) {
-    if (__DEV__) console.warn('[auth] local session reset failed', signOutError);
+    if (__DEV__) console.log('[auth] local session reset failed', signOutError);
   }
   return true;
 };

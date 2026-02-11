@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
+import { theme } from '@dowhat/shared';
 
 type IconRenderer = React.ComponentType<{ name: string; size: number; color: string }>;
 
@@ -44,22 +45,24 @@ const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <View style={styles.container}>
-      <View style={styles.iconContainer}>
-        {Ionicons ? (
-          <Ionicons name={icon} size={64} color="#D1D5DB" />
-        ) : (
-          <Text style={{ fontSize: 48, color: '#D1D5DB' }}>📭</Text>
+      <View style={styles.panel}>
+        <View style={styles.iconContainer}>
+          {Ionicons ? (
+            <Ionicons name={icon} size={56} color={theme.colors.ink40} />
+          ) : (
+            <Text style={{ fontSize: 46, color: theme.colors.ink40 }}>📭</Text>
+          )}
+        </View>
+
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
+
+        {actionText && (
+          <TouchableOpacity style={styles.actionButton} onPress={handleAction}>
+            <Text style={styles.actionText}>{actionText}</Text>
+          </TouchableOpacity>
         )}
       </View>
-      
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
-      
-      {actionText && (
-        <TouchableOpacity style={styles.actionButton} onPress={handleAction}>
-          <Text style={styles.actionText}>{actionText}</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 };
@@ -69,47 +72,63 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
-    paddingTop: 60,
+    padding: 24,
+    paddingTop: 40,
+  },
+  panel: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#F3F4F6',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: theme.colors.surfaceAlt,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   title: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#111827',
+    fontWeight: '700',
+    color: theme.colors.brandInk,
     textAlign: 'center',
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#6B7280',
+    fontSize: 15,
+    color: theme.colors.ink60,
     textAlign: 'center',
     lineHeight: 24,
     marginBottom: 32,
   },
   actionButton: {
-    backgroundColor: '#2C7BF6',
+    backgroundColor: theme.colors.brandTeal,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 24,
-    shadowColor: '#2C7BF6',
+    shadowColor: theme.colors.brandTeal,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.22,
     shadowRadius: 8,
     elevation: 4,
   },
   actionText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
 

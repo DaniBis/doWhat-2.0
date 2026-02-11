@@ -41,10 +41,10 @@ jest.mock("@dowhat/shared", () => {
 });
 
 type QueryBuilder = {
-  select: jest.MockedFunction<any>;
-  eq: jest.MockedFunction<any>;
-  maybeSingle: jest.MockedFunction<any>;
-  upsert: jest.MockedFunction<any>;
+  select: jest.Mock;
+  eq: jest.Mock;
+  maybeSingle: jest.Mock;
+  upsert: jest.Mock;
 };
 
 const createQueryBuilder = (): QueryBuilder => {

@@ -1,18 +1,21 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 
+import WebMap from "@/components/WebMap";
 import SaveToggleButton from "@/components/SaveToggleButton";
 import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
+import AuthGate from "@/components/AuthGate";
 import { buildCreateEventQuery, buildPrefillContextSummary } from "@/lib/adminPrefill";
 import {
   ACTIVITY_DISTANCE_OPTIONS,
   type MapActivity,
 } from "@dowhat/shared";
 import { normalizePlaceLabel } from '@/lib/places/labels';
+import { supabase } from "@/lib/supabase/browser";
 
 import type { MapMovePayload } from "@/components/WebMap";
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from "@/lib/venues/types";
@@ -20,10 +23,6 @@ import { ACTIVITY_NAMES, type ActivityName, VENUE_SEARCH_DEFAULT_RADIUS } from "
 import { buildVenueTaxonomySupport } from "@/lib/venues/taxonomySupport";
 import { buildVenueSavePayload } from "@/lib/venues/savePayload";
 import { filterVenuesBySignals, filterVenuesByStatus, type StatusFilter } from "@/lib/venues/filters";
-
-const WebMap = dynamic(() => import("@/components/WebMap"), {
-  ssr: false,
-}) as unknown as typeof import("@/components/WebMap").default;
 
 const FALLBACK_CENTER = { lat: 51.5074, lng: -0.1278 };
 const DEFAULT_LIMIT = 60;
@@ -93,15 +92,6 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string; helper: string
   { value: 'ai_only', label: 'AI only', helper: 'Fresh suggestions without votes' },
 ];
 
-const CATEGORY_FILTERS: Array<{ value: string; label: string; keywords: string[] }> = [
-  { value: 'all', label: 'All types', keywords: [] },
-  { value: 'climbing', label: 'Climbing · Bouldering', keywords: ['climb', 'boulder'] },
-  { value: 'gym', label: 'Gyms · Fitness', keywords: ['gym', 'fitness', 'studio'] },
-  { value: 'sports', label: 'Sports centers', keywords: ['sport', 'stadium', 'arena'] },
-  { value: 'cafe', label: 'Cafes · Coffee', keywords: ['cafe', 'coffee'] },
-  { value: 'bar', label: 'Bars · Nightlife', keywords: ['bar', 'pub', 'club'] },
-];
-
 const DEFAULT_ACTIVITY_NAME: ActivityName = ACTIVITY_NAMES[0];
 
 const DISTANCE_OPTION_CONFIG = ACTIVITY_DISTANCE_OPTIONS.map((km) => ({
@@ -112,6 +102,13 @@ const DISTANCE_OPTION_CONFIG = ACTIVITY_DISTANCE_OPTIONS.map((km) => ({
 
 export default function VenueVerificationPage() {
   const taxonomySupport = useMemo(() => buildVenueTaxonomySupport(), []);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const redirectTarget = useMemo(() => {
+    const params = searchParams?.toString() ?? "";
+    if (!pathname) return "/venues";
+    return params ? `${pathname}?${params}` : pathname;
+  }, [pathname, searchParams]);
   const [selectedActivity, setSelectedActivityRaw] = useState<ActivityName>(DEFAULT_ACTIVITY_NAME);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(() => {
     const entry = taxonomySupport.tier3ByActivity.get(DEFAULT_ACTIVITY_NAME);
@@ -139,24 +136,38 @@ export default function VenueVerificationPage() {
   const [keywordSignalOnly, setKeywordSignalOnly] = useState(false);
   const [priceLevelFilters, setPriceLevelFilters] = useState<number[]>([]);
   const [nameSearch, setNameSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState(CATEGORY_FILTERS[0]?.value ?? 'all');
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [voteLoadingKey, setVoteLoadingKey] = useState<string | null>(null);
   const [voteFeedback, setVoteFeedback] = useState<Record<string, VoteFeedback>>({});
   const [locationDenied, setLocationDenied] = useState(false);
   const [showTaxonomyPicker, setShowTaxonomyPicker] = useState(false);
+  const [authStatus, setAuthStatus] = useState<"loading" | "authed" | "anon">("loading");
 
   const selectActivity = useCallback((activity: ActivityName) => {
     setSelectedActivityRaw(activity);
   }, []);
 
   useEffect(() => {
-    const entry = taxonomySupport.tier3ByActivity.get(selectedActivity);
-    if (entry) {
-      setSelectedCategoryIds([entry.id]);
-    } else {
-      setSelectedCategoryIds([]);
-    }
-  }, [selectedActivity, taxonomySupport]);
+    let cancelled = false;
+    const resolveAuth = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const uid = data.user?.id ?? null;
+        setAuthStatus(uid ? "authed" : "anon");
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[venues] unable to resolve auth session", error);
+          setAuthStatus("anon");
+        }
+      }
+    };
+    resolveAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   const handleCategoryToggle = useCallback(
     (tier3Id: string) => {
@@ -183,7 +194,10 @@ export default function VenueVerificationPage() {
     [],
   );
 
-  const resetAdvancedFilters = useCallback(() => {
+  const resetFilters = useCallback(() => {
+    setStatusFilter("all");
+    setCategoryFilter("all");
+    setNameSearch("");
     setOnlyOpenNow(false);
     setOnlyWithVotes(false);
     setCategorySignalOnly(false);
@@ -206,6 +220,7 @@ export default function VenueVerificationPage() {
   }, [radiusMeters]);
 
   useEffect(() => {
+    if (authStatus !== "authed") return;
     let cancelled = false;
     const fallback = () => {
       if (!cancelled) {
@@ -235,7 +250,7 @@ export default function VenueVerificationPage() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, []);
+  }, [authStatus]);
 
   useEffect(() => {
     if (!center) return;
@@ -261,6 +276,7 @@ export default function VenueVerificationPage() {
   const centerLng = center?.lng ?? null;
 
   useEffect(() => {
+    if (authStatus !== "authed") return;
     if (centerLat == null || centerLng == null) return;
     const controller = new AbortController();
     setSummaryLoading(true);
@@ -298,10 +314,18 @@ export default function VenueVerificationPage() {
       });
 
     return () => controller.abort();
-  }, [centerLat, centerLng, boundsSnapshot, radiusMeters]);
+  }, [authStatus, centerLat, centerLng, boundsSnapshot, radiusMeters]);
 
   useEffect(() => {
+    if (authStatus !== "authed") return;
     if (centerLat == null || centerLng == null) return;
+    if (summary.length === 0) {
+      setResults([]);
+      setSearchError(null);
+      setSearchNotice(null);
+      setSearchLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setSearchLoading(true);
     setSearchError(null);
@@ -347,7 +371,7 @@ export default function VenueVerificationPage() {
       });
 
     return () => controller.abort();
-  }, [selectedActivity, centerLat, centerLng, boundsSnapshot, radiusMeters]);
+  }, [authStatus, selectedActivity, centerLat, centerLng, boundsSnapshot, radiusMeters, summary.length]);
 
   const availablePriceLevels = useMemo(() => {
     const levels = new Set<number>();
@@ -375,23 +399,87 @@ export default function VenueVerificationPage() {
     return counts;
   }, [results]);
 
+  const categoryOptions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>();
+    results.forEach((venue) => {
+      venue.primaryCategories.forEach((value) => {
+        const label = value.trim();
+        if (!label) return;
+        const key = label.toLowerCase();
+        const current = counts.get(key);
+        if (current) {
+          current.count += 1;
+        } else {
+          counts.set(key, { label, count: 1 });
+        }
+      });
+    });
+    return Array.from(counts.entries())
+      .map(([value, meta]) => ({ value, label: meta.label, count: meta.count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [results]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: results.length,
+      verified: 0,
+      needs_review: 0,
+      ai_only: 0,
+    };
+    results.forEach((venue) => {
+      if (venue.verified) {
+        counts.verified += 1;
+      } else if (venue.needsVerification) {
+        counts.needs_review += 1;
+      } else {
+        counts.ai_only += 1;
+      }
+    });
+    return counts;
+  }, [results]);
+
+  const statusOptions = useMemo(
+    () => {
+      if (results.length === 0) return [];
+      return STATUS_FILTERS.map((option) => ({
+        ...option,
+        count: statusCounts[option.value],
+      })).filter((option) => option.value === "all" || option.count > 0);
+    },
+    [results.length, statusCounts],
+  );
+
+  const hasVotesData = useMemo(
+    () => results.some((venue) => (venue.userYesVotes + venue.userNoVotes) > 0),
+    [results],
+  );
+
+  const supportsCategorySignal = useMemo(() => results.some((venue) => venue.categoryMatch), [results]);
+  const supportsKeywordSignal = useMemo(() => results.some((venue) => venue.keywordMatch), [results]);
+  const supportsOpenNow = useMemo(() => results.some((venue) => venue.openNow !== null), [results]);
+
+  useEffect(() => {
+    if (categoryFilter === "all") return;
+    if (!categoryOptions.some((option) => option.value === categoryFilter)) {
+      setCategoryFilter("all");
+    }
+  }, [categoryFilter, categoryOptions]);
+
+  useEffect(() => {
+    if (statusFilter === "all") return;
+    if (statusCounts[statusFilter] === 0) {
+      setStatusFilter("all");
+    }
+  }, [statusCounts, statusFilter]);
+
   const searchFilteredVenues = useMemo(() => {
     const term = nameSearch.trim().toLowerCase();
-    const categoryOption = CATEGORY_FILTERS.find((option) => option.value === categoryFilter) ?? CATEGORY_FILTERS[0];
-    const categoryKeywords = categoryOption?.keywords ?? [];
-
+    const categoryKey = categoryFilter;
     const matchesCategory = (venue: RankedVenueActivity) => {
-      if (!categoryKeywords.length || categoryOption?.value === 'all') return true;
-      const normalizedCategories = venue.primaryCategories.map((value) => value.toLowerCase());
-      const normalizedActivity = venue.activity.toLowerCase();
-      return categoryKeywords.some((keyword) => {
-        if (!keyword) return false;
-        const lower = keyword.toLowerCase();
-        return (
-          normalizedCategories.some((category) => category.includes(lower))
-          || normalizedActivity.includes(lower)
-        );
-      });
+      if (categoryKey === "all") return true;
+      return venue.primaryCategories.some(
+        (value) => value.trim().toLowerCase() === categoryKey,
+      );
     };
 
     return results.filter((venue) => {
@@ -445,6 +533,50 @@ export default function VenueVerificationPage() {
     return map;
   }, [summary]);
 
+  const availableActivities = useMemo(() => summary.map((entry) => entry.activity), [summary]);
+
+  const availableTier3Ids = useMemo(() => {
+    const ids = new Set<string>();
+    availableActivities.forEach((activity) => {
+      const entry = taxonomySupport.tier3ByActivity.get(activity);
+      if (entry?.id) ids.add(entry.id);
+    });
+    return ids;
+  }, [availableActivities, taxonomySupport]);
+
+  const filteredTaxonomy = useMemo(() => {
+    if (!taxonomySupport.taxonomy.length || availableTier3Ids.size === 0) return [];
+    return taxonomySupport.taxonomy
+      .map((tier1) => {
+        const tier2Children = tier1.children
+          .map((tier2) => {
+            const tier3Children = tier2.children.filter((tier3) => availableTier3Ids.has(tier3.id));
+            if (!tier3Children.length) return null;
+            return { ...tier2, children: tier3Children };
+          })
+          .filter(Boolean) as typeof tier1.children;
+        if (!tier2Children.length) return null;
+        return { ...tier1, children: tier2Children };
+      })
+      .filter(Boolean) as typeof taxonomySupport.taxonomy;
+  }, [taxonomySupport, availableTier3Ids]);
+
+  useEffect(() => {
+    const entry = taxonomySupport.tier3ByActivity.get(selectedActivity);
+    if (entry && availableTier3Ids.has(entry.id)) {
+      setSelectedCategoryIds([entry.id]);
+    } else {
+      setSelectedCategoryIds([]);
+    }
+  }, [availableTier3Ids, selectedActivity, taxonomySupport]);
+
+  useEffect(() => {
+    if (!availableActivities.length) return;
+    if (!availableActivities.includes(selectedActivity)) {
+      setSelectedActivityRaw(availableActivities[0]);
+    }
+  }, [availableActivities, selectedActivity]);
+
   const mapActivities = useMemo<MapActivity[]>(() => (
     visibleVenues.flatMap((row) => {
       const lat = sanitizeCoordinate(row.lat);
@@ -463,7 +595,7 @@ export default function VenueVerificationPage() {
   ), [visibleVenues]);
 
   const selectedSummary = summaryMap.get(selectedActivity);
-  const taxonomyAvailable = taxonomySupport.taxonomy.length > 0;
+  const taxonomyAvailable = filteredTaxonomy.length > 0;
   const selectedCategoryMeta = selectedCategoryIds.length
     ? taxonomySupport.tier3ById.get(selectedCategoryIds[0])
     : null;
@@ -562,27 +694,54 @@ export default function VenueVerificationPage() {
     currentActivityLabel,
     selectedCategoryDescription,
   );
-  const hasAdvancedFilters =
+  const hasActiveFilters =
+    statusFilter !== "all" ||
+    categoryFilter !== "all" ||
+    Boolean(nameSearch.trim()) ||
     onlyOpenNow ||
     onlyWithVotes ||
     categorySignalOnly ||
     keywordSignalOnly ||
     priceLevelFilters.length > 0;
 
+  if (authStatus === "loading") {
+    return (
+      <div className="mx-auto min-h-screen max-w-6xl px-4 py-12">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 w-48 rounded bg-ink-subtle" />
+          <div className="h-4 w-80 rounded bg-ink-subtle" />
+          <div className="h-64 rounded-3xl bg-ink-subtle" />
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "anon") {
+    return (
+      <div className="mx-auto min-h-screen max-w-4xl px-4 py-16">
+        <AuthGate
+          title="Sign in to verify venues"
+          description="Venue verification is available to members only. Sign in to review spots and vote."
+          redirectTo={redirectTarget}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-8">
-      <header className="mb-6 space-y-2">
-        <p className="text-sm font-semibold uppercase tracking-wide text-emerald-600">Smart activity discovery</p>
-        <h1 className="text-3xl font-bold text-slate-900">Help verify where each activity is available</h1>
-        <p className="text-base text-slate-600">
+      <header className="mb-8 glass-panel p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.32em] text-emerald-600">Smart activity discovery</p>
+        <h1 className="mt-3 text-3xl font-bold text-ink-strong">Help verify where each activity is available</h1>
+        <p className="mt-2 text-base text-ink-medium">
           We blend AI suggestions with community signals. Pick an activity, review nearby venues, and vote to confirm whether the spot actually hosts it.
         </p>
         {locationDenied ? (
-          <p className="text-sm text-slate-500">Using a fallback map center. Enable location permissions for sharper results.</p>
+          <p className="mt-2 text-sm text-ink-muted">Using a fallback map center. Enable location permissions for sharper results.</p>
         ) : null}
       </header>
 
-      <section className="mb-8 rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-sm">
+      <section className="mb-8 soft-card p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Activities in this area</h2>
@@ -591,37 +750,53 @@ export default function VenueVerificationPage() {
           {summaryError ? <p className="text-sm text-rose-600">{summaryError}</p> : null}
         </div>
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {ACTIVITY_NAMES.map((activity) => {
-            const data = summaryMap.get(activity);
-            const verifiedCount = data?.verifiedCount ?? 0;
-            const likelyCount = data?.likelyCount ?? 0;
-            const needsReview = data?.needsReviewCount ?? 0;
-            const avgConfidence = data?.averageConfidence ?? null;
-            return (
-              <button
-                key={activity}
-                type="button"
-                onClick={() => selectActivity(activity)}
-                className={clsx(
-                  "min-w-[220px] flex-1 rounded-2xl border px-4 py-3 text-left transition",
-                  selectedActivity === activity
-                    ? "border-emerald-500 bg-emerald-50/70 shadow-sm"
-                    : "border-slate-200 bg-white/70 hover:border-slate-300",
-                )}
-                aria-pressed={selectedActivity === activity}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-base font-semibold text-slate-900">{formatActivityLabel(activity)}</span>
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{verifiedCount} verified</span>
+          {summaryLoading && summary.length === 0 ? (
+            Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="min-w-[220px] flex-1 rounded-2xl border border-slate-200 bg-white/70 p-4">
+                <div className="animate-pulse space-y-3">
+                  <div className="h-4 w-24 rounded bg-slate-200" />
+                  <div className="h-3 w-32 rounded bg-slate-200" />
+                  <div className="h-3 w-40 rounded bg-slate-200" />
                 </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">Likely {likelyCount}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">Needs review {needsReview}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5">Avg confidence {formatPercent(avgConfidence)}</span>
-                </div>
-              </button>
-            );
-          })}
+              </div>
+            ))
+          ) : summary.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-500">
+              No activity signals yet. Move the map to a busier area or check back soon.
+            </div>
+          ) : (
+            summary.map((entry) => {
+              const activity = entry.activity;
+              const verifiedCount = entry.verifiedCount ?? 0;
+              const likelyCount = entry.likelyCount ?? 0;
+              const needsReview = entry.needsReviewCount ?? 0;
+              const avgConfidence = entry.averageConfidence ?? null;
+              return (
+                <button
+                  key={activity}
+                  type="button"
+                  onClick={() => selectActivity(activity)}
+                  className={clsx(
+                    "min-w-[220px] flex-1 rounded-2xl border px-4 py-3 text-left transition",
+                    selectedActivity === activity
+                      ? "border-emerald-500 bg-emerald-50/70 shadow-sm"
+                      : "border-slate-200 bg-white/70 hover:border-slate-300",
+                  )}
+                  aria-pressed={selectedActivity === activity}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-base font-semibold text-slate-900">{formatActivityLabel(activity)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{verifiedCount} verified</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">Likely {likelyCount}</span>
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">Needs review {needsReview}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5">Avg confidence {formatPercent(avgConfidence)}</span>
+                  </div>
+                </button>
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -646,7 +821,7 @@ export default function VenueVerificationPage() {
             <TaxonomyCategoryPicker
               selectedIds={selectedCategoryIds}
               onToggle={handleCategoryToggle}
-              taxonomy={taxonomySupport.taxonomy}
+              taxonomy={filteredTaxonomy}
               className="mt-4"
             />
           ) : (
@@ -669,24 +844,6 @@ export default function VenueVerificationPage() {
             </div>
             {searchError ? <span className="text-sm text-rose-600">{searchError}</span>
               : searchNotice ? <span className="text-sm text-amber-600">{searchNotice}</span> : null}
-          </div>
-          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span className="font-semibold uppercase tracking-wide text-slate-500">Radius presets</span>
-            {DISTANCE_OPTION_CONFIG.map((option) => (
-              <button
-                key={option.km}
-                type="button"
-                onClick={() => handleDistanceSelect(option.km)}
-                className={clsx(
-                  "rounded-full border px-3 py-1 text-sm transition",
-                  selectedDistanceKm === option.km
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
           </div>
           <div className="h-[520px] overflow-hidden rounded-2xl border border-slate-100 bg-slate-100/60">
             {center ? (
@@ -724,8 +881,28 @@ export default function VenueVerificationPage() {
           <p className="mt-2 text-xs text-slate-500">
             Votes require a free account. We will prompt you to sign in if needed.
           </p>
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-            <div>
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filters</p>
+                <p className="text-xs text-slate-500">Only options with live data are shown.</p>
+              </div>
+              <button
+                type="button"
+                onClick={resetFilters}
+                disabled={!hasActiveFilters}
+                className={clsx(
+                  "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                  hasActiveFilters
+                    ? "border-emerald-500 text-emerald-700 hover:bg-emerald-50"
+                    : "border-slate-200 text-slate-400",
+                )}
+              >
+                Reset filters
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
               <label htmlFor="venues-search" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Search venues
               </label>
@@ -741,7 +918,7 @@ export default function VenueVerificationPage() {
                 {nameSearch ? (
                   <button
                     type="button"
-                    onClick={() => setNameSearch('')}
+                    onClick={() => setNameSearch("")}
                     className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400"
                   >
                     Clear
@@ -749,180 +926,256 @@ export default function VenueVerificationPage() {
                 ) : null}
               </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category focus</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {CATEGORY_FILTERS.map((option) => {
-                  const active = option.value === categoryFilter;
-                  return (
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</p>
+                {categoryOptions.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
                     <button
-                      key={option.value}
                       type="button"
-                      onClick={() => setCategoryFilter(option.value)}
+                      onClick={() => setCategoryFilter("all")}
+                      aria-pressed={categoryFilter === "all"}
                       className={clsx(
-                        'rounded-full border px-3 py-1 text-sm font-semibold transition',
-                        active
-                          ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                        "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                        categoryFilter === "all"
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
                       )}
                     >
-                      {option.label}
+                      All categories
                     </button>
-                  );
-                })}
+                    {categoryOptions.map((option) => {
+                      const active = option.value === categoryFilter;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setCategoryFilter(option.value)}
+                          aria-pressed={active}
+                          className={clsx(
+                            "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold transition",
+                            active
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                          )}
+                        >
+                          <span>{option.label}</span>
+                          <span className="text-xs font-normal text-slate-500">{option.count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No category data yet.</p>
+                )}
               </div>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {STATUS_FILTERS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setStatusFilter(option.value)}
-                className={clsx(
-                  'flex-1 min-w-[140px] rounded-2xl border px-3 py-2 text-left text-sm transition',
-                  statusFilter === option.value
-                    ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
-                )}
-              >
-                <span className="block font-semibold text-slate-900">{option.label}</span>
-                <span className="text-xs text-slate-500">{option.helper}</span>
-              </button>
-            ))}
-          </div>
-          <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Signal filters</p>
-                <p className="text-xs text-slate-500">Stack cues to focus review-ready venues.</p>
-              </div>
-              <button
-                type="button"
-                onClick={resetAdvancedFilters}
-                disabled={!hasAdvancedFilters}
-                className={clsx(
-                  "rounded-full border px-3 py-1 text-xs font-semibold transition",
-                  hasAdvancedFilters
-                    ? "border-emerald-500 text-emerald-700 hover:bg-emerald-50"
-                    : "border-slate-200 text-slate-400",
-                )}
-              >
-                Reset filters
-              </button>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setOnlyOpenNow((prev) => !prev)}
-                aria-pressed={onlyOpenNow}
-                className={clsx(
-                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
-                  onlyOpenNow
-                    ? "border-emerald-500 bg-white shadow"
-                    : "border-slate-200 bg-white/80 hover:border-slate-300",
-                )}
-              >
-                <span className="block font-semibold text-slate-900">Open now</span>
-                <span className="text-xs text-slate-500">Requires live hours data</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setOnlyWithVotes((prev) => !prev)}
-                aria-pressed={onlyWithVotes}
-                className={clsx(
-                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
-                  onlyWithVotes
-                    ? "border-emerald-500 bg-white shadow"
-                    : "border-slate-200 bg-white/80 hover:border-slate-300",
-                )}
-              >
-                <span className="block font-semibold text-slate-900">Has votes</span>
-                <span className="text-xs text-slate-500">Only venues with community input</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setCategorySignalOnly((prev) => !prev)}
-                aria-pressed={categorySignalOnly}
-                className={clsx(
-                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
-                  categorySignalOnly
-                    ? "border-emerald-500 bg-white shadow"
-                    : "border-slate-200 bg-white/80 hover:border-slate-300",
-                )}
-              >
-                <span className="block font-semibold text-slate-900">Category match</span>
-                <span className="text-xs text-slate-500">Use taxonomy overlap as a gate</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setKeywordSignalOnly((prev) => !prev)}
-                aria-pressed={keywordSignalOnly}
-                className={clsx(
-                  "rounded-2xl border px-3 py-2 text-left text-sm transition",
-                  keywordSignalOnly
-                    ? "border-emerald-500 bg-white shadow"
-                    : "border-slate-200 bg-white/80 hover:border-slate-300",
-                )}
-              >
-                <span className="block font-semibold text-slate-900">Keyword signal</span>
-                <span className="text-xs text-slate-500">Require AI text cues</span>
-              </button>
-            </div>
-            <div className="mt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price focus</p>
-              {availablePriceLevels.length ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPriceLevelFilters([])}
-                    aria-pressed={priceLevelFilters.length === 0}
-                    className={clsx(
-                      "rounded-full border px-3 py-1 text-sm font-semibold transition",
-                      priceLevelFilters.length === 0
-                        ? "border-emerald-500 bg-white text-emerald-900"
-                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-                    )}
-                  >
-                    All prices
-                  </button>
-                  {availablePriceLevels.map((level) => {
-                    const active = priceLevelFilters.includes(level);
-                    const label = formatPriceLevelLabel(level) ?? "";
-                    const count = priceLevelCounts.get(level) ?? 0;
-                    return (
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Verification status</p>
+                {statusOptions.length ? (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {statusOptions.map((option) => (
                       <button
-                        key={`price-${level}`}
+                        key={option.value}
                         type="button"
-                        onClick={() => handlePriceLevelToggle(level)}
-                        aria-pressed={active}
+                        onClick={() => setStatusFilter(option.value)}
                         className={clsx(
-                          "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold transition",
-                          active
+                          "rounded-2xl border px-3 py-2 text-left text-sm transition",
+                          statusFilter === option.value
                             ? "border-emerald-500 bg-emerald-50 text-emerald-900"
                             : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
                         )}
                       >
-                        <span>{label || `Level ${level}`}</span>
-                        <span className="text-xs font-normal text-slate-500">{count}</span>
+                        <span className="block font-semibold text-slate-900">{option.label}</span>
+                        <span className="text-xs text-slate-500">
+                          {option.helper} · {option.count}
+                        </span>
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No verification data yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Activity support</p>
+                {supportsCategorySignal || supportsKeywordSignal ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {supportsCategorySignal ? (
+                      <button
+                        type="button"
+                        onClick={() => setCategorySignalOnly((prev) => !prev)}
+                        aria-pressed={categorySignalOnly}
+                        className={clsx(
+                          "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                          categorySignalOnly
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                        )}
+                      >
+                        Category match
+                      </button>
+                    ) : null}
+                    {supportsKeywordSignal ? (
+                      <button
+                        type="button"
+                        onClick={() => setKeywordSignalOnly((prev) => !prev)}
+                        aria-pressed={keywordSignalOnly}
+                        className={clsx(
+                          "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                          keywordSignalOnly
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                        )}
+                      >
+                        Keyword signal
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No activity support signals yet.</p>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Availability</p>
+                {supportsOpenNow ? (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setOnlyOpenNow((prev) => !prev)}
+                      aria-pressed={onlyOpenNow}
+                      className={clsx(
+                        "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                        onlyOpenNow
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                      )}
+                    >
+                      Open now
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">Open hours data is limited right now.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Signals</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {hasVotesData ? (
+                    <button
+                      type="button"
+                      onClick={() => setOnlyWithVotes((prev) => !prev)}
+                      aria-pressed={onlyWithVotes}
+                      className={clsx(
+                        "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                        onlyWithVotes
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                      )}
+                    >
+                      Has votes
+                    </button>
+                  ) : (
+                    <p className="text-xs text-slate-500">No vote data yet.</p>
+                  )}
                 </div>
-              ) : (
-                <p className="mt-2 text-xs text-slate-500">Price data is limited for this batch.</p>
-              )}
+                <div className="mt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price level</p>
+                  {availablePriceLevels.length ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPriceLevelFilters([])}
+                        aria-pressed={priceLevelFilters.length === 0}
+                        className={clsx(
+                          "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                          priceLevelFilters.length === 0
+                            ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                        )}
+                      >
+                        All prices
+                      </button>
+                      {availablePriceLevels.map((level) => {
+                        const active = priceLevelFilters.includes(level);
+                        const label = formatPriceLevelLabel(level) ?? "";
+                        const count = priceLevelCounts.get(level) ?? 0;
+                        return (
+                          <button
+                            key={`price-${level}`}
+                            type="button"
+                            onClick={() => handlePriceLevelToggle(level)}
+                            aria-pressed={active}
+                            className={clsx(
+                              "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold transition",
+                              active
+                                ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                            )}
+                          >
+                            <span>{label || `Level ${level}`}</span>
+                            <span className="text-xs font-normal text-slate-500">{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">Price data is limited for this batch.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Distance</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {DISTANCE_OPTION_CONFIG.map((option) => (
+                    <button
+                      key={option.km}
+                      type="button"
+                      onClick={() => handleDistanceSelect(option.km)}
+                      className={clsx(
+                        "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                        selectedDistanceKm === option.km
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
           <div className="mt-4 flex-1 overflow-y-auto">
-            {visibleVenues.length === 0 ? (
+            {searchLoading && results.length === 0 ? (
+              <div className="space-y-4">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="rounded-2xl border border-slate-200 bg-white/90 p-4">
+                    <div className="animate-pulse space-y-3">
+                      <div className="h-4 w-32 rounded bg-slate-200" />
+                      <div className="h-3 w-48 rounded bg-slate-200" />
+                      <div className="h-3 w-40 rounded bg-slate-200" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : visibleVenues.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-slate-500">
-                  <p>No venues match this filter yet.</p>
-                  <p className="text-sm">Try switching filters or moving the map.</p>
+                <p>No venues match this filter yet.</p>
+                <p className="text-sm">Try switching filters or moving the map.</p>
               </div>
             ) : (
               <ul className="space-y-4">
-                  {visibleVenues.map((venue) => {
+                {visibleVenues.map((venue) => {
                   const key = `${venue.venueId}:${selectedActivity}`;
                   const feedback = voteFeedback[key];
                   const savePayload = buildVenueSavePayload(venue);

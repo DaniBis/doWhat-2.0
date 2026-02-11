@@ -9,6 +9,14 @@ jest.mock('next/dynamic', () => () => () => null);
 
 const saveToggleSpy = jest.fn();
 
+jest.mock('@/lib/supabase/browser', () => ({
+  supabase: {
+    auth: {
+      getUser: jest.fn(async () => ({ data: { user: { id: 'user-1' } } })),
+    },
+  },
+}));
+
 jest.mock('@/components/SaveToggleButton', () => {
   return {
     __esModule: true,

@@ -9,6 +9,7 @@ import { maybeResetInvalidSession } from '../lib/auth';
 
 type AuthSessionLike = {
   makeRedirectUri: (options?: { useProxy?: boolean; path?: string; scheme?: string }) => string;
+  getRedirectUrl?: (path?: string) => string;
   startAsync?: (config: { authUrl: string; returnUrl?: string }) => Promise<{ type: string; url?: string; params?: Record<string, string> }>;
 };
 
@@ -30,7 +31,7 @@ try {
     AuthSession = loaded;
   }
 } catch {
-  console.warn('[auth] expo-auth-session not fully available; falling back to basic redirect');
+  if (__DEV__) console.log('[auth] expo-auth-session unavailable; using basic redirect fallback');
 }
 
 type LinkingEvent = { url: string };
@@ -51,7 +52,7 @@ function useSupabaseOAuthListener() {
           await supabase.auth.exchangeCodeForSession(code);
         }
       } catch (error) {
-        if (__DEV__) console.warn('[auth] listener error', error);
+        if (__DEV__) console.log('[auth] listener error', error);
       }
     };
 
@@ -119,16 +120,34 @@ export default function AuthButtons() {
   const redirectTo = useMemo(() => {
     const scheme = (Constants?.expoConfig?.scheme as string | undefined) ?? FALLBACK_SCHEME;
     const appOwnership = Constants?.appOwnership ?? null;
-    const shouldUseProxy = appOwnership === 'expo' && Platform.OS !== 'web';
+    const expoConfig = (Constants?.expoConfig ?? null) as { owner?: string; slug?: string } | null;
+    const executionEnvironment = (Constants as { executionEnvironment?: string } | undefined)?.executionEnvironment ?? null;
+    const isStandalone = appOwnership === 'standalone' || executionEnvironment === 'standalone';
+    const isExpoGo = appOwnership === 'expo' || executionEnvironment === 'storeClient';
+    const hasProjectIdentity = Boolean(expoConfig?.owner && expoConfig?.slug);
+    // Proxy redirects require a full Expo project identifier (owner/slug) and are only needed in Expo Go.
+    const shouldUseProxy = Platform.OS !== 'web' && !isStandalone && isExpoGo && hasProjectIdentity;
+    let proxyRedirect: string | null = null;
+
+    if (shouldUseProxy && AuthSession.getRedirectUrl) {
+      try {
+        proxyRedirect = AuthSession.getRedirectUrl('auth-callback');
+      } catch (error) {
+        if (__DEV__) console.log('[auth] getRedirectUrl failed; using scheme fallback', error);
+      }
+    }
 
     try {
-      return AuthSession.makeRedirectUri({
+      if (__DEV__) {
+        console.log('[auth] redirect env', { appOwnership, executionEnvironment, shouldUseProxy });
+      }
+      return proxyRedirect ?? AuthSession.makeRedirectUri({
         path: 'auth-callback',
         scheme,
         useProxy: shouldUseProxy,
       });
     } catch (error) {
-      if (__DEV__) console.warn('[auth] makeRedirectUri failed, falling back', error);
+      if (__DEV__) console.log('[auth] makeRedirectUri failed; using scheme fallback', error);
       return `${scheme}://auth-callback`;
     }
   }, []);
@@ -177,7 +196,7 @@ export default function AuthButtons() {
         const { data } = await supabase.auth.getUser();
         if (mounted) setUserEmail(data.user?.email ?? null);
       } catch (error) {
-        if (__DEV__) console.warn('[auth] getUser failed', error);
+        if (__DEV__) console.log('[auth] getUser failed', error);
         const reset = await maybeResetInvalidSession(error);
         if (reset && mounted) {
           setUserEmail(null);

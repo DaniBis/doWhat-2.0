@@ -31,7 +31,7 @@ type MockSupabase = {
       ) => { data: { subscription: { unsubscribe: () => void } } }
     >;
   };
-  from: jest.MockedFunction<(table: string) => any>;
+  from: jest.MockedFunction<(table: string) => unknown>;
 };
 
 const { supabase: mockSupabase } = jest.requireMock('@/lib/supabase/browser') as { supabase: MockSupabase };
@@ -52,7 +52,8 @@ const selectErrorsByTable: Record<string, PostgrestError | null> = {
 };
 
 type MutationResponse = { error: PostgrestError | null };
-const createMutationMock = () => jest.fn<Promise<MutationResponse>, any[]>(async () => ({ error: null }));
+const createMutationMock = () =>
+  jest.fn<Promise<MutationResponse>, unknown[]>(async () => ({ error: null }));
 
 const userSavedUpsert = createMutationMock();
 const legacyUpsert = createMutationMock();
@@ -421,7 +422,7 @@ describe('SavedActivitiesContext (web)', () => {
     const authChangeHandler = mockSupabase.auth.onAuthStateChange.mock.calls[0]?.[0];
     expect(authChangeHandler).toBeDefined();
     await act(async () => {
-      authChangeHandler?.('SIGNED_OUT', { user: null } as any);
+      authChangeHandler?.('SIGNED_OUT', null);
     });
 
     await act(async () => {

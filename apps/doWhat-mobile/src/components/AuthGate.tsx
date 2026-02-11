@@ -142,7 +142,7 @@ function SignInScreen() {
         style={{
           width: '100%',
           maxWidth: 420,
-          backgroundColor: '#FFFFFFEE',
+          backgroundColor: '#FFFFFF',
           borderRadius: 30,
           padding: 32,
           gap: 22,

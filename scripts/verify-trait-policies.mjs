@@ -141,6 +141,7 @@ const createSession = async ({ hostUserId, startsAt, endsAt }) => {
     price_cents: 0,
     visibility: 'friends',
     description: 'Trait policy verification session',
+    place_label: 'Trait policy verification',
   };
   const { data, error } = await service.from('sessions').insert(payload).select('id').single();
   if (error || !data) {

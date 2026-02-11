@@ -227,11 +227,21 @@ export default function SessionAttendanceList({
     };
   }, [sessionId]);
 
+  const filteredRows = useMemo(
+    () => rows.filter((row) => row.status === "going" || row.status === "interested"),
+    [rows],
+  );
+
+  const { going, interested } = useMemo(() => {
+    return {
+      going: filteredRows.filter((row) => row.status === "going"),
+      interested: filteredRows.filter((row) => row.status === "interested"),
+    };
+  }, [filteredRows]);
+
   if (!sessionId) {
     return null;
   }
-
-  const filteredRows = rows.filter((row) => row.status === "going" || row.status === "interested");
 
   if (variant === "detailed") {
     const order: Record<Status, number> = {
@@ -286,13 +296,6 @@ export default function SessionAttendanceList({
       </ul>
     );
   }
-
-  const { going, interested } = useMemo(() => {
-    return {
-      going: filteredRows.filter((row) => row.status === "going"),
-      interested: filteredRows.filter((row) => row.status === "interested"),
-    };
-  }, [filteredRows]);
 
   const maxAvatars = 5;
 

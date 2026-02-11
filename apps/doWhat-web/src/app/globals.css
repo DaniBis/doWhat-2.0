@@ -2,13 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: a tiny card utility */
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background:
+      radial-gradient(900px 480px at 8% -10%, rgba(22, 179, 163, 0.16), transparent 60%),
+      radial-gradient(700px 420px at 90% 0%, rgba(253, 181, 21, 0.12), transparent 55%),
+      #f8fafc;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display text-ink-strong;
+  }
+
+  a {
+    @apply text-ink-strong transition-colors;
+  }
+}
+
+/* Optional: small component utilities */
 @layer components {
   .card {
     @apply bg-surface text-ink-strong rounded-xl shadow-card border border-midnight-border;
   }
   .btn {
     @apply inline-flex items-center justify-center rounded-md px-md py-sm text-sm font-medium bg-brand-teal text-white hover:bg-brand-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-teal;
+  }
+
+  .glass-panel {
+    @apply rounded-3xl border border-white/50 bg-white/70 shadow-card backdrop-blur;
+  }
+
+  .soft-card {
+    @apply rounded-2xl border border-white/40 bg-white/80 shadow-sm backdrop-blur;
+  }
+
+  .pill-chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-ink-medium shadow-sm;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-brand-teal px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark;
+  }
+
+  .btn-outline {
+    @apply inline-flex items-center justify-center rounded-full border border-brand-teal/40 px-5 py-2 text-sm font-semibold text-brand-teal transition hover:bg-brand-teal/10;
   }
 }
 

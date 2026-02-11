@@ -1,3 +1,5 @@
+import type { CapacityFilterKey, TimeWindowKey } from '../preferences/mapFilters';
+
 export interface MapCoordinates {
   lat: number;
   lng: number;
@@ -10,6 +12,14 @@ export interface MapFilters {
   tags?: string[];
   /** People-related traits or personas to include. */
   traits?: string[];
+  /** Tier-3 taxonomy category ids. */
+  taxonomyCategories?: string[];
+  /** Discrete price level buckets. */
+  priceLevels?: number[];
+  /** Group size capacity key. */
+  capacityKey?: CapacityFilterKey;
+  /** Time-of-day or open-now window. */
+  timeWindow?: TimeWindowKey;
 }
 
 export interface MapActivitiesQuery {
@@ -36,7 +46,12 @@ export interface MapActivity {
   activity_types?: string[] | null;
   tags?: string[] | null;
   traits?: string[] | null;
+  taxonomy_categories?: string[] | null;
+  price_levels?: number[] | null;
+  capacity_key?: CapacityFilterKey | null;
+  time_window?: TimeWindowKey | null;
   upcoming_session_count?: number | null;
+  source?: string | null;
 }
 
 export interface MapActivitiesResponse {
@@ -45,6 +60,29 @@ export interface MapActivitiesResponse {
   count: number;
   activities: MapActivity[];
   source?: 'postgis' | 'client-filter' | string;
+  filterSupport?: {
+    activityTypes: boolean;
+    tags: boolean;
+    traits: boolean;
+    taxonomyCategories: boolean;
+    priceLevels: boolean;
+    capacityKey: boolean;
+    timeWindow: boolean;
+  };
+  facets?: {
+    activityTypes: { value: string; count: number }[];
+    tags: { value: string; count: number }[];
+    traits: { value: string; count: number }[];
+    taxonomyCategories: { value: string; count: number }[];
+    priceLevels: { value: string; count: number }[];
+    capacityKey: { value: string; count: number }[];
+    timeWindow: { value: string; count: number }[];
+  };
+  sourceBreakdown?: Record<string, number>;
+  cache?: { key: string; hit: boolean };
+  degraded?: boolean;
+  fallbackError?: string;
+  fallbackSource?: string;
 }
 
 export type MapActivityFeatureProperties = {

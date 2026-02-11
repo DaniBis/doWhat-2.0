@@ -32,9 +32,9 @@ export default function SaveToggleButton({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  if (!payload) return null;
-  const pending = pendingIds.has(payload.id);
-  const saved = isSaved(payload.id);
+  const payloadId = payload?.id;
+  const pending = payloadId ? pendingIds.has(payloadId) : false;
+  const saved = payloadId ? isSaved(payloadId) : false;
 
   const redirectTarget = useMemo(() => {
     const basePath = pathname ?? "/";
@@ -46,6 +46,7 @@ export default function SaveToggleButton({
   }, [pathname, searchParams]);
 
   const handlePress = useCallback(async () => {
+    if (!payloadId || !payload) return;
     if (pending) return;
     try {
       await toggle(payload);
@@ -58,7 +59,9 @@ export default function SaveToggleButton({
       }
       console.error("[save-toggle] failed to toggle", error);
     }
-  }, [pending, toggle, payload, redirectTarget, router]);
+  }, [payloadId, pending, toggle, payload, redirectTarget, router]);
+
+  if (!payloadId || !payload) return null;
 
   const appearance = saved
     ? "bg-emerald-600 text-white shadow-sm"

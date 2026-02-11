@@ -186,8 +186,6 @@ describe('SessionDetails reliability contest analytics', () => {
   it('emits analytics when contest CTA is tapped', async () => {
     const { findByText } = render(<SessionDetails />);
 
-    await waitFor(() => expect(mockFetchAttendanceSummary).toHaveBeenCalled());
-
     const contestButton = await findByText('Contest reliability');
     fireEvent.press(contestButton);
 

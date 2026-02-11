@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 
-import { createClient } from '@/lib/supabase/server';
 import { rateLimit } from '@/lib/rateLimit';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
-import { searchVenueActivities, isActivityName } from '@/lib/venues/search';
+import { discoverNearbyVenues } from '@/lib/discovery/engine';
+import { haversineMeters } from '@/lib/places/utils';
+import { isActivityName } from '@/lib/venues/search';
 import { VENUE_SEARCH_DEFAULT_RADIUS, VENUE_SEARCH_MAX_LIMIT } from '@/lib/venues/constants';
 import type { ActivityName } from '@/lib/venues/constants';
 
@@ -30,17 +31,40 @@ export async function GET(request: Request) {
   const includeUnverified = parseBoolean(url.searchParams.get('includeUnverified'));
 
   try {
-    const supabase = createClient();
-    const { results, debug } = await searchVenueActivities({
-      supabase,
-      activity: activityParam as ActivityName,
-      limit,
-      bounds: bounds ?? undefined,
-      radius,
-      includeUnverified,
-    });
+    const resolvedCenter = bounds ? centerFromBounds(bounds) : radius?.center ?? null;
+    if (!resolvedCenter) {
+      return NextResponse.json({ error: 'Provide either sw/ne bounds or lat/lng parameters.' }, { status: 400 });
+    }
 
-    return NextResponse.json({ activity: activityParam, results, debug });
+    const radiusMeters = bounds
+      ? Math.max(
+          haversineMeters(resolvedCenter.lat, resolvedCenter.lng, bounds.ne.lat, bounds.ne.lng),
+          VENUE_SEARCH_DEFAULT_RADIUS,
+        )
+      : radius?.radiusMeters ?? VENUE_SEARCH_DEFAULT_RADIUS;
+
+    const { result, venues, debug } = await discoverNearbyVenues(
+      {
+        center: resolvedCenter,
+        radiusMeters,
+        limit,
+        bounds: bounds ?? undefined,
+      },
+      activityParam as ActivityName,
+      { includeUnverified },
+    );
+
+    return NextResponse.json({
+      activity: activityParam,
+      results: venues,
+      items: result.items,
+      filterSupport: result.filterSupport,
+      facets: result.facets,
+      sourceBreakdown: result.sourceBreakdown,
+      cache: result.cache,
+      source: result.source,
+      debug,
+    });
   } catch (error) {
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
@@ -64,6 +88,13 @@ function parseRadius(url: URL) {
   return {
     center: { lat: centerLat, lng: centerLng },
     radiusMeters: radius,
+  };
+}
+
+function centerFromBounds(bounds: { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } }) {
+  return {
+    lat: (bounds.sw.lat + bounds.ne.lat) / 2,
+    lng: (bounds.sw.lng + bounds.ne.lng) / 2,
   };
 }
 

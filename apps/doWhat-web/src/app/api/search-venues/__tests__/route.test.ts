@@ -13,30 +13,30 @@ let GET: typeof import('../route').GET;
 beforeAll(async () => {
   if (!globalThis.TextEncoder) {
     const { TextEncoder, TextDecoder } = await import('node:util');
-    globalThis.TextEncoder = TextEncoder;
+    globalThis.TextEncoder = TextEncoder as unknown as typeof globalThis.TextEncoder;
     if (!globalThis.TextDecoder) {
-      globalThis.TextDecoder = TextDecoder;
+      globalThis.TextDecoder = TextDecoder as unknown as typeof globalThis.TextDecoder;
     }
   }
   if (!globalThis.ReadableStream) {
     const { ReadableStream } = await import('node:stream/web');
-    globalThis.ReadableStream = ReadableStream;
+    globalThis.ReadableStream = ReadableStream as unknown as typeof globalThis.ReadableStream;
   }
   if (!globalThis.MessagePort) {
     const { MessagePort, MessageChannel } = await import('node:worker_threads');
-    globalThis.MessagePort = MessagePort;
+    globalThis.MessagePort = MessagePort as unknown as typeof globalThis.MessagePort;
     if (!globalThis.MessageChannel) {
-      globalThis.MessageChannel = MessageChannel;
+      globalThis.MessageChannel = MessageChannel as unknown as typeof globalThis.MessageChannel;
     }
   }
   if (!globalThis.Request) {
     const { Request, Response, Headers } = await import('undici');
-    globalThis.Request = Request;
+    globalThis.Request = Request as unknown as typeof globalThis.Request;
     if (!globalThis.Response) {
-      globalThis.Response = Response;
+      globalThis.Response = Response as unknown as typeof globalThis.Response;
     }
     if (!globalThis.Headers) {
-      globalThis.Headers = Headers;
+      globalThis.Headers = Headers as unknown as typeof globalThis.Headers;
     }
   }
   const route = await import('../route');

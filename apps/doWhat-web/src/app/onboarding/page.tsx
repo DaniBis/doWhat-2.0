@@ -155,7 +155,6 @@ export default async function OnboardingHomePage() {
           statusNote: hasPledge && formattedAck ? `Acknowledged ${formattedAck}` : "Pledge pending",
         };
       default:
-        const _exhaustiveCheck: never = step.id;
         return {
           ...step,
           complete: false,

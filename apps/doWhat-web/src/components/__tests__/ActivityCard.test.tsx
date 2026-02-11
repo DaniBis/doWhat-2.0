@@ -6,18 +6,53 @@ import ActivityCard from "../ActivityCard";
 
 const saveToggleSpy = jest.fn();
 
-jest.mock("../SaveToggleButton", () => (props: unknown) => {
+function MockSaveToggleButton(props: unknown) {
   saveToggleSpy(props);
   return <div data-testid="save-toggle-mock" />;
-});
+}
+MockSaveToggleButton.displayName = "SaveToggleButton";
 
-jest.mock("../SessionAttendanceList", () => () => <div data-testid="session-attendance-list" />);
-jest.mock("../SessionAttendanceQuickActions", () => () => <div data-testid="session-attendance-quick-actions" />);
-jest.mock("../WebActivityIcon", () => () => <span data-testid="web-activity-icon" />);
+function MockSessionAttendanceList() {
+  return <div data-testid="session-attendance-list" />;
+}
+MockSessionAttendanceList.displayName = "SessionAttendanceList";
+
+function MockSessionAttendanceQuickActions() {
+  return <div data-testid="session-attendance-quick-actions" />;
+}
+MockSessionAttendanceQuickActions.displayName = "SessionAttendanceQuickActions";
+
+function MockWebActivityIcon() {
+  return <span data-testid="web-activity-icon" />;
+}
+MockWebActivityIcon.displayName = "WebActivityIcon";
+
+function MockLink({ children, ...props }: { children: React.ReactNode }) {
+  return <a {...props}>{children}</a>;
+}
+MockLink.displayName = "MockLink";
+
+jest.mock("../SaveToggleButton", () => ({
+  __esModule: true,
+  default: MockSaveToggleButton,
+}));
+
+jest.mock("../SessionAttendanceList", () => ({
+  __esModule: true,
+  default: MockSessionAttendanceList,
+}));
+jest.mock("../SessionAttendanceQuickActions", () => ({
+  __esModule: true,
+  default: MockSessionAttendanceQuickActions,
+}));
+jest.mock("../WebActivityIcon", () => ({
+  __esModule: true,
+  default: MockWebActivityIcon,
+}));
 
 jest.mock("next/link", () => ({
   __esModule: true,
-  default: ({ children, ...props }: { children: React.ReactNode }) => <a {...props}>{children}</a>,
+  default: MockLink,
 }));
 
 jest.mock("@dowhat/shared", () => ({

@@ -5,6 +5,12 @@ import userEvent from '@testing-library/user-event';
 import ProfilePage from '../page';
 import { supabase } from '@/lib/supabase/browser';
 
+function createMockComponent(testId: string, name: string) {
+  const Component = () => <div data-testid={testId} />;
+  Component.displayName = name;
+  return Component;
+}
+
 jest.mock('@dowhat/shared', () => {
   const actual = jest.requireActual('@dowhat/shared');
   return {
@@ -14,7 +20,16 @@ jest.mock('@dowhat/shared', () => {
 });
 
 jest.mock('next/link', () => {
-  return ({ children, href, onClick, ...rest }: { children: React.ReactNode; href: string | { pathname?: string }; onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void }) => (
+  const MockLink = ({
+    children,
+    href,
+    onClick,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    href: string | { pathname?: string };
+    onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  }) => (
     <a
       href={typeof href === 'string' ? href : href?.pathname ?? '#'}
       onClick={(event) => {
@@ -26,6 +41,8 @@ jest.mock('next/link', () => {
       {children}
     </a>
   );
+  MockLink.displayName = 'MockLink';
+  return MockLink;
 });
 
 jest.mock('@/lib/supabase/browser', () => {
@@ -39,49 +56,51 @@ jest.mock('@/lib/supabase/browser', () => {
 });
 
 jest.mock('@/components/profile/ProfileHeader', () => ({
-  ProfileHeader: () => <div data-testid="profile-header" />,
+  ProfileHeader: createMockComponent('profile-header', 'ProfileHeader'),
 }));
 
 jest.mock('@/components/profile/SportOnboardingBanner', () => ({
-  SportOnboardingBanner: () => <div data-testid="sport-banner" />,
+  SportOnboardingBanner: createMockComponent('sport-banner', 'SportOnboardingBanner'),
 }));
 
 jest.mock('@/components/profile/ReliabilityPledgeBanner', () => ({
-  ReliabilityPledgeBanner: () => <div data-testid="reliability-banner" />,
+  ReliabilityPledgeBanner: createMockComponent('reliability-banner', 'ReliabilityPledgeBanner'),
 }));
 
-jest.mock('@/components/profile/OnboardingProgressBanner', () => ({
-  OnboardingProgressBanner: ({ steps }: { steps: string[] }) => (
+jest.mock('@/components/profile/OnboardingProgressBanner', () => {
+  const OnboardingProgressBanner = ({ steps }: { steps: string[] }) => (
     <div data-testid="onboarding-progress-banner">{steps.join(',')}</div>
-  ),
-}));
+  );
+  OnboardingProgressBanner.displayName = 'OnboardingProgressBanner';
+  return { OnboardingProgressBanner };
+});
 
 jest.mock('@/components/profile/KPIGrid', () => ({
-  KPIGrid: () => <div data-testid="kpi-grid" />,
+  KPIGrid: createMockComponent('kpi-grid', 'KPIGrid'),
 }));
 
 jest.mock('@/components/profile/BadgesPreview', () => ({
-  BadgesPreview: () => <div data-testid="badges-preview" />,
+  BadgesPreview: createMockComponent('badges-preview', 'BadgesPreview'),
 }));
 
 jest.mock('@/components/profile/AttendanceBars', () => ({
-  AttendanceBars: () => <div data-testid="attendance-bars" />,
+  AttendanceBars: createMockComponent('attendance-bars', 'AttendanceBars'),
 }));
 
 jest.mock('@/components/profile/BioCard', () => ({
-  BioCard: () => <div data-testid="bio-card" />,
+  BioCard: createMockComponent('bio-card', 'BioCard'),
 }));
 
 jest.mock('@/components/profile/ReviewsTab', () => ({
-  ReviewsTab: () => <div data-testid="reviews-tab" />,
+  ReviewsTab: createMockComponent('reviews-tab', 'ReviewsTab'),
 }));
 
 jest.mock('@/components/traits/TraitCarousel', () => ({
-  TraitCarousel: () => <div data-testid="trait-carousel" />,
+  TraitCarousel: createMockComponent('trait-carousel', 'TraitCarousel'),
 }));
 
 jest.mock('@/components/traits/TraitSelector', () => ({
-  TraitSelector: () => <div data-testid="trait-selector" />,
+  TraitSelector: createMockComponent('trait-selector', 'TraitSelector'),
 }));
 
 const { trackOnboardingEntry } = jest.requireMock('@dowhat/shared') as {
@@ -109,14 +128,14 @@ const setupSupabaseProfileQueries = (overrides: Partial<ProfileRowData> = {}) =>
   };
   mockSupabase.from.mockImplementation((table: string) => {
     if (table === 'profiles') {
-      const builder: any = {};
+      const builder: Record<string, unknown> = {};
       builder.select = jest.fn(() => builder);
       builder.eq = jest.fn(() => builder);
       builder.maybeSingle = jest.fn(async () => ({ data: profileRowData, error: null }));
       return builder;
     }
     if (table === 'user_sport_profiles') {
-      const builder: any = {};
+      const builder: Record<string, unknown> = {};
       builder.select = jest.fn(() => builder);
       builder.eq = jest.fn(() => builder);
       builder.maybeSingle = jest.fn(async () => ({ data: { skill_level: sportProfileSkill }, error: null }));

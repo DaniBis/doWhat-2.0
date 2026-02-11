@@ -1,10 +1,11 @@
 "use client";
 
 import type { Route } from "next";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { isUuid } from "@dowhat/shared";
+import AuthGate from "@/components/AuthGate";
 import LocationPickerMap from "@/components/create/LocationPickerMap";
 import { extractSessionId, type CreateSessionResponse } from "./extractSessionId";
 import { supabase } from "@/lib/supabase/browser";
@@ -62,6 +63,7 @@ const buildReturnTarget = (basePath: string | null, sessionId: string): string =
 export default function CreateEventPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const prefill = useMemo<PrefillState>(() => {
     const activityIdParam = sanitizeQueryValue(searchParams?.get('activityId'));
     const activityId = activityIdParam && isUuid(activityIdParam) ? activityIdParam : null;
@@ -74,6 +76,11 @@ export default function CreateEventPage() {
     const returnTo = sanitizeRelativePath(searchParams?.get('returnTo'));
     return { activityId, activityName, venueId, venueName, lat, lng, returnTo } satisfies PrefillState;
   }, [searchParams]);
+  const redirectTarget = useMemo(() => {
+    const params = searchParams?.toString() ?? "";
+    if (!pathname) return "/create";
+    return params ? `${pathname}?${params}` : pathname;
+  }, [pathname, searchParams]);
   const hasPrefilledCoords = Boolean(prefill.lat && prefill.lng);
   const [activities, setActivities] = useState<Option[]>([]);
   const [venues, setVenues] = useState<Option[]>([]);
@@ -94,6 +101,7 @@ export default function CreateEventPage() {
   const [saving, setSaving] = useState(false);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>(prefill.lat && prefill.lng ? 'success' : 'idle');
   const resolvedLocationLabel = venueName.trim() ? venueName.trim() : 'Location to be confirmed';
+  const [authStatus, setAuthStatus] = useState<"loading" | "authed" | "anon">("loading");
 
   const { defaultStart, defaultEnd } = useMemo(() => {
     const tomorrow = new Date();
@@ -137,6 +145,28 @@ export default function CreateEventPage() {
   }, [defaultStart, defaultEnd]);
 
   useEffect(() => {
+    let cancelled = false;
+    const resolveAuth = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (cancelled) return;
+        const uid = data.user?.id ?? null;
+        setAuthStatus(uid ? "authed" : "anon");
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[create] unable to resolve auth session", error);
+          setAuthStatus("anon");
+        }
+      }
+    };
+    resolveAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== "authed") return;
     let active = true;
     (async () => {
       type ActivityRow = { id: string; name: string | null };
@@ -193,7 +223,7 @@ export default function CreateEventPage() {
     return () => {
       active = false;
     };
-  }, [hasPrefilledCoords]);
+  }, [authStatus, hasPrefilledCoords]);
 
   useEffect(() => {
     if (!venueId || venueName) return;
@@ -232,8 +262,8 @@ export default function CreateEventPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      setErr(null); 
-      setMsg(null); 
+      setErr(null);
+      setMsg(null);
       setSaving(true);
 
       // Require coordinates for local creation
@@ -277,9 +307,33 @@ export default function CreateEventPage() {
       }, 1000);
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
-    } finally { 
-      setSaving(false); 
+    } finally {
+      setSaving(false);
     }
+  }
+
+  if (authStatus === "loading") {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-16">
+        <div className="animate-pulse space-y-4">
+          <div className="h-7 w-48 rounded bg-ink-subtle" />
+          <div className="h-4 w-64 rounded bg-ink-subtle" />
+          <div className="h-48 rounded-2xl bg-ink-subtle" />
+        </div>
+      </main>
+    );
+  }
+
+  if (authStatus === "anon") {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-16">
+        <AuthGate
+          title="Sign in to create an event"
+          description="Creating events is available to members only. Sign in to publish a session and invite others."
+          redirectTo={redirectTarget}
+        />
+      </main>
+    );
   }
 
   return (

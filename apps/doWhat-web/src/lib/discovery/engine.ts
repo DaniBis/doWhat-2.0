@@ -8,21 +8,20 @@ import type {
   DiscoveryQuery,
   DiscoveryResult,
   DiscoverySourceBreakdown,
-} from '@dowhat/discovery-engine';
+} from './engine-core';
 import {
   CACHE_TTL_MS,
   MAX_CACHE_ENTRIES,
   MAX_CACHE_ITEMS,
   buildDiscoveryCacheKey,
   computeTileKey,
-  haversineMeters,
   normalizeFilters,
   normalizeList,
   normalizeRadius,
   roundCoordinate,
   sanitizeCoordinate,
-} from '@dowhat/discovery-engine';
-export { buildDiscoveryCacheKey } from '@dowhat/discovery-engine';
+} from './engine-core';
+export { buildDiscoveryCacheKey } from './engine-core';
 export type {
   DiscoveryBounds,
   DiscoveryFacet,
@@ -34,20 +33,18 @@ export type {
   DiscoveryQuery,
   DiscoveryResult,
   DiscoverySourceBreakdown,
-} from '@dowhat/discovery-engine';
+} from './engine-core';
 import { filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
 import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { resolveDiscoveryBounds } from '@/lib/discovery/bounds';
 import { hydratePlaceLabel, normalizePlaceLabel } from '@/lib/places/labels';
+import { haversineMeters } from '@/lib/places/utils';
 import { getOptionalServiceClient } from '@/lib/supabase/service';
 import { searchVenueActivities } from '@/lib/venues/search';
 import type { ActivityName } from '@/lib/venues/constants';
 import type { RankedVenueActivity } from '@/lib/venues/types';
-
-const OVERPASS_ENDPOINT =
-  process.env.OVERPASS_API_URL || 'https://overpass-api.de/api/interpreter';
 
 
 const isMissingColumnError = (
@@ -198,7 +195,7 @@ const buildFacets = (items: DiscoveryItem[]): DiscoveryFacets => {
 const buildSourceBreakdown = (items: DiscoveryItem[]): DiscoverySourceBreakdown => {
   const breakdown: DiscoverySourceBreakdown = {};
   items.forEach((item) => {
-    const key = item.source;
+    const key = item.source ?? 'unknown';
     breakdown[key] = (breakdown[key] ?? 0) + 1;
   });
   return breakdown;
@@ -412,44 +409,6 @@ type UpcomingSessionRow = {
   activity_id: string | null;
 };
 
-type OverpassElement = {
-  type: 'node' | 'way' | 'relation';
-  id: number;
-  lat?: number;
-  lon?: number;
-  center?: { lat?: number; lon?: number };
-  tags?: Record<string, string>;
-};
-
-const parseTagList = (value?: string) =>
-  (value ?? '')
-    .split(';')
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-const buildOverpassQuery = (lat: number, lng: number, radius: number, limit: number) => `
-[out:json][timeout:25];
-(
-  node(around:${radius},${lat},${lng})["leisure"~"^(sports_centre|fitness_centre|stadium|pitch|park)$"];
-  node(around:${radius},${lat},${lng})["amenity"~"^(gym|sports_hall|swimming_pool|community_centre)$"];
-  node(around:${radius},${lat},${lng})["sport"];
-  way(around:${radius},${lat},${lng})["leisure"~"^(sports_centre|fitness_centre|stadium|pitch|park)$"];
-  way(around:${radius},${lat},${lng})["amenity"~"^(gym|sports_hall|swimming_pool|community_centre)$"];
-  way(around:${radius},${lat},${lng})["sport"];
-  relation(around:${radius},${lat},${lng})["sport"];
-);
-out center ${limit};
-`;
-
-const describeVenue = (tags: Record<string, string> | undefined): string | null => {
-  if (!tags) return null;
-  const parts = [tags['addr:street'], tags['addr:city']].filter(Boolean);
-  if (parts.length) return parts.join(', ');
-  if (tags['addr:full']) return tags['addr:full'];
-  if (tags['addr:neighbourhood']) return tags['addr:neighbourhood'];
-  return null;
-};
-
 const toMapActivityFromVenue = (
   row: VenueFallbackRow,
   origin: { lat: number; lng: number },
@@ -541,7 +500,7 @@ const fetchVenueFallbackActivities = async (
   const items = (data ?? [])
     .map((row) => toMapActivityFromVenue(row, query.center))
     .filter((activity): activity is DiscoveryItem => Boolean(activity))
-    .sort((a, b) => a.distance_m - b.distance_m);
+    .sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
 
   const support: DiscoveryFilterSupport = {
     activityTypes: includeVerified,
@@ -556,85 +515,6 @@ const fetchVenueFallbackActivities = async (
   return { items, support };
 };
 
-const fetchOverpassActivities = async (query: DiscoveryQuery) => {
-  const safeRadius = Math.max(250, Math.min(query.radiusMeters, 5000));
-  const cappedLimit = Math.max(60, Math.min(query.limit * 3, 180));
-  const overpassQuery = buildOverpassQuery(query.center.lat, query.center.lng, safeRadius, cappedLimit);
-
-  const response = await fetch(OVERPASS_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-    },
-    body: new URLSearchParams({ data: overpassQuery }).toString(),
-    next: { revalidate: 0 },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Overpass request failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as { elements?: OverpassElement[] };
-  const elements = (payload.elements ?? []).filter((row) => row);
-
-  const activities: DiscoveryItem[] = [];
-
-  for (const element of elements) {
-    const lat = element.lat ?? element.center?.lat;
-    const lng = element.lon ?? element.center?.lon;
-    if (typeof lat !== 'number' || typeof lng !== 'number') continue;
-
-    const tags = element.tags ?? {};
-    const sports = parseTagList(tags.sport);
-    const leisure = parseTagList(tags.leisure);
-    const amenities = parseTagList(tags.amenity);
-    const label =
-      tags.name || sports[0] || leisure[0] || amenities[0] || tags['club'] || 'Local activity';
-    const venueDescription = describeVenue(tags);
-    const placeLabel = normalizePlaceLabel(venueDescription, label);
-
-    const distance = haversineMeters(query.center.lat, query.center.lng, lat, lng);
-
-    const combinedTags = Array.from(
-      new Set<string>([
-        ...sports,
-        ...leisure,
-        ...amenities,
-        ...(tags.club ? parseTagList(tags.club) : []),
-        ...(tags.cuisine ? parseTagList(tags.cuisine) : []),
-        'osm',
-      ]),
-    );
-
-    activities.push({
-      id: `${element.type}:${element.id}`,
-      name: label,
-      venue: venueDescription,
-      place_id: null,
-      place_label: placeLabel,
-      lat,
-      lng,
-      distance_m: distance,
-      activity_types: sports.length ? sports : leisure.length ? leisure : null,
-      tags: combinedTags.length ? combinedTags : null,
-      traits: null,
-      source: 'osm-overpass',
-    });
-  }
-
-  return {
-    items: activities.sort((a, b) => a.distance_m - b.distance_m),
-    support: {
-      activityTypes: true,
-      tags: true,
-      traits: false,
-      taxonomyCategories: false,
-      priceLevels: false,
-      capacityKey: false,
-      timeWindow: false,
-    } satisfies DiscoveryFilterSupport,
-  };
-};
 
 const fetchActivitiesFromRpc = async (
   client: SupabaseClient,
@@ -1041,26 +921,6 @@ export async function discoverNearbyActivities(
 
   if (activities.length < normalizedQuery.limit) {
     try {
-      const overpassResult = await fetchOverpassActivities(normalizedQuery);
-      const filteredOverpass = filterByQuery(overpassResult.items, normalizedFilters, overpassResult.support);
-      if (filteredOverpass.length) {
-        filterSupport = applyFilterSupport(filterSupport, overpassResult.support);
-        activities = mergeActivitiesWithFallback(activities, filteredOverpass);
-        fallbackMeta.fallbackSource = fallbackMeta.fallbackSource ?? 'osm-overpass';
-      }
-    } catch (fallbackError) {
-      console.warn('[nearby] fallback append failed', fallbackError);
-      if (!fallbackMeta.degraded) {
-        fallbackMeta = {
-          degraded: true,
-          fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-        };
-      }
-    }
-  }
-
-  if (activities.length < normalizedQuery.limit) {
-    try {
       const venueFallback = await fetchVenueFallbackActivities(supabase, normalizedQuery, normalizedQuery.limit);
       const filteredVenueFallback = filterByQuery(venueFallback.items, normalizedFilters, venueFallback.support);
       if (filteredVenueFallback.length) {
@@ -1149,7 +1009,7 @@ export async function discoverNearbyVenues(
   }
 
   const supabase = getOptionalServiceClient() ?? db();
-  const { results, debug, filterSupport } = await searchVenueActivities({
+  const { results, debug } = await searchVenueActivities({
     supabase,
     activity: activity,
     limit: normalizedQuery.limit,
@@ -1185,16 +1045,15 @@ export async function discoverNearbyVenues(
     radiusMeters: normalizedQuery.radiusMeters,
     count: ordered.length,
     items: ordered,
-    filterSupport:
-      filterSupport ?? {
-        activityTypes: true,
-        tags: true,
-        traits: false,
-        taxonomyCategories: false,
-        priceLevels: false,
-        capacityKey: false,
-        timeWindow: false,
-      },
+    filterSupport: {
+      activityTypes: true,
+      tags: true,
+      traits: false,
+      taxonomyCategories: false,
+      priceLevels: false,
+      capacityKey: false,
+      timeWindow: false,
+    },
     facets: buildFacets(ordered),
     sourceBreakdown: buildSourceBreakdown(ordered),
     cache: { key: cacheKey, hit: false },

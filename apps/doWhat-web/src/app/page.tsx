@@ -2,11 +2,8 @@ import Link from "next/link";
 import ActivityCard from "@/components/ActivityCard";
 import { normalizeCategoryKey } from "@/lib/places/categories";
 import { createClient } from "@/lib/supabase/server";
-import dynamic from "next/dynamic";
 
 type SearchParams = { [k: string]: string | string[] | undefined };
-
-const NearbyDiscoverList = dynamic(() => import("@/components/home/NearbyDiscoverList"), { ssr: false });
 
 const CATEGORY_LABELS: Record<string, string> = {
   activity: "Activities",
@@ -112,6 +109,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  const isSignedIn = Boolean(user);
 
   const typesCsv = (typeof searchParams?.types === 'string'
     ? searchParams?.types
@@ -302,75 +300,111 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
 
   return (
     <main className="min-h-screen">
-      {/* Upcoming Activities only */}
-      <div className="mx-auto max-w-7xl px-4 py-10">
-        <div className="mb-8 flex flex-wrap justify-between items-center gap-4">
-          <div>
-            <h2 className="text-3xl font-bold text-gray-900 mb-2">Upcoming Activities</h2>
-            <p className="text-gray-600">Created events and nearby results</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/filter?from=home"
-              className="inline-flex items-center gap-2 rounded-full border border-brand-teal/40 px-4 py-2 text-sm font-semibold text-brand-teal transition hover:bg-brand-teal/10"
-            >
-              ⚙️ Filters
-            </Link>
-          </div>
-        </div>
+      <div className="mx-auto max-w-7xl px-4 pb-16 pt-10">
+        <section className="relative overflow-hidden glass-panel p-8">
+          <div className="pointer-events-none absolute -right-20 -top-16 h-64 w-64 rounded-full bg-brand-teal/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-20 -left-20 h-72 w-72 rounded-full bg-brand-yellow/20 blur-3xl" />
+          <div className="relative grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-6">
+              <span className="pill-chip">Live nearby</span>
+              <div className="space-y-3">
+                <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Upcoming Activities</h1>
+                <p className="text-lg text-ink-medium">
+                  {isSignedIn
+                    ? "Created events and nearby results, tuned to your filters and location."
+                    : "Discover what is happening nearby. Sign in to join sessions, save favorites, and create your own events."}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {isSignedIn ? (
+                  <>
+                    <Link href="/create" className="btn-primary">
+                      Create an event
+                    </Link>
+                    <Link href="/filter?from=home" className="btn-outline">
+                      Filters
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link href="/auth?intent=signup&redirect=%2F" className="btn-primary">
+                      Create account
+                    </Link>
+                    <Link href="/auth?intent=signin&redirect=%2F" className="btn-outline">
+                      Sign in
+                    </Link>
+                  </>
+                )}
+                <Link href="/map" className="btn-outline">
+                  Open map
+                </Link>
+              </div>
+              <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1">
+                  {cards.length} active activity{cards.length === 1 ? "" : "ies"}
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1">
+                  Upcoming sessions only
+                </span>
+              </div>
+            </div>
 
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-brand-teal/25 bg-brand-teal/5 px-5 py-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-brand-teal">New</p>
-            <h3 className="text-xl font-semibold text-brand-dark">Verify where activities really happen</h3>
-            <p className="text-sm text-ink-medium">
-              Help confirm AI suggestions, upvote the best venues, and keep the discovery map accurate for everyone.
-            </p>
+            <div className="soft-card p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-brand-teal">New</p>
+              <h3 className="mt-3 text-lg font-semibold text-ink-strong">Verify where activities really happen</h3>
+              <p className="mt-2 text-sm text-ink-medium">
+                Help confirm AI suggestions, upvote the best venues, and keep the discovery map accurate for everyone.
+              </p>
+              <Link href="/venues" className="btn-primary mt-5 w-full">
+                Open verification hub →
+              </Link>
+              <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-xs text-ink-medium">
+                Tip: The verification hub works best when you keep location services enabled.
+              </div>
+            </div>
           </div>
-          <Link
-            href={{ pathname: "/venues" }}
-            className="inline-flex items-center rounded-full bg-brand-teal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark"
-          >
-            Open verification hub →
-          </Link>
-        </div>
+        </section>
 
-  {cards.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-6xl mb-4">🎯</div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No events yet</h3>
-            <p className="text-gray-600 mb-6">Be the first to create an event in your area!</p>
-            <Link
-              href="/create"
-              className="inline-flex items-center gap-2 rounded-full bg-brand-teal px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-dark"
-            >
-              <span>✨</span>
-              Create First Event
-            </Link>
+        <section className="mt-10">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-semibold text-ink-strong">Upcoming feed</h2>
+              <p className="text-sm text-ink-medium">All sessions scheduled near you in the next few days.</p>
+            </div>
+            <div className="text-xs text-ink-muted">
+              Showing {cards.length} activity{cards.length === 1 ? "" : "ies"}
+            </div>
           </div>
-        ) : (
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-            {cards.map((group) => {
-              const key =
-                group.activity.id ??
-                group.activity.name ??
-                group.sessions[0]?.id ??
-                `${group.sessions[0]?.starts_at ?? "group"}`;
-              return (
-                <ActivityCard
-                  key={key}
-                  activity={group.activity}
-                  sessions={group.sessions}
-                  currentUserId={user?.id}
-                />
-              );
-            })}
-          </div>
-        )}
-        {/* Nearby discovered via API */}
-        <div className="mt-12">
-          <NearbyDiscoverList />
-        </div>
+
+          {cards.length === 0 ? (
+            <div className="soft-card py-16 text-center">
+              <div className="text-5xl">🎯</div>
+              <h3 className="mt-4 text-xl font-semibold text-ink-strong">No events nearby yet</h3>
+              <p className="mt-2 text-sm text-ink-medium">Be the first to create an event in your area.</p>
+              <Link href="/create" className="btn-primary mt-6">
+                ✨ Create First Event
+              </Link>
+            </div>
+          ) : (
+            <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+              {cards.map((group) => {
+                const key =
+                  group.activity.id ??
+                  group.activity.name ??
+                  group.sessions[0]?.id ??
+                  `${group.sessions[0]?.starts_at ?? "group"}`;
+                return (
+                  <ActivityCard
+                    key={key}
+                    activity={group.activity}
+                    sessions={group.sessions}
+                    currentUserId={user?.id}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

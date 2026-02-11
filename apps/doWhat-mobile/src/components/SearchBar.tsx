@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { theme } from '@dowhat/shared';
 
 type SearchBarProps = {
   onSearch: (query: string) => void;
@@ -22,7 +23,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   onFilter,
   placeholder = 'Search activities...',
   showFilterButton = true,
-  suggestedSearches = ['Yoga', 'Coffee', 'Running', 'Art', 'Music', 'Food'],
+  suggestedSearches = [],
 }) => {
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
@@ -46,7 +47,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
     <View style={styles.container}>
       <View style={styles.searchContainer}>
         <View style={[styles.searchBar, focused && styles.searchBarFocused]}>
-          <Ionicons name="search" size={20} color="#6B7280" style={styles.searchIcon} />
+          <Ionicons
+            name="search"
+            size={20}
+            color={focused ? theme.colors.brandTeal : theme.colors.ink40}
+            style={styles.searchIcon}
+          />
           
           <TextInput
             style={styles.searchInput}
@@ -55,28 +61,28 @@ const SearchBar: React.FC<SearchBarProps> = ({
             onChangeText={handleSearch}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={theme.colors.ink40}
           />
           
           {query.length > 0 && (
             <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
-              <Ionicons name="close-circle" size={20} color="#6B7280" />
+              <Ionicons name="close-circle" size={20} color={theme.colors.ink40} />
             </TouchableOpacity>
           )}
         </View>
 
         {showFilterButton && (
           <TouchableOpacity style={styles.filterButton} onPress={onFilter}>
-            <Ionicons name="options" size={20} color="#2C7BF6" />
+            <Ionicons name="options" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         )}
       </View>
 
       {focused && suggestedSearches.length > 0 && (
         <View style={styles.suggestionsContainer}>
-          <Text style={styles.suggestionsTitle}>Popular searches</Text>
-          <ScrollView 
-            horizontal 
+          <Text style={styles.suggestionsTitle}>Suggested</Text>
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.suggestionsScrollView}
           >
@@ -86,7 +92,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
                 style={styles.suggestionChip}
                 onPress={() => handleSuggestionPress(suggestion)}
               >
-                <Ionicons name="trending-up" size={14} color="#6B7280" />
+                <Ionicons name="trending-up" size={14} color={theme.colors.ink40} />
                 <Text style={styles.suggestionText}>{suggestion}</Text>
               </TouchableOpacity>
             ))}
@@ -99,34 +105,35 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: 'white',
+    backgroundColor: 'transparent',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
     gap: 12,
   },
   searchBar: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    backgroundColor: theme.colors.surfaceAlt,
+    borderRadius: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: 'rgba(15, 23, 42, 0.08)',
   },
   searchBarFocused: {
-    borderColor: '#2C7BF6',
-    backgroundColor: 'white',
-    shadowColor: '#2C7BF6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: theme.colors.brandTeal,
+    backgroundColor: theme.colors.surface,
+    shadowColor: theme.colors.brandTeal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 4,
   },
   searchIcon: {
     marginRight: 8,
@@ -134,7 +141,8 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: '#111827',
+    color: theme.colors.brandInk,
+    fontWeight: '600',
   },
   clearButton: {
     padding: 4,
@@ -142,19 +150,26 @@ const styles = StyleSheet.create({
   filterButton: {
     width: 44,
     height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EBF4FF',
+    borderRadius: 14,
+    backgroundColor: theme.colors.brandTeal,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: theme.colors.brandTeal,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 3,
   },
   suggestionsContainer: {
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
   suggestionsTitle: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    color: theme.colors.ink40,
     marginBottom: 8,
   },
   suggestionsScrollView: {
@@ -163,18 +178,19 @@ const styles = StyleSheet.create({
   suggestionChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 16,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: 'rgba(15, 23, 42, 0.08)',
   },
   suggestionText: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: theme.colors.ink60,
     marginLeft: 4,
+    fontWeight: '600',
   },
 });
 
