@@ -49,7 +49,12 @@ function extractHost(value?: string | null): string | null {
   if (!value) return null;
   const host = value.split(':')[0];
   if (!host) return null;
-  if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
+  // Android emulator uses 10.0.2.2 for host-loopback; physical devices do not.
+  if (
+    Platform.OS === 'android' &&
+    !Constants.isDevice &&
+    (host === 'localhost' || host === '127.0.0.1')
+  ) {
     return '10.0.2.2';
   }
   return host;

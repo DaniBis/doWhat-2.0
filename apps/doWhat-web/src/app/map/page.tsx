@@ -64,6 +64,8 @@ const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
 const MAP_FILTERS_VERSION = 2;
 const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
+const BOUNDS_UPDATE_THRESHOLD = 0.0008;
+const EVENTS_QUERY_COORD_PRECISION = 3;
 
 type CapacityOption = { key: CapacityFilterKey; label: string };
 type TimeWindowOption = { key: TimeWindowKey; label: string };
@@ -239,15 +241,29 @@ const normaliseBounds = (value: Bounds): Bounds => ({
   ne: { lat: roundCoordinate(value.ne.lat, 5), lng: roundCoordinate(value.ne.lng, 5) },
 });
 
+const boundsCoordinateEqual = (a: number, b: number, epsilon = BOUNDS_UPDATE_THRESHOLD): boolean =>
+  Math.abs(a - b) <= epsilon;
+
 const boundsEqual = (a: Bounds | null, b: Bounds | null): boolean => {
   if (!a || !b) return false;
   return (
-    a.sw.lat === b.sw.lat
-    && a.sw.lng === b.sw.lng
-    && a.ne.lat === b.ne.lat
-    && a.ne.lng === b.ne.lng
+    boundsCoordinateEqual(a.sw.lat, b.sw.lat)
+    && boundsCoordinateEqual(a.sw.lng, b.sw.lng)
+    && boundsCoordinateEqual(a.ne.lat, b.ne.lat)
+    && boundsCoordinateEqual(a.ne.lng, b.ne.lng)
   );
 };
+
+const normaliseEventQueryBounds = (value: Bounds): Bounds => ({
+  sw: {
+    lat: roundCoordinate(value.sw.lat, EVENTS_QUERY_COORD_PRECISION),
+    lng: roundCoordinate(value.sw.lng, EVENTS_QUERY_COORD_PRECISION),
+  },
+  ne: {
+    lat: roundCoordinate(value.ne.lat, EVENTS_QUERY_COORD_PRECISION),
+    lng: roundCoordinate(value.ne.lng, EVENTS_QUERY_COORD_PRECISION),
+  },
+});
 
 const normaliseRadiusMeters = (value: number) => {
   const clamped = Math.max(300, Math.min(25_000, Number.isFinite(value) ? value : DEFAULT_RADIUS_METERS));
@@ -769,15 +785,24 @@ export default function MapPage() {
     return { from: start.toISOString(), to: end.toISOString() };
   }, [eventsRangeDays]);
 
-  const eventsQueryArgs = loadEvents && bounds
-    ? {
-        sw: bounds.sw,
-        ne: bounds.ne,
-        from: eventsWindow.from,
-        to: eventsWindow.to,
-        limit: 200,
-      }
-    : null;
+  const eventsQueryBounds = useMemo(
+    () => (bounds ? normaliseEventQueryBounds(bounds) : null),
+    [bounds],
+  );
+
+  const eventsQueryArgs = useMemo(
+    () =>
+      loadEvents && eventsQueryBounds
+        ? {
+            sw: eventsQueryBounds.sw,
+            ne: eventsQueryBounds.ne,
+            from: eventsWindow.from,
+            to: eventsWindow.to,
+            limit: 200,
+          }
+        : null,
+    [eventsQueryBounds, eventsWindow.from, eventsWindow.to, loadEvents],
+  );
 
   const eventsQuery = useEvents(eventsQueryArgs, {
     fetcher: eventsFetcher,

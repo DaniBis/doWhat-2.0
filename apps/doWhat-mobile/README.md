@@ -38,7 +38,12 @@ Keep this terminal open; use a new terminal for other commands.
 
 ### Quick launch helpers
 - Simulator: `pnpm --filter doWhat-mobile run start:ios` (clears stale Metro ports, boots the iOS simulator, and starts the Expo dev client on localhost:8081).
+- Android emulator/device: `pnpm --filter doWhat-mobile run start:android` (clears stale Metro ports, ensures `adb reverse` for Metro + web API, and starts Expo dev client on localhost:8081).
 - Physical device on the same Wi‑Fi: `EXPO_PREFER_LAN=1 pnpm --filter doWhat-mobile run start:ios` (automatically advertises the LAN IP and points `EXPO_PUBLIC_WEB_URL` at it so the native app can reach the Next.js dev API as well).
+- Route opener (after Metro is running):
+  - iOS: `pnpm --filter doWhat-mobile run open:route:ios -- /onboarding/sports`
+  - Android: `pnpm --filter doWhat-mobile run open:route:android -- /map`
+  - The helper opens the project URL for cold starts, then deep-links `dowhat://...`; on Android warm starts it skips bootstrap and opens the target route directly.
 
 ## Troubleshooting
 - Stuck connecting: ensure Metro still running; no Ctrl+C in that window.
@@ -46,3 +51,6 @@ Keep this terminal open; use a new terminal for other commands.
 - Device cannot reach API: set EXPO_PUBLIC_WEB_URL to reachable host/IP or re-run `start-ios.sh` with `EXPO_PREFER_LAN=1` to auto-detect.
 - iOS network errors: confirm you rebuilt after ATS changes.
 - Map screen relies on Google Maps; set `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` (or `GOOGLE_MAPS_API_KEY`) before running on a device or emulator.
+- Dev-client route open fails with `.../--/...`:
+  - In development builds, do not route by passing `/--/...` at bootstrap.
+  - Open `exp+dowhat-mobile://expo-development-client/?url=http://127.0.0.1:8081` first, then route using `dowhat://...` (the `open-dev-route.sh` helper does this for you).

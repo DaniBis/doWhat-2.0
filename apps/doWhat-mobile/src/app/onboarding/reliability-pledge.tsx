@@ -122,14 +122,32 @@ const ReliabilityPledgeScreen: React.FC = () => {
     setError(null);
     try {
       const timestamp = new Date().toISOString();
-      const { error: profileError } = await supabase
+      const profilePayload = {
+        id: userId,
+        user_id: userId,
+        reliability_pledge_ack_at: timestamp,
+        reliability_pledge_version: PLEDGE_VERSION,
+        updated_at: timestamp,
+      } as const;
+      let { error: profileError } = await supabase
         .from("profiles")
-        .update({
-          reliability_pledge_ack_at: timestamp,
-          reliability_pledge_version: PLEDGE_VERSION,
-          updated_at: timestamp,
-        })
-        .eq("id", userId);
+        .upsert(profilePayload, { onConflict: "id" });
+      if (
+        profileError &&
+        profileError.code === "23502" &&
+        /user_id/i.test(`${profileError.message ?? ""} ${profileError.details ?? ""}`)
+      ) {
+        const { error: repairError } = await supabase
+          .from("profiles")
+          .update({ user_id: userId, updated_at: timestamp })
+          .eq("id", userId);
+        if (!repairError) {
+          const retry = await supabase
+            .from("profiles")
+            .upsert(profilePayload, { onConflict: "id" });
+          profileError = retry.error ?? null;
+        }
+      }
       if (profileError) throw profileError;
       setAckTimestamp(timestamp);
       setAckVersion(PLEDGE_VERSION);

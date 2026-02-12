@@ -107,3 +107,187 @@
    - Switched the venues map from a dynamic import to a direct component import so the page no longer depends on a missing client chunk at runtime.
 13. **Map page chunk resilience**
    - Removed the dynamic import wrapper around WebMap and used a direct client import to avoid missing client chunks in dev.
+
+## 2026-02-11
+
+1. **Session continuation + log discipline**
+   - Read `changes_log.md` before continuing work and adopted a step-by-step logging workflow for this session.
+
+2. **Sports onboarding save hardening (mobile)**
+   - Updated `apps/doWhat-mobile/src/app/onboarding/sports.tsx` save flow to repair legacy profile rows that can trigger `profiles.user_id` null-constraint failures during upsert.
+   - Logic now retries profile upsert after a targeted `user_id` repair update when Postgres error `23502` references `user_id`.
+
+3. **Map abort-noise suppression (mobile)**
+   - Updated `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx` to treat abort-like fetch errors as non-fatal during places loading/fallback.
+   - Added an explicit empty response path for aborted map requests to avoid surfacing `[Map] ... AbortError` as a user-facing failure during normal viewport churn.
+
+4. **Validation after fixes**
+   - Re-ran `pnpm --filter doWhat-mobile typecheck` (pass).
+   - Re-ran `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` (pass after code update).
+5. **Runtime environment reset**
+   - Restarted active dev runtimes after they dropped (`dowhat-web` on `http://localhost:3002`, Expo dev-client on `http://localhost:8081`) before continuing platform proofs.
+6. **Fresh browser proof captures (web + mobile web)**
+   - Captured fresh screenshots after runtime restart for:
+     - Web: `/`, `/auth`, `/discover`
+     - Mobile web (Expo): `/`, `/(tabs)/map`, `/onboarding/sports`
+   - Verified current UI loads without the prior unstyled/blank-page regressions.
+7. **iOS native proof captures (post-fix)**
+   - Captured iOS screenshots for native app home, onboarding sports route, and map route after the latest map/onboarding fixes.
+   - Observed current state:
+     - Home loads without the previous save/network error overlays.
+     - Onboarding sports screen loads with selectable cards.
+     - Map opens and loads map tiles with no immediate red-box/network-failed overlay.
+8. **Android verification status update**
+   - Captured Android screenshots for home/onboarding/map via `adb` deep-link flow.
+   - Found Android app intermittently opening into the development-client shell (`Development servers`) rather than directly into the in-app UI, which affects deterministic screenshot proof.
+   - Cleared/re-captured `adb logcat` to isolate current failures. Latest clean relaunch did not reproduce the prior `profiles.user_id` (`23502`) error; ongoing issue appears tied to dev-client routing/session state and intermittent network failures.
+9. **Android clean runtime repro + proof update**
+   - Reconnected Android through Expo (`a`) and captured new clean screenshots after a fresh bundle load.
+   - Confirmed Android home and onboarding render without the previous error toasts in the new session.
+   - Captured Android map route loading state (spinner + controls); no immediate red network-error toast in this fresh run.
+10. **Reliability pledge save hardening (mobile)**
+   - Updated `apps/doWhat-mobile/src/app/onboarding/reliability-pledge.tsx` to mirror the sports-onboarding resilience path for legacy profile rows.
+   - Save now uses profile upsert with `id` + `user_id`, and on `23502` (`user_id`) it performs a targeted repair update and retries upsert.
+11. **Map events fetch path corrected for native**
+   - Updated `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx` so native platforms (`ios`/`android`) use Supabase fallback events directly instead of web `/api/events` first.
+   - This removes avoidable cross-host dependency from native map events loading and reduces false network-failure surface area.
+12. **Map logging-noise cleanup**
+   - Downgraded non-fatal map diagnostics from `console.warn` to `console.info` across fallback/abort pathways so expected resilience paths no longer appear as warning-level runtime failures during normal use.
+13. **Onboarding reliability test mock updated**
+   - Updated `apps/doWhat-mobile/src/app/__tests__/onboarding-reliability-pledge.test.tsx` Supabase mock to include `.upsert(...)` support after the reliability screen save-path change.
+14. **Viewport query algorithm guardrails (map)**
+   - Added query dedupe helpers in `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`:
+     - `viewportQueriesEqual(...)`
+     - `regionNeedsQueryRefresh(...)`
+     - time-based throttle via `lastQuerySyncAtRef`
+   - Query refresh now requires meaningful viewport change (or explicit force) and respects a minimum refresh interval to prevent bursty map refetch churn.
+15. **Validation reruns after latest patches**
+   - `pnpm --filter doWhat-mobile typecheck` passed.
+   - `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` passed (with baseline-browser-mapping staleness warning unchanged).
+16. **Fresh platform proofs captured (post-fix)**
+   - Web (Next): `/tmp/dowhat-web-home-proof-after-fixes.png`, `/tmp/dowhat-web-auth-proof-after-fixes.png`, `/tmp/dowhat-web-discover-proof-after-fixes.png`.
+   - Mobile web (Expo web): `/tmp/dowhat-mobile-web-home-proof-after-fixes.png`, `/tmp/dowhat-mobile-web-map-proof-after-fixes.png`, `/tmp/dowhat-mobile-web-onboarding-proof-after-fixes.png`.
+   - iOS (sim): `/tmp/dowhat-ios-home-proof-after-fixes.png`, `/tmp/dowhat-ios-onboarding-proof-after-fixes.png`, `/tmp/dowhat-ios-map-proof-after-fixes.png`.
+   - Android (emulator): `/tmp/dowhat-android-home-proof-after-fixes-final.png`, `/tmp/dowhat-android-onboarding-proof-after-fixes-final.png`, `/tmp/dowhat-android-map-proof-after-fixes-final.png`.
+17. **Android remaining visual caveat**
+   - Android screenshots still show a bottom toast (`Cannot connect to Metro...`) from Expo Development Client state management.
+   - This is a dev-runtime banner (not an app logic crash, not a Supabase error, not map fetch failure) and does not block in-app map/home/onboarding rendering in the captured runs.
+18. **Map query refinement follow-up**
+   - Removed an over-eager forced query-sync effect that was still causing repeated viewport query updates.
+   - Added rounded events-query bounds (`3` decimals) to stabilize query keys and reduce tiny-coordinate cache misses.
+   - Added query-key tolerance in `viewportQueriesEqual(...)` to avoid refetches caused only by floating-point noise.
+19. **Post-refinement validation**
+   - Re-ran `pnpm --filter doWhat-mobile typecheck` (pass).
+   - Re-ran final route screenshot checks for web/mobile-web/native routes; map/home/onboarding continue to render after the query refinements.
+20. **Android web-base host resolution fix**
+   - Fixed `apps/doWhat-mobile/src/lib/web.ts` host extraction logic to only rewrite `localhost` to `10.0.2.2` on Android emulator (`!Constants.isDevice`), avoiding invalid host rewriting on real Android devices.
+21. **Android startup reliability helper**
+   - Added `apps/doWhat-mobile/scripts/start-android.sh` and wired `start:android` to use it.
+   - The helper now clears stale dev ports, auto-starts the web dev server when needed, configures `adb reverse` for Metro/API, pins Expo dev-client host to localhost, and sets `EXPO_PUBLIC_WEB_URL` deterministically.
+22. **Mobile docs sync**
+   - Updated `apps/doWhat-mobile/README.md` quick-launch instructions to include the new Android startup helper and expected behavior.
+23. **Web map query-key stabilization**
+   - Updated `apps/doWhat-web/src/app/map/page.tsx` to reduce map refetch churn from floating-point jitter:
+     - bounds comparison now uses tolerance instead of strict equality,
+     - events query bounds are normalized/rounded (`3` decimals) before `useEvents` args are built.
+   - This keeps `/api/events` query keys stable when map movement is visually unchanged.
+24. **Validation reruns after web map stabilization**
+   - `pnpm --filter dowhat-web typecheck` passed.
+   - `pnpm --filter doWhat-mobile typecheck` passed.
+   - `pnpm --filter dowhat-web test -- map` passed.
+   - `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` passed (baseline-browser-mapping staleness warning unchanged).
+25. **Fresh proof captures (current run)**
+   - Web screenshots:
+     - `/tmp/dowhat-web-home-proof-current4.png`
+     - `/tmp/dowhat-web-auth-proof-current4.png`
+     - `/tmp/dowhat-web-discover-proof-current4.png`
+     - `/tmp/dowhat-web-map-proof-current4.png`
+   - Mobile web screenshots:
+     - `/tmp/dowhat-mobile-web-home-proof-current4.png`
+     - `/tmp/dowhat-mobile-web-onboarding-proof-current4.png`
+     - `/tmp/dowhat-mobile-web-map-proof-current4.png`
+   - iOS native screenshots:
+     - `/tmp/dowhat-ios-home-proof-current4.png`
+     - `/tmp/dowhat-ios-onboarding-proof-current4.png`
+     - `/tmp/dowhat-ios-map-proof-current4.png`
+   - Android native screenshots:
+     - `/tmp/dowhat-android-home-proof-current4.png`
+     - `/tmp/dowhat-android-onboarding-proof-current4.png`
+     - `/tmp/dowhat-android-map-proof-current4.png`
+26. **Runtime stability root-cause confirmation**
+   - Confirmed repeated "Cannot connect to Metro" and "problem loading project" regressions were primarily runtime orchestration issues (dev servers not continuously alive), not new logic regressions in map/onboarding screens.
+   - Re-established stable long-running sessions:
+     - `pnpm --filter dowhat-web dev` (`http://localhost:3002`)
+     - `pnpm --filter doWhat-mobile run start:ios` (`http://localhost:8081`)
+     - `pnpm --filter doWhat-mobile run start:android` (`http://localhost:8081` + `adb reverse`)
+27. **Deep-link behavior verification (Expo dev-client)**
+   - Re-validated the correct launch sequence for development builds:
+     1. Open project URL (`exp+dowhat-mobile://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081`)
+     2. Route with app scheme (`dowhat://...`)
+   - Confirmed this avoids the recurring iOS `Failed to open app from .../--/...` failure state seen when route URL handling is attempted directly against dev-client project bootstrap.
+28. **Fresh proof captures (current8/current8b)**
+   - Web screenshots:
+     - `/tmp/dowhat-web-home-proof-current8.png`
+     - `/tmp/dowhat-web-auth-proof-current8.png`
+     - `/tmp/dowhat-web-discover-proof-current8.png`
+   - Mobile web screenshots:
+     - `/tmp/dowhat-mobile-web-home-proof-current8.png`
+     - `/tmp/dowhat-mobile-web-onboarding-proof-current8.png`
+     - `/tmp/dowhat-mobile-web-map-proof-current8.png`
+   - iOS native screenshots:
+     - `/tmp/dowhat-ios-home-proof-current8.png`
+     - `/tmp/dowhat-ios-onboarding-proof-current8.png`
+     - `/tmp/dowhat-ios-map-proof-current8.png`
+   - Android native screenshots:
+     - `/tmp/dowhat-android-home-proof-current8b.png`
+     - `/tmp/dowhat-android-onboarding-proof-current8b.png`
+     - `/tmp/dowhat-android-map-proof-current8b.png`
+29. **Android runtime log recheck**
+   - Cleared and re-checked logcat during fresh routing flow; filtered scan did not show recurring:
+     - `Network request failed`
+     - `profiles.user_id` / `23502`
+     - `[sports-onboarding] save failed`
+     - `[reliability-pledge] save failed`
+   - Android map now consistently surfaces real fallback/supabase venue counts (`places in view`) rather than failing with red-box network errors.
+30. **Dev route opener helper (ios/android)**
+   - Added `apps/doWhat-mobile/scripts/open-dev-route.sh` to make dev-client route testing deterministic.
+   - The helper now:
+     - opens Expo project URL first on cold start,
+     - deep-links with `dowhat://...`,
+     - retries route open once after boot delay,
+     - skips project bootstrap on Android warm starts to avoid route override race.
+   - Added scripts in `apps/doWhat-mobile/package.json`:
+     - `open:route:ios`
+     - `open:route:android`
+31. **Mobile README route guidance update**
+   - Updated `apps/doWhat-mobile/README.md` with route helper usage and explicit note that Expo Go style `/--/...` links should not be used for dev-build route bootstrap.
+32. **Post-helper native validation**
+   - iOS route helper validation:
+     - `pnpm --filter doWhat-mobile run open:route:ios -- /map`
+     - screenshot: `/tmp/dowhat-ios-map-proof-current9.png` (map loaded with places + controls).
+   - Android route helper validation (after helper patch):
+     - `pnpm --filter doWhat-mobile run open:route:android -- /map`
+     - `pnpm --filter doWhat-mobile run open:route:android -- /onboarding/sports`
+     - screenshots:
+       - `/tmp/dowhat-android-map-proof-current10.png`
+       - `/tmp/dowhat-android-onboarding-proof-current10.png`
+     - no recurring filtered logcat hits for `Network request failed`, `23502`, `user_id`, or `Cannot connect to Metro` during this pass.
+33. **Current quality gates (re-run)**
+   - `pnpm --filter doWhat-mobile typecheck` passed.
+   - `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` passed.
+   - `pnpm --filter dowhat-web typecheck` passed.
+   - `pnpm --filter dowhat-web test -- map` passed.
+34. **Staged file audit before release sync**
+   - Re-reviewed every staged file diff to keep only actionable, production-relevant changes:
+     - mobile startup/routing helpers,
+     - onboarding save hardening,
+     - map fetch + query stability improvements,
+     - web map query-key stabilization,
+     - Supabase security hardening migration,
+     - docs/log updates.
+   - Confirmed no temporary runtime artifacts (`web-dev.log`, transient screenshots) are included in the staged set.
+35. **Final pre-commit quality gate rerun**
+   - Re-ran `pnpm --filter dowhat-web typecheck` (pass).
+   - Re-ran `pnpm --filter doWhat-mobile typecheck` (pass).
+   - Re-ran `pnpm --filter dowhat-web test -- map` (pass).
+   - Re-ran `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` (pass; baseline-browser-mapping staleness warning unchanged).

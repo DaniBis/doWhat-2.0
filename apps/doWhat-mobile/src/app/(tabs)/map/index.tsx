@@ -107,6 +107,244 @@ const parseCoordinate = (value: unknown): number | null => {
   return null;
 };
 
+const isAbortLikeError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const maybeError = error as { name?: unknown; message?: unknown };
+  const name = typeof maybeError.name === 'string' ? maybeError.name.toLowerCase() : '';
+  const message = typeof maybeError.message === 'string' ? maybeError.message.toLowerCase() : '';
+  return name === 'aborterror' || message.includes('abort');
+};
+
+type SupabaseEventRow = {
+  id: string | null;
+  title: string | null;
+  description: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  timezone: string | null;
+  venue_name: string | null;
+  lat: number | string | null;
+  lng: number | string | null;
+  address: string | null;
+  url: string | null;
+  image_url: string | null;
+  status: string | null;
+  tags: string[] | null;
+  place_id: string | null;
+  source_id: string | null;
+  source_uid: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type SupabaseSessionVenue = {
+  name?: string | null;
+  lat?: number | string | null;
+  lng?: number | string | null;
+  address?: string | null;
+};
+
+type SupabaseSessionActivity = {
+  name?: string | null;
+};
+
+type SupabaseSessionRow = {
+  id: string | null;
+  description: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  venue_id: string | null;
+  activity_id: string | null;
+  venues: SupabaseSessionVenue | SupabaseSessionVenue[] | null;
+  activities: SupabaseSessionActivity | SupabaseSessionActivity[] | null;
+};
+
+const MAX_EVENTS_FALLBACK_LIMIT = 200;
+
+const pickFirstRelation = <T,>(value: T | T[] | null | undefined): T | null => {
+  if (!value) return null;
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value;
+};
+
+const normalizeEventStatus = (value: unknown): EventSummary['status'] => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  switch (normalized) {
+    case 'verified':
+    case 'rejected':
+    case 'pending':
+    case 'unverified':
+    case 'scheduled':
+    case 'canceled':
+      return normalized;
+    case 'cancelled':
+      return 'canceled';
+    default:
+      return 'scheduled';
+  }
+};
+
+const normalizeEventState = (status: EventSummary['status']): EventSummary['event_state'] =>
+  status === 'canceled' ? 'canceled' : 'scheduled';
+
+const normalizeTextArray = (value: unknown): string[] | null => {
+  if (!Array.isArray(value)) return null;
+  const normalized = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry): entry is string => entry.length > 0);
+  return normalized.length ? normalized : null;
+};
+
+const eventIsWithinBounds = (
+  event: Pick<EventSummary, 'lat' | 'lng'>,
+  sw?: { lat: number; lng: number },
+  ne?: { lat: number; lng: number },
+) => {
+  if (!sw || !ne) return true;
+  if (typeof event.lat !== 'number' || typeof event.lng !== 'number') return false;
+  return event.lat >= sw.lat && event.lat <= ne.lat && event.lng >= sw.lng && event.lng <= ne.lng;
+};
+
+const toEventSummaryFromEventRow = (row: SupabaseEventRow): EventSummary | null => {
+  if (!row.id || !row.start_at) return null;
+  const status = normalizeEventStatus(row.status);
+  const lat = parseCoordinate(row.lat);
+  const lng = parseCoordinate(row.lng);
+  const placeLabel = row.venue_name ?? row.address ?? null;
+  return {
+    id: row.id,
+    title: row.title ?? 'Community event',
+    description: row.description ?? null,
+    start_at: row.start_at,
+    end_at: row.end_at ?? null,
+    timezone: row.timezone ?? 'UTC',
+    venue_name: row.venue_name ?? null,
+    place_label: placeLabel,
+    lat,
+    lng,
+    address: row.address ?? null,
+    url: row.url ?? `/events/${row.id}`,
+    image_url: row.image_url ?? null,
+    status,
+    event_state: normalizeEventState(status),
+    reliability_score: null,
+    tags: normalizeTextArray(row.tags),
+    place_id: row.place_id ?? null,
+    source_id: row.source_id ?? null,
+    source_uid: row.source_uid ?? null,
+    metadata: row.metadata ?? null,
+    verification_confirmations: null,
+    verification_required: null,
+  };
+};
+
+const toEventSummaryFromSessionRow = (row: SupabaseSessionRow): EventSummary | null => {
+  if (!row.id || !row.starts_at) return null;
+  const venue = pickFirstRelation(row.venues);
+  const activity = pickFirstRelation(row.activities);
+  const lat = parseCoordinate(venue?.lat ?? null);
+  const lng = parseCoordinate(venue?.lng ?? null);
+  const venueName = venue?.name ?? null;
+  const address = venue?.address ?? null;
+  const placeLabel = venueName ?? address ?? null;
+  return {
+    id: row.id,
+    title: activity?.name ?? venueName ?? 'Community session',
+    description: row.description ?? null,
+    start_at: row.starts_at,
+    end_at: row.ends_at ?? null,
+    timezone: 'UTC',
+    venue_name: venueName,
+    place_label: placeLabel,
+    lat,
+    lng,
+    address,
+    url: `/sessions/${row.id}`,
+    image_url: null,
+    status: 'scheduled',
+    event_state: 'scheduled',
+    reliability_score: null,
+    tags: ['community'],
+    place_id: row.venue_id ?? null,
+    source_id: null,
+    source_uid: row.id,
+    metadata: {
+      source: 'session',
+      sessionId: row.id,
+      activityId: row.activity_id ?? null,
+      venueId: row.venue_id ?? null,
+    },
+    verification_confirmations: null,
+    verification_required: null,
+  };
+};
+
+const fetchSupabaseEventsFallback = async (query: {
+  sw?: { lat: number; lng: number };
+  ne?: { lat: number; lng: number };
+  from?: string;
+  to?: string;
+  limit?: number;
+}): Promise<{ events: EventSummary[] }> => {
+  const requestedLimit = Number.isFinite(query.limit)
+    ? Math.max(1, Math.min(Math.round(query.limit as number), MAX_EVENTS_FALLBACK_LIMIT))
+    : 100;
+
+  let eventsQuery = supabase
+    .from('events')
+    .select(
+      'id,title,description,start_at,end_at,timezone,venue_name,lat,lng,address,url,image_url,status,tags,place_id,source_id,source_uid,metadata',
+    )
+    .order('start_at', { ascending: true })
+    .limit(requestedLimit);
+
+  if (query.from) eventsQuery = eventsQuery.gte('start_at', query.from);
+  if (query.to) eventsQuery = eventsQuery.lte('start_at', query.to);
+  if (query.sw && query.ne) {
+    eventsQuery = eventsQuery
+      .gte('lat', query.sw.lat)
+      .lte('lat', query.ne.lat)
+      .gte('lng', query.sw.lng)
+      .lte('lng', query.ne.lng);
+  }
+
+  const { data: eventRows, error: eventsError } = await eventsQuery;
+  if (eventsError) throw eventsError;
+
+  let sessionsQuery = supabase
+    .from('sessions')
+    .select('id,description,starts_at,ends_at,venue_id,activity_id,venues(name,lat,lng,address),activities(name)')
+    .order('starts_at', { ascending: true })
+    .limit(requestedLimit);
+
+  if (query.from) sessionsQuery = sessionsQuery.gte('starts_at', query.from);
+  if (query.to) sessionsQuery = sessionsQuery.lte('starts_at', query.to);
+
+  const { data: sessionRows, error: sessionsError } = await sessionsQuery;
+  if (sessionsError && __DEV__) {
+    console.info('[Map] sessions fallback query failed', sessionsError);
+  }
+
+  const events = (Array.isArray(eventRows) ? eventRows : [])
+    .map((row) => toEventSummaryFromEventRow(row as SupabaseEventRow))
+    .filter((row): row is EventSummary => Boolean(row));
+
+  const sessions = (Array.isArray(sessionRows) ? sessionRows : [])
+    .map((row) => toEventSummaryFromSessionRow(row as SupabaseSessionRow))
+    .filter((row): row is EventSummary => Boolean(row))
+    .filter((event) => eventIsWithinBounds(event, query.sw, query.ne));
+
+  const merged = [...events, ...sessions].sort(
+    (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
+  );
+  const deduped = new Map<string, EventSummary>();
+  merged.forEach((event) => {
+    if (!deduped.has(event.id)) {
+      deduped.set(event.id, event);
+    }
+  });
+  return { events: Array.from(deduped.values()).slice(0, requestedLimit) };
+};
+
 const coordsApproximatelyEqual = (
   a: { lat: number; lng: number },
   b: { lat: number; lng: number },
@@ -821,6 +1059,44 @@ const regionsApproximatelyEqual = (a: MapRegion, b: MapRegion) => {
   );
 };
 
+const arraysEqual = (a: string[] | undefined, b: string[] | undefined) => {
+  if (!a?.length && !b?.length) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+};
+
+const viewportQueriesEqual = (a: PlacesViewportQuery, b: PlacesViewportQuery) => {
+  const epsilon = 1e-4;
+  return (
+    a.city === b.city &&
+    a.limit === b.limit &&
+    arraysEqual(a.categories, b.categories) &&
+    Math.abs(a.bounds.sw.lat - b.bounds.sw.lat) < epsilon &&
+    Math.abs(a.bounds.sw.lng - b.bounds.sw.lng) < epsilon &&
+    Math.abs(a.bounds.ne.lat - b.bounds.ne.lat) < epsilon &&
+    Math.abs(a.bounds.ne.lng - b.bounds.ne.lng) < epsilon
+  );
+};
+
+const regionNeedsQueryRefresh = (previous: MapRegion, next: MapRegion) => {
+  const maxLatDelta = Math.max(previous.latitudeDelta, next.latitudeDelta, MIN_MAP_DELTA);
+  const maxLngDelta = Math.max(previous.longitudeDelta, next.longitudeDelta, MIN_MAP_DELTA);
+  const latMove = Math.abs(previous.latitude - next.latitude);
+  const lngMove = Math.abs(previous.longitude - next.longitude);
+  const latDeltaShift = Math.abs(previous.latitudeDelta - next.latitudeDelta) / maxLatDelta;
+  const lngDeltaShift = Math.abs(previous.longitudeDelta - next.longitudeDelta) / maxLngDelta;
+
+  const panThresholdRatio = 0.12;
+  const zoomThresholdRatio = 0.08;
+  return (
+    latMove >= maxLatDelta * panThresholdRatio ||
+    lngMove >= maxLngDelta * panThresholdRatio ||
+    latDeltaShift >= zoomThresholdRatio ||
+    lngDeltaShift >= zoomThresholdRatio
+  );
+};
+
 const boundsFromRegion = (region: MapRegion): PlacesViewportQuery['bounds'] => {
   const latSpan = region.latitudeDelta / 2;
   const lngSpan = region.longitudeDelta / 2;
@@ -829,6 +1105,8 @@ const boundsFromRegion = (region: MapRegion): PlacesViewportQuery['bounds'] => {
     ne: { lat: region.latitude + latSpan, lng: region.longitude + lngSpan },
   };
 };
+
+const roundCoordForEventsQuery = (value: number) => Number(value.toFixed(3));
 
 const getGeohashPrecisionForDelta = (latitudeDelta: number) => {
   if (latitudeDelta < 0.01) return 7;
@@ -1138,6 +1416,8 @@ export default function MapScreen() {
 
   const mapRef = useRef<ComponentRef<typeof MapView> | null>(null);
   const lastRegionRef = useRef<MapRegion>(cityRegion);
+  const lastQueryRegionRef = useRef<MapRegion>(cityRegion);
+  const lastQuerySyncAtRef = useRef<number>(0);
   const geocodeAbortControllerRef = useRef<AbortController | null>(null);
   const lastGeocodedLabelRef = useRef<string | null>(null);
   const lastGeocodedCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -1332,9 +1612,29 @@ export default function MapScreen() {
   const [targetQuery, setTargetQuery] = useState<PlacesViewportQuery>(() => buildViewportQuery(cityRegion));
   const [query, setQuery] = useState<PlacesViewportQuery>(() => buildViewportQuery(cityRegion));
 
+  const syncViewportQuery = useCallback(
+    (nextRegion: MapRegion, options?: { force?: boolean }) => {
+      const previousRegion = lastQueryRegionRef.current;
+      const force = options?.force ?? false;
+      if (!force && !regionNeedsQueryRefresh(previousRegion, nextRegion)) {
+        return;
+      }
+      const nowMs = Date.now();
+      if (!force && nowMs - lastQuerySyncAtRef.current < 1200) {
+        return;
+      }
+      lastQuerySyncAtRef.current = nowMs;
+      lastQueryRegionRef.current = nextRegion;
+      const nextQuery = buildViewportQuery(nextRegion);
+      setTargetQuery((previousQuery) => (viewportQueriesEqual(previousQuery, nextQuery) ? previousQuery : nextQuery));
+    },
+    [buildViewportQuery],
+  );
+
   useEffect(() => {
     setRegion(cityRegion);
     lastRegionRef.current = cityRegion;
+    lastQueryRegionRef.current = cityRegion;
     const initialQuery = buildViewportQuery(cityRegion);
     setTargetQuery(initialQuery);
     setQuery(initialQuery);
@@ -1348,8 +1648,8 @@ export default function MapScreen() {
   }, [targetQuery]);
 
   useEffect(() => {
-    setTargetQuery(buildViewportQuery(region));
-  }, [buildViewportQuery, region]);
+    syncViewportQuery(lastRegionRef.current, { force: true });
+  }, [syncViewportQuery]);
 
   useEffect(() => {
     setFilters((prev) => {
@@ -1387,7 +1687,7 @@ export default function MapScreen() {
           label: typeof data.location === 'string' ? data.location : null,
         });
       } catch (err) {
-        console.warn('Failed to fetch profile location', err);
+        console.info('Failed to fetch profile location', err);
       }
     })();
     return () => {
@@ -1455,12 +1755,12 @@ export default function MapScreen() {
           };
           setRegion(nextRegion);
           lastRegionRef.current = nextRegion;
-          setTargetQuery(buildViewportQuery(nextRegion));
+          syncViewportQuery(nextRegion, { force: true });
           setLocationInitialized(true);
         }
       } catch (err) {
         if (isMounted && !locationInitialized) {
-          console.warn('Location setup error', err);
+          console.info('Location setup error', err);
           setHasLocationPermission(false);
           // Fallback to profile or city
           const centerLat = profileLocation?.lat ?? cityRegion.latitude;
@@ -1473,7 +1773,7 @@ export default function MapScreen() {
           };
           setRegion(nextRegion);
           lastRegionRef.current = nextRegion;
-          setTargetQuery(buildViewportQuery(nextRegion));
+          syncViewportQuery(nextRegion, { force: true });
           setLocationInitialized(true);
         }
       }
@@ -1481,7 +1781,7 @@ export default function MapScreen() {
     return () => {
       isMounted = false;
     };
-  }, [buildViewportQuery, cityRegion, profileLocation, locationInitialized]);
+  }, [buildViewportQuery, cityRegion, profileLocation, locationInitialized, syncViewportQuery]);
 
   useEffect(() => {
     if (locationInitialized && mapRef.current) {
@@ -1501,23 +1801,77 @@ export default function MapScreen() {
       };
       setRegion(profileRegion);
       lastRegionRef.current = profileRegion;
-      setTargetQuery(buildViewportQuery(profileRegion));
+      syncViewportQuery(profileRegion, { force: true });
       // Removed animateToRegion since region prop handles animation
     }
-  }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery]);
+  }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery, syncViewportQuery]);
 
   const supabasePlacesFetcher = useMemo<FetchPlaces>(() => {
     return async ({ bounds, limit, city: queryCity, signal }) => {
       const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
         ? performance.now()
         : Date.now();
+      const buildEmptyResponse = () => {
+        const latencyMs = Math.round(
+          (typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()) - startedAt,
+        );
+        return {
+          cacheHit: false,
+          places: [],
+          providerCounts: {},
+          attribution: [],
+          latencyMs,
+        };
+      };
       const citySlugForQuery = queryCity ?? city.slug ?? DEFAULT_CITY_SLUG;
+      const fetchFallbackPlaces = async () => {
+        const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+        const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
+        const fallbackRadius = estimateRadiusFromBounds(bounds);
+        const fallbackPlaces = await fetchOverpassPlaceSummaries({
+          lat: centerLat,
+          lng: centerLng,
+          radiusMeters: fallbackRadius,
+          limit: limit ?? 400,
+          signal,
+        });
+        const latencyMs = Math.round(
+          (typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()) - startedAt,
+        );
+        const providerCounts: Record<string, number> = { openstreetmap: fallbackPlaces.length };
+        return {
+          cacheHit: false,
+          places: fallbackPlaces,
+          providerCounts,
+          attribution: [OPENSTREETMAP_FALLBACK_ATTRIBUTION],
+          latencyMs,
+        };
+      };
       try {
         const places = await fetchSupabasePlacesWithinBounds({
           bounds,
           citySlug: citySlugForQuery,
           limit: limit ?? 400,
         });
+        if (!places.length) {
+          try {
+            const fallback = await fetchFallbackPlaces();
+            if (fallback.places.length > 0) {
+              return fallback;
+            }
+          } catch (fallbackError) {
+            if (isAbortLikeError(fallbackError)) {
+              return buildEmptyResponse();
+            }
+            if (__DEV__) {
+              console.info('[Map] Empty Supabase results and fallback fetch failed', fallbackError);
+            }
+          }
+        }
         const latencyMs = Math.round(
           (typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()
@@ -1533,35 +1887,21 @@ export default function MapScreen() {
         };
       } catch (primaryError) {
         if (__DEV__) {
-          console.warn('[Map] Supabase places fetch failed', primaryError);
+          if (!isAbortLikeError(primaryError)) {
+            console.info('[Map] Supabase places fetch failed', primaryError);
+          }
         }
-        const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
-        const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
-        const fallbackRadius = estimateRadiusFromBounds(bounds);
+        if (isAbortLikeError(primaryError)) {
+          return buildEmptyResponse();
+        }
         try {
-          const fallbackPlaces = await fetchOverpassPlaceSummaries({
-            lat: centerLat,
-            lng: centerLng,
-            radiusMeters: fallbackRadius,
-            limit: limit ?? 400,
-            signal,
-          });
-          const latencyMs = Math.round(
-            (typeof performance !== 'undefined' && typeof performance.now === 'function'
-              ? performance.now()
-              : Date.now()) - startedAt,
-          );
-          const providerCounts: Record<string, number> = { openstreetmap: fallbackPlaces.length };
-          return {
-            cacheHit: false,
-            places: fallbackPlaces,
-            providerCounts,
-            attribution: [OPENSTREETMAP_FALLBACK_ATTRIBUTION],
-            latencyMs,
-          };
+          return await fetchFallbackPlaces();
         } catch (fallbackError) {
+          if (isAbortLikeError(fallbackError)) {
+            return buildEmptyResponse();
+          }
           if (__DEV__) {
-            console.warn('[Map] Places fallback failed', fallbackError);
+            console.info('[Map] Places fallback failed', fallbackError);
           }
           throw primaryError instanceof Error
             ? primaryError
@@ -1582,14 +1922,41 @@ export default function MapScreen() {
   const friendlyError = error ? error.replace(/^TypeError:\s*/i, '').trim() || null : null;
   const places = placesQuery.data?.places ?? [];
 
-  const eventsFetcher = useMemo(
-    () =>
-      createEventsFetcher({
-        buildUrl: () => buildWebUrl('/api/events'),
-        includeCredentials: true,
-      }),
-    [],
-  );
+  const eventsFetcher = useMemo(() => {
+    if (Platform.OS !== 'web') {
+      return async (args: Parameters<typeof fetchSupabaseEventsFallback>[0]) => {
+        try {
+          return await fetchSupabaseEventsFallback(args);
+        } catch (fallbackError) {
+          if (__DEV__) {
+            console.info('[Map] Native events fallback failed', fallbackError);
+          }
+          return { events: [] };
+        }
+      };
+    }
+    const webEventsFetcher = createEventsFetcher({
+      buildUrl: () => buildWebUrl('/api/events'),
+      includeCredentials: true,
+    });
+    return async (args: Parameters<typeof webEventsFetcher>[0]) => {
+      try {
+        return await webEventsFetcher(args);
+      } catch (webError) {
+        if (__DEV__) {
+          console.info('[Map] /api/events fetch failed, using Supabase fallback', webError);
+        }
+        try {
+          return await fetchSupabaseEventsFallback(args);
+        } catch (fallbackError) {
+          if (__DEV__) {
+            console.info('[Map] Supabase events fallback failed', fallbackError);
+          }
+          return { events: [] };
+        }
+      }
+    };
+  }, []);
 
   const eventsWindow = useMemo(() => {
     const start = new Date();
@@ -1601,8 +1968,14 @@ export default function MapScreen() {
   const eventsQueryArgs = useMemo(() => {
     if (!query?.bounds) return null;
     return {
-      sw: query.bounds.sw,
-      ne: query.bounds.ne,
+      sw: {
+        lat: roundCoordForEventsQuery(query.bounds.sw.lat),
+        lng: roundCoordForEventsQuery(query.bounds.sw.lng),
+      },
+      ne: {
+        lat: roundCoordForEventsQuery(query.bounds.ne.lat),
+        lng: roundCoordForEventsQuery(query.bounds.ne.lng),
+      },
       from: eventsWindow.from,
       to: eventsWindow.to,
       limit: 150,
@@ -1681,7 +2054,7 @@ export default function MapScreen() {
     }
     lastRegionRef.current = normalised;
     setRegion(normalised);
-    setTargetQuery(buildViewportQuery(normalised));
+    syncViewportQuery(normalised);
   };
 
   const deferredRegion = useDeferredValue(region);
@@ -1997,7 +2370,7 @@ export default function MapScreen() {
     const target = normaliseWebsiteUrl(url ?? null);
     if (!target) return;
     Linking.openURL(target).catch((error) => {
-      console.warn('[Map] Failed to open venue website', error);
+      console.info('[Map] Failed to open venue website', error);
     });
   }, []);
 

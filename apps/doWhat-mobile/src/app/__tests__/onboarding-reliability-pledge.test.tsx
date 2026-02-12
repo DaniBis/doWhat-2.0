@@ -22,11 +22,13 @@ jest.mock("../../lib/supabase", () => {
     userId: string | null;
     profile: { reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null };
     lastUpdatePayload: Record<string, unknown> | null;
+    upsertError: { message: string; code?: string; details?: string } | null;
     updateError: { message: string } | null;
   } = {
     userId: "user-123",
     profile: { reliability_pledge_ack_at: null, reliability_pledge_version: null },
     lastUpdatePayload: null,
+    upsertError: null,
     updateError: null,
   };
 
@@ -41,6 +43,10 @@ jest.mock("../../lib/supabase", () => {
       if (table !== "profiles") throw new Error(`Unexpected table: ${table}`);
       return {
         select: jest.fn(() => buildSelectChain()),
+        upsert: jest.fn(async (payload: Record<string, unknown>) => {
+          state.lastUpdatePayload = payload;
+          return { error: state.upsertError };
+        }),
         update: jest.fn((payload: Record<string, unknown>) => ({
           eq: jest.fn(async () => {
             state.lastUpdatePayload = payload;
@@ -59,6 +65,7 @@ jest.mock("../../lib/supabase", () => {
       state.userId = "user-123";
       state.profile = { reliability_pledge_ack_at: null, reliability_pledge_version: null };
       state.lastUpdatePayload = null;
+      state.upsertError = null;
       state.updateError = null;
       mockClient.from.mockClear();
       mockClient.auth.getUser.mockClear();
