@@ -19,6 +19,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "db:migrate": "node run_migrations.js",
+    "db:advisor:fix": "node scripts/apply-security-advisor-fixes.mjs",
     "health": "node scripts/health-env.mjs && node scripts/health-migrations.mjs --dowhat && node scripts/health-notifications.mjs && node scripts/health-trait-policies.mjs && node scripts/verify-dowhat.mjs && (curl -sf http://localhost:3002/api/health | jq .ok || true)",
     "ci": "pnpm install --frozen-lockfile && pnpm -w run typecheck && pnpm -w run lint && pnpm -w run test && pnpm --filter dowhat-web run build && (pnpm --filter dowhat-web run start &) && node -e \"const http=require('node:http');const url='http://localhost:3002/api/health';let i=0;const max=30;const wait=2000;function poll(){i++;http.get(url,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{try{const j=JSON.parse(d);if(j.ok){console.log('Health OK');process.exit(0)}else{console.error('Health not OK yet');if(i<max)setTimeout(poll,wait);else process.exit(1)}}catch(e){if(i<max)setTimeout(poll,wait);else{console.error('Health parse error',e);process.exit(1)}}})}).on('error',e=>{if(i<max)setTimeout(poll,wait);else{console.error('Health request error',e);process.exit(1)}})}poll();\"",
     "cron:traits:batch": "curl -s -X POST -H x-cron-secret:$CRON_SECRET 'http://localhost:3002/api/traits/recompute/all?limit=50&offset=0'",

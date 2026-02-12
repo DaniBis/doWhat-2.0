@@ -291,3 +291,56 @@
    - Re-ran `pnpm --filter doWhat-mobile typecheck` (pass).
    - Re-ran `pnpm --filter dowhat-web test -- map` (pass).
    - Re-ran `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` (pass; baseline-browser-mapping staleness warning unchanged).
+
+## 2026-02-12
+
+1. **Supabase Security Advisor follow-up hardening migration**
+   - Added `apps/doWhat-web/supabase/migrations/062_security_advisor_search_path_hardening.sql`.
+   - Migration auto-detects all `public` functions without an explicit `search_path` and applies:
+     - `SET search_path = public, extensions, pg_temp`
+   - This targets the repeated `Function Search Path Mutable` warnings shown in Security Advisor.
+2. **Supabase execution readiness check (blocked by placeholder DSN)**
+   - Verified local DB tooling state:
+     - `psql` not installed on this machine.
+     - `brew` not available.
+     - Node `pg` client is available via `dowhat-web` workspace dependencies.
+   - Validated provided DSN format and confirmed it still contains `[YOUR-PASSWORD]` placeholder, so remote migration execution cannot authenticate yet.
+3. **Migration 062 robustness hardening**
+   - Updated `062_security_advisor_search_path_hardening.sql` to avoid brittle execution in production:
+     - excludes extension-owned functions (`pg_depend` + `pg_extension`),
+     - wraps each `ALTER FUNCTION` in an exception block and skips entries with insufficient privilege.
+   - Goal: ensure migration completes while still clearing `Function Search Path Mutable` for app-owned `public` functions.
+4. **Automated Supabase advisor-fix runner**
+   - Added `scripts/apply-security-advisor-fixes.mjs`.
+   - Script behavior:
+     - uses `SUPABASE_DB_URL`/`DATABASE_URL`,
+     - applies migrations `061` and `062` with schema-migration tracking,
+     - prints a verification summary for:
+       - remaining mutable `public` functions,
+       - `security_invoker` status of target views,
+       - `spatial_ref_sys` RLS + read policy status.
+   - Added root npm script: `db:advisor:fix`.
+5. **Runner validation in local environment**
+   - Syntax check passed: `node --check scripts/apply-security-advisor-fixes.mjs`.
+   - Placeholder guard confirmed: running with `[YOUR-PASSWORD]` DSN exits early with clear error message.
+6. **Migration 061 permission-safe update**
+   - Remote execution failed on `must be owner of table spatial_ref_sys`.
+   - Updated `061_security_advisor_hardening.sql` to be permission-safe for extension-owned tables:
+     - wrapped RLS enable/policy creation/revokes in `DO` blocks with `insufficient_privilege` handling,
+     - keeps advisor-targeted changes for app-owned objects while avoiding hard failure.
+7. **Remote Supabase advisor fix execution (production DB)**
+   - Ran `pnpm db:advisor:fix` against the configured Supabase project.
+   - Applied migrations successfully:
+     - `061_security_advisor_hardening.sql`
+     - `062_security_advisor_search_path_hardening.sql`
+   - Post-run verification summary:
+     - `mutableFunctionCount`: `0`
+     - target view `security_invoker` enabled for existing views (`dowhat_adoption_metrics`, `v_venue_activity_scores`, `v_venue_activity_votes`).
+8. **Residual `spatial_ref_sys` advisory diagnosis**
+   - Verified `public.spatial_ref_sys` owner is `supabase_admin` while current migration role is `postgres`.
+   - Verified `postgres` cannot `SET ROLE supabase_admin` (`pg_has_role(..., 'member') = false`).
+   - Conclusion: project-level DB credentials cannot enable RLS or create policy on `public.spatial_ref_sys`; this residual advisor item is ownership-constrained in Supabase managed extensions.
+9. **Idempotency verification for advisor fixer**
+   - Re-ran `pnpm db:advisor:fix` after successful application.
+   - Confirmed idempotent behavior: migrations `061` and `062` were skipped as already applied.
+   - Verification summary remained stable (`mutableFunctionCount = 0`; `spatial_ref_sys` ownership-limited state unchanged).
