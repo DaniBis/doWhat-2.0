@@ -344,3 +344,67 @@
    - Re-ran `pnpm db:advisor:fix` after successful application.
    - Confirmed idempotent behavior: migrations `061` and `062` were skipped as already applied.
    - Verification summary remained stable (`mutableFunctionCount = 0`; `spatial_ref_sys` ownership-limited state unchanged).
+10. **PostGIS placement audit against production Supabase**
+    - Audited extension metadata in live DB:
+      - `postgis` exists, schema = `public`, version = `3.3.7`, `extrelocatable = false`.
+      - `spatial_ref_sys` is extension-member (`is_postgis_member = true`) and owner `supabase_admin`.
+      - Found active spatial columns in app tables: `activities.geom`, `events.geom`, `places.geom`.
+11. **Permission probes for documented troubleshooting path**
+    - Confirmed current role cannot run required catalog mutation:
+      - `UPDATE pg_extension SET extrelocatable = true WHERE extname='postgis'` -> `permission denied for table pg_extension`.
+    - Confirmed direct relocation is blocked in current state:
+      - `ALTER EXTENSION postgis SET SCHEMA extensions` -> `extension "postgis" does not support SET SCHEMA`.
+12. **Risk assessment for drop/reinstall workaround**
+    - Executed rollback-only probe for `DROP EXTENSION postgis CASCADE`.
+    - Given live geometry dependencies in core app tables, drop/reinstall was marked unsafe for self-service execution in production.
+13. **Supabase doc alignment confirmation**
+    - Reviewed Supabase PostGIS troubleshooting guidance and confirmed this scenario requires the relocation sequence that starts with changing `extrelocatable`, a step not executable with current project-level role privileges.
+14. **Resolution path identified (support-assisted extension relocation)**
+    - Determined remaining Security Advisor `spatial_ref_sys` finding can only be cleared via support-assisted PostGIS relocation from `public` to `extensions` for this project.
+15. **Clarified Supabase support-only PostGIS relocation sequence**
+    - Identified and shared the exact SQL block from the official PostGIS troubleshooting docs that Supabase support can run when `postgis` is stuck in `public` and non-relocatable.
+    - Confirmed this sequence is privileged because it mutates `pg_extension` metadata and requires elevated ownership/permissions.
+16. **Post-support verification run (live DB)**
+    - Re-ran `pnpm db:advisor:fix` against production after support confirmation.
+    - Verification summary now reports:
+      - `mutableFunctionCount = 0`
+      - `spatialRefSys = null` (no longer present in `public`)
+      - advisor-target views remain `security_invoker = true`.
+17. **PostGIS relocation confirmed complete**
+    - Direct metadata checks confirm support successfully moved PostGIS objects:
+      - extension schema: `extensions` (was `public`)
+      - `spatial_ref_sys` table schema: `extensions`
+      - `st_*` function count: `public = 0`, `extensions = 439`.
+    - This matches the expected end state from the Supabase troubleshooting path.
+18. **Security Advisor remaining items triage**
+    - Confirmed Security Advisor still reports:
+      - `Security Definer View` error for `public.social_sweat_adoption_metrics` (typo in migration `061` targeted `social_sweet_*`).
+      - `Extension in Public` warnings for `vector`, `cube`, `earthdistance`, and `pg_net`.
+      - `Auth`/`Config` warnings that must be resolved in the Supabase Dashboard (OTP expiry, leaked password protection, and Postgres patch upgrade).
+19. **Security Advisor view + extension migrations (DB-level)**
+    - Added `apps/doWhat-web/supabase/migrations/063_security_advisor_view_invoker_followup.sql` to set `security_invoker=true` on `public.social_sweat_adoption_metrics` (and keep back-compat for the earlier typo).
+    - Added `apps/doWhat-web/supabase/migrations/064_security_advisor_extension_schema_cleanup.sql` to move `vector`, `cube`, and `earthdistance` out of `public` and reinstall `pg_net` into `extensions` (pauses any `cron.job` rows calling `net.http_*` while doing so).
+    - Fixed the typo in `apps/doWhat-web/supabase/migrations/061_security_advisor_hardening.sql` so fresh installs target `social_sweat_*` correctly.
+20. **Advisor-fix runner upgraded**
+    - Updated `scripts/apply-security-advisor-fixes.mjs` to:
+      - apply migrations `063` + `064`,
+      - verify `security_invoker` for both `social_sweat_*` and `social_sweet_*`,
+      - report extension schema placement for `vector`, `cube`, `earthdistance`, `pg_net`, and `postgis`.
+21. **Migration apply attempt + cron privilege fix**
+    - Ran `pnpm db:advisor:fix` against production:
+      - `063_security_advisor_view_invoker_followup.sql` applied successfully.
+      - `064_security_advisor_extension_schema_cleanup.sql` failed with `permission denied for table job` while attempting to pause `cron.job`.
+    - Updated `064_security_advisor_extension_schema_cleanup.sql` to treat `cron.job` access as best-effort:
+      - catches `insufficient_privilege` and continues with the extension relocation/reinstall path.
+22. **Security Advisor DB-level items cleared**
+    - Re-ran `pnpm db:advisor:fix` and applied `064_security_advisor_extension_schema_cleanup.sql` successfully.
+    - Verification summary now confirms:
+      - `mutableFunctionCount = 0`
+      - `public.social_sweat_adoption_metrics security_invoker = true`
+      - `vector`, `cube`, `earthdistance`, `pg_net`, and `postgis` all installed under schema `extensions`.
+23. **Security Advisor remaining dashboard-only warnings**
+    - Identified the remaining warnings as Supabase Dashboard configuration items (not SQL-migrationable):
+      - `Auth OTP Long Expiry`
+      - `Leaked Password Protection Disabled`
+      - `Postgres version has security patches available`
+    - Prepared step-by-step dashboard remediation guidance for the owner to apply.

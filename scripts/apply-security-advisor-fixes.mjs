@@ -23,6 +23,8 @@ const resolveDatabaseUrl = () => {
 const MIGRATIONS = [
   resolve(process.cwd(), 'apps/doWhat-web/supabase/migrations/061_security_advisor_hardening.sql'),
   resolve(process.cwd(), 'apps/doWhat-web/supabase/migrations/062_security_advisor_search_path_hardening.sql'),
+  resolve(process.cwd(), 'apps/doWhat-web/supabase/migrations/063_security_advisor_view_invoker_followup.sql'),
+  resolve(process.cwd(), 'apps/doWhat-web/supabase/migrations/064_security_advisor_extension_schema_cleanup.sql'),
 ];
 
 const SCHEMA_MIGRATIONS_TABLE = 'public.schema_migrations';
@@ -111,7 +113,28 @@ const querySecuritySummary = async (client) => {
       'v_venue_activity_votes',
       'v_venue_activity_scores',
       'dowhat_adoption_metrics',
+      'social_sweat_adoption_metrics',
       'social_sweet_adoption_metrics',
+    ]],
+  );
+
+  const extensionSchemas = await client.query(
+    `
+      SELECT
+        e.extname AS extension_name,
+        n.nspname AS schema_name,
+        e.extrelocatable AS relocatable
+      FROM pg_extension e
+      JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE e.extname = ANY ($1::text[])
+      ORDER BY e.extname
+    `,
+    [[
+      'vector',
+      'cube',
+      'earthdistance',
+      'pg_net',
+      'postgis',
     ]],
   );
 
@@ -136,6 +159,7 @@ const querySecuritySummary = async (client) => {
     mutableFunctionCount: mutableFunctions.rows[0]?.total ?? null,
     viewSecurity: targetViews.rows,
     spatialRefSys: spatialRls.rows[0] ?? null,
+    extensions: extensionSchemas.rows,
   };
 };
 
@@ -158,6 +182,22 @@ const main = async () => {
       console.warn(
         `[advisor-fix] ${summary.mutableFunctionCount} public functions still have mutable search_path.`,
       );
+    }
+
+    const insecureViews = (summary.viewSecurity || []).filter((view) => view.security_invoker_enabled === false);
+    if (insecureViews.length) {
+      console.warn('[advisor-fix] views still missing security_invoker=true:');
+      for (const view of insecureViews) {
+        console.warn(`- ${view.view_name}`);
+      }
+    }
+
+    const publicExtensions = (summary.extensions || []).filter((ext) => ext.schema_name === 'public');
+    if (publicExtensions.length) {
+      console.warn('[advisor-fix] extensions still installed in public schema:');
+      for (const ext of publicExtensions) {
+        console.warn(`- ${ext.extension_name}`);
+      }
     }
   } finally {
     await client.end();

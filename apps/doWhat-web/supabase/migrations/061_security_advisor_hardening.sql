@@ -5,6 +5,8 @@
 ALTER VIEW IF EXISTS public.v_venue_activity_votes SET (security_invoker = true);
 ALTER VIEW IF EXISTS public.v_venue_activity_scores SET (security_invoker = true);
 ALTER VIEW IF EXISTS public.dowhat_adoption_metrics SET (security_invoker = true);
+ALTER VIEW IF EXISTS public.social_sweat_adoption_metrics SET (security_invoker = true);
+-- Back-compat for earlier typo (kept idempotent in case the view exists).
 ALTER VIEW IF EXISTS public.social_sweet_adoption_metrics SET (security_invoker = true);
 
 -- Lock trigger helper functions to a deterministic search_path.
