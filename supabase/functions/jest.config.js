@@ -2,7 +2,6 @@ module.exports = {
   displayName: 'supabase-functions',
   rootDir: __dirname,
   testEnvironment: 'node',
-  collectCoverage: false,
   transform: {
     '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json' }],
   },

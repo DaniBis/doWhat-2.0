@@ -408,3 +408,36 @@
       - `Leaked Password Protection Disabled`
       - `Postgres version has security patches available`
     - Prepared step-by-step dashboard remediation guidance for the owner to apply.
+24. **Post-DB-fix full regression pass (start)**
+    - Began a fresh end-to-end verification run across web + mobile (web/iOS/Android):
+      - typecheck, unit tests, lint
+      - smoke navigation through core user surfaces (home/auth/discover/map/onboarding)
+    - Any failures found in this pass will be fixed and re-verified before final sign-off.
+25. **Typecheck re-run (post Security Advisor cleanup)**
+    - `pnpm --filter dowhat-web typecheck` passed.
+    - `pnpm --filter doWhat-mobile typecheck` passed.
+26. **Web lint + unit tests re-run (clean)**
+    - `pnpm --filter dowhat-web lint` passed with no ESLint warnings/errors.
+    - `pnpm --filter dowhat-web test` passed (67/67 suites, 227/227 tests) with no console noise.
+27. **Mobile unit tests re-run (clean)**
+    - Removed noisy debug logs from `apps/doWhat-mobile/src/app/home.tsx` and `apps/doWhat-mobile/src/app/people-filter.tsx`.
+    - Downgraded `ProfileSimple` save failure logging to dev-only warnings (and suppressed in tests) in `apps/doWhat-mobile/src/app/profile.simple.tsx`.
+    - Patched `baseline-browser-mapping@2.8.31` to suppress its stale-data warning under Jest workers; added `patches/baseline-browser-mapping@2.8.31.patch` + `pnpm.patchedDependencies` wiring.
+    - `pnpm --filter doWhat-mobile test` passed (18/18 suites, 78/78 tests) with no console noise/warnings.
+28. **Repo ESLint check**
+    - `pnpm lint` passed.
+29. **Root Jest warning cleanup**
+    - Removed `collectCoverage: false` from `supabase/functions/jest.config.js` to eliminate the Jest config validation warning during `pnpm test`.
+    - `pnpm test` now runs clean (no config warnings).
+30. **Typecheck re-run (full)**
+    - `pnpm --filter dowhat-web typecheck` passed.
+    - `pnpm --filter doWhat-mobile typecheck` passed.
+    - `pnpm --filter @dowhat/shared typecheck` passed.
+31. **People filters cleanup (mobile)**
+    - Normalized indentation for the `fetchNearbyTraits` / `applyFilters` helpers after removing debug logs in `apps/doWhat-mobile/src/app/people-filter.tsx`.
+32. **Pre-commit regression gates**
+    - `pnpm lint` passed.
+    - `pnpm test` passed (94/94 suites, 358/358 tests) with no warnings/errors.
+33. **Final log hygiene**
+    - Normalized the `saveEdits` try/catch indentation in `apps/doWhat-mobile/src/app/profile.simple.tsx` after removing the mount-time `console.log`.
+    - Re-ran `pnpm lint` + `pnpm test` to confirm the repo remains clean.

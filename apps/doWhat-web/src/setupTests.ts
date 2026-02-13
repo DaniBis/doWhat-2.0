@@ -3,6 +3,41 @@ import React from 'react';
 
 process.env.BROWSERSLIST_IGNORE_OLD_DATA = '1';
 
+const createMockSupabaseQuery = () => {
+  const builder: Record<string, unknown> = {};
+  builder.select = jest.fn(() => builder);
+  builder.insert = jest.fn(() => builder);
+  builder.update = jest.fn(() => builder);
+  builder.upsert = jest.fn(() => builder);
+  builder.delete = jest.fn(() => builder);
+  builder.eq = jest.fn(() => builder);
+  builder.in = jest.fn(() => builder);
+  builder.order = jest.fn(() => builder);
+  builder.limit = jest.fn(() => builder);
+  builder.maybeSingle = jest.fn(async () => ({ data: null, error: null }));
+  builder.single = jest.fn(async () => ({ data: null, error: null }));
+  builder.then = jest.fn(() => Promise.resolve({ data: [], error: null }));
+  return builder;
+};
+
+const createMockSupabaseClient = () => ({
+  auth: {
+    getSession: jest.fn(() => Promise.resolve({ data: { session: null }, error: null })),
+    getUser: jest.fn(() => Promise.resolve({ data: { user: null }, error: null })),
+    signInWithOAuth: jest.fn(() => Promise.resolve({ data: {}, error: null })),
+    signOut: jest.fn(() => Promise.resolve({ error: null })),
+    onAuthStateChange: jest.fn(() => ({ data: { subscription: { unsubscribe: jest.fn() } } })),
+  },
+  from: jest.fn(() => createMockSupabaseQuery()),
+  rpc: jest.fn(() => Promise.resolve({ data: [], error: null })),
+  storage: {
+    from: jest.fn(() => ({
+      upload: jest.fn(async () => ({ data: null, error: null })),
+      getPublicUrl: jest.fn(() => ({ data: { publicUrl: 'https://example.com/avatar.png' } })),
+    })),
+  },
+});
+
 // Mock Next.js modules
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -80,28 +115,12 @@ jest.mock('react-map-gl', () => {
 
 // Mock Supabase
 jest.mock('@supabase/supabase-js', () => ({
-  createClient: jest.fn(() => ({
-    auth: {
-      getSession: jest.fn(() => Promise.resolve({ data: { session: null }, error: null })),
-      getUser: jest.fn(() => Promise.resolve({ data: { user: null }, error: null })),
-      signInWithOAuth: jest.fn(() => Promise.resolve({ data: {}, error: null })),
-      signOut: jest.fn(() => Promise.resolve({ error: null })),
-      onAuthStateChange: jest.fn(() => ({ data: { subscription: { unsubscribe: jest.fn() } } }))
-    },
-    from: jest.fn(() => ({
-      select: jest.fn().mockReturnThis(),
-      insert: jest.fn().mockReturnThis(),
-      update: jest.fn().mockReturnThis(),
-      delete: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      in: jest.fn().mockReturnThis(),
-      order: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      single: jest.fn(() => Promise.resolve({ data: null, error: null })),
-      then: jest.fn(() => Promise.resolve({ data: [], error: null }))
-    })),
-    rpc: jest.fn(() => Promise.resolve({ data: [], error: null }))
-  }))
+  createClient: jest.fn(() => createMockSupabaseClient()),
+}));
+
+jest.mock('@supabase/ssr', () => ({
+  createBrowserClient: jest.fn(() => createMockSupabaseClient()),
+  createServerClient: jest.fn(() => createMockSupabaseClient()),
 }));
 
 // Mock environment variables

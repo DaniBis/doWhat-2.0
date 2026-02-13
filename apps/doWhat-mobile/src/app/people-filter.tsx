@@ -404,19 +404,21 @@ export default function PeopleFilterScreen() {
 				setNearbyTraits(buildFallbackTraitCounts());
 				return;
 			}
+
 			const mapped = payload.map((trait, index) => {
 				const count = trait.popularity || trait.voteCount || trait.baseCount || trait.score || 1;
 				return {
 					trait_name: trait.name ?? `Trait ${index + 1}`,
 					icon: resolveTraitEmoji(trait.icon),
-					color:
-						trait.color ?? FALLBACK_TRAITS[index % FALLBACK_TRAITS.length]?.color ?? '#0EA5E9',
+					color: trait.color ?? FALLBACK_TRAITS[index % FALLBACK_TRAITS.length]?.color ?? '#0EA5E9',
 					count: Math.max(1, Math.round(count)),
 				};
 			});
 			setNearbyTraits(mapped.sort((a, b) => b.count - a.count));
 		} catch (error) {
-			console.error('[people-filters] failed to load popular traits', error);
+			if (__DEV__ && process.env.NODE_ENV !== 'test') {
+				console.warn('[people-filters] failed to load popular traits', error);
+			}
 			setNearbyTraits(buildFallbackTraitCounts());
 		}
 	};
@@ -438,7 +440,6 @@ export default function PeopleFilterScreen() {
 	};
 
 	const applyFilters = () => {
-		console.log('Applying filters:', peopleFilters);
 		router.back();
 	};
 

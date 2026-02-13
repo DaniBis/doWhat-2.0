@@ -616,7 +616,7 @@ const ownedToMobileBadge = (badge: OwnedBadge, fallback?: BadgeMeta): MobileBadg
 });
 
 export default function ProfileSimple() {
-  console.log('[ProfileSimple] Mounted');
+  // Avoid noisy mount logs in production/test runs.
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
@@ -838,7 +838,7 @@ export default function ProfileSimple() {
           const endorsements = typeof entry?.endorsements === 'number' ? entry.endorsements : 0;
           endorsementsByBadgeId.set(badgeId, endorsements);
         });
-      } else if (__DEV__) {
+      } else if (__DEV__ && process.env.NODE_ENV !== 'test') {
         console.warn('[ProfileSimple] endorsement view unavailable, defaulting counts to 0', endorsementResult.error);
       }
 
@@ -875,7 +875,7 @@ export default function ProfileSimple() {
 
       setCatalogBadges(parseCatalogBadges(catalogPayload));
     } catch (error) {
-      if (__DEV__) {
+      if (__DEV__ && process.env.NODE_ENV !== 'test') {
         console.warn('[ProfileSimple] loadBadges failed', error);
       }
       setOwnedBadges([]);
@@ -1654,7 +1654,9 @@ export default function ProfileSimple() {
       setEditOpen(false);
     } catch (error) {
       const message = describeError(error, 'Failed to save profile.');
-      console.error('[ProfileSimple] saveEdits failed', error);
+      if (__DEV__ && process.env.NODE_ENV !== 'test') {
+        console.warn('[ProfileSimple] saveEdits failed', error);
+      }
       setErr(message);
     } finally {
       setLoading(false);

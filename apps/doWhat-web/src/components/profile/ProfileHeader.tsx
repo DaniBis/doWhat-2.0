@@ -76,7 +76,9 @@ export function ProfileHeader({
     } catch (error) {
       const message = getErrorMessage(error);
       // eslint-disable-next-line no-console
-      console.error('Avatar upload failed', error);
+      if (process.env.NODE_ENV !== 'test') {
+        console.error('Avatar upload failed', error);
+      }
       setErrorMsg(`Failed to upload image: ${message}`);
     } finally {
       setUploading(false);

@@ -301,9 +301,6 @@ function HomeScreen() {
         setNearbyPlaces(supabasePlaces ?? []);
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
-        if (__DEV__) {
-          console.log('[Home] Supabase places fetch success', supabasePlaces.length, 'places');
-        }
         return;
       } catch (err) {
         primaryError = err;

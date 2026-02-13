@@ -194,7 +194,9 @@ export default function ProfilePage() {
           setSportSkillLevel(null);
         }
       } catch (err) {
-        console.warn('[profile] failed to load sport/reliability preferences', err);
+        if (process.env.NODE_ENV !== 'test') {
+          console.warn('[profile] failed to load sport/reliability preferences', err);
+        }
         if (!cancelled) {
           setPrimarySport(null);
           setSportSkillLevel(null);

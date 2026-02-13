@@ -107,6 +107,8 @@ describe("OnboardingNavLink", () => {
     const link = screen.getByRole("link", { name: /Finish onboarding/i });
     expect(link).toHaveAttribute("href", "/onboarding/traits");
 
+    // Prevent jsdom's unimplemented navigation from polluting test output.
+    link.addEventListener("click", (event) => event.preventDefault());
     await userEvent.click(link);
     expect(trackOnboardingEntry).toHaveBeenCalledWith({
       source: "nav",

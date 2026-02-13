@@ -101,42 +101,54 @@ export async function queryEventsWithFallback(
 
     if (!aliasTitle && missingColumn(message, 'title')) {
       aliasTitle = true;
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing title column, falling back to normalized_title alias');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing title column, falling back to normalized_title alias');
+      }
       continue;
     }
 
     if (!omitEventState && missingColumn(message, 'event_state')) {
       omitEventState = true;
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing event_state column, falling back to default state');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing event_state column, falling back to default state');
+      }
       continue;
     }
 
     if (!omitReliabilityScore && missingColumn(message, 'reliability_score')) {
       omitReliabilityScore = true;
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing reliability_score column, falling back to null score');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing reliability_score column, falling back to null score');
+      }
       continue;
     }
 
     if (!omitVerificationConfirmations && missingColumn(message, 'verification_confirmations')) {
       omitVerificationConfirmations = true;
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing verification_confirmations column, disabling progress meter');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing verification_confirmations column, disabling progress meter');
+      }
       continue;
     }
 
     if (!omitVerificationRequired && missingColumn(message, 'verification_required')) {
       omitVerificationRequired = true;
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing verification_required column, disabling progress meter');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing verification_required column, disabling progress meter');
+      }
       continue;
     }
 
     if (aliasTitle && missingColumn(message, 'normalized_title')) {
-      // eslint-disable-next-line no-console
-      console.warn('[events-api] missing both title and normalized_title columns, returning empty dataset');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[events-api] missing both title and normalized_title columns, returning empty dataset');
+      }
       return {
         events: [],
         error: null,

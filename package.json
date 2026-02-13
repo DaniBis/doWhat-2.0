@@ -61,6 +61,7 @@
   },
   "pnpm": {
     "patchedDependencies": {
+      "baseline-browser-mapping@2.8.31": "patches/baseline-browser-mapping@2.8.31.patch",
       "expo-device@5.9.4": "patches/expo-device@5.9.4.patch",
       "expo-dev-menu@4.5.8": "patches/expo-dev-menu@4.5.8.patch",
       "use-latest-callback@0.2.4": "patches/use-latest-callback@0.2.4.patch",

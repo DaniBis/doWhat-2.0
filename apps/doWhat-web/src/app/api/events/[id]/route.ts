@@ -120,37 +120,47 @@ export async function GET(_request: Request, context: { params: { id: string } }
 
     if (!omitTitle && !aliasTitle && isMissingColumnError(message, 'title')) {
       aliasTitle = true;
-      // eslint-disable-next-line no-console
-      console.warn('[event-detail-api] missing title column, retrying with normalized_title alias');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[event-detail-api] missing title column, retrying with normalized_title alias');
+      }
       continue;
     }
 
     if (aliasTitle && isMissingColumnError(message, 'normalized_title')) {
       aliasTitle = false;
       omitTitle = true;
-      // eslint-disable-next-line no-console
-      console.warn('[event-detail-api] missing both title and normalized_title columns, retrying without title');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[event-detail-api] missing both title and normalized_title columns, retrying without title');
+      }
       continue;
     }
 
     if (!omitVenueName && isMissingColumnError(message, 'venue_name')) {
       omitVenueName = true;
-      // eslint-disable-next-line no-console
-      console.warn('[event-detail-api] missing venue_name column, retrying without it');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[event-detail-api] missing venue_name column, retrying without it');
+      }
       continue;
     }
 
     if (!omitPlaceId && isMissingColumnError(message, 'place_id')) {
       omitPlaceId = true;
-      // eslint-disable-next-line no-console
-      console.warn('[event-detail-api] missing place_id column, retrying without it');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[event-detail-api] missing place_id column, retrying without it');
+      }
       continue;
     }
 
     if (!omitEventState && isMissingColumnError(message, 'event_state')) {
       omitEventState = true;
-      // eslint-disable-next-line no-console
-      console.warn('[event-detail-api] missing event_state column, retrying without it');
+      if (process.env.NODE_ENV !== 'test') {
+        // eslint-disable-next-line no-console
+        console.warn('[event-detail-api] missing event_state column, retrying without it');
+      }
       continue;
     }
 

@@ -136,7 +136,9 @@ const markActivitiesPlaceColumnMissing = () => {
   activitiesPlaceColumnSupport = 'missing';
   if (!loggedMissingActivitiesPlaceColumnWarning) {
     loggedMissingActivitiesPlaceColumnWarning = true;
-    console.warn('activities.place_id column missing; rerun migrations 045+ to restore canonical place linkage.');
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('activities.place_id column missing; rerun migrations 045+ to restore canonical place linkage.');
+    }
   }
 };
 
@@ -156,7 +158,9 @@ const markActivitiesPlaceLabelColumnMissing = () => {
   activitiesPlaceLabelColumnSupport = 'missing';
   if (!loggedMissingActivitiesPlaceLabelWarning) {
     loggedMissingActivitiesPlaceLabelWarning = true;
-    console.warn('activities.place_label column missing; rerun migrations 048+ to restore canonical place labels.');
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('activities.place_label column missing; rerun migrations 048+ to restore canonical place labels.');
+    }
   }
 };
 
