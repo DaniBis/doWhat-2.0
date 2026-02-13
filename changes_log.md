@@ -441,3 +441,34 @@
 33. **Final log hygiene**
     - Normalized the `saveEdits` try/catch indentation in `apps/doWhat-mobile/src/app/profile.simple.tsx` after removing the mount-time `console.log`.
     - Re-ran `pnpm lint` + `pnpm test` to confirm the repo remains clean.
+
+## 2026-02-13
+
+1. **Quality gates re-run (clean)**
+   - `pnpm lint` passed.
+   - `pnpm test` passed (94/94 suites, 358/358 tests) with no warnings/errors.
+   - `pnpm --filter dowhat-web typecheck` passed.
+   - `pnpm --filter doWhat-mobile typecheck` passed.
+
+2. **Web + mobile-web smoke proof captures**
+   - Web (Next) screenshots:
+     - `/tmp/proof-20260213-web-home.png`
+     - `/tmp/proof-20260213-web-auth.png`
+     - `/tmp/proof-20260213-web-discover.png`
+     - `/tmp/proof-20260213-web-map.png`
+   - Mobile web (Expo) screenshots:
+     - `/tmp/proof-20260213-mobile-web-home.png`
+     - `/tmp/proof-20260213-mobile-web-map.png`
+     - `/tmp/proof-20260213-mobile-web-onboarding-sports.png`
+
+3. **iOS + Android smoke proof captures**
+   - iOS (Simulator) screenshots:
+     - `/tmp/proof-20260213-ios-home.png`
+     - `/tmp/proof-20260213-ios-map.png`
+     - `/tmp/proof-20260213-ios-onboarding-sports.png`
+   - Android (Emulator) screenshots:
+     - `/tmp/proof-20260213-android-home.png`
+     - `/tmp/proof-20260213-android-map.png`
+     - `/tmp/proof-20260213-android-onboarding-sports.png`
+   - Android logcat scan (after clearing logs and re-opening routes) showed no fresh matches for:
+     - `Network request failed`, `23502`, `profiles.user_id`, onboarding save failures, or Metro connection errors.
