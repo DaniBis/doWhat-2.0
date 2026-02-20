@@ -36003,3 +36003,28 @@ Nearby error {
 
  ✓ Starting...
  ✓ Ready in 7.3s
+
+> dowhat-web@0.1.0 dev /Users/danielbisceanu/doWhat/apps/doWhat-web
+> next dev -p 3002
+
+  ▲ Next.js 14.2.3
+  - Local:        http://localhost:3002
+  - Environments: .env.local
+  - Experiments (use with caution):
+    · typedRoutes
+
+ ✓ Starting...
+ ✓ Ready in 2s
+ ○ Compiling / ...
+ ✓ Compiled / in 3.2s (1167 modules)
+ GET / 200 in 5693ms
+ GET / 200 in 1239ms
+ ○ Compiling /auth ...
+ ✓ Compiled /auth in 696ms (1173 modules)
+ GET /auth 200 in 848ms
+ ✓ Compiled /discover in 263ms (1243 modules)
+ GET /discover 200 in 386ms
+ ○ Compiling /map ...
+ ✓ Compiled /map in 795ms (1332 modules)
+ GET /map 200 in 938ms
+[?25h

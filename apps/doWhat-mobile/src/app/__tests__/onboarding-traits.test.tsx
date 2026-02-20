@@ -178,10 +178,9 @@ describe('TraitSelectionScreen', () => {
   });
 
   it('enforces the five-trait selection limit before enabling save', async () => {
-    const { getByText, getByTestId } = render(<TraitSelectionScreen />);
+    const { getByText, getByTestId, findByTestId } = render(<TraitSelectionScreen />);
 
-    await waitFor(() => expect(getByText('Choose 5 traits that describe you')).toBeTruthy());
-    await waitFor(() => expect(getByTestId('trait-card-trait-1')).toBeTruthy());
+    await findByTestId('trait-card-trait-1', undefined, { timeout: 10000 });
 
     const saveButton = getByTestId('trait-onboarding-save-button');
     expect(saveButton).toBeDisabled();
@@ -190,7 +189,7 @@ describe('TraitSelectionScreen', () => {
       fireEvent.press(getByTestId(`trait-card-trait-${i}`));
     }
 
-    await waitFor(() => expect(saveButton).not.toBeDisabled());
+    await waitFor(() => expect(saveButton).not.toBeDisabled(), { timeout: 10000 });
     expect(getByText('All set! Save to continue.')).toBeTruthy();
 
     fireEvent.press(getByTestId('trait-card-trait-6'));

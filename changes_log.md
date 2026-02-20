@@ -398,6 +398,30 @@
       - catches `insufficient_privilege` and continues with the extension relocation/reinstall path.
 22. **Security Advisor DB-level items cleared**
     - Re-ran `pnpm db:advisor:fix` and applied `064_security_advisor_extension_schema_cleanup.sql` successfully.
+
+## 2026-02-18
+
+1. **Context + discovery algorithm review (no code changes)**
+   - Read `changes_log.md` and reviewed the discovery + venue ranking logic plus event/session hydration to assess activity-to-place/event matching.
+   - Files reviewed: `apps/doWhat-web/src/lib/discovery/engine.ts`, `apps/doWhat-web/src/lib/venues/search.ts`, `apps/doWhat-web/src/lib/recommendations/engine.ts`, `apps/doWhat-web/src/app/api/events/route.ts`, `apps/doWhat-web/src/lib/sessions/server.ts`, `apps/doWhat-web/src/lib/events/venueMatching.ts`.
+2. **Map default mode now shows activities + events together**
+   - Updated `apps/doWhat-web/src/app/map/page.tsx` so the map opens in `both` mode by default, matching the requirement to surface activities and events simultaneously.
+3. **Strict place-backed activity enforcement in discovery**
+   - Updated `apps/doWhat-web/src/lib/discovery/engine.ts` to only return activities that are canonical app activities (`id` is UUID) and linked to a canonical place (`place_id` is UUID).
+   - This removes venue-proxy fallback items from the map activity feed and hardens activity-to-real-place accuracy.
+4. **Activity detail navigation from map/list interactions**
+   - Added explicit “View details →” actions for activities in both the map popup and list cards.
+   - Updated `apps/doWhat-web/src/components/WebMap.tsx` and `apps/doWhat-web/src/app/map/page.tsx` with a dedicated activity details callback.
+   - UUID activities now route to `/activities/[id]`; non-UUID fallback path safely redirects to create-event prefill.
+5. **Validation for modified files**
+   - Checked diagnostics for:
+     - `apps/doWhat-web/src/app/map/page.tsx`
+     - `apps/doWhat-web/src/components/WebMap.tsx`
+     - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - Result: no TypeScript/editor errors after the above changes.
+6. **Workspace typecheck re-run after map/discovery hardening**
+   - Ran workspace `typecheck` task (`pnpm -r run typecheck`).
+   - Result: `packages/shared`, `apps/doWhat-web`, and `apps/doWhat-mobile` all passed.
     - Verification summary now confirms:
       - `mutableFunctionCount = 0`
       - `public.social_sweat_adoption_metrics security_invoker = true`
@@ -472,3 +496,246 @@
      - `/tmp/proof-20260213-android-onboarding-sports.png`
    - Android logcat scan (after clearing logs and re-opening routes) showed no fresh matches for:
      - `Network request failed`, `23502`, `profiles.user_id`, onboarding save failures, or Metro connection errors.
+
+## 2026-02-16 (Continuation)
+
+1. **Session resume + state restore**
+   - Re-read `changes_log.md` to continue from latest validated point.
+   - Confirmed current working tree contains pending changes in:
+     - `apps/doWhat-mobile/src/app/__tests__/onboarding-reliability-pledge.test.tsx`
+     - `apps/doWhat-mobile/src/app/__tests__/onboarding-traits.test.tsx`
+     - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx`
+     - `apps/doWhat-web/src/app/layout.tsx`
+     - `package.json`
+     - `pnpm-lock.yaml`
+     - `scripts/health-migrations.mjs`
+     - `scripts/health-notifications.mjs`
+     - deleted `patches/baseline-browser-mapping@2.8.31.patch`
+
+2. **Current regression focus**
+   - Android screenshot evidence shows intermittent `System UI isn't responding` and toast-level `Network request failed`/deep-link parse noise during rapid route smoke automation.
+   - Next step is a dedicated Android diagnosis pass (adb logs + controlled route open cadence) and then retest web/iOS/Android smoke paths with fresh captures.
+
+## 2026-02-17
+
+1. **Android diagnosis pass executed (controlled cadence + fresh captures)**
+   - Re-ran Android route opens in controlled sequence (`/map` -> `/onboarding/sports` -> `/home`) with fixed delays and fresh log capture.
+   - Captured new artifacts:
+     - `/tmp/proof-20260217-android-map-v2.png`
+     - `/tmp/proof-20260217-android-onboarding-sports-v2.png`
+     - `/tmp/proof-20260217-android-home-v2.png`
+     - `/tmp/proof-20260217-android-logcat-v2.txt`
+
+2. **Dev route opener hardening (Android)**
+   - Updated `apps/doWhat-mobile/scripts/open-dev-route.sh`:
+     - deep-link format now uses `dowhat:///...` (path-safe form instead of host-like parsing),
+     - Android retry open now runs only for cold-start bootstrap paths (skips warm-start duplicate route replay).
+   - Goal: reduce unnecessary activity restarts/UI churn and remove one source of routing noise during automation.
+
+3. **Android startup preflight warning (network health)**
+   - Updated `apps/doWhat-mobile/scripts/start-android.sh` to run a lightweight emulator outbound-network check (`ping 8.8.8.8`) after `adb reverse` setup.
+   - When connectivity is broken, startup now emits an explicit warning so smoke-test failures are immediately attributable to emulator runtime health rather than app logic.
+
+4. **Root-cause evidence: emulator network environment instability (not app DB logic regression)**
+   - During failing windows, Android diagnostics showed repeated `TypeError: Network request failed` and `AuthRetryableFetchError` in app logs.
+   - Emulator shell connectivity checks during the same run showed DNS/network instability symptoms (`ping ... unknown host`, intermittent missing resolver state, and network reachability inconsistency), explaining the bursty transport failures.
+   - Existing app-specific historical failures were *not* reproduced in this pass:
+     - no fresh `profiles.user_id` / `23502` onboarding save errors.
+
+5. **Follow-up recommendation**
+   - Treat remaining Android flakiness as runtime/emulator health first (stable emulator networking, then route smoke).
+   - Keep app-level verification focused on deterministic proofs after emulator connectivity is healthy.
+
+## 2026-02-18
+
+1. **Android smoke re-run after network-health recovery (clean)**
+    - Confirmed emulator outbound connectivity before rerun (`ping 8.8.8.8` successful).
+    - Re-ran controlled Android route sequence via helper:
+       - `/map`
+       - `/onboarding/sports`
+       - `/home`
+    - Captured fresh Android artifacts:
+       - `/tmp/proof-20260218-android-map.png`
+       - `/tmp/proof-20260218-android-onboarding-sports.png`
+       - `/tmp/proof-20260218-android-home.png`
+       - `/tmp/proof-20260218-android-logcat.txt`
+    - Log scan result (clean for tracked signatures):
+       - `Network request failed`: `0`
+       - deep-link route mismatch warning: `0`
+       - `BLASTSyncEngine` ANR precursor warning: `0`
+       - no fresh `23502` / `profiles.user_id` onboarding-save failures.
+
+2. **Web smoke proof refresh**
+
+## 2026-02-20
+
+1. **Discovery intelligence coding kickoff: ranking module integrated**
+   - Added `apps/doWhat-web/src/lib/discovery/ranking.ts` with a first-pass startup-grade ranking layer:
+     - weighted component scoring (`relevance`, `proximity`, `temporal`, `socialProof`, `quality`),
+     - stable `dedupe_key` generation,
+     - per-item `rank_score` and `rank_breakdown`,
+     - confidence outputs (`quality_confidence`, `place_match_confidence`).
+
+2. **Discovery item contract extended with intelligence metadata**
+   - Updated `apps/doWhat-web/src/lib/discovery/engine-core.ts` to include optional ranking/confidence fields on `DiscoveryItem`.
+   - Updated shared map typing in `packages/shared/src/map/types.ts` so API/UI consumers can safely receive the same metadata.
+
+3. **Ranking layer wired into activity discovery path**
+   - Updated `apps/doWhat-web/src/lib/discovery/engine.ts` to execute ranking after hard eligibility gates (`isPlaceBackedActivity`) and before final ordering.
+   - Updated ordering logic to prioritize `rank_score` with distance/name tie-breakers.
+
+4. **Validation checks after coding kickoff**
+   - Re-ran editor diagnostics on changed files (ranking + discovery + shared types): no TypeScript/editor errors.
+5. **Discovery debug counters + confidence gate (implementation pass)**
+   - Extended discovery result contract with optional `debug` metadata in `apps/doWhat-web/src/lib/discovery/engine-core.ts`:
+     - candidate counters across retrieval/gating stages,
+     - drop counters (`notPlaceBacked`, `lowConfidence`, `deduped`),
+     - ranking policy metadata.
+   - Updated `apps/doWhat-web/src/lib/discovery/engine.ts` to:
+     - support `includeDebug` option,
+     - expose cache-hit debug diagnostics,
+     - apply explicit place-confidence gate (`ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8`) after ranking,
+     - compute stage-by-stage counters for explainability.
+6. **Nearby API explain mode + exposure telemetry**
+   - Added `explain` query parsing in `apps/doWhat-web/src/lib/filters.ts`.
+   - Updated `apps/doWhat-web/src/app/api/nearby/route.ts` to pass `includeDebug` and optionally return `debug` payload when `explain=1`.
+   - Added `apps/doWhat-web/src/lib/discovery/telemetry.ts` for sampled discovery exposure logs (`[discovery.exposure]`) including top item scores/confidence and debug counters.
+   - Hardened telemetry request-id extraction for mocked request objects (`request.headers?.get?.(...)`).
+7. **Validation reruns after explain/telemetry integration**
+   - Re-ran targeted test: `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts` (pass).
+   - Re-ran workspace typecheck (`pnpm -w run typecheck`) and confirmed all workspaces pass.
+8. **Persistent discovery exposure storage (DB schema)**
+    - Added `apps/doWhat-web/supabase/migrations/065_discovery_exposures.sql`.
+    - New table `public.discovery_exposures` stores sampled discovery request/result payloads for ranking analytics and future LTR pipelines.
+    - Included indexes on `created_at` and `request_id`, enabled RLS, and revoked anon/authenticated direct access (service-role write path only).
+9. **Telemetry persistence implementation (service-role, sampled)**
+    - Updated `apps/doWhat-web/src/lib/discovery/telemetry.ts` to persist sampled exposures into `discovery_exposures` using optional service client.
+    - Kept graceful fallback behavior (non-blocking, warn-once on insert failure).
+    - Added test-only control via `DISCOVERY_EXPOSURE_ALLOW_IN_TEST=1` and helper reset hook `__telemetryTesting.resetWarnings()`.
+10. **Nearby route non-blocking telemetry + request mock hardening**
+      - Updated `apps/doWhat-web/src/app/api/nearby/route.ts` to keep telemetry fire-and-forget (`void recordDiscoveryExposure(...)`) and maintain mocked-request compatibility.
+11. **New discovery telemetry unit tests**
+      - Added `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts` covering:
+         - sampled persistence path (`DISCOVERY_EXPOSURE_SAMPLE_RATE=1`),
+         - no-op path (`DISCOVERY_EXPOSURE_SAMPLE_RATE=0`).
+12. **Validation reruns after persistence changes**
+      - Ran targeted tests:
+         - `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts` (pass)
+         - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts` (pass)
+      - Re-ran workspace typecheck (`pnpm -w run typecheck`) and confirmed all packages/apps pass.
+13. **Telemetry batching added for exposure writes**
+      - Upgraded `apps/doWhat-web/src/lib/discovery/telemetry.ts` to support in-memory batched writes with configurable controls:
+         - `DISCOVERY_EXPOSURE_BATCH_SIZE` (default `10`)
+         - `DISCOVERY_EXPOSURE_FLUSH_MS` (default `1500`)
+      - Added internal queue flush scheduling and test helper `__telemetryTesting.flushNow()`.
+      - Maintained non-blocking behavior and warn-once failure semantics.
+14. **Exposure retention cleanup job (ops hardening)**
+      - Added `scripts/discovery-exposures-cleanup.mjs` to remove rows older than retention window (`DISCOVERY_EXPOSURE_RETENTION_DAYS`, default `30`).
+      - Added root script command `db:discovery:cleanup` in `package.json`.
+15. **Telemetry tests expanded for batch behavior**
+      - Updated `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts` for batched insert payload shape.
+      - Added explicit batch-threshold flush coverage (batch size `2` test path).
+16. **Validation reruns after batching + cleanup job**
+      - Re-ran targeted tests:
+         - `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts` (pass)
+         - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts` (pass)
+      - Syntax check passed for new script:
+         - `node --check scripts/discovery-exposures-cleanup.mjs`
+      - Re-ran workspace typecheck (`pnpm -w run typecheck`) and confirmed all workspaces pass.
+17. **Admin analytics endpoint for discovery exposures**
+      - Added `apps/doWhat-web/src/app/api/admin/discovery-exposures/route.ts`.
+      - Endpoint behavior:
+         - admin-email allowlist protected (`NEXT_PUBLIC_ADMIN_EMAILS`),
+         - configurable window (`days`) + row cap (`limit`),
+         - returns aggregate metrics for ranking observability:
+            - cache/degraded rates,
+            - average returned items,
+            - average after-confidence-gate candidates,
+            - total dropped counters (`notPlaceBacked`, `lowConfidence`, `deduped`),
+            - average top rank score,
+            - top sources and hourly timeseries.
+18. **Admin exposure analytics tests added**
+      - Added `apps/doWhat-web/src/app/api/admin/discovery-exposures/__tests__/route.test.ts` covering:
+         - non-admin rejection path,
+         - successful aggregate response for admin users.
+      - Adjusted request mocking to avoid runtime dependency on global `Request` in Jest node environment.
+19. **Compatibility fix for mocked query builders**
+      - Updated admin analytics route query chain to avoid `.returns(...)` fluent helper (cast result data instead), keeping compatibility with existing mocked builders in tests.
+20. **Validation reruns after admin analytics endpoint**
+      - Re-ran targeted tests (all pass):
+         - `apps/doWhat-web/src/app/api/admin/discovery-exposures/__tests__/route.test.ts`
+         - `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts`
+         - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - Re-ran workspace typecheck (`pnpm -w run typecheck`) and confirmed all workspaces pass.
+21. **Admin UI for discovery analytics (read-side dashboard)**
+      - Added `apps/doWhat-web/src/app/admin/discovery-exposures/page.tsx`.
+      - New admin page includes:
+         - allowlist-auth guard behavior aligned with existing admin pages,
+         - window (`days`) and row-limit controls,
+         - summary metric cards (cache/degraded rates, average returned items, average top score),
+         - gating impact counters (after-confidence-gate average + dropped totals),
+         - top source breakdown and hourly timeseries list,
+         - metadata footer (rows considered + cutoff timestamp).
+22. **Admin dashboard navigation link update**
+      - Added `Discovery Analytics` link on `apps/doWhat-web/src/app/admin/page.tsx` header nav.
+      - Adjusted link typing to satisfy Next typed-routes (`as Route`).
+23. **Validation reruns after admin UI integration**
+      - Re-ran targeted tests:
+         - `apps/doWhat-web/src/app/api/admin/discovery-exposures/__tests__/route.test.ts` (pass)
+         - `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts` (pass)
+         - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts` (pass)
+         - `apps/doWhat-web/src/app/admin/__tests__/page.test.tsx` (pass)
+      - Re-ran narrowed recheck after typed-route fix:
+         - `apps/doWhat-web/src/app/admin/__tests__/page.test.tsx` (pass)
+         - `apps/doWhat-web/src/app/api/admin/discovery-exposures/__tests__/route.test.ts` (pass)
+      - Re-ran workspace typecheck (`pnpm -w run typecheck`) and confirmed all workspaces pass.
+24. **Stage assessment + hard QA pass before release sync**
+      - Product/engineering judgement (current stage):
+         - Discovery is now in an **instrumented beta-hardening** phase (not MVP): ranking, confidence gating, dedupe metadata, sampled exposure logging, retention tooling, and admin analytics are in place.
+         - Primary remaining risk is not core discovery correctness but operational tuning (threshold calibration, long-window signal quality, and batch ingestion volume controls in production).
+      - Full validation sweep executed:
+         - Full Jest suite run across workspace: `363/363` tests passed.
+         - Workspace typecheck: passed for `packages/shared`, `apps/doWhat-web`, `apps/doWhat-mobile`.
+         - API health check: `/api/health` returned `ok: true` with expected table checks healthy.
+         - User-flow HTTP smoke routes returned `200`:
+            - `/`
+            - `/auth`
+            - `/map`
+            - `/admin`
+            - `/admin/discovery-exposures`
+      - Decision: proceed with shipping current change set (no additional feature coding required for this pass).
+
+## 2026-02-19
+
+1. **Discovery intelligence layer architecture design (startup-grade)**
+    - Added a dedicated architecture/design document covering retrieval, ranking, dedupe, confidence scoring, observability, anti-abuse controls, and scalability roadmap.
+    - New file: `docs/discovery_intelligence_layer_startup_design_2026-02-19.md`.
+    - Design includes:
+       - 3-stage retrieval→gating→ranking pipeline,
+       - strict activity place-backing policy,
+       - explainable weighted scoring model and confidence formulas,
+       - hierarchical cross-source dedupe keys + merge policy,
+       - phased migration plan (contract hardening → ranking extraction → cache/precompute scale → LTR).
+    - Captured fresh web screenshots:
+       - `/tmp/proof-20260218-web-home.png`
+       - `/tmp/proof-20260218-web-auth.png`
+       - `/tmp/proof-20260218-web-discover.png`
+       - `/tmp/proof-20260218-web-map.png`
+
+3. **iOS smoke proof refresh**
+    - Captured fresh iOS simulator screenshots:
+       - `/tmp/proof-20260218-ios-home.png`
+       - `/tmp/proof-20260218-ios-map.png`
+       - `/tmp/proof-20260218-ios-onboarding-sports.png`
+
+4. **Mobile web proof refresh**
+    - Captured fresh Expo web screenshots:
+       - `/tmp/proof-20260218-mobile-web-home.png`
+       - `/tmp/proof-20260218-mobile-web-map.png`
+       - `/tmp/proof-20260218-mobile-web-onboarding-sports.png`
+
+5. **Post-smoke validation gates (targeted) passed**
+    - `pnpm --filter dowhat-web typecheck` passed.
+    - `pnpm --filter doWhat-mobile typecheck` passed.
+    - `pnpm --filter dowhat-web test -- map` passed.
+    - `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` passed.

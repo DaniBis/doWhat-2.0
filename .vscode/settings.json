@@ -22,6 +22,12 @@
   "github.copilot.chat.continue.maxRequests": 25,
   "CodeGPT.apiKey": "Anthropic",
   "java.compile.nullAnalysis.mode": "automatic",
-  "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx4G -Xms100m -Xlog:disable"
+  "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx4G -Xms100m -Xlog:disable",
+  "chat.tools.terminal.autoApprove": {
+    "/^git status --short && node -e \"const p=require\\('\\./apps/doWhat-mobile/package\\.json'\\); console\\.log\\(Object\\.keys\\(p\\.scripts\\)\\.sort\\(\\)\\.join\\('\\\\n'\\)\\)\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
 
 }

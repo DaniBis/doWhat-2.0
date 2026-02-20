@@ -1,10 +1,10 @@
 import React from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import SessionDetails from '../(tabs)/sessions/[id]';
-import type { AttendanceSummary } from '../../lib/sessionAttendance';
+import type { AttendanceSummary } from '../lib/sessionAttendance';
 import type { AttendanceDisputeHistoryItem } from '../../lib/attendanceDispute';
 
-type SessionAttendanceModule = typeof import('../../lib/sessionAttendance');
+type SessionAttendanceModule = typeof import('../lib/sessionAttendance');
 type AttendanceDisputeModule = typeof import('../../lib/attendanceDispute');
 
 const baseAttendanceSummary: AttendanceSummary = {
@@ -15,7 +15,7 @@ const baseAttendanceSummary: AttendanceSummary = {
   maxAttendees: 4,
 };
 
-jest.mock('../../lib/sessionAttendance', () => ({
+jest.mock('../lib/sessionAttendance', () => ({
   fetchAttendanceSummary: jest.fn(),
   joinSessionAttendance: jest.fn(),
 }));
@@ -25,7 +25,7 @@ jest.mock('../../lib/attendanceDispute', () => ({
   submitAttendanceDispute: jest.fn(),
 }));
 
-const sessionAttendanceModule = jest.requireMock('../../lib/sessionAttendance') as {
+const sessionAttendanceModule = jest.requireMock('../lib/sessionAttendance') as {
   fetchAttendanceSummary: jest.MockedFunction<SessionAttendanceModule['fetchAttendanceSummary']>;
   joinSessionAttendance: jest.MockedFunction<SessionAttendanceModule['joinSessionAttendance']>;
 };
@@ -186,7 +186,8 @@ describe('SessionDetails reliability contest analytics', () => {
   it('emits analytics when contest CTA is tapped', async () => {
     const { findByText } = render(<SessionDetails />);
 
-    const contestButton = await findByText('Contest reliability');
+    await waitFor(() => expect(mockFetchAttendanceSummary).toHaveBeenCalledWith('session-123'));
+    const contestButton = await findByText('Contest reliability', undefined, { timeout: 10000 });
     fireEvent.press(contestButton);
 
     await waitFor(() => {

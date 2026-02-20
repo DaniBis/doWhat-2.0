@@ -20,6 +20,7 @@
     "test:coverage": "jest --coverage",
     "db:migrate": "node run_migrations.js",
     "db:advisor:fix": "node scripts/apply-security-advisor-fixes.mjs",
+    "db:discovery:cleanup": "node scripts/discovery-exposures-cleanup.mjs",
     "health": "node scripts/health-env.mjs && node scripts/health-migrations.mjs --dowhat && node scripts/health-notifications.mjs && node scripts/health-trait-policies.mjs && node scripts/verify-dowhat.mjs && (curl -sf http://localhost:3002/api/health | jq .ok || true)",
     "ci": "pnpm install --frozen-lockfile && pnpm -w run typecheck && pnpm -w run lint && pnpm -w run test && pnpm --filter dowhat-web run build && (pnpm --filter dowhat-web run start &) && node -e \"const http=require('node:http');const url='http://localhost:3002/api/health';let i=0;const max=30;const wait=2000;function poll(){i++;http.get(url,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{try{const j=JSON.parse(d);if(j.ok){console.log('Health OK');process.exit(0)}else{console.error('Health not OK yet');if(i<max)setTimeout(poll,wait);else process.exit(1)}}catch(e){if(i<max)setTimeout(poll,wait);else{console.error('Health parse error',e);process.exit(1)}}})}).on('error',e=>{if(i<max)setTimeout(poll,wait);else{console.error('Health request error',e);process.exit(1)}})}poll();\"",
     "cron:traits:batch": "curl -s -X POST -H x-cron-secret:$CRON_SECRET 'http://localhost:3002/api/traits/recompute/all?limit=50&offset=0'",
@@ -44,7 +45,6 @@
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "babel-jest": "^29.3.1",
-    "baseline-browser-mapping": "^2.8.31",
     "esbuild": "^0.25.9",
     "eslint": "^8.57.0",
     "eslint-config-next": "14",
@@ -61,7 +61,6 @@
   },
   "pnpm": {
     "patchedDependencies": {
-      "baseline-browser-mapping@2.8.31": "patches/baseline-browser-mapping@2.8.31.patch",
       "expo-device@5.9.4": "patches/expo-device@5.9.4.patch",
       "expo-dev-menu@4.5.8": "patches/expo-dev-menu@4.5.8.patch",
       "use-latest-callback@0.2.4": "patches/use-latest-callback@0.2.4.patch",
@@ -70,8 +69,7 @@
     "overrides": {
       "metro": "0.80.12",
       "metro-config": "0.80.12",
-      "metro-resolver": "0.80.12",
-      "baseline-browser-mapping": "2.8.31"
+      "metro-resolver": "0.80.12"
     }
   },
   "version": "1.0.0",

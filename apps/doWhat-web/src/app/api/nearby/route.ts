@@ -1,6 +1,7 @@
 import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { discoverNearbyActivities } from '@/lib/discovery/engine';
+import { recordDiscoveryExposure } from '@/lib/discovery/telemetry';
 import { parseNearbyQuery } from '@/lib/filters';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
@@ -46,8 +47,28 @@ export async function GET(request: Request) {
           timeWindow: normalizeTimeWindow(q.timeWindow),
         },
       },
-      { bypassCache: Boolean(q.refresh) },
+      { bypassCache: Boolean(q.refresh), includeDebug: Boolean(q.explain) },
     );
+
+    void recordDiscoveryExposure({
+      requestId: request.headers?.get?.('x-request-id') ?? null,
+      query: {
+        lat: q.lat,
+        lng: q.lng,
+        radiusMeters,
+        limit,
+        filtersApplied: [
+          q.activityTypes?.length ?? 0,
+          q.tags?.length ?? 0,
+          q.traits?.length ?? 0,
+          q.taxonomyCategories?.length ?? 0,
+          q.priceLevels?.length ?? 0,
+          q.capacityKey ? 1 : 0,
+          q.timeWindow ? 1 : 0,
+        ].reduce((sum, value) => sum + value, 0),
+      },
+      result,
+    });
 
     return Response.json({
       center: result.center,
@@ -62,6 +83,7 @@ export async function GET(request: Request) {
       degraded: result.degraded,
       fallbackError: result.fallbackError,
       fallbackSource: result.fallbackSource,
+      debug: q.explain ? result.debug : undefined,
     });
   } catch (error: unknown) {
     const message = getErrorMessage(error);

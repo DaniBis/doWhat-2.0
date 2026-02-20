@@ -7,6 +7,7 @@ import type {
   NormalizedDiscoveryFilters,
   DiscoveryQuery,
   DiscoveryResult,
+  DiscoveryDebug,
   DiscoverySourceBreakdown,
 } from './engine-core';
 import {
@@ -32,6 +33,7 @@ export type {
   NormalizedDiscoveryFilters,
   DiscoveryQuery,
   DiscoveryResult,
+  DiscoveryDebug,
   DiscoverySourceBreakdown,
 } from './engine-core';
 import { filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
@@ -39,6 +41,7 @@ import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { resolveDiscoveryBounds } from '@/lib/discovery/bounds';
+import { rankDiscoveryItems } from '@/lib/discovery/ranking';
 import { hydratePlaceLabel, normalizePlaceLabel } from '@/lib/places/labels';
 import { haversineMeters } from '@/lib/places/utils';
 import { getOptionalServiceClient } from '@/lib/supabase/service';
@@ -203,6 +206,13 @@ const buildSourceBreakdown = (items: DiscoveryItem[]): DiscoverySourceBreakdown 
 
 const orderDiscoveryItems = (items: DiscoveryItem[]) =>
   [...items].sort((a, b) => {
+    const scoreA = a.rank_score ?? null;
+    const scoreB = b.rank_score ?? null;
+    if (scoreA != null || scoreB != null) {
+      const safeA = scoreA ?? Number.NEGATIVE_INFINITY;
+      const safeB = scoreB ?? Number.NEGATIVE_INFINITY;
+      if (safeA !== safeB) return safeB - safeA;
+    }
     const distanceA = a.distance_m ?? Number.POSITIVE_INFINITY;
     const distanceB = b.distance_m ?? Number.POSITIVE_INFINITY;
     if (distanceA !== distanceB) return distanceA - distanceB;
@@ -264,6 +274,14 @@ const dedupeByPlaceKey = (items: DiscoveryItem[]): DiscoveryItem[] => {
   });
   return result;
 };
+
+const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
+  if (!isUuid(item.id)) return false;
+  if (!isUuid(item.place_id ?? null)) return false;
+  return true;
+};
+
+const ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8;
 
 const applyFilterSupport = (
   current: DiscoveryFilterSupport,
@@ -870,6 +888,7 @@ const hydrateActivitiesWithPlaces = async (
 
 type DiscoverNearbyOptions = {
   bypassCache?: boolean;
+  includeDebug?: boolean;
 };
 
 export async function discoverNearbyActivities(
@@ -889,9 +908,34 @@ export async function discoverNearbyActivities(
   const cacheClient = getOptionalServiceClient() ?? db();
   const { entry, record } = await readDiscoveryCache(cacheClient, tileKey, cacheKey);
   const bypassCache = Boolean(options?.bypassCache);
+  const includeDebug = Boolean(options?.includeDebug);
 
   if (!bypassCache && entry) {
-    return buildCacheResult(entry, normalizedQuery, cacheKey);
+    const cached = buildCacheResult(entry, normalizedQuery, cacheKey);
+    if (includeDebug) {
+      cached.debug = {
+        cacheHit: true,
+        candidateCounts: {
+          afterRpc: entry.items.length,
+          afterFallbackMerge: entry.items.length,
+          afterMetadataFilter: entry.items.length,
+          afterPlaceGate: entry.items.length,
+          afterConfidenceGate: entry.items.length,
+          afterDedupe: cached.items.length,
+          final: cached.items.length,
+        },
+        dropped: {
+          notPlaceBacked: 0,
+          lowConfidence: 0,
+          deduped: Math.max(0, entry.items.length - cached.items.length),
+        },
+        ranking: {
+          enabled: true,
+          placeMinConfidence: ACTIVITY_PLACE_MIN_CONFIDENCE,
+        },
+      };
+    }
+    return cached;
   }
 
   const supabase = db();
@@ -907,7 +951,29 @@ export async function discoverNearbyActivities(
   let filterSupport = filterSupportDefault;
 
   const rpcResult = await fetchActivitiesFromRpc(supabase, normalizedQuery);
+  const debug = {
+    cacheHit: false,
+    candidateCounts: {
+      afterRpc: 0,
+      afterFallbackMerge: 0,
+      afterMetadataFilter: 0,
+      afterPlaceGate: 0,
+      afterConfidenceGate: 0,
+      afterDedupe: 0,
+      final: 0,
+    },
+    dropped: {
+      notPlaceBacked: 0,
+      lowConfidence: 0,
+      deduped: 0,
+    },
+    ranking: {
+      enabled: true,
+      placeMinConfidence: ACTIVITY_PLACE_MIN_CONFIDENCE,
+    },
+  } satisfies DiscoveryDebug;
   let activities = filterByQuery(rpcResult.items, normalizedFilters, rpcResult.support);
+  debug.candidateCounts.afterRpc = activities.length;
   filterSupport = applyFilterSupport(filterSupport, rpcResult.support);
   const source = rpcResult.source ?? undefined;
 
@@ -916,6 +982,7 @@ export async function discoverNearbyActivities(
   filterSupport = applyFilterSupport(filterSupport, fallbackResult.support);
 
   activities = mergeActivitiesWithFallback(activities, fallbackItems);
+  debug.candidateCounts.afterFallbackMerge = activities.length;
 
   let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
 
@@ -951,11 +1018,31 @@ export async function discoverNearbyActivities(
     timeWindow: metadataResult.support.timeWindow,
   });
   activities = filterByQuery(activities, normalizedFilters, filterSupport);
+  debug.candidateCounts.afterMetadataFilter = activities.length;
+
+  const placeBacked = activities.filter(isPlaceBackedActivity);
+  debug.dropped.notPlaceBacked = Math.max(0, activities.length - placeBacked.length);
+  debug.candidateCounts.afterPlaceGate = placeBacked.length;
+
+  activities = placeBacked;
+  activities = rankDiscoveryItems(activities, {
+    center: normalizedQuery.center,
+    filters: normalizedFilters,
+  });
+  activities = activities.filter((item) => {
+    const confidence = item.place_match_confidence ?? item.quality_confidence ?? 0;
+    return confidence >= ACTIVITY_PLACE_MIN_CONFIDENCE;
+  });
+  debug.dropped.lowConfidence = Math.max(0, debug.candidateCounts.afterPlaceGate - activities.length);
+  debug.candidateCounts.afterConfidenceGate = activities.length;
 
   const ordered = orderDiscoveryItems(activities).slice(0, normalizedQuery.limit);
   const hydrated = await hydrateActivitiesWithPlaces(supabase, ordered);
   const deduped = mergeActivitiesWithFallback(hydrated, []);
+  debug.dropped.deduped = Math.max(0, hydrated.length - deduped.length);
+  debug.candidateCounts.afterDedupe = deduped.length;
   const limited = deduped.slice(0, normalizedQuery.limit);
+  debug.candidateCounts.final = limited.length;
 
   const result: DiscoveryResult = {
     center: normalizedQuery.center,
@@ -967,6 +1054,7 @@ export async function discoverNearbyActivities(
     sourceBreakdown: buildSourceBreakdown(limited),
     cache: { key: cacheKey, hit: false },
     source: source ?? fallbackMeta.fallbackSource ?? 'client-filter',
+    debug: includeDebug ? debug : undefined,
     ...fallbackMeta,
   };
 

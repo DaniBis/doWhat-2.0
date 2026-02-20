@@ -45,6 +45,17 @@ export type DiscoveryItem = {
   time_window?: TimeWindowKey | null;
   upcoming_session_count?: number | null;
   source?: string | null;
+  dedupe_key?: string | null;
+  quality_confidence?: number | null;
+  place_match_confidence?: number | null;
+  rank_score?: number | null;
+  rank_breakdown?: {
+    relevance: number;
+    proximity: number;
+    temporal: number;
+    socialProof: number;
+    quality: number;
+  } | null;
 };
 
 export type DiscoveryFilterSupport = {
@@ -71,6 +82,28 @@ export type DiscoveryFacets = {
 
 export type DiscoverySourceBreakdown = Record<string, number>;
 
+export type DiscoveryDebug = {
+  cacheHit: boolean;
+  candidateCounts: {
+    afterRpc: number;
+    afterFallbackMerge: number;
+    afterMetadataFilter: number;
+    afterPlaceGate: number;
+    afterConfidenceGate: number;
+    afterDedupe: number;
+    final: number;
+  };
+  dropped: {
+    notPlaceBacked: number;
+    lowConfidence: number;
+    deduped: number;
+  };
+  ranking: {
+    enabled: boolean;
+    placeMinConfidence: number;
+  };
+};
+
 export type DiscoveryQuery = {
   center: { lat: number; lng: number };
   radiusMeters: number;
@@ -92,6 +125,7 @@ export type DiscoveryResult = {
   degraded?: boolean;
   fallbackError?: string;
   fallbackSource?: string;
+  debug?: DiscoveryDebug;
 };
 
 const TILE_PRECISION = 6;

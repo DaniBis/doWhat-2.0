@@ -42,7 +42,8 @@ if [[ -z "$ROUTE_PATH" ]]; then
   ROUTE_PATH="home"
 fi
 
-APP_ROUTE_URL="dowhat://${ROUTE_PATH}"
+# Use triple slash so route is parsed as a path segment (not authority/host).
+APP_ROUTE_URL="dowhat:///${ROUTE_PATH}"
 ENCODED_PROJECT_URL="$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$PROJECT_URL")"
 DEV_CLIENT_URL="${SCHEME_PREFIX}${ENCODED_PROJECT_URL}"
 
@@ -66,7 +67,9 @@ case "$PLATFORM" in
       sleep "$BOOT_WAIT_SECONDS"
     fi
     adb shell am start -W -a android.intent.action.VIEW -d "$APP_ROUTE_URL" "$APP_ID" >/dev/null
-    if [[ "$RETRY_ROUTE_OPEN" == "1" ]]; then
+    # On Android, only retry route open after a cold-start bootstrap. Retrying on
+    # warm starts can trigger unnecessary activity restarts and UI churn.
+    if [[ "$RETRY_ROUTE_OPEN" == "1" && "$app_running" == "0" ]]; then
       sleep "$ROUTE_RETRY_DELAY_SECONDS"
       adb shell am start -W -a android.intent.action.VIEW -d "$APP_ROUTE_URL" "$APP_ID" >/dev/null
     fi

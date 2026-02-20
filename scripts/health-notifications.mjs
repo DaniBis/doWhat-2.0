@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import pg from 'pg';
+import loadEnv from './utils/load-env.mjs';
 
 const { Client } = pg;
+
+loadEnv();
 
 const pickEnv = (...keys) => {
   for (const key of keys) {

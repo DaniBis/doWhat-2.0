@@ -84,8 +84,26 @@ ensure_adb_reverse() {
   echo "Configured adb reverse for Metro ${METRO_PORT} and web API ${WEB_DEV_PORT}."
 }
 
+check_android_network_health() {
+  if ! command -v adb >/dev/null 2>&1; then
+    return
+  fi
+
+  local has_device
+  has_device=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+  if [[ -z "${has_device}" ]]; then
+    return
+  fi
+
+  if ! adb shell ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+    echo "Warning: Android emulator network check failed (no outbound IP connectivity)."
+    echo "         You may see toast-level 'Network request failed' during smoke tests until emulator networking recovers."
+  fi
+}
+
 start_web_dev_server
 ensure_adb_reverse
+check_android_network_health
 
 if [[ -z "${EXPO_PUBLIC_WEB_URL:-}" ]]; then
   export EXPO_PUBLIC_WEB_URL="http://127.0.0.1:${WEB_DEV_PORT}"

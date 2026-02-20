@@ -276,7 +276,7 @@ export default function MapPage() {
   const [queryCenter, setQueryCenter] = useState<MapCoordinates | null>(null);
   const [radiusMeters, setRadiusMeters] = useState<number>(DEFAULT_RADIUS_METERS);
   const [viewMode, setViewMode] = useState<ToggleOption>("map");
-  const [dataMode, setDataMode] = useState<'activities' | 'events' | 'both'>("activities");
+  const [dataMode, setDataMode] = useState<'activities' | 'events' | 'both'>("both");
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -1331,6 +1331,21 @@ export default function MapPage() {
     [isAuthenticated, router, track],
   );
 
+  const handleActivityDetails = useCallback(
+    (activity: MapActivity) => {
+      track('map_activity_details_requested', {
+        activityId: activity.id,
+        isUuid: isUuid(activity.id),
+      });
+      if (isUuid(activity.id)) {
+        router.push(`/activities/${activity.id}` as Route);
+        return;
+      }
+      handleCreateEvent(activity);
+    },
+    [handleCreateEvent, router, track],
+  );
+
 const handleRequestDetails = useCallback(
   (activity: MapActivity) => {
     handleViewEvents(activity.id);
@@ -1849,6 +1864,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             onSelectActivity={handleActivitySelect}
             onSelectEvent={handleEventSelect}
             onRequestDetails={handleRequestDetails}
+            onRequestActivityDetails={handleActivityDetails}
             onRequestCreateEvent={handleCreateEvent}
             onRequestEventDetails={handleEventDetails}
             activeActivityId={selectedActivityId}
@@ -2058,6 +2074,16 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
                               </button>
                             )}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleActivityDetails(activity);
+                              }}
+                              className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
+                            >
+                              View details →
+                            </button>
                             <button
                               type="button"
                               onClick={(event) => {

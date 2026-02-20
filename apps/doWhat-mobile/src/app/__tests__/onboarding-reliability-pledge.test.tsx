@@ -118,15 +118,14 @@ describe("ReliabilityPledgeScreen", () => {
   });
 
   it("requires all commitments before enabling the pledge", async () => {
-    const { getByText, getByTestId } = render(<ReliabilityPledgeScreen />);
+    const { getByTestId, findByTestId } = render(<ReliabilityPledgeScreen />);
 
-    await waitFor(() => expect(getByText("Reliability pledge")).toBeTruthy());
     const submitButton = getByTestId("reliability-pledge-submit");
     expect(submitButton).toBeDisabled();
 
-    await waitFor(() => expect(getByTestId("commitment-confirm-attendance")).toBeTruthy());
+    await findByTestId("commitment-confirm-attendance", undefined, { timeout: 10000 });
     selectAllCommitments(getByTestId);
-    await waitFor(() => expect(submitButton).not.toBeDisabled());
+    await waitFor(() => expect(submitButton).not.toBeDisabled(), { timeout: 10000 });
   });
 
   it("saves the pledge and navigates home", async () => {

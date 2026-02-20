@@ -1,6 +1,5 @@
 import "./globals.css";
 
-import { Inter } from "next/font/google";
 import React from "react";
 import dynamic from "next/dynamic";
 import Providers from "./providers";
@@ -14,8 +13,6 @@ const AuthButtons = dynamic<AuthButtonsProps>(() => import("@/components/AuthBut
 const GeoRequirementBanner = dynamic(() => import("@/components/GeoRequirement"), { ssr: false }) as unknown as React.FC;
 import BrandLogo from "@/components/BrandLogo";
 
-const inter = Inter({ subsets: ["latin"] });
-
 export default async function RootLayout({
   children,
 }: {
@@ -23,7 +20,7 @@ export default async function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} min-h-dvh bg-surface-canvas text-ink antialiased`}>
+      <body className="min-h-dvh bg-surface-canvas font-sans text-ink antialiased">
         <header className="sticky top-0 z-50 border-b border-white/40 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
             <div className="flex items-center gap-6">

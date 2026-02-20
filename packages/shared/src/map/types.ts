@@ -52,6 +52,17 @@ export interface MapActivity {
   time_window?: TimeWindowKey | null;
   upcoming_session_count?: number | null;
   source?: string | null;
+  dedupe_key?: string | null;
+  quality_confidence?: number | null;
+  place_match_confidence?: number | null;
+  rank_score?: number | null;
+  rank_breakdown?: {
+    relevance: number;
+    proximity: number;
+    temporal: number;
+    socialProof: number;
+    quality: number;
+  } | null;
 }
 
 export interface MapActivitiesResponse {

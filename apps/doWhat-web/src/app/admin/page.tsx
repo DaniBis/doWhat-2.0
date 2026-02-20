@@ -622,6 +622,7 @@ export default function AdminDashboard() {
           <Link href="/admin/sessions" className="text-brand-teal">Manage Sessions</Link>
           <Link href="/admin/venues" className="text-brand-teal">Manage Venues</Link>
           <Link href="/admin/activities" className="text-brand-teal">Manage Activities</Link>
+          <Link href={"/admin/discovery-exposures" as Route} className="text-brand-teal">Discovery Analytics</Link>
           <Link href={ADMIN_DISPUTES_ROUTE} className="inline-flex items-center gap-xxs text-brand-teal">
             Moderate Disputes
             {isAdmin

@@ -8,7 +8,6 @@ overrides:
   metro: 0.80.12
   metro-config: 0.80.12
   metro-resolver: 0.80.12
-  baseline-browser-mapping: 2.8.31
 
 patchedDependencies:
   expo-dev-menu@4.5.8:
@@ -68,9 +67,6 @@ importers:
       babel-jest:
         specifier: ^29.3.1
         version: 29.7.0(@babel/core@7.28.4)
-      baseline-browser-mapping:
-        specifier: 2.8.31
-        version: 2.8.31
       esbuild:
         specifier: ^0.25.9
         version: 0.25.9
