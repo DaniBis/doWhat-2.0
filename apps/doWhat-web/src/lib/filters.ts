@@ -14,6 +14,8 @@ export type NearbyQuery = {
   limit?: number
 };
 
+const MAX_NEARBY_LIMIT = 600;
+
 export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
   const lat = parseFloat(searchParams.get('lat') || '0');
   const lng = parseFloat(searchParams.get('lng') || '0');
@@ -32,7 +34,9 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
     .filter((value) => value >= 1 && value <= 4);
   const capacityKey = searchParams.get('capacity') || null;
   const timeWindow = searchParams.get('timeWindow') || null;
-  const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 200);
+  const requestedLimit = parseInt(searchParams.get('limit') || '50');
+  const safeLimit = Number.isFinite(requestedLimit) ? requestedLimit : 50;
+  const limit = Math.min(Math.max(safeLimit, 1), MAX_NEARBY_LIMIT);
   return {
     lat,
     lng,

@@ -1,5 +1,174 @@
 # Changes Log
 
+## 2026-02-26
+
+1. **Hanoi + Bucharest parity with Bangkok discovery warm-up**
+   - Added city-specific place warmers so we can run the same tile-based inventory bootstrap outside Bangkok:
+      - `apps/doWhat-web/src/lib/places/hanoiWarm.ts`
+      - `apps/doWhat-web/src/lib/places/bucharestWarm.ts`
+   - Added cron endpoints:
+      - `POST /api/cron/places/hanoi`
+      - `POST /api/cron/places/bucharest`
+   - Added CLI seed scripts and package commands:
+      - `scripts/seed-places-hanoi.mjs`
+      - `scripts/seed-places-bucharest.mjs`
+      - package scripts `seed:places:hanoi` and `seed:places:bucharest`
+
+2. **City matcher robustness for non-Bangkok runs**
+   - Updated city-scoped activity matcher query in `apps/doWhat-web/src/lib/places/activityMatching.ts` to use case-insensitive matching across both `city` and `locality` columns (instead of strict `city = value`), improving cross-city operability.
+
+3. **Verification (live runs)**
+   - Ran both new city warmers with `CRON_SECRET` and 20 tiles:
+      - Hanoi: successful, OSM provider counts observed, high tile place counts.
+      - Bucharest: successful, OSM provider counts observed, high tile place counts.
+   - Nearby API verification after warm-up:
+      - Hanoi center (`21.0278, 105.8342`): `limit=150/300/600` returned `150/300/600`.
+      - Bucharest center (`44.4268, 26.1025`): `limit=150/300/600` returned `150/300/600`.
+      - Source breakdown confirms dominant `supabase-places` supply for both cities.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed.
+
+## 2026-02-24
+
+1. **Map search fix: multi-activity queries now work (e.g. "billiards climbing")**
+   - Investigated the failure case where typing multiple activity terms in the map search box returned no results even when each activity type existed.
+   - Root cause:
+      - Search augmentation only derived a **single** activity token from the entire input string, so multi-term input like `billiards climbing` became one unusable token.
+      - Client-side text matching relied heavily on full-string inclusion, so multi-term combinations were too strict.
+   - Fixes applied:
+      - Added `apps/doWhat-web/src/app/map/searchTokens.ts` with reusable tokenization helpers:
+         - `toActivitySearchToken(...)`
+         - `extractActivitySearchTokens(...)`
+         - `extractSearchTerms(...)`
+      - Updated `apps/doWhat-web/src/app/map/page.tsx`:
+         - search augmentation now sends multiple derived activity types (union), not one,
+         - client-side matching now supports multi-term input by checking tokenized words and derived activity tokens across `name/venue/place/tags/activity_types`,
+         - events text search now also uses tokenized terms.
+      - Added regression tests in `apps/doWhat-web/src/app/map/__tests__/searchTokens.test.ts` for partial terms, multi-word aliases, and multi-term extraction.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - Jest (targeted): `searchTokens.test.ts` passed (4/4),
+      - API verification:
+         - `/api/nearby?...&types=climbing,billiards` returns combined results from both categories,
+         - `/api/nearby?...&types=climbing` and `/api/nearby?...&types=billiards` each return expected category-specific subsets.
+
+2. **Bangkok inventory depth fix: map no longer capped at 200 activities**
+   - Investigated reports that Bangkok map discovery still felt limited versus available supply.
+   - Root cause: a hidden discovery cap (`MAX_CACHE_ITEMS = 200`) combined with request-level `limit` clamping prevented `/api/nearby` from returning more than 200 items even when data existed.
+   - Fixes applied:
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - increased `MAX_CACHE_ITEMS` from `200` to `600`.
+      - `apps/doWhat-web/src/lib/filters.ts`
+         - increased `/api/nearby` query limit ceiling from `200` to `600` with safe parsing/normalization.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - increased base map nearby request limit to `400`,
+         - increased search-augmented limit target to `600`.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - API verification now returns expected high-volume counts:
+         - `limit=300 -> 300`,
+         - `limit=400 -> 400`,
+         - `limit=500 -> 500`,
+         - `limit=600 -> 600`.
+
+## 2026-02-22
+
+1. **Map specialty activity discovery fix (climbing/roller-skating)**
+   - Investigated live Bangkok map behavior where search/filtering for specialty activities (for example `climbing`) showed zero results despite known places in the dataset.
+   - Root causes found:
+      - place-fallback `activity_types` were too generic for many specialty venues,
+      - narrow filtered fallback scans were too shallow for long-tail categories,
+      - map text search did not match against `tags`/`activity_types`.
+   - Fixes applied:
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - derive place-fallback `activity_types` from keyword matching against `ACTIVITY_CATALOG_PRESETS` (name/address/tags/categories),
+         - widen place fallback scan depth for narrow filters,
+      - `packages/shared/src/activities/catalog.ts`
+         - added specialty presets: `roller-skating`, `horse-riding`,
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - map search now also checks `tags` + `activity_types`,
+         - added search-augmented nearby query (activity-type token + wider search radius) and merges results client-side before radius gating.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - API verification:
+         - `/api/nearby?...&radius=13000&types=climbing` returns 1 result (`WellFit Bon Marché`, ~11.7km),
+         - `/api/nearby?...&radius=25000&types=climbing` returns 2 results.
+
+2. **Follow-up fix: specialty search with small radius ("climb" on 2.5km map)**
+   - Investigated a remaining UX gap where typing `climb` still showed zero results when the map radius was very small (for example 2.5km), even though valid climbing activities existed nearby in broader Bangkok bounds.
+   - Updated `apps/doWhat-web/src/app/map/page.tsx` so active text search uses an effective minimum radius of 25km for client-side inclusion, while keeping non-search behavior unchanged.
+   - Added partial-term normalization for search augmentation tokens:
+      - `climb*`/`bould*` -> `climbing`,
+      - `skat*`/`roller*` -> `roller-skating`,
+      - `horse*`/`equestrian*` -> `horse-riding`.
+   - Fixed client-side search matching so augmented specialty results (for example places tagged as `climbing`) are retained even when the raw free-text term (`climb`) is not present in the displayed name field.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed.
+
+## 2026-02-21
+
+1. **Events ingestion: multi-source location verification**
+   - Added cross-source location verification in `apps/doWhat-web/src/lib/events/verification.ts` and wired it into the ingest pipeline.
+   - Events are now annotated with `metadata.locationVerification` using a strict rule: same `place_id` or within 300m coordinates, with at least 2 distinct sources required for confirmation.
+   - Ingestion summaries now include `locationVerified` and `locationPending` counters per source.
+
+2. **Verification regression tests**
+   - Added `apps/doWhat-web/src/lib/events/__tests__/verification.test.ts` covering both confirmed (multi-source) and pending (single-source) location states.
+
+3. **Documentation update**
+   - Updated `docs/events-ingestion.md` with the new location verification model and metadata fields so ingestion behavior is auditable.
+
+4. **Profile location autocomplete (London lookup fix)**
+   - Implemented forward-geocode autocomplete in `apps/doWhat-web/src/components/profile/ProfileHeader.tsx` for manual location edits.
+   - Added debounced query flow to `/api/geocode?q=...`, selectable suggestions dropdown, and coordinate capture on selection so updates persist both label and lat/lng.
+   - Added regression coverage in `apps/doWhat-web/src/__tests__/ProfilePage.integration.test.tsx` to verify typing `Lond` returns/selects London and persists coordinates via profile update API.
+   - Validation: targeted Jest integration tests passed; workspace typecheck passed.
+
+5. **Map center now follows profile location**
+   - Updated map bootstrapping in `apps/doWhat-web/src/app/map/page.tsx` to prioritize profile location (`/api/profile/me`) before browser geolocation.
+   - Added profile center resolver utilities in `apps/doWhat-web/src/app/map/profileCenter.ts`.
+   - Extended profile payload from `apps/doWhat-web/src/app/api/profile/[id]/route.ts` with `locationLat/locationLng` sourced from stored `last_lat/last_lng`.
+   - Fallback order is now: profile coordinates → profile location geocode → device geolocation → default fallback center.
+   - Added tests in `apps/doWhat-web/src/app/map/__tests__/profileCenter.test.ts`.
+   - Validation: map/profile tests passed, workspace typecheck passed, workspace lint passed.
+
+6. **Discovery/event algorithm reliability + efficiency upgrade**
+    - Upgraded event location verification logic in `apps/doWhat-web/src/lib/events/verification.ts`:
+       - Introduced weighted `accuracyScore` (0..100) using source quality + corroboration + canonical place agreement.
+       - Confirmation now requires multi-source support plus high-confidence threshold (`>=95`).
+       - Persisted thresholds and scores inside `metadata.locationVerification`.
+    - Added/updated tests:
+       - `apps/doWhat-web/src/lib/events/__tests__/verification.test.ts` validates high-accuracy confirmation behavior.
+       - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts` validates `verifiedOnly=1&minAccuracy=95` filtering.
+    - Added verified filtering controls across event query stack:
+       - Shared contracts and fetchers updated in `packages/shared/src/events/types.ts`, `packages/shared/src/events/api.ts`, and `packages/shared/src/events/utils.ts`.
+       - Events API now supports `verifiedOnly` and `minAccuracy` query params in `apps/doWhat-web/src/app/api/events/route.ts`.
+       - Map now requests high-accuracy verified events by default (`verifiedOnly=true`, `minAccuracy=95`) in `apps/doWhat-web/src/app/map/page.tsx`.
+    - Improved ingestion efficiency in `apps/doWhat-web/src/lib/events/ingest.ts` with bounded parallel source processing (`concurrency` option, default 3 workers, max 6).
+    - Validation: targeted tests passed, workspace typecheck passed, workspace lint passed.
+
+7. **Bangkok no-community bootstrap hardening (map population without users)**
+    - Executed automated population jobs against local runtime:
+       - `seed-places-bangkok` with `BANGKOK_TILE_COUNT=20` to warm a wider place inventory.
+       - cron activity matcher dry-run/apply cycles for place-to-activity inference.
+    - Discovery fallback upgraded so map can show place-backed inventory even when user-generated activities are sparse:
+       - `apps/doWhat-web/src/lib/discovery/engine.ts`
+          - venue fallback rows now carry `place_id`.
+          - place-backed fallback IDs (`place:*`, `venue:*`) are accepted by place-gating.
+          - added `places` fallback retrieval path (`source: supabase-places`) after venue fallback.
+    - Improved activity-matching robustness for multilingual text:
+       - `apps/doWhat-web/src/lib/places/activityMatching.ts` now normalizes with Unicode letter/number support (`\p{L}\p{N}`), improving non-Latin keyword matching.
+    - Expanded preset activity catalog breadth for auto-bootstrap coverage:
+       - `packages/shared/src/activities/catalog.ts` now includes additional presets (billiards, massage, surf, boating, martial arts, running, cycling, badminton).
+    - Validation:
+       - `/api/nearby` Bangkok explain payload now returns dense fallback inventory (`sourceBreakdown` includes `supabase-places`; final count reached limit=150).
+       - workspace typecheck/lint passed after code changes.
+
 ## 2026-01-08
 
 1. **/map performance: request storm control**
@@ -739,3 +908,95 @@
     - `pnpm --filter doWhat-mobile typecheck` passed.
     - `pnpm --filter dowhat-web test -- map` passed.
     - `pnpm --filter doWhat-mobile test -- onboarding-sports onboarding-reliability-pledge` passed.
+
+## 2026-02-20
+
+1. **Continuous web QA loop: full-suite crack point fixed**
+      - Kept the web dev runtime active and ran full workspace tests as part of the ongoing “test until stop” loop.
+      - Found one failing test in `apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx`:
+         - `PeopleFilterPage reliability pledge banner tracks onboarding analytics when the pledge CTA is clicked`
+      - Stabilized the test by:
+         - waiting for onboarding banners to fully hydrate before interaction,
+         - switching the pledge CTA interaction to `fireEvent.click(...)` for deterministic event dispatch in this jsdom path.
+      - Validation result after patch:
+         - Full workspace Jest run passed: `363/363`.
+
+2. **Profile location accuracy + city/place canonicalization hardening (web)**
+      - Investigated the reported profile save failure (`profiles.user_id` not-null violation) and the location precision issue from profile edit.
+      - Implemented end-to-end location accuracy updates:
+         - `apps/doWhat-web/src/components/profile/ProfileHeader.tsx`
+            - `Use my current location` now captures high-accuracy GPS (`enableHighAccuracy: true`) and stores precise coordinates in edit state.
+            - Save payload now includes `locationLat`/`locationLng` when device location is used.
+            - Manual edits clear coordinate lock to avoid stale coordinate-text mismatches.
+         - `apps/doWhat-web/src/app/profile/page.tsx`
+            - Auto-location bootstrap now sends both `location` and precise coordinates to profile update API.
+         - `apps/doWhat-web/src/app/api/profile/[id]/update/route.ts`
+            - Fixed insert path by including `user_id` in profile upsert payload.
+            - Added coordinate-aware update flow:
+               - accept `locationLat`/`locationLng` directly,
+               - reverse-geocode coordinates to canonical city/place label,
+               - fallback to forward geocode only when precise coordinates are missing,
+               - clear stored coordinates when location is explicitly nulled.
+         - `apps/doWhat-web/src/app/api/geocode/route.ts`
+            - Improved reverse-geocode label composition to prioritize place-like signals (`amenity/building/shop/tourism/leisure/neighbourhood/suburb`) plus locality and region, producing clearer city/place labels for profile display.
+      - Validation after implementation:
+         - Workspace typecheck passed.
+         - Full workspace Jest passed: `363/363`.
+
+3. **Location-product benchmark research (Tinder/Bumble/Hinge) for implementation direction**
+      - Reviewed official policy/help docs to align behavior with established location-first apps:
+         - Tinder privacy + Passport mode docs (geolocation coordinates, approximate profile location, virtual travel location).
+         - Bumble privacy + support docs (`Updating your location`, `Travel mode`).
+         - Hinge privacy docs (precise geolocation usage when permission is granted).
+      - Key adopted patterns:
+         - precise coordinate capture at permissioned device level,
+         - user-visible label normalized to city/place (not raw coords),
+         - optional virtual location handled separately from physical GPS location.
+
+4. **Profile UI now shows place names instead of coordinate strings**
+      - Added coordinate-label normalization on profile load in `apps/doWhat-web/src/app/profile/page.tsx`.
+      - If a stored profile location matches `lat,lng` format, the page now reverse-geocodes it to a human-readable place label and updates both UI state and persisted profile data.
+      - This backfills older coordinate-only profile rows without requiring the user to re-edit manually.
+      - Validation:
+         - Targeted tests passed:
+            - `apps/doWhat-web/src/__tests__/ProfilePage.integration.test.tsx`
+            - `apps/doWhat-web/src/app/profile/__tests__/page.test.tsx`
+         - Workspace typecheck passed.
+
+5. **Deep root-cause fix: reverse-geocode 403 blocked label normalization**
+      - Investigated why coordinate text (`15.905, 108.329`) still appeared after prior normalization logic.
+      - Found `/api/geocode?lat=...&lng=...` was returning `403` in app runtime for reverse lookup, preventing place-label replacement.
+      - Implemented geocode runtime/request hardening in `apps/doWhat-web/src/app/api/geocode/route.ts`:
+         - forced Node runtime (`export const runtime = 'nodejs'`),
+         - switched to explicit Nominatim headers bundle (`User-Agent`, `Referer`, `Accept-Language`),
+         - updated default user-agent contact from placeholder to `team@dowhat.app`.
+      - Verified endpoint behavior on the exact failing coordinates:
+         - now returns label: `Bếp Tre, Hội An Tây Ward, Vietnam`.
+      - Added regression test in `apps/doWhat-web/src/__tests__/ProfilePage.integration.test.tsx`:
+         - confirms coordinate-only profile location is normalized to place label,
+         - confirms normalized value is persisted through `/api/profile/:id/update`.
+      - Final validation sweep:
+         - full workspace Jest: `364/364` passed,
+         - workspace typecheck passed,
+         - `/api/health` passed.
+
+6. **Map proximity integrity fix (activities/events now constrained to user/map location)**
+      - Investigated the `/map` regression where nearby results were showing activities from distant geographies (hundreds/thousands of km away) despite local map center and radius.
+      - Root cause:
+         - PostGIS RPC source (`activities_nearby`) could return far rows in some environments; engine path trusted those rows and merged them without a hard post-merge radius gate.
+         - Cached discovery entries could preserve previously far rows unless explicitly re-constrained on cache-hit reads.
+      - Server-side fixes in `apps/doWhat-web/src/lib/discovery/engine.ts`:
+         - Added strict `enforceDistanceWindow(...)` radius gate using authoritative haversine distance from requested center.
+         - Recomputed/normalized `distance_m` from coordinates for RPC rows before returning them.
+         - Applied radius gate after fallback merges and before ranking/final slice.
+         - Applied radius gate in cache-hit path (`buildCacheResult`) to prevent stale far rows from leaking back into responses.
+      - Client-side safety net in `apps/doWhat-web/src/app/map/page.tsx`:
+         - Added final proximity guard for rendered activities and events against current query center/radius.
+         - This ensures UI never displays out-of-radius items even if upstream data drifts.
+      - Runtime verification:
+         - `GET /api/nearby?lat=15.905&lng=108.329&radius=2500&limit=50&refresh=1` now returns `count=0` instead of far-away records, confirming strict location scoping.
+      - Validation:
+         - full workspace Jest: `364/364` passed,
+         - workspace typecheck passed,
+         - workspace lint completed,
+         - `/api/health` passed.

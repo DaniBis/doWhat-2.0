@@ -98,4 +98,84 @@ describe('/api/events payload', () => {
     expect(Array.isArray(payload.events)).toBe(true);
     expect(payload.events[0]?.place_label).toBe('Unnamed spot');
   });
+
+  it('filters out events that do not satisfy verifiedOnly + minAccuracy constraints', async () => {
+    const rows: EventSummary[] = [
+      {
+        id: 'event-low',
+        title: 'Low confidence listing',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Unknown',
+        place_label: null,
+        lat: 1,
+        lng: 2,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'unverified',
+        event_state: null,
+        tags: null,
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: {
+            confirmed: false,
+            accuracyScore: 82,
+          },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+      {
+        id: 'event-high',
+        title: 'High confidence listing',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Verified Venue',
+        place_label: null,
+        lat: 3,
+        lng: 4,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'verified',
+        event_state: null,
+        tags: null,
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: {
+            confirmed: true,
+            accuracyScore: 97,
+          },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+    ];
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return createQuery({ data: rows, error: null });
+      if (table === 'sessions') return createQuery({ data: [], error: null });
+      if (table === 'places') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({ url: 'http://localhost/api/events?limit=20&verifiedOnly=1&minAccuracy=95' } as unknown as Request);
+
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    expect(payload.events).toHaveLength(1);
+    expect(payload.events[0]?.id).toBe('event-high');
+  });
 });

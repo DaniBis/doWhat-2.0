@@ -85,10 +85,13 @@ export interface IngestStats {
   persisted: number;
   skipped: number;
   errors: number;
+  locationVerified?: number;
+  locationPending?: number;
   lastStatus: string;
 }
 
 export interface IngestOptions {
   limitSources?: number;
   sourceIds?: string[];
+  concurrency?: number;
 }

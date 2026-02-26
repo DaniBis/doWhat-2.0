@@ -36,7 +36,7 @@ export type {
   DiscoveryDebug,
   DiscoverySourceBreakdown,
 } from './engine-core';
-import { filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
+import { ACTIVITY_CATALOG_PRESETS, filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
 import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
@@ -221,6 +221,35 @@ const orderDiscoveryItems = (items: DiscoveryItem[]) =>
     return a.id.localeCompare(b.id);
   });
 
+const computeDistanceFromCenter = (
+  item: DiscoveryItem,
+  center: { lat: number; lng: number },
+): number | null => {
+  if (!Number.isFinite(item.lat) || !Number.isFinite(item.lng)) {
+    return typeof item.distance_m === 'number' && Number.isFinite(item.distance_m) ? item.distance_m : null;
+  }
+  return haversineMeters(center.lat, center.lng, item.lat, item.lng);
+};
+
+const enforceDistanceWindow = (
+  items: DiscoveryItem[],
+  query: DiscoveryQuery,
+): DiscoveryItem[] => {
+  const epsilonMeters = 50;
+  const maxDistance = query.radiusMeters + epsilonMeters;
+  const result: DiscoveryItem[] = [];
+  items.forEach((item) => {
+    const distance = computeDistanceFromCenter(item, query.center);
+    if (distance == null || !Number.isFinite(distance)) return;
+    if (distance > maxDistance) return;
+    result.push({
+      ...item,
+      distance_m: distance,
+    });
+  });
+  return result;
+};
+
 const placeKeyForItem = (item: DiscoveryItem): string => {
   if (item.place_id) return `place:${item.place_id}`;
   const name = item.name ? item.name.trim().toLowerCase() : '';
@@ -276,9 +305,15 @@ const dedupeByPlaceKey = (items: DiscoveryItem[]): DiscoveryItem[] => {
 };
 
 const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
-  if (!isUuid(item.id)) return false;
   if (!isUuid(item.place_id ?? null)) return false;
-  return true;
+  if (isUuid(item.id)) return true;
+  if (item.source === 'supabase-venues' && /^venue:/i.test(item.id)) {
+    return true;
+  }
+  if (item.source === 'supabase-places' && /^place:/i.test(item.id)) {
+    return true;
+  }
+  return false;
 };
 
 const ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8;
@@ -361,7 +396,8 @@ const buildCacheResult = (
 ): DiscoveryResult => {
   const normalizedFilters = normalizeFilters(query.filters);
   const filteredItems = filterByQuery(entry.items, normalizedFilters, entry.filterSupport);
-  const limited = orderDiscoveryItems(filteredItems).slice(0, query.limit);
+  const radiusBound = enforceDistanceWindow(filteredItems, query);
+  const limited = orderDiscoveryItems(radiusBound).slice(0, query.limit);
   return {
     center: query.center,
     radiusMeters: normalizeRadius(query.radiusMeters),
@@ -423,6 +459,17 @@ type VenueFallbackRow = {
   updated_at?: string | null;
 };
 
+type PlaceFallbackRow = {
+  id: string | null;
+  name: string | null;
+  address: string | null;
+  lat: number | string | null;
+  lng: number | string | null;
+  tags?: string[] | null;
+  categories?: string[] | null;
+  updated_at?: string | null;
+};
+
 type UpcomingSessionRow = {
   activity_id: string | null;
 };
@@ -440,7 +487,7 @@ const toMapActivityFromVenue = (
     id: `venue:${row.id}`,
     name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby venue',
     venue: row.address ?? null,
-    place_id: null,
+    place_id: row.id,
     place_label: placeLabel,
     lat,
     lng,
@@ -533,6 +580,154 @@ const fetchVenueFallbackActivities = async (
   return { items, support };
 };
 
+const toMapActivityFromPlace = (
+  row: PlaceFallbackRow,
+  origin: { lat: number; lng: number },
+): DiscoveryItem | null => {
+  if (!row?.id) return null;
+  const lat = sanitizeCoordinate(row.lat);
+  const lng = sanitizeCoordinate(row.lng);
+  if (lat == null || lng == null) return null;
+  const placeLabel = normalizePlaceLabel(row.name, row.address);
+  return {
+    id: `place:${row.id}`,
+    name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby place',
+    venue: row.address ?? null,
+    place_id: row.id,
+    place_label: placeLabel,
+    lat,
+    lng,
+    distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
+    activity_types: buildPlaceActivityTypes(row),
+    tags: displayStringList(row.tags ?? null),
+    traits: null,
+    source: 'supabase-places',
+  };
+};
+
+const normalizeActivityToken = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+const buildPlaceActivityTypes = (row: PlaceFallbackRow): string[] | null => {
+  const categories = displayStringList(row.categories ?? null) ?? [];
+  const derived = new Set<string>(categories);
+
+  const textParts = [
+    row.name,
+    row.address,
+    ...(row.tags ?? []),
+    ...(row.categories ?? []),
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => normalizeActivityToken(value))
+    .filter((value) => value.length > 0);
+
+  const haystack = ` ${textParts.join(' ')} `;
+
+  ACTIVITY_CATALOG_PRESETS.forEach((entry) => {
+    const matchesKeyword = (entry.keywords ?? []).some((keyword) => {
+      const token = normalizeActivityToken(keyword);
+      return token.length > 0 && haystack.includes(` ${token} `);
+    });
+    if (matchesKeyword) {
+      derived.add(entry.slug);
+    }
+  });
+
+  return derived.size ? Array.from(derived) : null;
+};
+
+const fetchPlacesFallbackActivities = async (
+  client: SupabaseClient,
+  query: DiscoveryQuery,
+  limit: number,
+) => {
+  const hasNarrowFilters =
+    normalizeList(query.filters?.activityTypes).length > 0
+    || normalizeList(query.filters?.tags).length > 0
+    || normalizeList(query.filters?.traits).length > 0
+    || normalizeList(query.filters?.taxonomyCategories).length > 0;
+  const bounds = resolveDiscoveryBounds(query);
+  const swLat = bounds.sw.lat;
+  const neLat = bounds.ne.lat;
+  const swLng = bounds.sw.lng;
+  const neLng = bounds.ne.lng;
+  const baseColumns = ['id', 'name', 'address', 'lat', 'lng'];
+  let includeTags = true;
+  let includeCategories = true;
+  let includeUpdatedAt = true;
+
+  const buildPlacesQuery = () => {
+    const columns = [...baseColumns];
+    if (includeTags) columns.push('tags');
+    if (includeCategories) columns.push('categories');
+    if (includeUpdatedAt) columns.push('updated_at');
+    let queryBuilder = client
+      .from('places')
+      .select(columns.join(','))
+      .gte('lat', swLat)
+      .lte('lat', neLat)
+      .gte('lng', swLng)
+      .lte('lng', neLng)
+      .limit(hasNarrowFilters ? Math.max(limit * 12, 1200) : Math.max(limit * 3, 120))
+      .returns<PlaceFallbackRow[]>();
+    if (includeUpdatedAt && !hasNarrowFilters) {
+      queryBuilder = queryBuilder.order('updated_at', { ascending: false });
+    }
+    return queryBuilder;
+  };
+
+  let data: PlaceFallbackRow[] | null = null;
+  let error: { code?: string | null; message?: string | null; hint?: string | null } | null = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const result = await buildPlacesQuery();
+    data = result.data;
+    error = result.error;
+
+    if (!error) break;
+
+    if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
+      includeUpdatedAt = false;
+      continue;
+    }
+    if (includeTags && isMissingColumnError(error, 'tags')) {
+      includeTags = false;
+      continue;
+    }
+    if (includeCategories && isMissingColumnError(error, 'categories')) {
+      includeCategories = false;
+      continue;
+    }
+    break;
+  }
+
+  if (error) {
+    throw error;
+  }
+
+  const items = (data ?? [])
+    .map((row) => toMapActivityFromPlace(row, query.center))
+    .filter((activity): activity is DiscoveryItem => Boolean(activity))
+    .sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
+
+  const support: DiscoveryFilterSupport = {
+    activityTypes: includeCategories,
+    tags: includeTags,
+    traits: false,
+    taxonomyCategories: false,
+    priceLevels: false,
+    capacityKey: false,
+    timeWindow: false,
+  };
+
+  return { items, support };
+};
+
 
 const fetchActivitiesFromRpc = async (
   client: SupabaseClient,
@@ -573,6 +768,7 @@ const fetchActivitiesFromRpc = async (
         const lat = row.lat_out ?? row.lat;
         const lng = row.lng_out ?? row.lng;
         if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+        const distance = haversineMeters(query.center.lat, query.center.lng, lat, lng);
         return {
           id: row.id,
           name: row.name,
@@ -581,7 +777,7 @@ const fetchActivitiesFromRpc = async (
           place_label: normalizePlaceLabel(row.place_label ?? null, row.venue ?? null, row.name ?? null),
           lat,
           lng,
-          distance_m: row.distance_m ?? 0,
+          distance_m: distance,
           activity_types: row.activity_types ?? null,
           tags: row.tags ?? null,
           traits: row.traits ?? null,
@@ -590,8 +786,10 @@ const fetchActivitiesFromRpc = async (
       })
       .filter((row): row is DiscoveryItem => Boolean(row));
 
+    const withinRadius = enforceDistanceWindow(items, query);
+
     return {
-      items,
+      items: withinRadius,
       support: {
         activityTypes: true,
         tags: true,
@@ -601,7 +799,7 @@ const fetchActivitiesFromRpc = async (
         capacityKey: true,
         timeWindow: true,
       },
-      source: items.length ? 'postgis' : null,
+      source: withinRadius.length ? 'postgis' : null,
     };
   } catch (error) {
     console.warn('activities_nearby RPC exception, falling back:', error);
@@ -995,6 +1193,16 @@ export async function discoverNearbyActivities(
         activities = mergeActivitiesWithFallback(activities, filteredVenueFallback);
         fallbackMeta.fallbackSource = fallbackMeta.fallbackSource ?? 'supabase-venues';
       }
+
+      if (activities.length < normalizedQuery.limit) {
+        const placesFallback = await fetchPlacesFallbackActivities(supabase, normalizedQuery, normalizedQuery.limit);
+        const filteredPlacesFallback = filterByQuery(placesFallback.items, normalizedFilters, placesFallback.support);
+        if (filteredPlacesFallback.length) {
+          filterSupport = applyFilterSupport(filterSupport, placesFallback.support);
+          activities = mergeActivitiesWithFallback(activities, filteredPlacesFallback);
+          fallbackMeta.fallbackSource = fallbackMeta.fallbackSource ?? 'supabase-places';
+        }
+      }
     } catch (venueFallbackError) {
       console.warn('[nearby] venue fallback failed', venueFallbackError);
       if (!fallbackMeta.degraded) {
@@ -1005,6 +1213,9 @@ export async function discoverNearbyActivities(
       }
     }
   }
+
+  activities = enforceDistanceWindow(activities, normalizedQuery);
+  debug.candidateCounts.afterFallbackMerge = activities.length;
 
   const metadataResult = await hydrateActivitiesMetadata(supabase, activities);
   activities = metadataResult.items;

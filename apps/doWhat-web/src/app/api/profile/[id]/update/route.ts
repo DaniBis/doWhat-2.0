@@ -18,38 +18,82 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     console.error('ensureProfileColumns failed', error);
     return NextResponse.json({ error: message || 'Failed to prepare profile schema' }, { status: 500 });
   }
-  const update: Record<string, unknown> = { id: params.id, updated_at: new Date().toISOString() };
+  const update: Record<string, unknown> = { id: params.id, user_id: params.id, updated_at: new Date().toISOString() };
   if (typeof body.name === 'string') update.full_name = body.name.slice(0, 120);
   if (typeof body.avatarUrl === 'string') update.avatar_url = body.avatarUrl;
-  if (typeof body.location === 'string') {
-    const locationString = body.location.slice(0,120);
-    update.location = locationString;
-    
-    // Geocode the location to get coordinates
+  const parseFiniteNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const requestOrigin = (() => {
     try {
-      const requestOrigin = (() => {
-        try {
-          const url = new URL(req.url);
-          return url.origin;
-        } catch {
-          return null;
-        }
-      })();
-      const baseUrl = requestOrigin || process.env.NEXTAUTH_URL || 'http://localhost:3000';
-      const geocodeUrl = new URL('/api/geocode', baseUrl);
-      geocodeUrl.searchParams.set('q', locationString);
-      const geocodeResponse = await fetch(geocodeUrl.toString());
-      if (geocodeResponse.ok) {
-        const geocodeData = await geocodeResponse.json();
-        if (geocodeData.lat && geocodeData.lng) {
-          update.last_lat = geocodeData.lat;
-          update.last_lng = geocodeData.lng;
+      const url = new URL(req.url);
+      return url.origin;
+    } catch {
+      return null;
+    }
+  })();
+  const baseUrl = requestOrigin || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+
+  const bodyLat = parseFiniteNumber((body as Record<string, unknown>).locationLat);
+  const bodyLng = parseFiniteNumber((body as Record<string, unknown>).locationLng);
+  const hasBodyCoords = bodyLat != null && bodyLng != null;
+
+  if (hasBodyCoords) {
+    update.last_lat = bodyLat;
+    update.last_lng = bodyLng;
+    try {
+      const reverseUrl = new URL('/api/geocode', baseUrl);
+      reverseUrl.searchParams.set('lat', String(bodyLat));
+      reverseUrl.searchParams.set('lng', String(bodyLng));
+      const reverseResponse = await fetch(reverseUrl.toString());
+      if (reverseResponse.ok) {
+        const reverseData = await reverseResponse.json() as { label?: string | null };
+        if (typeof reverseData.label === 'string' && reverseData.label.trim()) {
+          update.location = reverseData.label.slice(0, 120);
         }
       }
-    } catch (geocodeError) {
-      console.warn('Failed to geocode location', geocodeError);
-      // Continue without coordinates - location string is still saved
+    } catch (reverseError) {
+      console.warn('Failed to reverse geocode precise coordinates', reverseError);
     }
+  }
+
+  if (typeof body.location === 'string') {
+    const locationString = body.location.slice(0,120);
+    if (!('location' in update)) {
+      update.location = locationString;
+    }
+
+    if (!hasBodyCoords) {
+      // Geocode the location text to get coordinates when precise coordinates are not provided.
+      try {
+        const geocodeUrl = new URL('/api/geocode', baseUrl);
+        geocodeUrl.searchParams.set('q', locationString);
+        const geocodeResponse = await fetch(geocodeUrl.toString());
+        if (geocodeResponse.ok) {
+          const geocodeData = await geocodeResponse.json() as { lat?: number; lng?: number; label?: string };
+          if (typeof geocodeData.lat === 'number' && typeof geocodeData.lng === 'number') {
+            update.last_lat = geocodeData.lat;
+            update.last_lng = geocodeData.lng;
+          }
+          if (typeof geocodeData.label === 'string' && geocodeData.label.trim()) {
+            update.location = geocodeData.label.slice(0, 120);
+          }
+        }
+      } catch (geocodeError) {
+        console.warn('Failed to geocode location text', geocodeError);
+        // Continue without coordinates - location string is still saved
+      }
+    }
+  } else if (body.location === null) {
+    update.location = null;
+    update.last_lat = null;
+    update.last_lng = null;
   }
   if (typeof body.bio === 'string') {
     update.bio = body.bio.slice(0, 1000);

@@ -25,6 +25,23 @@ curl -X POST \
 
 The handler fetches all enabled sources, parses/normalises events, performs venue matching, and upserts into `events`.
 
+### Location verification (multi-source)
+
+The ingester now performs a cross-source location check before persisting records:
+
+- It groups candidates by event identity (`dedupe_key`).
+- For each candidate, it looks for matching evidence from other sources.
+- A location match is accepted when either:
+  - `place_id` is the same, or
+  - coordinates are within **300m**.
+- Verification is marked in `events.metadata.locationVerification` with:
+  - `confirmed` (boolean),
+  - `confirmations` (count),
+  - `required` (currently `2`),
+  - `matchedSources` and rule details.
+
+This gives each event a traceable location-confidence trail and helps prevent incorrect map pins from single-source noise.
+
 ### Scheduling
 
 * **Production** – configure your scheduler (Vercel Cron, Cloud Scheduler, etc.) to hit `/api/cron/ingest-events` every 3 hours (and optionally a nightly run).

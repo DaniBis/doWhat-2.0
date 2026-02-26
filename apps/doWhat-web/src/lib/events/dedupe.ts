@@ -86,12 +86,64 @@ const longerDescription = (
   return b.length > a.length ? b : a;
 };
 
+const toJsonRecord = (value: Json | undefined): Record<string, Json> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, Json>;
+};
+
+const toStringList = (value: Json | undefined): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+};
+
+const toFiniteNumber = (value: Json | undefined): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const chooseLocationVerification = (
+  existingMetadata: Record<string, Json>,
+  incomingMetadata: Record<string, Json>,
+): Record<string, Json> | null => {
+  const existingVerification = toJsonRecord(existingMetadata.locationVerification);
+  const incomingVerification = toJsonRecord(incomingMetadata.locationVerification);
+
+  if (!existingVerification && !incomingVerification) return null;
+  if (!existingVerification) return incomingVerification;
+  if (!incomingVerification) return existingVerification;
+
+  const existingConfirmed = existingVerification.confirmed === true;
+  const incomingConfirmed = incomingVerification.confirmed === true;
+  if (existingConfirmed !== incomingConfirmed) {
+    return existingConfirmed ? existingVerification : incomingVerification;
+  }
+
+  const existingScore = toFiniteNumber(existingVerification.accuracyScore);
+  const incomingScore = toFiniteNumber(incomingVerification.accuracyScore);
+  if ((existingScore ?? -1) !== (incomingScore ?? -1)) {
+    return (existingScore ?? -1) > (incomingScore ?? -1) ? existingVerification : incomingVerification;
+  }
+
+  const existingConfirmations = toFiniteNumber(existingVerification.confirmations) ?? 0;
+  const incomingConfirmations = toFiniteNumber(incomingVerification.confirmations) ?? 0;
+  if (existingConfirmations !== incomingConfirmations) {
+    return existingConfirmations > incomingConfirmations ? existingVerification : incomingVerification;
+  }
+
+  return incomingVerification;
+};
+
 export const mergeExistingEvent = (
   existing: ExistingEventRow,
   incoming: EventUpsertRecord,
 ): EventUpsertRecord => {
   const existingMetadata = (existing.metadata ?? {}) as Record<string, Json>;
   const incomingMetadata = incoming.metadata ?? {};
+  const mergedLocationVerification = chooseLocationVerification(existingMetadata, incomingMetadata);
+  const mergedEvidenceSources = Array.from(
+    new Set([
+      ...toStringList(existingMetadata.locationEvidenceSources),
+      ...toStringList(incomingMetadata.locationEvidenceSources),
+    ]),
+  );
   const merged: EventUpsertRecord = {
     ...incoming,
     id: existing.id,
@@ -108,6 +160,8 @@ export const mergeExistingEvent = (
     metadata: {
       ...existingMetadata,
       ...incomingMetadata,
+      ...(mergedLocationVerification ? { locationVerification: mergedLocationVerification } : {}),
+      ...(mergedEvidenceSources.length ? { locationEvidenceSources: mergedEvidenceSources } : {}),
     },
   };
 

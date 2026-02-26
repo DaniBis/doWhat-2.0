@@ -9,6 +9,7 @@ import { fetchWithRobots } from './fetcher';
 import { mergeExistingEvent, toUpsertRecord, type ExistingEventRow } from './dedupe';
 import type { EventSourceRow, EventUpsertRecord, IngestOptions, IngestStats, NormalizedEvent } from './types';
 import { ensureTagArray, nowUtc } from './utils';
+import { annotateLocationVerification, createVerificationIndex, type VerificationIndex } from './verification';
 import { matchVenueForEvent } from './venueMatching';
 
 const EVENT_BATCH_SIZE = 50;
@@ -62,11 +63,70 @@ const upsertEvents = async (
   records: EventUpsertRecord[],
 ): Promise<number> => {
   if (!records.length) return 0;
-  const { error } = await client.from('events').upsert(records, { onConflict: 'dedupe_key' });
-  if (error) {
-    throw new Error(`Failed to upsert events: ${error.message}`);
+  const primary = await client.from('events').upsert(records, { onConflict: 'dedupe_key' });
+  if (!primary.error) {
+    return records.length;
   }
+
+  const message = primary.error.message ?? '';
+  const needsLegacyCompat =
+    /host_id/i.test(message)
+    || /starts_at/i.test(message)
+    || /ends_at/i.test(message);
+
+  if (!needsLegacyCompat) {
+    throw new Error(`Failed to upsert events: ${primary.error.message}`);
+  }
+
+  const hostId = await resolveIngestionHostId(client);
+  if (!hostId) {
+    throw new Error(`Failed to upsert events: ${primary.error.message}`);
+  }
+
+  const compatRecords: Record<string, unknown>[] = records.map((record) => ({
+    ...record,
+    host_id: hostId,
+    starts_at: record.start_at,
+    ends_at: record.end_at ?? record.start_at,
+  }));
+
+  const compat = await client.from('events').upsert(compatRecords, { onConflict: 'dedupe_key' });
+  if (compat.error) {
+    throw new Error(`Failed to upsert events: ${compat.error.message}`);
+  }
+
   return records.length;
+};
+
+let ingestionHostIdCache: string | null | undefined;
+
+const resolveIngestionHostId = async (client: ServiceClient): Promise<string | null> => {
+  if (typeof ingestionHostIdCache !== 'undefined') {
+    return ingestionHostIdCache;
+  }
+
+  const configured = process.env.EVENT_INGEST_HOST_ID?.trim();
+  if (configured) {
+    ingestionHostIdCache = configured;
+    return ingestionHostIdCache;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('users')
+      .select('id')
+      .limit(1)
+      .maybeSingle<{ id: string | null }>();
+    if (error) {
+      ingestionHostIdCache = null;
+      return null;
+    }
+    ingestionHostIdCache = data?.id ?? null;
+    return ingestionHostIdCache;
+  } catch {
+    ingestionHostIdCache = null;
+    return null;
+  }
 };
 
 const fetchExistingEvents = async (
@@ -160,6 +220,7 @@ const normaliseEvents = async (
 const processSource = async (
   client: ServiceClient,
   source: EventSourceRow,
+  verificationIndex: VerificationIndex,
 ): Promise<IngestStats> => {
   const stats: IngestStats = {
     sourceId: source.id,
@@ -168,6 +229,8 @@ const processSource = async (
     persisted: 0,
     skipped: 0,
     errors: 0,
+    locationVerified: 0,
+    locationPending: 0,
     lastStatus: 'pending',
   };
 
@@ -180,10 +243,14 @@ const processSource = async (
     stats.normalized = events.length;
 
     const normalizedRecords = await normaliseEvents(client, source, events);
-    const dedupeKeys = normalizedRecords.map((record) => record.dedupe_key);
+    const verified = annotateLocationVerification(normalizedRecords, source, verificationIndex);
+    stats.locationVerified = verified.verifiedCount;
+    stats.locationPending = verified.pendingCount;
+
+    const dedupeKeys = verified.records.map((record) => record.dedupe_key);
     const existingMap = await fetchExistingEvents(client, dedupeKeys);
 
-    const upsertRecords: EventUpsertRecord[] = normalizedRecords.map((record) => {
+    const upsertRecords: EventUpsertRecord[] = verified.records.map((record) => {
       const existing = existingMap.get(record.dedupe_key);
       return existing ? mergeExistingEvent(existing, record) : record;
     });
@@ -208,12 +275,28 @@ const processSource = async (
 export const ingestEvents = async (options?: IngestOptions) => {
   const client = createServiceClient();
   const sources = await loadSources(client, options);
+  const verificationIndex = createVerificationIndex();
+  const concurrency = Math.max(1, Math.min(6, Math.round(options?.concurrency ?? 1)));
   const summaries: IngestStats[] = [];
-  for (const source of sources) {
-    // eslint-disable-next-line no-await-in-loop
-    const summary = await processSource(client, source);
-    summaries.push(summary);
-  }
+
+  let cursor = 0;
+  const nextSource = (): EventSourceRow | null => {
+    if (cursor >= sources.length) return null;
+    const source = sources[cursor];
+    cursor += 1;
+    return source;
+  };
+
+  const workers = Array.from({ length: Math.min(concurrency, sources.length) }, async () => {
+    while (true) {
+      const source = nextSource();
+      if (!source) break;
+      const summary = await processSource(client, source, verificationIndex);
+      summaries.push(summary);
+    }
+  });
+
+  await Promise.all(workers);
   return {
     processed: summaries.length,
     summaries,

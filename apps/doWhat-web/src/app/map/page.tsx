@@ -37,8 +37,10 @@ import AuthGate from "@/components/AuthGate";
 import WebMap, { type MapMovePayload, type ViewBounds } from "@/components/WebMap";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
+import { haversineMeters } from '@/lib/places/utils';
 import { supabase } from "@/lib/supabase/browser";
 import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
+import { parseCoordinateLabel, resolveMapCenterFromProfile, type MapProfileLocationPayload } from './profileCenter';
 import {
   clampReliabilityScore,
   describeEventOrigin,
@@ -53,6 +55,7 @@ import {
   formatReliabilityLabel,
 } from "@/lib/events/presentation";
 import { useStableNearbyData } from './useStableNearbyData';
+import { extractActivitySearchTokens, extractSearchTerms } from './searchTokens';
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
@@ -66,6 +69,8 @@ const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
 const BOUNDS_UPDATE_THRESHOLD = 0.0008;
 const EVENTS_QUERY_COORD_PRECISION = 3;
+const MAP_NEARBY_LIMIT = 400;
+const MAP_SEARCH_AUGMENT_LIMIT = 600;
 
 type CapacityOption = { key: CapacityFilterKey; label: string };
 type TimeWindowOption = { key: TimeWindowKey; label: string };
@@ -208,6 +213,30 @@ const formatKilometres = (meters?: number | null) => {
   const km = meters / 1000;
   if (km < 1) return `${Math.round(km * 10) / 10} km`;
   return `${Math.round(km * 10) / 10} km`;
+};
+
+const isWithinRadius = (
+  center: MapCoordinates | null,
+  radiusMeters: number,
+  lat?: number | null,
+  lng?: number | null,
+  fallbackDistance?: number | null,
+): boolean => {
+  const epsilonMeters = 50;
+  const maxDistance = radiusMeters + epsilonMeters;
+  const finiteFallback = typeof fallbackDistance === 'number' && Number.isFinite(fallbackDistance)
+    ? fallbackDistance
+    : null;
+
+  if (!center) {
+    return finiteFallback == null || finiteFallback <= maxDistance;
+  }
+
+  if (typeof lat === 'number' && Number.isFinite(lat) && typeof lng === 'number' && Number.isFinite(lng)) {
+    return haversineMeters(center.lat, center.lng, lat, lng) <= maxDistance;
+  }
+
+  return finiteFallback == null || finiteFallback <= maxDistance;
 };
 
 const getSessionIdFromMetadata = (metadata: unknown): string | null => {
@@ -543,30 +572,79 @@ export default function MapPage() {
   useEffect(() => {
     if (isAuthenticated !== true) return;
     let cancelled = false;
-    const fallback = () => {
-      if (!cancelled && !centerRef.current) {
-        primeCenter(FALLBACK_CENTER);
+
+    const applyProfileCenter = async (): Promise<boolean> => {
+      try {
+        const profileResponse = await fetch('/api/profile/me', { cache: 'no-store' });
+        if (!profileResponse.ok) return false;
+        const profile = (await profileResponse.json()) as MapProfileLocationPayload;
+        let profileCenter = resolveMapCenterFromProfile(profile);
+
+        if (!profileCenter && typeof profile.location === 'string' && profile.location.trim().length > 1) {
+          const coordinateLabel = parseCoordinateLabel(profile.location);
+          if (coordinateLabel) {
+            profileCenter = coordinateLabel;
+          } else {
+            const geocodeResponse = await fetch(`/api/geocode?q=${encodeURIComponent(profile.location)}&limit=1`);
+            if (geocodeResponse.ok) {
+              const payload = (await geocodeResponse.json()) as { lat?: number; lng?: number };
+              if (typeof payload.lat === 'number' && typeof payload.lng === 'number') {
+                profileCenter = {
+                  lat: Number(payload.lat.toFixed(6)),
+                  lng: Number(payload.lng.toFixed(6)),
+                };
+              }
+            }
+          }
+        }
+
+        if (!profileCenter || cancelled) return false;
+        primeCenter(profileCenter);
+        setLocationErrored(false);
+        return true;
+      } catch (error) {
+        console.warn('[map] unable to hydrate center from profile location', error);
+        return false;
       }
     };
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (p) => {
-          if (cancelled) return;
-          primeCenter({ lat: Number(p.coords.latitude.toFixed(6)), lng: Number(p.coords.longitude.toFixed(6)) });
-        },
-        () => {
-          setLocationErrored(true);
-          fallback();
-        },
-        { enableHighAccuracy: true, timeout: 7000 },
-      );
-    } else {
-      fallback();
-    }
-    const timeout = setTimeout(fallback, 4000);
+
+    const applyDeviceOrFallbackCenter = () => {
+      const fallback = () => {
+        if (!cancelled && !centerRef.current) {
+          primeCenter(FALLBACK_CENTER);
+        }
+      };
+
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (p) => {
+            if (cancelled) return;
+            primeCenter({ lat: Number(p.coords.latitude.toFixed(6)), lng: Number(p.coords.longitude.toFixed(6)) });
+          },
+          () => {
+            setLocationErrored(true);
+            fallback();
+          },
+          { enableHighAccuracy: true, timeout: 7000 },
+        );
+      } else {
+        fallback();
+      }
+      const timeout = setTimeout(fallback, 4000);
+      return timeout;
+    };
+
+    let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+    void (async () => {
+      const profileApplied = await applyProfileCenter();
+      if (!profileApplied) {
+        fallbackTimeout = applyDeviceOrFallbackCenter();
+      }
+    })();
+
     return () => {
       cancelled = true;
-      clearTimeout(timeout);
+      if (fallbackTimeout) clearTimeout(fallbackTimeout);
     };
   }, [isAuthenticated, primeCenter]);
 
@@ -698,13 +776,37 @@ export default function MapPage() {
         ? {
             center: queryCenter,
             radiusMeters,
-            limit: 150,
+            limit: MAP_NEARBY_LIMIT,
             filters: filtersForQuery,
             bounds: bounds ?? undefined,
           }
         : null,
     [accessAllowed, queryCenter, radiusMeters, filtersForQuery, bounds],
   );
+
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const searchActivityTokens = useMemo(
+    () => extractActivitySearchTokens(normalizedSearchTerm),
+    [normalizedSearchTerm],
+  );
+
+  const searchAugmentedQuery = useMemo(() => {
+    if (!query) return null;
+    if (!searchActivityTokens.length) return null;
+
+    const baseFilters = query.filters ?? {};
+    const activityTypes = Array.from(new Set([...(baseFilters.activityTypes ?? []), ...searchActivityTokens]));
+
+    return {
+      ...query,
+      radiusMeters: Math.max(query.radiusMeters, 25_000),
+      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
+      filters: {
+        ...baseFilters,
+        activityTypes,
+      },
+    };
+  }, [query, searchActivityTokens]);
 
   const loadActivities = accessAllowed && dataMode !== 'events';
   const loadEvents = accessAllowed && dataMode !== 'activities';
@@ -726,10 +828,32 @@ export default function MapPage() {
     },
   });
 
+  const nearbySearch = useNearbyActivities(searchAugmentedQuery, {
+    fetcher,
+    enabled: Boolean(searchAugmentedQuery) && loadActivities,
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
   const stableNearby = useStableNearbyData(nearby);
   const nearbyData = stableNearby.data ?? nearby.data ?? null;
 
-  const activities = nearbyData?.activities ?? EMPTY_ACTIVITIES;
+  const searchActivities = nearbySearch.data?.activities ?? EMPTY_ACTIVITIES;
+  const activities = useMemo(() => {
+    if (!searchActivities.length) return nearbyData?.activities ?? EMPTY_ACTIVITIES;
+    const merged = new Map<string, MapActivity>();
+    for (const activity of nearbyData?.activities ?? EMPTY_ACTIVITIES) {
+      merged.set(activity.id, activity);
+    }
+    for (const activity of searchActivities) {
+      merged.set(activity.id, activity);
+    }
+    return Array.from(merged.values());
+  }, [nearbyData?.activities, searchActivities]);
   const filterSupport = nearbyData?.filterSupport ?? null;
   const facets = nearbyData?.facets ?? null;
   const facetActivityTypes = useMemo(
@@ -799,6 +923,8 @@ export default function MapPage() {
             from: eventsWindow.from,
             to: eventsWindow.to,
             limit: 200,
+            verifiedOnly: true,
+            minAccuracy: 95,
           }
         : null,
     [eventsQueryBounds, eventsWindow.from, eventsWindow.to, loadEvents],
@@ -826,6 +952,8 @@ export default function MapPage() {
   const filteredActivities = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const hasSearch = term.length > 0;
+    const searchTerms = extractSearchTerms(term);
+    const searchTokens = extractActivitySearchTokens(term);
     const normalizeSet = (values?: (string | null | undefined)[] | null) => {
       const set = new Set<string>();
       (values ?? []).forEach((value) => {
@@ -858,6 +986,12 @@ export default function MapPage() {
     const filterCapacity = Boolean(capacityFilter && capacitySupported);
     const filterTimeWindow = Boolean(timeWindowFilter && timeWindowSupported);
 
+    const effectiveRadiusMeters = hasSearch ? Math.max(radiusMeters, 25_000) : radiusMeters;
+
+    const proximityConstrained = activities.filter((activity) =>
+      isWithinRadius(queryCenter, effectiveRadiusMeters, activity.lat, activity.lng, activity.distance_m),
+    );
+
     if (
       !hasSearch &&
       !filterActivityTypes &&
@@ -867,10 +1001,10 @@ export default function MapPage() {
       !filterCapacity &&
       !filterTimeWindow
     ) {
-      return activities;
+      return proximityConstrained;
     }
 
-    return activities.filter((activity) => {
+    return proximityConstrained.filter((activity) => {
       if (filterActivityTypes) {
         const haystack = useTagsForActivityTypes || (!activityTypesSupported && tagsSupported)
           ? normalizeSet(activity.tags)
@@ -900,13 +1034,33 @@ export default function MapPage() {
         const name = activity.name?.toLowerCase() ?? '';
         const venue = activity.venue?.toLowerCase() ?? '';
         const place = activity.place_label?.toLowerCase() ?? '';
-        return name.includes(term) || venue.includes(term) || place.includes(term);
+        const tags = (activity.tags ?? []).join(' ').toLowerCase();
+        const types = (activity.activity_types ?? []).join(' ').toLowerCase();
+        const haystack = `${name} ${venue} ${place} ${tags} ${types}`;
+
+        if (haystack.includes(term)) {
+          return true;
+        }
+
+        if (searchTerms.some((searchWord) => haystack.includes(searchWord))) {
+          return true;
+        }
+
+        if (searchTokens.length > 0) {
+          const typeTokens = normalizeSet(activity.activity_types);
+          const tagTokens = normalizeSet(activity.tags);
+          return searchTokens.some((token) => typeTokens.has(token) || tagTokens.has(token));
+        }
+
+        return false;
       }
 
       return true;
     });
   }, [
     activities,
+    queryCenter,
+    radiusMeters,
     searchTerm,
     selectedActivityTypes,
     selectedTraits,
@@ -925,15 +1079,20 @@ export default function MapPage() {
   ]);
 
   const filteredEvents = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return events;
-    return events.filter((eventSummary) => {
+    const effectiveRadiusMeters = normalizedSearchTerm.length > 0 ? Math.max(radiusMeters, 25_000) : radiusMeters;
+    const nearbyEvents = events.filter((eventSummary) =>
+      isWithinRadius(queryCenter, effectiveRadiusMeters, eventSummary.lat, eventSummary.lng, null),
+    );
+    if (!normalizedSearchTerm) return nearbyEvents;
+    const searchTerms = extractSearchTerms(normalizedSearchTerm);
+    return nearbyEvents.filter((eventSummary) => {
       const title = eventSummary.title?.toLowerCase() ?? '';
       const venue = eventSummary.venue_name?.toLowerCase() ?? '';
       const place = eventSummary.place_label?.toLowerCase() ?? '';
-      return title.includes(term) || venue.includes(term) || place.includes(term);
+      const haystack = `${title} ${venue} ${place}`;
+      return haystack.includes(normalizedSearchTerm) || searchTerms.some((searchWord) => haystack.includes(searchWord));
     });
-  }, [events, searchTerm]);
+  }, [events, queryCenter, radiusMeters, normalizedSearchTerm]);
 
   useEffect(() => {
     if (!highlightSessionId || !filteredEvents.length) return;

@@ -2,7 +2,14 @@ import { NextResponse } from 'next/server';
 
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
-const USER_AGENT = `doWhat/1.0 (${process.env.NOMINATIM_EMAIL || 'contact@example.com'})`;
+export const runtime = 'nodejs';
+
+const USER_AGENT = `doWhat/1.0 (${process.env.NOMINATIM_EMAIL || 'team@dowhat.app'})`;
+const NOMINATIM_HEADERS = {
+  'User-Agent': USER_AGENT,
+  Referer: process.env.NOMINATIM_REFERER || 'https://dowhat.app',
+  'Accept-Language': 'en',
+} as const;
 
 type GeocodeSuggestion = { label: string; description: string | null; lat: number; lng: number };
 
@@ -97,7 +104,7 @@ export async function GET(req: Request) {
       }
 
       const res = await fetch(url.toString(), {
-        headers: { 'User-Agent': USER_AGENT },
+        headers: NOMINATIM_HEADERS,
         next: { revalidate: 60 * 60 * 24 },
       });
       if (!res.ok) {
@@ -176,9 +183,7 @@ export async function GET(req: Request) {
   if (!lat || !lng) return NextResponse.json({ error: 'lat & lng required' }, { status: 400 });
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`, {
-      headers: {
-        'User-Agent': USER_AGENT,
-      },
+      headers: NOMINATIM_HEADERS,
       next: { revalidate: 60 * 60 * 24 },
     });
     if (!r.ok) return NextResponse.json({ error: 'geocode failed', status: r.status }, { status: 502 });
@@ -188,11 +193,19 @@ export async function GET(req: Request) {
         house_number?: string | null;
         road?: string | null;
         residential?: string | null;
+        amenity?: string | null;
+        building?: string | null;
+        shop?: string | null;
+        tourism?: string | null;
+        leisure?: string | null;
         neighbourhood?: string | null;
+        suburb?: string | null;
+        city_district?: string | null;
         city?: string | null;
         town?: string | null;
         village?: string | null;
         hamlet?: string | null;
+        county?: string | null;
         state?: string | null;
         postcode?: string | null;
         country?: string | null;
@@ -200,9 +213,22 @@ export async function GET(req: Request) {
     };
     const addr = j.address || {};
     const line1 = [addr.house_number, addr.road || addr.residential].filter(Boolean).join(' ').trim();
-    const locality = addr.city || addr.town || addr.village || addr.hamlet || addr.neighbourhood || null;
-    const regionParts = [addr.postcode, addr.state, addr.country].filter(Boolean);
-    const labelParts = [line1 || null, locality, regionParts.length ? regionParts.join(', ') : null].filter(Boolean);
+    const placeLabel =
+      addr.amenity ||
+      addr.building ||
+      addr.shop ||
+      addr.tourism ||
+      addr.leisure ||
+      addr.neighbourhood ||
+      addr.suburb ||
+      addr.city_district ||
+      line1 ||
+      null;
+    const locality = addr.city || addr.town || addr.village || addr.hamlet || addr.county || null;
+    const stateCountry = [addr.state, addr.country].filter(Boolean).join(', ');
+    const labelParts = [placeLabel, locality, stateCountry || null]
+      .filter((value): value is string => Boolean(value))
+      .filter((value, index, arr) => arr.findIndex((item) => item.toLowerCase() === value.toLowerCase()) === index);
     const label = labelParts.join(', ');
     const description = j.display_name && j.display_name !== label ? j.display_name : null;
     return NextResponse.json({

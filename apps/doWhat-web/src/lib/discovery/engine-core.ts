@@ -135,7 +135,7 @@ const DEFAULT_RADIUS_METERS = 2_000;
 
 export const CACHE_TTL_MS = 5 * 60 * 1000;
 export const MAX_CACHE_ENTRIES = 30;
-export const MAX_CACHE_ITEMS = 200;
+export const MAX_CACHE_ITEMS = 600;
 
 const CAPACITY_KEYS = new Set<CapacityFilterKey>(['any', 'couple', 'small', 'medium', 'large']);
 const TIME_WINDOW_KEYS = new Set<TimeWindowKey>(['any', 'open_now', 'morning', 'afternoon', 'evening', 'late']);

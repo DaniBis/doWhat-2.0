@@ -23,14 +23,22 @@ export function ProfileHeader({
   reliability?: Reliability | null;
   editable?: boolean;
   socials?: SocialHandles;
-  onProfileUpdated?: (p: { name?: string; avatarUrl?: string; socials?: SocialHandles; bio?: string; location?: string | null }) => Promise<void> | void;
+  onProfileUpdated?: (p: { name?: string; avatarUrl?: string; socials?: SocialHandles; bio?: string; location?: string | null; locationLat?: number; locationLng?: number }) => Promise<void> | void;
 }) {
+  type LocationSuggestion = {
+    label: string;
+    description?: string | null;
+    lat: number;
+    lng: number;
+  };
+
   void _userId;
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [pendingName, setPendingName] = useState(name);
   const [pendingBio, setPendingBio] = useState(bio || '');
   const [pendingLocation, setPendingLocation] = useState(location || '');
+  const [pendingLocationCoords, setPendingLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [socials, setSocials] = useState<SocialHandles>(initialSocials || {});
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -40,6 +48,9 @@ export function ProfileHeader({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [locStatus, setLocStatus] = useState<'idle' | 'loading' | 'denied' | 'error'>('idle');
   const [locError, setLocError] = useState<string | null>(null);
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([]);
+  const [locationSuggestionsOpen, setLocationSuggestionsOpen] = useState(false);
+  const [locationLookupBusy, setLocationLookupBusy] = useState(false);
 
   const uploadAvatarBlob = useCallback(async (file: File) => {
     setErrorMsg(null);
@@ -134,12 +145,84 @@ export function ProfileHeader({
     setPendingName(name);
     setPendingBio(bio || '');
     setPendingLocation(location || '');
+    setPendingLocationCoords(null);
     setSocials(initialSocials || {});
     setErrorMsg(null);
     setLocError(null);
     setLocStatus('idle');
+    setLocationSuggestions([]);
+    setLocationSuggestionsOpen(false);
+    setLocationLookupBusy(false);
     setEditOpen(true);
   }
+
+  useEffect(() => {
+    if (!editOpen) {
+      setLocationSuggestions([]);
+      setLocationSuggestionsOpen(false);
+      setLocationLookupBusy(false);
+      return;
+    }
+
+    const query = pendingLocation.trim();
+    if (query.length < 2) {
+      setLocationSuggestions([]);
+      setLocationSuggestionsOpen(false);
+      setLocationLookupBusy(false);
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const handle = window.setTimeout(async () => {
+      setLocationLookupBusy(true);
+      try {
+        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(query)}&limit=5`, {
+          signal: ctrl.signal,
+        });
+        if (!resp.ok) {
+          setLocationSuggestions([]);
+          setLocationSuggestionsOpen(false);
+          return;
+        }
+        const payload = await resp.json() as {
+          results?: Array<{ label?: string; description?: string | null; lat?: number; lng?: number }>;
+        };
+        const suggestions: LocationSuggestion[] = [];
+        for (const entry of payload.results ?? []) {
+          if (!entry || typeof entry.label !== 'string') continue;
+          if (typeof entry.lat !== 'number' || typeof entry.lng !== 'number') continue;
+          suggestions.push({
+            label: entry.label,
+            description: typeof entry.description === 'string' ? entry.description : null,
+            lat: entry.lat,
+            lng: entry.lng,
+          });
+        }
+
+        setLocationSuggestions(suggestions);
+        setLocationSuggestionsOpen(suggestions.length > 0);
+      } catch (error) {
+        if ((error as { name?: string }).name === 'AbortError') return;
+        setLocationSuggestions([]);
+        setLocationSuggestionsOpen(false);
+      } finally {
+        setLocationLookupBusy(false);
+      }
+    }, 220);
+
+    return () => {
+      ctrl.abort();
+      window.clearTimeout(handle);
+    };
+  }, [editOpen, pendingLocation]);
+
+  const applyLocationSuggestion = (suggestion: LocationSuggestion) => {
+    setPendingLocation(suggestion.label);
+    setPendingLocationCoords({ lat: suggestion.lat, lng: suggestion.lng });
+    setLocationSuggestionsOpen(false);
+    setLocationSuggestions([]);
+    setLocError(null);
+  };
 
   function resolveLocationFromDevice() {
     if (!('geolocation' in navigator)) {
@@ -163,6 +246,7 @@ export function ProfileHeader({
           console.warn('[ProfileHeader] reverse geocode failed', error);
         }
         setPendingLocation(label);
+        setPendingLocationCoords({ lat: latitude, lng: longitude });
         setLocStatus('idle');
       } catch (error) {
         console.warn('[ProfileHeader] processing geolocation failed', error);
@@ -173,7 +257,7 @@ export function ProfileHeader({
       console.warn('[ProfileHeader] geolocation request denied', err);
       setLocError(err.code === err.PERMISSION_DENIED ? 'Location permission denied.' : 'Unable to access your location.');
       setLocStatus('denied');
-    }, { enableHighAccuracy: false, timeout: 8000 });
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30_000 });
   }
 
   async function saveEdits() {
@@ -183,7 +267,14 @@ export function ProfileHeader({
       setErrorMsg('Display name cannot be empty.');
       return;
     }
-    const update: { name?: string; socials?: SocialHandles; bio?: string; location?: string | null } = {};
+    const update: {
+      name?: string;
+      socials?: SocialHandles;
+      bio?: string;
+      location?: string | null;
+      locationLat?: number;
+      locationLng?: number;
+    } = {};
     if (trimmedName !== name) update.name = trimmedName;
 
     const cleanedSocials: SocialHandles = {};
@@ -200,6 +291,10 @@ export function ProfileHeader({
 
     const nextLocation = pendingLocation.trim().slice(0, 120);
     if (nextLocation !== (location ?? '')) update.location = nextLocation ? nextLocation : null;
+    if (pendingLocationCoords && nextLocation) {
+      update.locationLat = pendingLocationCoords.lat;
+      update.locationLng = pendingLocationCoords.lng;
+    }
 
     if (!update.name && !update.bio && !update.socials && !('location' in update)) {
       setEditOpen(false);
@@ -348,12 +443,45 @@ export function ProfileHeader({
               placeholder="Share a short blurb"
             />
             <label className="block text-sm font-medium text-ink-strong mb-xxs">Location</label>
-            <input
-              value={pendingLocation}
-              onChange={(e) => setPendingLocation(e.target.value.slice(0, 120))}
-              placeholder="City, neighbourhood, or leave blank"
-              className="w-full rounded-md border border-midnight-border/60 px-sm py-xs text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-ink placeholder-ink-muted"
-            />
+            <div className="relative">
+              <input
+                value={pendingLocation}
+                onChange={(e) => {
+                  setPendingLocation(e.target.value.slice(0, 120));
+                  setPendingLocationCoords(null);
+                  setLocationSuggestionsOpen(true);
+                }}
+                onFocus={() => {
+                  if (locationSuggestions.length > 0) setLocationSuggestionsOpen(true);
+                }}
+                onBlur={() => {
+                  window.setTimeout(() => setLocationSuggestionsOpen(false), 120);
+                }}
+                placeholder="City, neighbourhood, or leave blank"
+                className="w-full rounded-md border border-midnight-border/60 px-sm py-xs text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-ink placeholder-ink-muted"
+              />
+              {locationSuggestionsOpen && locationSuggestions.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-midnight-border/40 bg-surface shadow-lg">
+                  {locationSuggestions.map((item) => (
+                    <button
+                      key={`${item.label}:${item.lat.toFixed(5)},${item.lng.toFixed(5)}`}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        applyLocationSuggestion(item);
+                      }}
+                      className="block w-full border-b border-midnight-border/20 px-sm py-xs text-left text-xs text-ink hover:bg-surface-alt last:border-b-0"
+                    >
+                      <div className="font-medium text-ink-strong">{item.label}</div>
+                      {item.description && <div className="mt-xxs text-[11px] text-ink-muted">{item.description}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {locationLookupBusy && pendingLocation.trim().length >= 2 && (
+              <p className="mt-xxs text-[11px] text-ink-muted">Searching places…</p>
+            )}
             <div className="mt-xs flex flex-wrap items-center gap-xs text-xs text-ink-muted">
               <button
                 type="button"
@@ -366,7 +494,7 @@ export function ProfileHeader({
               {pendingLocation && (
                 <button
                   type="button"
-                  onClick={() => { setPendingLocation(''); setLocStatus('idle'); setLocError(null); }}
+                  onClick={() => { setPendingLocation(''); setPendingLocationCoords(null); setLocStatus('idle'); setLocError(null); }}
                   className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/40 px-sm py-xxs text-xs text-ink-muted hover:bg-surface-alt"
                 >
                   Clear

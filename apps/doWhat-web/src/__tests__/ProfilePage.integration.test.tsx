@@ -104,4 +104,134 @@ describe('ProfilePage integration basic edit', () => {
     // Edit modal closes
     await waitFor(() => expect(queryByText('Edit Profile')).not.toBeInTheDocument());
   });
+
+  it('normalizes coordinate-only profile location into a place label and persists it', async () => {
+    fetchMock.mockImplementation((url: RequestInfo | URL) => {
+      const href = toHref(url);
+      if (href === '/api/profile/user-1') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'user-1',
+              name: 'Orig',
+              email: 'u@example.com',
+              location: '15.905, 108.329',
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (href.startsWith('/api/geocode?lat=15.905&lng=108.329')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ label: 'Bếp Tre, Hội An Tây Ward, Vietnam' }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (href.startsWith('/api/profile/user-1/update')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }
+      if (href.startsWith('/api/profile/user-1/reliability')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ reliability: { score: 0, confidence: 0, components: { AS30: 0, AS90: 0 } }, attendance: null }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    const { findByText } = render(<ProfilePage />);
+    await findByText('Orig');
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/profile/user-1/update',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('Bếp Tre, Hội An Tây Ward, Vietnam'),
+        }),
+      );
+    });
+
+    expect(await findByText(/Bếp Tre, Hội An Tây Ward, Vietnam/i)).toBeInTheDocument();
+  });
+
+  it('autocompletes typed location and persists selected coordinates', async () => {
+    fetchMock.mockImplementation((url: RequestInfo | URL) => {
+      const href = toHref(url);
+      if (href === '/api/profile/user-1') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'user-1',
+              name: 'Orig',
+              email: 'u@example.com',
+              location: 'Hanoi',
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (href.includes('/api/geocode?q=Lond')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              label: 'London, United Kingdom',
+              lat: 51.5074,
+              lng: -0.1278,
+              results: [
+                {
+                  label: 'London, United Kingdom',
+                  description: 'London, Greater London, England, United Kingdom',
+                  lat: 51.5074,
+                  lng: -0.1278,
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (href.startsWith('/api/profile/user-1/update')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }
+      if (href.startsWith('/api/profile/user-1/reliability')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ reliability: { score: 0, confidence: 0, components: { AS30: 0, AS90: 0 } }, attendance: null }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    const { getByPlaceholderText, getByText, findByText } = render(<ProfilePage />);
+    await findByText('Orig');
+
+    const editButtons = document.querySelectorAll('button');
+    const nameEdit = Array.from(editButtons).find((button) => button.textContent === 'Edit' && button.className.includes('inline-flex')) as HTMLButtonElement | undefined;
+    if (!nameEdit) throw new Error('Profile header Edit button not found');
+    fireEvent.click(nameEdit);
+
+    const locationInput = getByPlaceholderText('City, neighbourhood, or leave blank') as HTMLInputElement;
+    fireEvent.change(locationInput, { target: { value: 'Lond' } });
+
+    await findByText('London, United Kingdom');
+    fireEvent.mouseDown(getByText('London, United Kingdom'));
+    fireEvent.click(getByText('Save'));
+
+    await waitFor(() => {
+      const updateCall = fetchMock.mock.calls.find((call) => toHref(call[0]).startsWith('/api/profile/user-1/update'));
+      expect(updateCall).toBeTruthy();
+      const init = updateCall?.[1] as RequestInit | undefined;
+      const body = typeof init?.body === 'string' ? init.body : '';
+      expect(body).toContain('London, United Kingdom');
+      expect(body).toContain('51.5074');
+      expect(body).toContain('-0.1278');
+    });
+  });
 });

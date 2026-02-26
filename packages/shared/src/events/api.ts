@@ -32,6 +32,12 @@ export const createEventsFetcher = (options: CreateEventsFetcherOptions): FetchE
     if (query.categories?.length) {
       url.searchParams.set('categories', query.categories.join(','));
     }
+    if (query.verifiedOnly) {
+      url.searchParams.set('verifiedOnly', '1');
+    }
+    if (typeof query.minAccuracy === 'number' && Number.isFinite(query.minAccuracy)) {
+      url.searchParams.set('minAccuracy', String(Math.max(0, Math.min(100, Math.round(query.minAccuracy)))));
+    }
 
     const response = await http(url.toString(), {
       method: 'GET',

@@ -14,6 +14,7 @@ import { getOptionalServiceClient } from '@/lib/supabase/service';
 import { expandCategoryAliases, NORMALIZED_CATEGORIES, type NormalizedCategory } from './categories';
 import { fetchFoursquarePlaces } from './providers/foursquare';
 import { fetchGooglePlaces } from './providers/google';
+import { fetchOverpassPlaces } from './providers/osm';
 import {
   defaultAttribution,
   ensureArray,
@@ -953,6 +954,13 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   );
 
   const providerResults: ProviderPlace[] = [];
+
+  const overpassCall = await callProvider('openstreetmap', () =>
+    fetchOverpassPlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
+  );
+  if (overpassCall.status === 'fulfilled') {
+    providerResults.push(...overpassCall.value.filter((place) => place.canPersist !== false));
+  }
 
   const foursquareCall = await callProvider('foursquare', () =>
     fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),

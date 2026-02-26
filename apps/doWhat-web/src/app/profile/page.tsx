@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   derivePendingOnboardingSteps,
   isPlayStyle,
@@ -32,6 +32,21 @@ import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 type TabKey = 'overview' | 'traits' | 'badges' | 'activities' | 'reviews';
 
+function parseCoordinatesFromLabel(value?: string | null): { lat: number; lng: number } | null {
+  if (!value) return null;
+  const match = value.trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const lat = Number.parseFloat(match[1]);
+  const lng = Number.parseFloat(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+function isCoordinateLabel(value?: string | null): boolean {
+  return parseCoordinatesFromLabel(value) != null;
+}
+
 export default function ProfilePage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileUser | null>(null);
@@ -54,6 +69,7 @@ export default function ProfilePage() {
   const [sportProfileLoading, setSportProfileLoading] = useState(true);
   const [reliabilityPledgeAckAt, setReliabilityPledgeAckAt] = useState<string | null>(null);
   const [reliabilityPledgeLoading, setReliabilityPledgeLoading] = useState(true);
+  const normalizedLocationKeysRef = useRef<Set<string>>(new Set());
   const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
   const traitCountLoading = loading || traitsRefreshing;
   const onboardingProgressReady = !traitCountLoading && !sportProfileLoading && !reliabilityPledgeLoading;
@@ -235,13 +251,49 @@ export default function ProfilePage() {
           await fetch(`/api/profile/${userId}/update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location: label })
+            body: JSON.stringify({ location: label, locationLat: latitude, locationLng: longitude })
           });
         }
       } catch { /* ignore */ }
       setGeoBusy(false);
     }, () => { setGeoDenied(true); setGeoBusy(false); }, { enableHighAccuracy: false, timeout: 7000 });
   }, [profile, userId, geoBusy, geoDenied]);
+
+  // Backfill older coordinate-only location labels into human-friendly place names.
+  useEffect(() => {
+    if (!profile?.location || !userId) return;
+    const coords = parseCoordinatesFromLabel(profile.location);
+    if (!coords) return;
+
+    const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
+    if (normalizedLocationKeysRef.current.has(key)) return;
+    normalizedLocationKeysRef.current.add(key);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`/api/geocode?lat=${encodeURIComponent(String(coords.lat))}&lng=${encodeURIComponent(String(coords.lng))}`);
+        if (!resp.ok) return;
+        const payload = await resp.json() as { label?: string | null };
+        const nextLabel = typeof payload.label === 'string' ? payload.label.trim() : '';
+        if (!nextLabel || isCoordinateLabel(nextLabel)) return;
+        if (cancelled) return;
+
+        setProfile((prev) => (prev ? { ...prev, location: nextLabel } : prev));
+        await fetch(`/api/profile/${userId}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ location: nextLabel, locationLat: coords.lat, locationLng: coords.lng }),
+        });
+      } catch {
+        // Keep profile stable; we'll retry next session if needed.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.location, userId]);
 
   async function saveBio(bio: string) {
     if (!userId) return;

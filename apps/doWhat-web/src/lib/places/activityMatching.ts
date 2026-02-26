@@ -307,7 +307,7 @@ function buildSearchIndex(place: PlaceRow): SearchIndex {
 function normalizeSearchString(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .replace(/\s+/g, ' ');
 }
@@ -334,6 +334,7 @@ async function loadActivityCatalog(client: SupabaseClient): Promise<ActivityCata
     if (!data?.length) {
       return fallback;
     }
+
     return data.map((row) => ({
       id: row.id,
       slug: row.slug,
@@ -364,7 +365,11 @@ async function loadPlacesBatch(client: SupabaseClient, options: MatchOptions): P
     query = query.eq('id', options.placeId).limit(1);
   }
   if (options.city) {
-    query = query.eq('city', options.city);
+    const normalizedCity = options.city.trim();
+    if (normalizedCity.length) {
+      const escaped = normalizedCity.replace(/[%_,]/g, (match) => `\\${match}`);
+      query = query.or(`city.ilike.${escaped},locality.ilike.${escaped}`);
+    }
   }
 
   const { data, error } = await query;

@@ -121,6 +121,33 @@ const parseIso = (value: string | null): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
+const readVerification = (event: { metadata?: Record<string, unknown> | null }): {
+  confirmed: boolean;
+  accuracyScore: number | null;
+} => {
+  const metadata = event.metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return { confirmed: false, accuracyScore: null };
+  }
+  const verification = (metadata as Record<string, unknown>).locationVerification;
+  if (!verification || typeof verification !== 'object') {
+    return { confirmed: false, accuracyScore: null };
+  }
+  const record = verification as Record<string, unknown>;
+  const confirmed = record.confirmed === true;
+  const accuracyScore = typeof record.accuracyScore === 'number' && Number.isFinite(record.accuracyScore)
+    ? Math.max(0, Math.min(100, Math.round(record.accuracyScore)))
+    : null;
+  return { confirmed, accuracyScore };
+};
+
+const isSessionOriginEvent = (event: { metadata?: Record<string, unknown> | null }): boolean => {
+  const metadata = event.metadata;
+  if (!metadata || typeof metadata !== 'object') return false;
+  const source = (metadata as Record<string, unknown>).source;
+  return source === 'session';
+};
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const sw = parseCoordinatePair(url.searchParams.get('sw'));
@@ -130,6 +157,11 @@ export async function GET(request: Request) {
   const limitParam = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : 100;
   const categoriesParam = url.searchParams.get('categories');
+  const verifiedOnly = url.searchParams.get('verifiedOnly') === '1';
+  const minAccuracyParam = Number.parseInt(url.searchParams.get('minAccuracy') ?? '', 10);
+  const minAccuracy = Number.isFinite(minAccuracyParam)
+    ? Math.max(0, Math.min(100, minAccuracyParam))
+    : null;
   const categories = categoriesParam
     ? categoriesParam
         .split(',')
@@ -250,7 +282,20 @@ export async function GET(request: Request) {
     }),
   }));
 
-  return NextResponse.json({ events: normalizedEvents });
+  const verifiedEvents = normalizedEvents.filter((event) => {
+    if (isSessionOriginEvent(event)) {
+      return true;
+    }
+    const verification = readVerification(event);
+    if (verifiedOnly && !verification.confirmed) return false;
+    if (minAccuracy != null) {
+      if (verification.accuracyScore == null) return false;
+      if (verification.accuracyScore < minAccuracy) return false;
+    }
+    return true;
+  });
+
+  return NextResponse.json({ events: verifiedEvents });
 }
 
 async function fetchSessionEvents({

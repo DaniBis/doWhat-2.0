@@ -9,6 +9,8 @@ type ProfileRow = {
   id?: string | null;
   full_name?: string | null;
   location?: string | null;
+  last_lat?: number | null;
+  last_lng?: number | null;
   avatar_url?: string | null;
   bio?: string | null;
   instagram?: string | null;
@@ -32,7 +34,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   });
 
   const baseColumns = ['id', 'full_name', 'avatar_url'] as const;
-  const optionalColumns: string[] = ['bio', 'location', 'instagram', 'whatsapp'];
+  const optionalColumns: string[] = ['bio', 'location', 'last_lat', 'last_lng', 'instagram', 'whatsapp'];
 
   async function fetchProfile(columns: readonly string[]): Promise<{ data: ProfileRow | null; error: PostgrestError | null }> {
     const { data, error } = await supabase
@@ -86,6 +88,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     name: profileRow?.full_name || auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email || 'User',
     email: auth.user.email || '',
     location: typeof profileRow?.location === 'string' ? profileRow.location : undefined,
+    locationLat: typeof profileRow?.last_lat === 'number' ? profileRow.last_lat : undefined,
+    locationLng: typeof profileRow?.last_lng === 'number' ? profileRow.last_lng : undefined,
     avatarUrl: profileRow?.avatar_url || auth.user.user_metadata?.avatar_url || undefined,
     bio: typeof profileRow?.bio === 'string' ? profileRow.bio : undefined,
     socials: profileRow ? {

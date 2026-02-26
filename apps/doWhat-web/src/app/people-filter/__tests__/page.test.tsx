@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import PeopleFilterPage from '../page';
@@ -248,9 +248,12 @@ describe('PeopleFilterPage reliability pledge banner', () => {
     setPledgeState({ ackAt: null, version: null });
     await mountPeopleFilterPage();
 
-    const user = userEvent.setup();
+    await waitFor(() =>
+      expect(screen.getByText('Set your sport & skill')).toBeInTheDocument(),
+    );
+
     const cta = await screen.findByRole('link', { name: /review pledge/i });
-    await user.click(cta);
+    fireEvent.click(cta);
 
     await waitFor(() =>
       expect(mockTrackOnboardingEntry).toHaveBeenCalledWith({

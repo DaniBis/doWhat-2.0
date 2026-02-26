@@ -39,6 +39,11 @@ export const eventsQueryKey = (query: EventsQuery) => {
       to: query.to ?? null,
       categories,
       limit: query.limit ?? null,
+      verifiedOnly: query.verifiedOnly ?? false,
+      minAccuracy:
+        typeof query.minAccuracy === 'number' && Number.isFinite(query.minAccuracy)
+          ? Math.max(0, Math.min(100, Math.round(query.minAccuracy)))
+          : null,
     },
   ] as const;
 };

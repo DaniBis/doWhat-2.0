@@ -57,4 +57,6 @@ export interface EventsQuery {
   to?: string;
   categories?: string[];
   limit?: number;
+  verifiedOnly?: boolean;
+  minAccuracy?: number;
 }

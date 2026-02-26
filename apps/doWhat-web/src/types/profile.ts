@@ -35,6 +35,8 @@ export type ProfileUser = {
   name: string;
   email: string;
   location?: string;
+  locationLat?: number;
+  locationLng?: number;
   avatarUrl?: string;
   bio?: string;
   socials?: { instagram?: string | null; whatsapp?: string | null };
