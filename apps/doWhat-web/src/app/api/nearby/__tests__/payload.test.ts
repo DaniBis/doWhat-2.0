@@ -1,3 +1,5 @@
+import { PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
+
 const responseJsonMock = jest.fn((body: unknown, init?: ResponseInit) => ({ body, init }));
 
 const discoverNearbyActivities = jest.fn();
@@ -47,7 +49,7 @@ describe('/api/nearby payload', () => {
           name: 'Chess',
           venue: null,
           place_id: null,
-          place_label: 'Unnamed spot',
+          place_label: PLACE_FALLBACK_LABEL,
           lat: 1,
           lng: 2,
           distance_m: 25,
@@ -90,6 +92,6 @@ describe('/api/nearby payload', () => {
     expect(responseJsonMock).toHaveBeenCalledTimes(1);
     void result;
     const payload = responseJsonMock.mock.calls[0]?.[0] as { activities: Array<{ place_label: string }> };
-    expect(payload.activities[0]?.place_label).toBe('Unnamed spot');
+    expect(payload.activities[0]?.place_label).toBe(PLACE_FALLBACK_LABEL);
   });
 });

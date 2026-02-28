@@ -71,7 +71,7 @@ export async function GET(req: Request, context: RouteContext) {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] ?? null : row.profiles ?? null;
       return {
         userId: row.user_id,
-        status: row.status,
+        status: toEffectiveRosterStatus(row.status, row.attendance_status),
         attendanceStatus: row.attendance_status,
         verified: Boolean(row.checked_in),
         fullName: profile?.full_name ?? null,
@@ -127,14 +127,35 @@ export async function POST(req: Request, context: RouteContext) {
 
     const applied: ReliabilityUpdateInput[] = [];
     for (const update of sanitized) {
+      const { data: attendeeBefore, error: attendeeBeforeError } = await service
+        .from("session_attendees")
+        .select("status, attendance_status")
+        .eq("session_id", sessionId)
+        .eq("user_id", update.userId)
+        .maybeSingle<{ status: SessionAttendeeRow["status"]; attendance_status: AttendanceStatus }>();
+      if (attendeeBeforeError) throw attendeeBeforeError;
+      if (!attendeeBefore) {
+        throw new SessionValidationError(`No attendance record found for user ${update.userId}.`, 404);
+      }
+
       const verified = normalizeVerifiedFlag(update.attendanceStatus, update.verified);
+      const syncedRsvpStatus = mapAttendanceToRsvpStatus(update.attendanceStatus, attendeeBefore);
+      const attendeePatch: {
+        attendance_status: AttendanceStatus;
+        checked_in: boolean;
+        attended_at: string | null;
+        status?: SessionAttendeeRow["status"];
+      } = {
+        attendance_status: update.attendanceStatus,
+        checked_in: verified,
+        attended_at: update.attendanceStatus === "attended" ? new Date().toISOString() : null,
+      };
+      if (syncedRsvpStatus) {
+        attendeePatch.status = syncedRsvpStatus;
+      }
       const { data, error } = await service
         .from("session_attendees")
-        .update({
-          attendance_status: update.attendanceStatus,
-          checked_in: verified,
-          attended_at: update.attendanceStatus === "attended" ? new Date().toISOString() : null,
-        })
+        .update(attendeePatch)
         .eq("session_id", sessionId)
         .eq("user_id", update.userId)
         .select("user_id");
@@ -168,6 +189,31 @@ function parseAttendanceStatus(value: unknown): AttendanceStatus {
     return value;
   }
   throw new SessionValidationError("Invalid attendance status.");
+}
+
+function mapAttendanceToRsvpStatus(
+  attendanceStatus: AttendanceStatus,
+  current: { status: SessionAttendeeRow["status"]; attendance_status: AttendanceStatus },
+): SessionAttendeeRow["status"] | null {
+  if (attendanceStatus === "attended") return "going";
+  if (
+    attendanceStatus === "registered" &&
+    current.status === "declined" &&
+    (current.attendance_status === "late_cancel" || current.attendance_status === "no_show")
+  ) {
+    return "going";
+  }
+  return null;
+}
+
+function toEffectiveRosterStatus(
+  status: SessionAttendeeRow["status"],
+  attendanceStatus: AttendanceStatus,
+): SessionAttendeeRow["status"] {
+  if (status === "going" && (attendanceStatus === "late_cancel" || attendanceStatus === "no_show")) {
+    return "declined";
+  }
+  return status;
 }
 
 function sanitizeId(value: string | null | undefined): string | null {

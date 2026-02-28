@@ -181,7 +181,6 @@ type Props = {
   onSelectActivity?: (activity: MapActivity) => void;
   onSelectEvent?: (event: EventSummary) => void;
   onRequestDetails?: (activity: MapActivity) => void;
-  onRequestActivityDetails?: (activity: MapActivity) => void;
   onRequestCreateEvent?: (activity: MapActivity) => void;
   onRequestEventDetails?: (event: EventSummary) => void;
   mode?: 'activities' | 'events' | 'both';
@@ -199,7 +198,6 @@ function WebMap({
   onSelectActivity,
   onSelectEvent,
   onRequestDetails,
-  onRequestActivityDetails,
   onRequestCreateEvent,
   onRequestEventDetails,
   mode = 'activities',
@@ -490,16 +488,6 @@ function WebMap({
                 />
               ) : null}
               <div className="flex flex-wrap gap-xs text-xs">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onRequestActivityDetails?.(selectedActivity);
-                  }}
-                  className="rounded-full border border-midnight-border/40 px-sm py-xxs font-semibold text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
-                >
-                  View details →
-                </button>
                 {canViewSelectedActivityEvents && (
                   <button
                     type="button"

@@ -7,7 +7,7 @@ const CITY_SLUG = 'bucharest';
 const CENTER_LAT = 44.4268;
 const CENTER_LNG = 26.1025;
 const TILE_PRECISION = 5;
-const DEFAULT_TILE_COUNT = 10;
+const DEFAULT_TILE_COUNT = 20;
 const MAX_TILE_COUNT = 80;
 
 const buildTiles = (target: number): string[] => {

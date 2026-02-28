@@ -14,9 +14,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   try {
     await ensureProfileColumns();
   } catch (error) {
-    const message = getErrorMessage(error);
-    console.error('ensureProfileColumns failed', error);
-    return NextResponse.json({ error: message || 'Failed to prepare profile schema' }, { status: 500 });
+    console.warn('ensureProfileColumns failed during profile update; continuing with best-effort update', getErrorMessage(error));
   }
   const update: Record<string, unknown> = { id: params.id, user_id: params.id, updated_at: new Date().toISOString() };
   if (typeof body.name === 'string') update.full_name = body.name.slice(0, 120);

@@ -3,7 +3,8 @@ import type { CityCategoryConfig, FoursquareCategory, FoursquarePlace, Foursquar
 import { haversineMeters, mergeCategories } from '../utils';
 import type { PlacesQuery, ProviderPlace } from '../types';
 
-const FOURSQUARE_ENDPOINT = 'https://api.foursquare.com/v3/places/search';
+const FOURSQUARE_ENDPOINT = 'https://places-api.foursquare.com/places/search';
+const FOURSQUARE_API_VERSION = '2025-06-17';
 
 const selectCategories = (source: string[] | NormalizedCategory[] | undefined): NormalizedCategory[] =>
   expandCategoryAliases((source ?? []) as string[]);
@@ -72,17 +73,18 @@ export const fetchFoursquarePlaces = async (
   url.searchParams.set('limit', String(Math.min(query.limit ?? 50, 50)));
   url.searchParams.set('sort', 'DISTANCE');
   if (categoryIds.length > 0) {
-    url.searchParams.set('categories', categoryIds.join(','));
+    url.searchParams.set('fsq_category_ids', categoryIds.join(','));
   }
   if (keywordFilters.length && !url.searchParams.has('query')) {
     url.searchParams.set('query', keywordFilters.join(' '));
   }
-  url.searchParams.set('fields', 'fsq_id,name,location,categories,geocodes,website,description,hours,link');
+  url.searchParams.set('fields', 'fsq_place_id,name,latitude,longitude,location,categories,link');
 
   const response = await fetch(url.toString(), {
     headers: {
       Accept: 'application/json',
-      Authorization: apiKey,
+      Authorization: `Bearer ${apiKey}`,
+      'X-Places-Api-Version': FOURSQUARE_API_VERSION,
     },
     next: { revalidate: 0 },
   });
@@ -91,22 +93,34 @@ export const fetchFoursquarePlaces = async (
     throw new Error(`Foursquare request failed (${response.status})`);
   }
 
-  const payload = (await response.json()) as FoursquareSearchResponse;
+  const payload = (await response.json()) as FoursquareSearchResponse & {
+    results?: Array<Record<string, unknown>>;
+  };
   const results = payload.results ?? [];
 
-  return results.map<ProviderPlace>((result: FoursquarePlace) => {
-    const geocodes = result.geocodes?.main;
-    const mergedCategories = mergeCategories(categories, interpretCategories(result.categories ?? []));
+  return results.map<ProviderPlace>((rawResult) => {
+    const result = rawResult as FoursquarePlace & Record<string, unknown>;
+    const latitude =
+      (typeof result.latitude === 'number' ? result.latitude : null)
+      ?? (typeof result.geocodes?.main?.latitude === 'number' ? result.geocodes.main.latitude : null)
+      ?? null;
+    const longitude =
+      (typeof result.longitude === 'number' ? result.longitude : null)
+      ?? (typeof result.geocodes?.main?.longitude === 'number' ? result.geocodes.main.longitude : null)
+      ?? null;
+
+    const resultCategories = (result.categories ?? []) as Array<FoursquareCategory & { fsq_category_id?: string }>;
+    const mergedCategories = mergeCategories(categories, interpretCategories(resultCategories));
     const categoriesForPlace = mergedCategories.length ? mergedCategories : ['activity'];
-    const tagSet = new Set((result.categories ?? []).map((category) => category.name.toLowerCase()));
+    const tagSet = new Set(resultCategories.map((category) => category.name.toLowerCase()));
     keywordFilters.forEach((keyword) => tagSet.add(keyword.toLowerCase()));
 
     return {
       provider: 'foursquare',
-      providerId: result.fsq_id,
+      providerId: String(result.fsq_place_id ?? result.fsq_id ?? ''),
       name: result.name,
-      lat: geocodes?.latitude ?? 0,
-      lng: geocodes?.longitude ?? 0,
+      lat: latitude ?? 0,
+      lng: longitude ?? 0,
       categories: categoriesForPlace,
       tags: Array.from(tagSet),
       address: result.location?.address,
@@ -114,9 +128,9 @@ export const fetchFoursquarePlaces = async (
       region: result.location?.region,
       country: result.location?.country,
       postcode: result.location?.postcode,
-      website: result.website,
-      phone: result.tel,
-      description: result.description,
+      website: typeof result.website === 'string' ? result.website : undefined,
+      phone: typeof result.tel === 'string' ? result.tel : undefined,
+      description: typeof result.description === 'string' ? result.description : undefined,
       rating: typeof result.rating === 'number' ? result.rating : undefined,
       raw: result as unknown as Record<string, unknown>,
       attribution: {
@@ -125,5 +139,5 @@ export const fetchFoursquarePlaces = async (
       },
       confidence: 0.8,
     };
-  }).filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng));
+  }).filter((place) => place.providerId.length > 0 && Number.isFinite(place.lat) && Number.isFinite(place.lng));
 };

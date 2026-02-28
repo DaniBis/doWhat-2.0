@@ -12,6 +12,7 @@ import {
   resolveApiUser,
   SessionValidationError,
 } from '@/lib/sessions/server';
+import { isUuid } from '@dowhat/shared';
 
 export async function GET(req: Request) {
   try {
@@ -57,12 +58,14 @@ export async function POST(req: Request) {
     });
 
     const service = createServiceClient();
-    const placeId = await resolveSessionPlaceId(service, {
-      activityId: payload.activityId,
-      lat: payload.lat,
-      lng: payload.lng,
-      labelHint: payload.venueName ?? payload.activityName ?? null,
-    });
+    const explicitPlaceId = isUuid(payload.placeId ?? null) ? payload.placeId : null;
+    const placeId = explicitPlaceId
+      ?? await resolveSessionPlaceId(service, {
+        activityId: payload.activityId,
+        lat: payload.lat,
+        lng: payload.lng,
+        labelHint: payload.venueName ?? payload.activityName ?? null,
+      });
 
     const activityId = await ensureActivity(service, {
       activityId: payload.activityId,
@@ -72,12 +75,15 @@ export async function POST(req: Request) {
       venueName: payload.venueName,
       placeId,
     });
-    const venueId = await ensureVenue(service, {
-      venueId: payload.venueId,
-      venueName: payload.venueName,
-      lat: payload.lat,
-      lng: payload.lng,
-    });
+    const shouldMaterializeVenue = Boolean(payload.venueId) || (!placeId && Boolean(payload.venueName));
+    const venueId = shouldMaterializeVenue
+      ? await ensureVenue(service, {
+          venueId: payload.venueId,
+          venueName: payload.venueName,
+          lat: payload.lat,
+          lng: payload.lng,
+        })
+      : null;
     const placeLabel = await deriveSessionPlaceLabel(service, {
       placeId,
       activityId,

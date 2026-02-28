@@ -101,7 +101,8 @@ const analyseActivityCategories = (
   return { matches, canonical, display };
 };
 
-const HOME_QUERY_LIMIT = 80;
+const HOME_QUERY_LIMIT = 500;
+const HOME_RECENT_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
 export default async function HomePage({ searchParams }: { searchParams?: SearchParams }) {
   const supabase = createClient();
@@ -137,7 +138,9 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
     .order("starts_at", { ascending: true })
     .limit(HOME_QUERY_LIMIT);
 
-  query = query.gte("starts_at", new Date().toISOString());
+  const lookbackIso = new Date(Date.now() - HOME_RECENT_LOOKBACK_MS).toISOString();
+  const nowIso = new Date().toISOString();
+  query = query.or(`starts_at.gte.${lookbackIso},ends_at.gte.${nowIso},created_at.gte.${lookbackIso}`);
 
   if (priceMin > 0) query = query.gte('price_cents', Math.round(priceMin * 100));
   if (priceMax < 100) query = query.lte('price_cents', Math.round(priceMax * 100));

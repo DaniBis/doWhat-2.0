@@ -55,7 +55,10 @@ import {
   formatReliabilityLabel,
 } from "@/lib/events/presentation";
 import { useStableNearbyData } from './useStableNearbyData';
-import { extractActivitySearchTokens, extractSearchTerms } from './searchTokens';
+import { extractActivitySearchTokens, extractSearchPhrases, extractStructuredActivityTokens } from './searchTokens';
+import { matchesActivitySearch } from './searchMatching';
+import { resolveMapCenterFromSession } from './highlightSession';
+import { dedupeNearDuplicateActivities, hasTypeIntentMatch, isGenericActivityDisplay, pruneLowQualitySearchActivities } from './resultQuality';
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
@@ -69,8 +72,10 @@ const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
 const BOUNDS_UPDATE_THRESHOLD = 0.0008;
 const EVENTS_QUERY_COORD_PRECISION = 3;
-const MAP_NEARBY_LIMIT = 400;
-const MAP_SEARCH_AUGMENT_LIMIT = 600;
+const MAP_NEARBY_LIMIT = 1200;
+const MAP_SEARCH_AUGMENT_LIMIT = 2000;
+const MAP_SPARSE_RESULTS_THRESHOLD = 8;
+const MAP_EVENTS_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
 type CapacityOption = { key: CapacityFilterKey; label: string };
 type TimeWindowOption = { key: TimeWindowKey; label: string };
@@ -294,6 +299,25 @@ const normaliseEventQueryBounds = (value: Bounds): Bounds => ({
   },
 });
 
+const buildBoundsAroundCenter = (center: MapCoordinates, radiusMeters: number): Bounds => {
+  const earthMetersPerLatDegree = 111_320;
+  const latDelta = radiusMeters / earthMetersPerLatDegree;
+  const cosLat = Math.cos((center.lat * Math.PI) / 180);
+  const safeCos = Math.max(0.2, Math.abs(cosLat));
+  const lngDelta = radiusMeters / (earthMetersPerLatDegree * safeCos);
+
+  return {
+    sw: {
+      lat: center.lat - latDelta,
+      lng: center.lng - lngDelta,
+    },
+    ne: {
+      lat: center.lat + latDelta,
+      lng: center.lng + lngDelta,
+    },
+  };
+};
+
 const normaliseRadiusMeters = (value: number) => {
   const clamped = Math.max(300, Math.min(25_000, Number.isFinite(value) ? value : DEFAULT_RADIUS_METERS));
   const bucket = 250;
@@ -321,11 +345,38 @@ export default function MapPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = useMemo(() => searchParams?.toString() ?? '', [searchParams]);
+  const e2eBypassAuth =
+    process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === 'true'
+    && searchParams?.get('e2e') === '1';
   const redirectTarget = useMemo(() => {
     if (!pathname) return '/map';
     return searchParamsString ? `${pathname}?${searchParamsString}` : pathname;
   }, [pathname, searchParamsString]);
   const highlightSessionId = searchParams?.get('highlightSession');
+  const [storedHighlightSessionId, setStoredHighlightSessionId] = useState<string | null>(null);
+  const effectiveHighlightSessionId = highlightSessionId ?? storedHighlightSessionId;
+  const attemptedHighlightFetchRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (highlightSessionId) {
+      setStoredHighlightSessionId(null);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.sessionStorage.getItem('dowhat:last-created-session');
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { id?: string; createdAt?: number };
+      const id = typeof parsed?.id === 'string' ? parsed.id.trim() : '';
+      const createdAt = typeof parsed?.createdAt === 'number' ? parsed.createdAt : 0;
+      const isFresh = createdAt > 0 && Date.now() - createdAt < 24 * 60 * 60 * 1000;
+      if (id && isFresh) {
+        setStoredHighlightSessionId(id);
+      }
+    } catch {
+      // ignore storage parse failures
+    }
+  }, [highlightSessionId]);
   const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [preferencesUserId, setPreferencesUserId] = useState<string | null>(null);
@@ -337,6 +388,7 @@ export default function MapPage() {
   const boundsRef = useRef<Bounds | null>(bounds);
   const dataModeRef = useRef(dataMode);
   const lastSyncedActivityIdRef = useRef<string | null>(searchParams?.get('activity') ?? null);
+  const centeredForActivityIdRef = useRef<string | null>(null);
   const primeCenter = useCallback((next: MapCoordinates) => {
     centerRef.current = next;
     queryCenterRef.current = next;
@@ -570,7 +622,7 @@ export default function MapPage() {
   }, [filters, persistPreferences, preferencesInitialised]);
 
   useEffect(() => {
-    if (isAuthenticated !== true) return;
+    if (isAuthenticated !== true && !e2eBypassAuth) return;
     let cancelled = false;
 
     const applyProfileCenter = async (): Promise<boolean> => {
@@ -646,7 +698,7 @@ export default function MapPage() {
       cancelled = true;
       if (fallbackTimeout) clearTimeout(fallbackTimeout);
     };
-  }, [isAuthenticated, primeCenter]);
+  }, [e2eBypassAuth, isAuthenticated, primeCenter]);
 
   useEffect(() => {
     if (!center) return;
@@ -668,7 +720,7 @@ export default function MapPage() {
         const { data } = await supabase.auth.getUser();
         if (!mounted) return;
         const userId = data.user?.id ?? null;
-        setIsAuthenticated(Boolean(userId));
+        setIsAuthenticated(e2eBypassAuth ? true : Boolean(userId));
         if (userId) {
           if (preferencesUserId !== userId) {
             await loadPreferencesForUser(userId);
@@ -679,7 +731,7 @@ export default function MapPage() {
       } catch (error) {
         console.warn('[map] unable to resolve auth session', error);
         if (mounted) {
-          setIsAuthenticated(false);
+          setIsAuthenticated(e2eBypassAuth ? true : false);
           hydrateAnonymousPreferences();
         }
       }
@@ -690,7 +742,7 @@ export default function MapPage() {
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
       const userId = session?.user?.id ?? null;
-      setIsAuthenticated(Boolean(userId));
+      setIsAuthenticated(e2eBypassAuth ? true : Boolean(userId));
       if (userId) {
         await loadPreferencesForUser(userId);
       } else {
@@ -702,7 +754,7 @@ export default function MapPage() {
       listener.subscription.unsubscribe();
       mounted = false;
     };
-  }, [hydrateAnonymousPreferences, loadPreferencesForUser, preferencesUserId]);
+  }, [e2eBypassAuth, hydrateAnonymousPreferences, loadPreferencesForUser, preferencesUserId]);
 
   useEffect(() => {
     centerRef.current = center;
@@ -785,13 +837,50 @@ export default function MapPage() {
   );
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const hasQueryFilterConstraints = useMemo(() => {
+    const next = query?.filters;
+    if (!next) return false;
+    return Boolean(
+      (next.activityTypes?.length ?? 0)
+      || (next.tags?.length ?? 0)
+      || (next.traits?.length ?? 0)
+      || (next.taxonomyCategories?.length ?? 0)
+      || (next.priceLevels?.length ?? 0)
+      || next.capacityKey
+      || next.timeWindow,
+    );
+  }, [query?.filters]);
   const searchActivityTokens = useMemo(
     () => extractActivitySearchTokens(normalizedSearchTerm),
     [normalizedSearchTerm],
   );
 
+  const filteredAugmentedQuery = useMemo(() => {
+    if (!query) return null;
+    if (normalizedSearchTerm) return null;
+    if (!hasQueryFilterConstraints) return null;
+
+    return {
+      ...query,
+      radiusMeters: Math.max(query.radiusMeters, 25_000),
+      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
+    };
+  }, [query, normalizedSearchTerm, hasQueryFilterConstraints]);
+
   const searchAugmentedQuery = useMemo(() => {
     if (!query) return null;
+    if (!normalizedSearchTerm) return null;
+
+    return {
+      ...query,
+      radiusMeters: Math.max(query.radiusMeters, 25_000),
+      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
+    };
+  }, [query, normalizedSearchTerm]);
+
+  const searchAugmentedTypeQuery = useMemo(() => {
+    if (!query) return null;
+    if (!normalizedSearchTerm) return null;
     if (!searchActivityTokens.length) return null;
 
     const baseFilters = query.filters ?? {};
@@ -806,7 +895,7 @@ export default function MapPage() {
         activityTypes,
       },
     };
-  }, [query, searchActivityTokens]);
+  }, [query, normalizedSearchTerm, searchActivityTokens]);
 
   const loadActivities = accessAllowed && dataMode !== 'events';
   const loadEvents = accessAllowed && dataMode !== 'activities';
@@ -839,12 +928,38 @@ export default function MapPage() {
     retry: 1,
   });
 
+  const nearbySearchByType = useNearbyActivities(searchAugmentedTypeQuery, {
+    fetcher,
+    enabled: Boolean(searchAugmentedTypeQuery) && loadActivities,
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
+  const nearbyFilteredAugment = useNearbyActivities(filteredAugmentedQuery, {
+    fetcher,
+    enabled: Boolean(filteredAugmentedQuery) && loadActivities,
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
   const stableNearby = useStableNearbyData(nearby);
   const nearbyData = stableNearby.data ?? nearby.data ?? null;
 
   const searchActivities = nearbySearch.data?.activities ?? EMPTY_ACTIVITIES;
+  const searchTypeActivities = nearbySearchByType.data?.activities ?? EMPTY_ACTIVITIES;
+  const filteredAugmentActivities = nearbyFilteredAugment.data?.activities ?? EMPTY_ACTIVITIES;
   const activities = useMemo(() => {
-    if (!searchActivities.length) return nearbyData?.activities ?? EMPTY_ACTIVITIES;
+    if (!searchActivities.length && !searchTypeActivities.length && !filteredAugmentActivities.length) {
+      return nearbyData?.activities ?? EMPTY_ACTIVITIES;
+    }
     const merged = new Map<string, MapActivity>();
     for (const activity of nearbyData?.activities ?? EMPTY_ACTIVITIES) {
       merged.set(activity.id, activity);
@@ -852,8 +967,14 @@ export default function MapPage() {
     for (const activity of searchActivities) {
       merged.set(activity.id, activity);
     }
+    for (const activity of searchTypeActivities) {
+      merged.set(activity.id, activity);
+    }
+    for (const activity of filteredAugmentActivities) {
+      merged.set(activity.id, activity);
+    }
     return Array.from(merged.values());
-  }, [nearbyData?.activities, searchActivities]);
+  }, [nearbyData?.activities, searchActivities, searchTypeActivities, filteredAugmentActivities]);
   const filterSupport = nearbyData?.filterSupport ?? null;
   const facets = nearbyData?.facets ?? null;
   const facetActivityTypes = useMemo(
@@ -904,30 +1025,31 @@ export default function MapPage() {
 
   const eventsRangeDays = dataMode === 'events' ? 21 : 14;
   const eventsWindow = useMemo(() => {
-    const start = new Date();
+    const start = new Date(Date.now() - MAP_EVENTS_LOOKBACK_MS);
     const end = new Date(start.getTime() + eventsRangeDays * 24 * 60 * 60 * 1000);
     return { from: start.toISOString(), to: end.toISOString() };
   }, [eventsRangeDays]);
 
-  const eventsQueryBounds = useMemo(
-    () => (bounds ? normaliseEventQueryBounds(bounds) : null),
-    [bounds],
-  );
+  const eventsQueryBounds = useMemo(() => {
+    if (queryCenter) {
+      const radiusForEventsQuery = Math.max(radiusMeters, 25_000);
+      const aroundCenter = buildBoundsAroundCenter(queryCenter, radiusForEventsQuery);
+      return normaliseEventQueryBounds(aroundCenter);
+    }
+    return bounds ? normaliseEventQueryBounds(bounds) : null;
+  }, [bounds, queryCenter, radiusMeters]);
 
   const eventsQueryArgs = useMemo(
     () =>
       loadEvents && eventsQueryBounds
         ? {
-            sw: eventsQueryBounds.sw,
-            ne: eventsQueryBounds.ne,
+            ...(locationErrored ? {} : { sw: eventsQueryBounds.sw, ne: eventsQueryBounds.ne }),
             from: eventsWindow.from,
             to: eventsWindow.to,
             limit: 200,
-            verifiedOnly: true,
-            minAccuracy: 95,
           }
         : null,
-    [eventsQueryBounds, eventsWindow.from, eventsWindow.to, loadEvents],
+    [eventsQueryBounds, eventsWindow.from, eventsWindow.to, loadEvents, locationErrored],
   );
 
   const eventsQuery = useEvents(eventsQueryArgs, {
@@ -952,8 +1074,9 @@ export default function MapPage() {
   const filteredActivities = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const hasSearch = term.length > 0;
-    const searchTerms = extractSearchTerms(term);
+    const searchPhrases = extractSearchPhrases(term);
     const searchTokens = extractActivitySearchTokens(term);
+    const structuredSearchTokens = extractStructuredActivityTokens(term);
     const normalizeSet = (values?: (string | null | undefined)[] | null) => {
       const set = new Set<string>();
       (values ?? []).forEach((value) => {
@@ -985,26 +1108,15 @@ export default function MapPage() {
     const filterPrice = selectedPriceSet.size > 0 && priceLevelsSupported;
     const filterCapacity = Boolean(capacityFilter && capacitySupported);
     const filterTimeWindow = Boolean(timeWindowFilter && timeWindowSupported);
+    const hasAnyStructuredFilter =
+      filterActivityTypes
+      || filterTraits
+      || filterTaxonomy
+      || filterPrice
+      || filterCapacity
+      || filterTimeWindow;
 
-    const effectiveRadiusMeters = hasSearch ? Math.max(radiusMeters, 25_000) : radiusMeters;
-
-    const proximityConstrained = activities.filter((activity) =>
-      isWithinRadius(queryCenter, effectiveRadiusMeters, activity.lat, activity.lng, activity.distance_m),
-    );
-
-    if (
-      !hasSearch &&
-      !filterActivityTypes &&
-      !filterTraits &&
-      !filterTaxonomy &&
-      !filterPrice &&
-      !filterCapacity &&
-      !filterTimeWindow
-    ) {
-      return proximityConstrained;
-    }
-
-    return proximityConstrained.filter((activity) => {
+    const applyFilters = (activity: MapActivity): boolean => {
       if (filterActivityTypes) {
         const haystack = useTagsForActivityTypes || (!activityTypesSupported && tagsSupported)
           ? normalizeSet(activity.tags)
@@ -1031,32 +1143,74 @@ export default function MapPage() {
       if (filterTimeWindow && activity.time_window !== timeWindowFilter) return false;
 
       if (hasSearch) {
-        const name = activity.name?.toLowerCase() ?? '';
-        const venue = activity.venue?.toLowerCase() ?? '';
-        const place = activity.place_label?.toLowerCase() ?? '';
-        const tags = (activity.tags ?? []).join(' ').toLowerCase();
-        const types = (activity.activity_types ?? []).join(' ').toLowerCase();
-        const haystack = `${name} ${venue} ${place} ${tags} ${types}`;
-
-        if (haystack.includes(term)) {
-          return true;
+        const intentTokens = new Set<string>([
+          ...searchTokens.map((value) => value.trim().toLowerCase()).filter(Boolean),
+          ...structuredSearchTokens.map((value) => value.trim().toLowerCase()).filter(Boolean),
+          ...selectedTypes,
+        ]);
+        if (
+          isGenericActivityDisplay(activity, PLACE_FALLBACK_LABEL)
+          && intentTokens.size > 0
+          && !hasTypeIntentMatch(activity, intentTokens)
+        ) {
+          return false;
         }
-
-        if (searchTerms.some((searchWord) => haystack.includes(searchWord))) {
-          return true;
-        }
-
-        if (searchTokens.length > 0) {
-          const typeTokens = normalizeSet(activity.activity_types);
-          const tagTokens = normalizeSet(activity.tags);
-          return searchTokens.some((token) => typeTokens.has(token) || tagTokens.has(token));
-        }
-
-        return false;
+        return matchesActivitySearch(activity, {
+          term,
+          searchPhrases,
+          searchTokens,
+          structuredSearchTokens,
+        });
       }
 
       return true;
-    });
+    };
+
+    const baseEffectiveRadiusMeters = hasSearch ? Math.max(radiusMeters, 25_000) : radiusMeters;
+    const expandedEffectiveRadiusMeters = Math.max(baseEffectiveRadiusMeters, 25_000);
+
+    const proximityConstrained = activities.filter((activity) =>
+      isWithinRadius(queryCenter, baseEffectiveRadiusMeters, activity.lat, activity.lng, activity.distance_m),
+    );
+
+    if (
+      !hasSearch &&
+      !hasAnyStructuredFilter
+    ) {
+      return dedupeNearDuplicateActivities(proximityConstrained);
+    }
+
+    const strictResults = proximityConstrained.filter(applyFilters);
+    const shouldExpandSparseFilters =
+      !hasSearch
+      && hasAnyStructuredFilter
+      && strictResults.length < MAP_SPARSE_RESULTS_THRESHOLD
+      && expandedEffectiveRadiusMeters > baseEffectiveRadiusMeters;
+
+    if (!shouldExpandSparseFilters) {
+      return dedupeNearDuplicateActivities(pruneLowQualitySearchActivities({
+        activities: strictResults,
+        hasSearch,
+        hasStructuredFilters: hasAnyStructuredFilter,
+        searchTokens,
+        structuredSearchTokens,
+        selectedTypes,
+        fallbackLabel: PLACE_FALLBACK_LABEL,
+      }));
+    }
+
+    const expandedProximity = activities.filter((activity) =>
+      isWithinRadius(queryCenter, expandedEffectiveRadiusMeters, activity.lat, activity.lng, activity.distance_m),
+    );
+    return dedupeNearDuplicateActivities(pruneLowQualitySearchActivities({
+      activities: expandedProximity.filter(applyFilters),
+      hasSearch,
+      hasStructuredFilters: hasAnyStructuredFilter,
+      searchTokens,
+      structuredSearchTokens,
+      selectedTypes,
+      fallbackLabel: PLACE_FALLBACK_LABEL,
+    }));
   }, [
     activities,
     queryCenter,
@@ -1080,41 +1234,94 @@ export default function MapPage() {
 
   const filteredEvents = useMemo(() => {
     const effectiveRadiusMeters = normalizedSearchTerm.length > 0 ? Math.max(radiusMeters, 25_000) : radiusMeters;
-    const nearbyEvents = events.filter((eventSummary) =>
-      isWithinRadius(queryCenter, effectiveRadiusMeters, eventSummary.lat, eventSummary.lng, null),
-    );
-    if (!normalizedSearchTerm) return nearbyEvents;
-    const searchTerms = extractSearchTerms(normalizedSearchTerm);
-    return nearbyEvents.filter((eventSummary) => {
+    const nearbyEvents = locationErrored
+      ? events
+      : events.filter((eventSummary) =>
+          isWithinRadius(queryCenter, effectiveRadiusMeters, eventSummary.lat, eventSummary.lng, null),
+        );
+    const scopedEvents = nearbyEvents.length > 0 ? nearbyEvents : events;
+    if (!normalizedSearchTerm) return scopedEvents;
+    const searchPhrases = extractSearchPhrases(normalizedSearchTerm);
+    return scopedEvents.filter((eventSummary) => {
       const title = eventSummary.title?.toLowerCase() ?? '';
       const venue = eventSummary.venue_name?.toLowerCase() ?? '';
       const place = eventSummary.place_label?.toLowerCase() ?? '';
       const haystack = `${title} ${venue} ${place}`;
-      return haystack.includes(normalizedSearchTerm) || searchTerms.some((searchWord) => haystack.includes(searchWord));
+      return haystack.includes(normalizedSearchTerm) || searchPhrases.some((searchWord) => haystack.includes(searchWord));
     });
-  }, [events, queryCenter, radiusMeters, normalizedSearchTerm]);
+  }, [events, locationErrored, queryCenter, radiusMeters, normalizedSearchTerm]);
 
   useEffect(() => {
-    if (!highlightSessionId || !filteredEvents.length) return;
+    if (!effectiveHighlightSessionId) return;
+
     const match = filteredEvents.find((eventSummary) => {
-      if (eventSummary.id === highlightSessionId) return true;
+      if (eventSummary.id === effectiveHighlightSessionId) return true;
       const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
-      return sessionId === highlightSessionId;
+      return sessionId === effectiveHighlightSessionId;
     });
-    if (!match) return;
-    setSelectedEventId(match.id);
-    if (dataMode === 'activities') {
-      setDataMode('both');
+    if (match) {
+      setSelectedEventId(match.id);
+      setSelectedActivityId(null);
+      if (dataMode === 'activities') {
+        setDataMode('both');
+      }
+      setViewMode('list');
+      const params = new URLSearchParams(searchParamsString);
+      params.delete('activity');
+      const basePath = pathname ?? '/map';
+      const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
+      router.replace(nextUrl as Route, { scroll: false });
+      return;
     }
-    setViewMode('list');
-    const params = new URLSearchParams(searchParamsString);
-    params.delete('highlightSession');
-    const basePath = pathname ?? '/map';
-    const nextUrl = params.toString() ? `${basePath}?${params.toString()}` : basePath;
-    router.replace(nextUrl as Route, { scroll: false });
-  }, [dataMode, filteredEvents, highlightSessionId, pathname, router, searchParamsString]);
+
+    if (attemptedHighlightFetchRef.current.has(effectiveHighlightSessionId)) return;
+    attemptedHighlightFetchRef.current.add(effectiveHighlightSessionId);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(effectiveHighlightSessionId)}`, {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const payload = (await response.json()) as { session?: unknown; error?: string };
+        if (!response.ok || !payload?.session) return;
+        if (cancelled) return;
+
+        const centerFromSession = resolveMapCenterFromSession(payload.session);
+        if (centerFromSession) {
+          centerRef.current = centerFromSession;
+          queryCenterRef.current = centerFromSession;
+          setCenter(centerFromSession);
+          setQueryCenter(centerFromSession);
+          const delta = 0.02;
+          const nextBounds = {
+            sw: { lat: centerFromSession.lat - delta, lng: centerFromSession.lng - delta },
+            ne: { lat: centerFromSession.lat + delta, lng: centerFromSession.lng + delta },
+          };
+          boundsRef.current = nextBounds;
+          setBounds(nextBounds);
+        }
+
+        if (dataMode === 'activities') {
+          setDataMode('both');
+        }
+        setSelectedEventId(effectiveHighlightSessionId);
+        setSelectedActivityId(null);
+        setViewMode('list');
+      } catch {
+        // Ignore; normal events query flow will continue and the param stays for the next refresh.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataMode, effectiveHighlightSessionId, filteredEvents, pathname, router, searchParamsString]);
 
   useEffect(() => {
+    if (effectiveHighlightSessionId) return;
     const params = new URLSearchParams(searchParamsString);
     const requestedId = params.get('activity');
     lastSyncedActivityIdRef.current = requestedId;
@@ -1128,7 +1335,7 @@ export default function MapPage() {
     setSelectedActivityId(requestedId);
     setSelectedEventId(null);
     setViewMode('list');
-  }, [searchParamsString, selectedActivityId]);
+  }, [effectiveHighlightSessionId, searchParamsString, selectedActivityId]);
 
   const availableActivityTypes = useMemo(() => {
     if (useTagsForActivityTypes && facetTags.length) {
@@ -1490,21 +1697,6 @@ export default function MapPage() {
     [isAuthenticated, router, track],
   );
 
-  const handleActivityDetails = useCallback(
-    (activity: MapActivity) => {
-      track('map_activity_details_requested', {
-        activityId: activity.id,
-        isUuid: isUuid(activity.id),
-      });
-      if (isUuid(activity.id)) {
-        router.push(`/activities/${activity.id}` as Route);
-        return;
-      }
-      handleCreateEvent(activity);
-    },
-    [handleCreateEvent, router, track],
-  );
-
 const handleRequestDetails = useCallback(
   (activity: MapActivity) => {
     handleViewEvents(activity.id);
@@ -1764,6 +1956,27 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     return activities.find((activity) => activity.id === selectedActivityId) ?? null;
   }, [activities, selectedActivityId]);
 
+  useEffect(() => {
+    if (!selectedActivity) {
+      centeredForActivityIdRef.current = null;
+      return;
+    }
+    if (centeredForActivityIdRef.current === selectedActivity.id) return;
+    if (!Number.isFinite(selectedActivity.lat) || !Number.isFinite(selectedActivity.lng)) return;
+
+    const nextCenter = { lat: Number(selectedActivity.lat.toFixed(6)), lng: Number(selectedActivity.lng.toFixed(6)) };
+    centerRef.current = nextCenter;
+    queryCenterRef.current = nextCenter;
+    setCenter(nextCenter);
+    setQueryCenter(nextCenter);
+
+    const nextBounds = buildBoundsAroundCenter(nextCenter, Math.max(radiusMeters, 25_000));
+    boundsRef.current = nextBounds;
+    setBounds(nextBounds);
+
+    centeredForActivityIdRef.current = selectedActivity.id;
+  }, [radiusMeters, selectedActivity]);
+
   const selectedActivitySummary = useMemo(() => {
     if (!selectedActivity) return null;
     const place = activityPlaceLabel(selectedActivity) ?? PLACE_FALLBACK_LABEL;
@@ -1868,7 +2081,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     ? `No events match "${searchTerm}". Try another name or clear the search.`
     : "No events match those filters yet. Try widening your search.";
 
-  if (isAuthenticated === null) {
+  if (isAuthenticated === null && !e2eBypassAuth) {
     return (
       <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
         Checking your account…
@@ -1876,7 +2089,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     );
   }
 
-  if (isAuthenticated === false) {
+  if (isAuthenticated === false && !e2eBypassAuth) {
     return (
       <main className="mx-auto flex min-h-[calc(100dvh-64px)] max-w-3xl items-center px-4 py-12">
         <AuthGate
@@ -2023,7 +2236,6 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             onSelectActivity={handleActivitySelect}
             onSelectEvent={handleEventSelect}
             onRequestDetails={handleRequestDetails}
-            onRequestActivityDetails={handleActivityDetails}
             onRequestCreateEvent={handleCreateEvent}
             onRequestEventDetails={handleEventDetails}
             activeActivityId={selectedActivityId}
@@ -2233,16 +2445,6 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleActivityDetails(activity);
-                              }}
-                              className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
-                            >
-                              View details →
-                            </button>
                             <button
                               type="button"
                               onClick={(event) => {

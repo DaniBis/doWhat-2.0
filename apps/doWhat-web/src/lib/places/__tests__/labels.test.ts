@@ -16,6 +16,11 @@ describe('normalizePlaceLabel', () => {
     expect(label).toBe(PLACE_FALLBACK_LABEL);
   });
 
+  it('ignores placeholder names such as unnamed place', () => {
+    const label = normalizePlaceLabel('Unnamed place', '  ', null, 'Main Hall');
+    expect(label).toBe('Main Hall');
+  });
+
   it('ignores non-string candidates', () => {
     const label = normalizePlaceLabel(null as unknown as string, 'Cafe Court');
     expect(label).toBe('Cafe Court');

@@ -7,7 +7,7 @@ const CITY_SLUG = 'hanoi';
 const CENTER_LAT = 21.0278;
 const CENTER_LNG = 105.8342;
 const TILE_PRECISION = 5;
-const DEFAULT_TILE_COUNT = 10;
+const DEFAULT_TILE_COUNT = 20;
 const MAX_TILE_COUNT = 80;
 
 const buildTiles = (target: number): string[] => {

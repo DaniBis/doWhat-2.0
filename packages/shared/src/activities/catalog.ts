@@ -113,6 +113,14 @@ export const ACTIVITY_CATALOG_PRESETS: ActivityCatalogEntry[] = [
     keywords: ['horse riding', 'horseback riding', 'equestrian', 'stable', 'riding school'],
     fsq_categories: [],
   },
+  {
+    id: 15,
+    slug: 'poker',
+    name: 'Poker',
+    description: 'Poker rooms, card clubs, and venues that host poker games.',
+    keywords: ['poker', 'poker room', 'poker club', 'card room', 'texas hold em', 'holdem', 'casino poker', 'casino'],
+    fsq_categories: [],
+  },
 ];
 
 export const getActivityPresetById = (id: number): ActivityCatalogEntry | undefined =>

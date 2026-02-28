@@ -9,6 +9,10 @@ import type { EventSummary } from '@dowhat/shared';
 import { queryEventsWithFallback } from './queryEventsWithFallback';
 
 const MAX_LIMIT = 200;
+const SESSION_EVENTS_DEFAULT_LOOKBACK_HOURS = 24;
+const SESSION_FALLBACK_MIN_FETCH = 500;
+const SESSION_FALLBACK_MAX_FETCH = 2000;
+const SESSION_FALLBACK_FETCH_MULTIPLIER = 5;
 
 const getSessionCoordinates = (session: HydratedSession) => {
   const lat = session.place?.lat ?? session.venue?.lat ?? session.activity?.lat ?? null;
@@ -313,12 +317,20 @@ async function fetchSessionEvents({
   toIso: string | null;
   limit: number;
 }): Promise<EventSummary[]> {
+  const effectiveFromIso =
+    fromIso
+    ?? new Date(Date.now() - SESSION_EVENTS_DEFAULT_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
+  const sessionFetchLimit = Math.min(
+    SESSION_FALLBACK_MAX_FETCH,
+    Math.max(SESSION_FALLBACK_MIN_FETCH, limit * SESSION_FALLBACK_FETCH_MULTIPLIER),
+  );
+
   let query = client
     .from('sessions')
     .select('*')
     .order('starts_at', { ascending: true })
-    .limit(limit);
-  if (fromIso) query = query.gte('starts_at', fromIso);
+    .limit(sessionFetchLimit);
+  query = query.or(`starts_at.gte.${effectiveFromIso},ends_at.gte.${effectiveFromIso},created_at.gte.${effectiveFromIso}`);
   if (toIso) query = query.lte('starts_at', toIso);
   const { data, error } = await query;
   if (error || !data?.length) return [];

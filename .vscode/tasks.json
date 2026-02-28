@@ -105,6 +105,14 @@
 			"type": "shell",
 			"command": "pnpm test -- --passWithNoTests",
 			"group": "test"
+		},
+		{
+			"label": "diagnose:unnamed-places-db",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"temp/check_unnamed_places.cjs"
+			]
 		}
 	]
 }

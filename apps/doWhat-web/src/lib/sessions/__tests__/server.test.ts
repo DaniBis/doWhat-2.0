@@ -2,6 +2,8 @@ import { resolvePlaceFromCoordsWithClient } from "@/lib/places/resolver";
 import {
   __sessionServerTesting,
   ensureActivity,
+  extractSessionPayload,
+  getUserAttendanceStatus,
   hydrateSessions,
   resolveSessionPlaceId,
   deriveSessionPlaceLabel,
@@ -250,6 +252,45 @@ describe("deriveSessionPlaceLabel", () => {
   });
 });
 
+describe('extractSessionPayload', () => {
+  it('parses placeId and place_id aliases', () => {
+    const fromCamel = extractSessionPayload({ placeId: '3d9e27a6-c62f-4906-a2cf-5d7b406e82fd' });
+    const fromSnake = extractSessionPayload({ place_id: '3d9e27a6-c62f-4906-a2cf-5d7b406e82fd' });
+
+    expect(fromCamel.placeId).toBe('3d9e27a6-c62f-4906-a2cf-5d7b406e82fd');
+    expect(fromSnake.placeId).toBe('3d9e27a6-c62f-4906-a2cf-5d7b406e82fd');
+  });
+
+  it('preserves non-empty place ids for downstream validation', () => {
+    const parsed = extractSessionPayload({ placeId: '  not-a-uuid  ' });
+    expect(parsed.placeId).toBe('not-a-uuid');
+  });
+});
+
+describe("getUserAttendanceStatus", () => {
+  it("maps going + late_cancel to declined", async () => {
+    const service = createAttendanceStatusService({
+      status: "going",
+      attendance_status: "late_cancel",
+    });
+
+    const status = await getUserAttendanceStatus(service as never, "session-1", "user-1");
+
+    expect(status).toBe("declined");
+  });
+
+  it("keeps going when attendance outcome is registered", async () => {
+    const service = createAttendanceStatusService({
+      status: "going",
+      attendance_status: "registered",
+    });
+
+    const status = await getUserAttendanceStatus(service as never, "session-2", "user-2");
+
+    expect(status).toBe("going");
+  });
+});
+
 type TableMap = {
   activities?: Array<Record<string, unknown>>;
   venues?: Array<Record<string, unknown>>;
@@ -388,4 +429,13 @@ function createSingleRowService(rows: Record<string, Record<string, unknown> | n
       return query;
     }),
   };
+}
+
+function createAttendanceStatusService(row: { status: "going" | "interested" | "declined"; attendance_status?: string | null } | null) {
+  const maybeSingle = jest.fn(async () => ({ data: row, error: null }));
+  const eqUser = jest.fn(() => ({ maybeSingle }));
+  const eqSession = jest.fn(() => ({ eq: eqUser }));
+  const select = jest.fn(() => ({ eq: eqSession }));
+  const from = jest.fn(() => ({ select }));
+  return { from };
 }

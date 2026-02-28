@@ -80,6 +80,39 @@ describe('places provider adapters', () => {
     expect(places[0].categories).toContain('activity');
   });
 
+  test('fetchOverpassPlaces skips unnamed placeholders', async () => {
+    const payload = {
+      elements: [
+        {
+          type: 'node',
+          id: 11,
+          lat: 13.744,
+          lon: 100.531,
+          tags: {
+            name: 'Unnamed place',
+            leisure: 'sports_centre',
+          },
+        },
+        {
+          type: 'node',
+          id: 12,
+          lat: 13.745,
+          lon: 100.532,
+          tags: {
+            name: 'Named Arena',
+            leisure: 'sports_centre',
+          },
+        },
+      ],
+    };
+
+    mockFetchJson(payload);
+
+    const places = await fetchOverpassPlaces(query);
+    expect(places).toHaveLength(1);
+    expect(places[0]?.name).toBe('Named Arena');
+  });
+
   test('fetchFoursquarePlaces maps categories', async () => {
     process.env.FOURSQUARE_API_KEY = 'test-key';
     const payload = {

@@ -4,14 +4,20 @@ import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { isUuid } from "@dowhat/shared";
+import { isUuid, type MapActivity } from "@dowhat/shared";
 import AuthGate from "@/components/AuthGate";
 import LocationPickerMap from "@/components/create/LocationPickerMap";
 import { extractSessionId, type CreateSessionResponse } from "./extractSessionId";
+import { formatDateTimeLocalInput, toUtcIsoFromDateTimeLocal } from './dateTime';
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
-
-type Option = { id: string; name: string };
+import {
+  buildVenueDiscoveryQuery,
+  mapActivitiesToVenueOptions,
+  suggestVenueOptions,
+  type VenueOption as Option,
+} from './venueDiscovery';
+import { parseVenueSelection } from './venueSelection';
 
 type LocationStatus = 'idle' | 'loading' | 'success' | 'error' | 'denied' | 'manual';
 
@@ -19,6 +25,7 @@ type PrefillState = {
   activityId: string | null;
   activityName: string | null;
   venueId: string | null;
+  placeId: string | null;
   venueName: string | null;
   lat: string | null;
   lng: string | null;
@@ -70,11 +77,13 @@ export default function CreateEventPage() {
     const activityName = sanitizeQueryValue(searchParams?.get('activityName'));
     const venueIdParam = sanitizeQueryValue(searchParams?.get('venueId'));
     const venueId = venueIdParam && isUuid(venueIdParam) ? venueIdParam : null;
+    const placeIdParam = sanitizeQueryValue(searchParams?.get('placeId'));
+    const placeId = placeIdParam && isUuid(placeIdParam) ? placeIdParam : null;
     const venueName = sanitizeQueryValue(searchParams?.get('venueName'));
     const lat = normalizeCoordinateParam(searchParams?.get('lat'));
     const lng = normalizeCoordinateParam(searchParams?.get('lng'));
     const returnTo = sanitizeRelativePath(searchParams?.get('returnTo'));
-    return { activityId, activityName, venueId, venueName, lat, lng, returnTo } satisfies PrefillState;
+    return { activityId, activityName, venueId, placeId, venueName, lat, lng, returnTo } satisfies PrefillState;
   }, [searchParams]);
   const redirectTarget = useMemo(() => {
     const params = searchParams?.toString() ?? "";
@@ -84,10 +93,16 @@ export default function CreateEventPage() {
   const hasPrefilledCoords = Boolean(prefill.lat && prefill.lng);
   const [activities, setActivities] = useState<Option[]>([]);
   const [venues, setVenues] = useState<Option[]>([]);
+  const [venuesLoading, setVenuesLoading] = useState(false);
+  const [venuesError, setVenuesError] = useState<string | null>(null);
 
   const [activityId, setActivityId] = useState(prefill.activityId ?? '');
   const [activityName, setActivityName] = useState(prefill.activityName ?? '');
   const [venueId, setVenueId] = useState(prefill.venueId ?? '');
+  const [placeId, setPlaceId] = useState(prefill.placeId ?? '');
+  const [venueSelectionId, setVenueSelectionId] = useState(
+    prefill.placeId ? `place:${prefill.placeId}` : prefill.venueId ? `venue:${prefill.venueId}` : '',
+  );
   const [venueName, setVenueName] = useState(prefill.venueId ? '' : prefill.venueName ?? '');
   const [lat, setLat] = useState(prefill.lat ?? '');
   const [lng, setLng] = useState(prefill.lng ?? '');
@@ -106,10 +121,10 @@ export default function CreateEventPage() {
   const { defaultStart, defaultEnd } = useMemo(() => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const defaultStartValue = tomorrow.toISOString().slice(0, 16);
+    const defaultStartValue = formatDateTimeLocalInput(tomorrow);
     const tomorrowEnd = new Date(tomorrow);
     tomorrowEnd.setHours(tomorrowEnd.getHours() + 2);
-    const defaultEndValue = tomorrowEnd.toISOString().slice(0, 16);
+    const defaultEndValue = formatDateTimeLocalInput(tomorrowEnd);
     return { defaultStart: defaultStartValue, defaultEnd: defaultEndValue };
   }, []);
 
@@ -122,6 +137,16 @@ export default function CreateEventPage() {
 
   const showLocationNotice = locationStatus === 'loading' || locationStatus === 'error' || locationStatus === 'denied';
   const disableSubmit = saving || !coordsValid;
+  const selectedActivityLabel = useMemo(() => {
+    if (activityName.trim()) return activityName.trim();
+    if (!activityId) return '';
+    return activities.find((candidate) => candidate.id === activityId)?.name ?? '';
+  }, [activities, activityId, activityName]);
+  const venueNameSuggestions = useMemo(() => {
+    if (venueSelectionId) return [] as Option[];
+    if (!venueName.trim()) return [] as Option[];
+    return suggestVenueOptions(venues, venueName, 6);
+  }, [venueName, venueSelectionId, venues]);
 
   function handleManualLatChange(value: string) {
     setLat(value);
@@ -170,21 +195,13 @@ export default function CreateEventPage() {
     let active = true;
     (async () => {
       type ActivityRow = { id: string; name: string | null };
-      type VenueRow = { id: string; name: string | null };
 
       try {
-        const [activityResp, venueResp] = await Promise.all([
-          supabase
-            .from('activities')
-            .select('id,name')
-            .order('name')
-            .returns<ActivityRow[]>(),
-          supabase
-            .from('venues')
-            .select('id,name')
-            .order('name')
-            .returns<VenueRow[]>(),
-        ]);
+        const activityResp = await supabase
+          .from('activities')
+          .select('id,name')
+          .order('name')
+          .returns<ActivityRow[]>();
 
         if (!active) return;
 
@@ -194,17 +211,8 @@ export default function CreateEventPage() {
           );
         }
 
-        if (!venueResp.error && venueResp.data) {
-          setVenues(
-            venueResp.data.map((row) => ({ id: row.id, name: row.name ?? 'Untitled venue' }))
-          );
-        }
-
         if (activityResp.error) {
           console.warn('Failed to load activities', activityResp.error);
-        }
-        if (venueResp.error) {
-          console.warn('Failed to load venues', venueResp.error);
         }
       } catch (error) {
         if (active) {
@@ -224,6 +232,71 @@ export default function CreateEventPage() {
       active = false;
     };
   }, [authStatus, hasPrefilledCoords]);
+
+  useEffect(() => {
+    if (authStatus !== 'authed') return;
+    if (!coordsValid) {
+      setVenues([]);
+      setVenuesError(null);
+      setVenuesLoading(false);
+      return;
+    }
+
+    const la = Number.parseFloat(lat);
+    const ln = Number.parseFloat(lng);
+    if (!Number.isFinite(la) || !Number.isFinite(ln)) return;
+
+    const query = buildVenueDiscoveryQuery({
+      lat: la,
+      lng: ln,
+      activityLabel: selectedActivityLabel,
+    });
+
+    const params = new URLSearchParams({
+      lat: la.toFixed(6),
+      lng: ln.toFixed(6),
+      radius: String(query.radiusMeters),
+      limit: String(query.limit),
+      refresh: '1',
+    });
+    if (query.types.length) {
+      params.set('types', query.types.join(','));
+    }
+
+    let cancelled = false;
+    setVenuesLoading(true);
+    setVenuesError(null);
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/nearby?${params.toString()}`, {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const payload = (await response.json()) as { error?: string; activities?: MapActivity[] };
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Failed to load nearby venues.');
+        }
+        if (cancelled) return;
+        const next = mapActivitiesToVenueOptions(payload.activities ?? []);
+        setVenues(next);
+      } catch (error) {
+        if (cancelled) return;
+        const message = getErrorMessage(error);
+        setVenues([]);
+        setVenuesError(message);
+      } finally {
+        if (!cancelled) {
+          setVenuesLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus, coordsValid, lat, lng, selectedActivityLabel]);
 
   useEffect(() => {
     if (!venueId || venueName) return;
@@ -277,12 +350,13 @@ export default function CreateEventPage() {
         activityId: activityId || null,
         activityName: activityName.trim() || null,
         venueId: venueId || null,
+        placeId: placeId || null,
         venueName: venueName.trim() || null,
         lat: la,
         lng: ln,
         price: Number(price) || 0,
-        startsAt: startsAt || defaultStart,
-        endsAt: endsAt || defaultEnd,
+        startsAt: toUtcIsoFromDateTimeLocal(startsAt || defaultStart),
+        endsAt: toUtcIsoFromDateTimeLocal(endsAt || defaultEnd),
         description: description.trim() || null,
       };
 
@@ -298,6 +372,13 @@ export default function CreateEventPage() {
       const sessionId = extractSessionId(result);
       if (!response.ok || !sessionId) {
         throw new Error(result?.error || 'Failed to create event.');
+      }
+
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(
+          'dowhat:last-created-session',
+          JSON.stringify({ id: sessionId, createdAt: Date.now() }),
+        );
       }
 
       setMsg('Event created successfully!');
@@ -403,10 +484,13 @@ export default function CreateEventPage() {
           </label>
           <div className="space-y-3">
             <select
-              value={venueId}
+              value={venueSelectionId}
               onChange={(e) => {
                 const selectedValue = e.target.value;
-                setVenueId(selectedValue);
+                setVenueSelectionId(selectedValue);
+                const next = parseVenueSelection(selectedValue);
+                setVenueId(next.venueId);
+                setPlaceId(next.placeId);
                 if (selectedValue) {
                   const selectedVenue = venues.find((v) => v.id === selectedValue);
                   setVenueName(selectedVenue?.name ?? '');
@@ -416,13 +500,20 @@ export default function CreateEventPage() {
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             >
-              <option value="">Select existing venue (optional)</option>
+              <option value="">Select nearby venue/place (optional)</option>
               {venues.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}
                 </option>
               ))}
             </select>
+            <p className="text-xs text-gray-600">
+              {venuesLoading
+                ? 'Loading nearby places around your location…'
+                : venuesError
+                  ? `Could not load nearby places (${venuesError}). You can still type a venue manually.`
+                  : 'This list is location-aware and expands automatically when activity filters are applied.'}
+            </p>
             
             <input
               type="text"
@@ -430,11 +521,42 @@ export default function CreateEventPage() {
               value={venueName}
               onChange={(e) => {
                 setVenueName(e.target.value);
-                if (e.target.value) setVenueId('');
+                if (e.target.value) {
+                  setVenueSelectionId('');
+                  setVenueId('');
+                  setPlaceId('');
+                }
               }}
-              disabled={!!venueId}
+              disabled={!!venueId || !!placeId}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal disabled:bg-gray-50"
             />
+            {!venueSelectionId && venueNameSuggestions.length > 0 && (
+              <div className="rounded-lg border border-gray-200 bg-white p-2">
+                <p className="px-1 pb-1 text-xs text-gray-600">
+                  Matching nearby venues (optional): choose one or keep typing your own name.
+                </p>
+                <ul className="space-y-1">
+                  {venueNameSuggestions.map((suggestion) => (
+                    <li key={suggestion.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVenueSelectionId(suggestion.id);
+                          const next = parseVenueSelection(suggestion.id);
+                          setVenueId(next.venueId);
+                          setPlaceId(next.placeId);
+                          setVenueName(suggestion.name);
+                        }}
+                        className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <span>{suggestion.name}</span>
+                        <span className="text-xs font-semibold text-brand-teal">Use</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 

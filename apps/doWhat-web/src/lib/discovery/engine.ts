@@ -41,8 +41,9 @@ import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { resolveDiscoveryBounds } from '@/lib/discovery/bounds';
+import { fetchPlacesForViewport } from '@/lib/places/aggregator';
 import { rankDiscoveryItems } from '@/lib/discovery/ranking';
-import { hydratePlaceLabel, normalizePlaceLabel } from '@/lib/places/labels';
+import { hydratePlaceLabel, normalizePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 import { haversineMeters } from '@/lib/places/utils';
 import { getOptionalServiceClient } from '@/lib/supabase/service';
 import { searchVenueActivities } from '@/lib/venues/search';
@@ -304,6 +305,78 @@ const dedupeByPlaceKey = (items: DiscoveryItem[]): DiscoveryItem[] => {
   return result;
 };
 
+const PLACEHOLDER_NAME_PATTERNS = [
+  /^unnamed(?:\s+(?:place|spot|venue|location))?$/i,
+  /^unknown(?:\s+(?:place|spot|venue|location))?$/i,
+  /^no\s*name$/i,
+  /^n\/?a$/i,
+  /^none$/i,
+  /^null$/i,
+];
+
+const GENERIC_DISCOVERY_NAME_PATTERNS = [/^nearby\s+(?:spot|activity|venue)$/i, /^[a-z]+\s+spot$/i];
+
+const hasMeaningfulDiscoveryDisplay = (item: Pick<DiscoveryItem, 'name' | 'place_label'>): boolean => {
+  const name = normalizeDisplayCandidate(item.name);
+  const placeLabel = normalizeDisplayCandidate(item.place_label ?? null);
+  const meaningfulName = Boolean(name && !GENERIC_DISCOVERY_NAME_PATTERNS.some((pattern) => pattern.test(name)));
+  const meaningfulPlace = Boolean(placeLabel && placeLabel !== PLACE_FALLBACK_LABEL);
+  return meaningfulName || meaningfulPlace;
+};
+
+const normalizeDisplayCandidate = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (PLACEHOLDER_NAME_PATTERNS.some((pattern) => pattern.test(trimmed))) return null;
+  return trimmed;
+};
+
+const humanizeToken = (value: string): string =>
+  value
+    .split(/[-_\s]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const resolveDiscoveryDisplay = (input: {
+  name?: string | null;
+  venue?: string | null;
+  placeLabel?: string | null;
+  activityTypes?: string[] | null;
+  tags?: string[] | null;
+}): { name: string; placeLabel: string } => {
+  const cleanName = normalizeDisplayCandidate(input.name);
+  const cleanVenue = normalizeDisplayCandidate(input.venue);
+  const cleanPlaceLabel = normalizeDisplayCandidate(input.placeLabel);
+
+  const token =
+    normalizeDisplayCandidate((input.activityTypes ?? [])[0] ?? null)
+    ?? normalizeDisplayCandidate((input.tags ?? [])[0] ?? null);
+  const derived = token ? `${humanizeToken(token)} spot` : null;
+
+  const placeLabel = cleanPlaceLabel ?? cleanVenue ?? cleanName ?? derived ?? 'Nearby spot';
+  const name = cleanName ?? cleanPlaceLabel ?? cleanVenue ?? derived ?? 'Nearby activity';
+
+  return { name, placeLabel };
+};
+
+const prioritizeMeaningfulActivities = (items: DiscoveryItem[]): DiscoveryItem[] => {
+  const meaningful: DiscoveryItem[] = [];
+  const generic: DiscoveryItem[] = [];
+  items.forEach((item) => {
+    if (hasMeaningfulDiscoveryDisplay(item)) {
+      meaningful.push(item);
+      return;
+    }
+    generic.push(item);
+  });
+  return [...meaningful, ...generic];
+};
+
+const filterGenericActivities = (items: DiscoveryItem[]): DiscoveryItem[] =>
+  items.filter((item) => hasMeaningfulDiscoveryDisplay(item));
+
 const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
   if (!isUuid(item.place_id ?? null)) return false;
   if (isUuid(item.id)) return true;
@@ -317,6 +390,72 @@ const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
 };
 
 const ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8;
+const SPARSE_CITY_BOOTSTRAP_MIN_RESULTS = 180;
+const SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS = 5_000;
+
+const CITY_BOOTSTRAP_CENTERS: Array<{ slug: string; lat: number; lng: number }> = [
+  { slug: 'bangkok', lat: 13.7563, lng: 100.5018 },
+  { slug: 'hanoi', lat: 21.0278, lng: 105.8342 },
+  { slug: 'bucharest', lat: 44.4268, lng: 26.1025 },
+];
+
+const inferBootstrapCitySlug = (center: { lat: number; lng: number }): string | undefined => {
+  let nearestSlug: string | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of CITY_BOOTSTRAP_CENTERS) {
+    const distance = haversineMeters(center.lat, center.lng, candidate.lat, candidate.lng);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestSlug = candidate.slug;
+    }
+  }
+  if (!nearestSlug) return undefined;
+  // Avoid assigning an unrelated city slug for far-away coordinates.
+  if (nearestDistance > 120_000) return undefined;
+  return nearestSlug;
+};
+
+const hasActiveDiscoveryFilters = (filters: NormalizedDiscoveryFilters): boolean => {
+  return (
+    filters.activityTypes.length > 0
+    || filters.tags.length > 0
+    || filters.traits.length > 0
+    || filters.taxonomyCategories.length > 0
+    || filters.priceLevels.length > 0
+    || filters.capacityKey !== 'any'
+    || filters.timeWindow !== 'any'
+  );
+};
+
+const hasTypeOrTagDiscoveryFilters = (filters: NormalizedDiscoveryFilters): boolean => {
+  return filters.activityTypes.length > 0 || filters.tags.length > 0;
+};
+
+const maybeBootstrapSparseCityPlaces = async (
+  query: DiscoveryQuery,
+  filters: NormalizedDiscoveryFilters,
+  currentCount: number,
+): Promise<boolean> => {
+  if (currentCount >= SPARSE_CITY_BOOTSTRAP_MIN_RESULTS) return false;
+  if (query.radiusMeters > SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS) return false;
+  if (hasActiveDiscoveryFilters(filters)) return false;
+
+  const bounds = resolveDiscoveryBounds(query);
+  const inferredCity = inferBootstrapCitySlug(query.center);
+
+  try {
+    await fetchPlacesForViewport({
+      bounds,
+      limit: Math.max(Math.min(query.limit, 600), 300),
+      forceRefresh: true,
+      city: inferredCity,
+    });
+    return true;
+  } catch (error) {
+    console.warn('[nearby] sparse-city bootstrap failed', error);
+    return false;
+  }
+};
 
 const applyFilterSupport = (
   current: DiscoveryFilterSupport,
@@ -482,13 +621,19 @@ const toMapActivityFromVenue = (
   const lat = sanitizeCoordinate(row.lat);
   const lng = sanitizeCoordinate(row.lng);
   if (lat == null || lng == null) return null;
-  const placeLabel = normalizePlaceLabel(row.name, row.address);
+  const resolved = resolveDiscoveryDisplay({
+    name: row.name,
+    venue: row.address,
+    placeLabel: normalizePlaceLabel(row.name, row.address),
+    activityTypes: displayStringList(row.verified_activities ?? null),
+    tags: displayStringList(row.ai_activity_tags ?? null),
+  });
   return {
     id: `venue:${row.id}`,
-    name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby venue',
+    name: resolved.name,
     venue: row.address ?? null,
     place_id: row.id,
-    place_label: placeLabel,
+    place_label: resolved.placeLabel,
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
@@ -588,17 +733,24 @@ const toMapActivityFromPlace = (
   const lat = sanitizeCoordinate(row.lat);
   const lng = sanitizeCoordinate(row.lng);
   if (lat == null || lng == null) return null;
-  const placeLabel = normalizePlaceLabel(row.name, row.address);
+  const derivedTypes = buildPlaceActivityTypes(row);
+  const resolved = resolveDiscoveryDisplay({
+    name: row.name,
+    venue: row.address,
+    placeLabel: normalizePlaceLabel(row.name, row.address),
+    activityTypes: derivedTypes,
+    tags: displayStringList(row.tags ?? null),
+  });
   return {
     id: `place:${row.id}`,
-    name: typeof row.name === 'string' && row.name.trim() ? row.name : 'Nearby place',
+    name: resolved.name,
     venue: row.address ?? null,
     place_id: row.id,
-    place_label: placeLabel,
+    place_label: resolved.placeLabel,
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
-    activity_types: buildPlaceActivityTypes(row),
+    activity_types: derivedTypes,
     tags: displayStringList(row.tags ?? null),
     traits: null,
     source: 'supabase-places',
@@ -769,12 +921,19 @@ const fetchActivitiesFromRpc = async (
         const lng = row.lng_out ?? row.lng;
         if (typeof lat !== 'number' || typeof lng !== 'number') return null;
         const distance = haversineMeters(query.center.lat, query.center.lng, lat, lng);
-        return {
-          id: row.id,
+        const resolved = resolveDiscoveryDisplay({
           name: row.name,
           venue: row.venue,
+          placeLabel: normalizePlaceLabel(row.place_label ?? null, row.venue ?? null, row.name ?? null),
+          activityTypes: row.activity_types ?? null,
+          tags: row.tags ?? null,
+        });
+        return {
+          id: row.id,
+          name: resolved.name,
+          venue: row.venue,
           place_id: row.place_id ?? null,
-          place_label: normalizePlaceLabel(row.place_label ?? null, row.venue ?? null, row.name ?? null),
+          place_label: resolved.placeLabel,
           lat,
           lng,
           distance_m: distance,
@@ -971,7 +1130,8 @@ const fetchActivitiesFallback = async (
 
   const withinRadius = withDistance.filter((row) => row.distance <= query.radiusMeters);
 
-  const chosen = withinRadius.slice(0, query.limit);
+  const scanLimit = Math.max(query.limit * 4, 400);
+  const chosen = withinRadius.slice(0, scanLimit);
   const activityIds = chosen.map((row) => row.id);
   const upcomingCounts: Record<string, number> = {};
 
@@ -995,7 +1155,7 @@ const fetchActivitiesFallback = async (
     }
   }
 
-  const items = chosen.map((row) => {
+  const items = prioritizeMeaningfulActivities(chosen.map((row) => {
     const prefTraits = (row.participant_preferences ?? []).flatMap((pref) =>
       (pref?.preferred_traits ?? []).filter((trait): trait is string => typeof trait === 'string'),
     );
@@ -1006,12 +1166,20 @@ const fetchActivitiesFallback = async (
       ]),
     );
 
-    return {
-      id: row.id,
+    const resolved = resolveDiscoveryDisplay({
       name: row.name,
       venue: row.venue,
+      placeLabel: normalizePlaceLabel(row.place_label ?? null, row.venue ?? null, row.name ?? null),
+      activityTypes: row.activity_types ?? null,
+      tags: row.tags ?? null,
+    });
+
+    return {
+      id: row.id,
+      name: resolved.name,
+      venue: row.venue,
       place_id: row.place_id ?? null,
-      place_label: normalizePlaceLabel(row.place_label ?? null, row.venue ?? null, row.name ?? null),
+      place_label: resolved.placeLabel,
       lat: row.lat as number,
       lng: row.lng as number,
       distance_m: row.distance,
@@ -1021,7 +1189,7 @@ const fetchActivitiesFallback = async (
       upcoming_session_count: upcomingCounts[row.id] ?? 0,
       source: 'activities',
     } satisfies DiscoveryItem;
-  });
+  }));
 
   return {
     items,
@@ -1125,6 +1293,7 @@ export async function discoverNearbyActivities(
         dropped: {
           notPlaceBacked: 0,
           lowConfidence: 0,
+          genericLabels: 0,
           deduped: Math.max(0, entry.items.length - cached.items.length),
         },
         ranking: {
@@ -1163,6 +1332,7 @@ export async function discoverNearbyActivities(
     dropped: {
       notPlaceBacked: 0,
       lowConfidence: 0,
+      genericLabels: 0,
       deduped: 0,
     },
     ranking: {
@@ -1183,6 +1353,30 @@ export async function discoverNearbyActivities(
   debug.candidateCounts.afterFallbackMerge = activities.length;
 
   let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
+
+  const bootstrappedSparseCity = await maybeBootstrapSparseCityPlaces(
+    normalizedQuery,
+    normalizedFilters,
+    activities.length,
+  );
+
+  if (bootstrappedSparseCity) {
+    const refreshedPlacesFallback = await fetchPlacesFallbackActivities(
+      supabase,
+      normalizedQuery,
+      Math.max(normalizedQuery.limit, 300),
+    );
+    const filteredRefreshedPlaces = filterByQuery(
+      refreshedPlacesFallback.items,
+      normalizedFilters,
+      refreshedPlacesFallback.support,
+    );
+    if (filteredRefreshedPlaces.length) {
+      filterSupport = applyFilterSupport(filterSupport, refreshedPlacesFallback.support);
+      activities = mergeActivitiesWithFallback(activities, filteredRefreshedPlaces);
+      fallbackMeta.fallbackSource = 'supabase-places';
+    }
+  }
 
   if (activities.length < normalizedQuery.limit) {
     try {
@@ -1231,6 +1425,16 @@ export async function discoverNearbyActivities(
   activities = filterByQuery(activities, normalizedFilters, filterSupport);
   debug.candidateCounts.afterMetadataFilter = activities.length;
 
+  const nonGenericActivities = filterGenericActivities(activities);
+  const shouldPreserveGenericFallback =
+    hasTypeOrTagDiscoveryFilters(normalizedFilters)
+    && nonGenericActivities.length === 0
+    && activities.length > 0;
+  debug.dropped.genericLabels = shouldPreserveGenericFallback
+    ? 0
+    : Math.max(0, activities.length - nonGenericActivities.length);
+  activities = shouldPreserveGenericFallback ? activities : nonGenericActivities;
+
   const placeBacked = activities.filter(isPlaceBackedActivity);
   debug.dropped.notPlaceBacked = Math.max(0, activities.length - placeBacked.length);
   debug.candidateCounts.afterPlaceGate = placeBacked.length;
@@ -1247,7 +1451,7 @@ export async function discoverNearbyActivities(
   debug.dropped.lowConfidence = Math.max(0, debug.candidateCounts.afterPlaceGate - activities.length);
   debug.candidateCounts.afterConfidenceGate = activities.length;
 
-  const ordered = orderDiscoveryItems(activities).slice(0, normalizedQuery.limit);
+  const ordered = prioritizeMeaningfulActivities(orderDiscoveryItems(activities)).slice(0, normalizedQuery.limit);
   const hydrated = await hydrateActivitiesWithPlaces(supabase, ordered);
   const deduped = mergeActivitiesWithFallback(hydrated, []);
   debug.dropped.deduped = Math.max(0, hydrated.length - deduped.length);

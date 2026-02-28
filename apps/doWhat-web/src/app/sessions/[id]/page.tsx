@@ -206,7 +206,7 @@ export default async function SessionDetails({ params }: SessionPageProps) {
                 <h3 className="text-base font-semibold text-gray-900">Attendee roster</h3>
                 <p className="text-sm text-gray-600">Status badges update live as people respond.</p>
               </div>
-              <SessionAttendanceList sessionId={hydrated.id} variant="detailed" />
+              <SessionAttendanceList sessionId={hydrated.id} variant="detailed" includeDeclined />
             </div>
           </div>
         </section>
@@ -250,16 +250,17 @@ type ParticipantLoaderInput = {
 async function loadSessionParticipants({ sessionId, supabase, excludeUserId }: ParticipantLoaderInput): Promise<TraitVoteRecipient[]> {
   const { data: attendees } = await supabase
     .from("session_attendees")
-    .select("user_id")
+    .select("user_id, attendance_status")
     .eq("session_id", sessionId)
     .eq("status", "going");
 
-  type AttendanceRow = Pick<SessionAttendeeRow, "user_id">;
+  type AttendanceRow = Pick<SessionAttendeeRow, "user_id"> & { attendance_status?: string | null };
   const typedRows = (attendees ?? []) as AttendanceRow[];
 
   const attendeeIds = Array.from(
     new Set(
       typedRows
+        .filter((row) => row.attendance_status !== "late_cancel" && row.attendance_status !== "no_show")
         .map((row) => row.user_id)
         .filter((value): value is string => Boolean(value) && value !== excludeUserId),
     ),
@@ -291,14 +292,18 @@ async function getUserAttendanceStatus(
 ): Promise<AttendanceStatus | null> {
   const { data, error } = await supabase
     .from("session_attendees")
-    .select("status")
+    .select("status, attendance_status")
     .eq("session_id", sessionId)
     .eq("user_id", userId)
-    .maybeSingle<{ status: AttendanceStatus }>();
+    .maybeSingle<{ status: AttendanceStatus; attendance_status?: string | null }>();
   if (error) {
     throw error;
   }
-  return data?.status ?? null;
+  if (!data?.status) return null;
+  if (data.status === "going" && (data.attendance_status === "late_cancel" || data.attendance_status === "no_show")) {
+    return "declined";
+  }
+  return data.status;
 }
 
 function getVoteUnlockState(endsAt: string | null) {

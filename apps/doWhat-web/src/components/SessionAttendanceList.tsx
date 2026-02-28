@@ -20,6 +20,7 @@ type Row = {
   status: Status;
   user_id: string;
   profiles?: Profile | null;
+  attendance_status?: string | null;
 };
 
 type AttendanceEventDetail = {
@@ -36,6 +37,7 @@ type Props = {
   sessionId?: string | null;
   className?: string;
   showInterested?: boolean;
+  includeDeclined?: boolean;
   variant?: "summary" | "detailed";
 };
 
@@ -118,6 +120,7 @@ export default function SessionAttendanceList({
   sessionId,
   className,
   showInterested = true,
+  includeDeclined = false,
   variant = "summary",
 }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -125,11 +128,12 @@ export default function SessionAttendanceList({
   const load = useCallback(async () => {
     if (!sessionId) return;
 
+    const visibleStatuses = includeDeclined ? ["going", "interested", "declined"] : ["going", "interested"];
     const { data, error } = await supabase
       .from("session_attendees")
-      .select("session_id, status, user_id, profiles(id, username, full_name, avatar_url)")
+      .select("session_id, status, attendance_status, user_id, profiles(id, username, full_name, avatar_url)")
       .eq("session_id", sessionId)
-      .in("status", ["going", "interested"]);
+      .in("status", visibleStatuses);
 
     if (error) {
       console.error("Failed to load session attendees", error);
@@ -139,17 +143,25 @@ export default function SessionAttendanceList({
     const typed = (data ?? []) as SupabaseRow[];
     const normalized: Row[] = typed.map((item) => ({
       session_id: item.session_id,
-      status: item.status,
+      status: toEffectiveStatus(item.status, (item as { attendance_status?: string | null }).attendance_status ?? null),
+      attendance_status: (item as { attendance_status?: string | null }).attendance_status ?? null,
       user_id: item.user_id,
       profiles: resolveProfile(item.profiles) ?? null,
     }));
+
+function toEffectiveStatus(status: Status, attendanceStatus?: string | null): Status {
+  if (status === "going" && (attendanceStatus === "late_cancel" || attendanceStatus === "no_show")) {
+    return "declined";
+  }
+  return status;
+}
 
     const deduped = new Map<string, Row>();
     normalized.forEach((row) => {
       deduped.set(row.user_id, row);
     });
     setRows(Array.from(deduped.values()));
-  }, [sessionId]);
+  }, [includeDeclined, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -187,7 +199,7 @@ export default function SessionAttendanceList({
       const { userId } = custom.detail;
       const status = custom.detail.status ?? null;
 
-      if (!status || status === "declined") {
+      if (!status || (status === "declined" && !includeDeclined)) {
         setRows((prev) => prev.filter((row) => row.user_id !== userId));
         return;
       }
@@ -225,11 +237,14 @@ export default function SessionAttendanceList({
     return () => {
       window.removeEventListener("session-attendance-updated", handler as EventListener);
     };
-  }, [sessionId]);
+  }, [includeDeclined, sessionId]);
 
   const filteredRows = useMemo(
-    () => rows.filter((row) => row.status === "going" || row.status === "interested"),
-    [rows],
+    () =>
+      rows.filter(
+        (row) => row.status === "going" || row.status === "interested" || (includeDeclined && row.status === "declined"),
+      ),
+    [includeDeclined, rows],
   );
 
   const { going, interested } = useMemo(() => {
@@ -263,11 +278,17 @@ export default function SessionAttendanceList({
       );
     }
 
-    const statusLabel = (status: Status) => (status === "going" ? "Going" : "Interested");
+    const statusLabel = (status: Status) => {
+      if (status === "going") return "Going";
+      if (status === "interested") return "Interested";
+      return "Declined";
+    };
     const badgeClass = (status: Status) =>
       status === "going"
         ? "bg-brand-teal/15 text-brand-teal"
-        : "bg-feedback-warning/15 text-feedback-warning";
+        : status === "interested"
+          ? "bg-feedback-warning/15 text-feedback-warning"
+          : "bg-ink-muted/15 text-ink-muted";
 
     const displayName = (row: Row) =>
       row.profiles?.full_name || row.profiles?.username || "Explorer";

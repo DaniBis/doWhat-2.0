@@ -76,7 +76,7 @@ describe('/api/discovery/activities', () => {
     );
 
     expect(payload.items).toHaveLength(1);
-    expect(payload.items[0]?.place_label).toBe('Unnamed spot');
+    expect(payload.items[0]?.place_label).toBe('Nearby spot');
     expect(payload.filterSupport.capacityKey).toBe(false);
     expect(payload.facets.activityTypes).toEqual([]);
   });

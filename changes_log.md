@@ -1,5 +1,556 @@
 # Changes Log
 
+## 2026-02-28
+
+1. **Create Event venue-name suggestions from nearby matches (optional adopt, manual typing preserved)**
+   - User-reported UX issue: while typing venue name manually (e.g. `VietClimb`), existing nearby matching venues were not suggested inline.
+   - Requirement: suggest matching nearby venue names as the user types, but keep full freedom to ignore suggestions and continue with custom/manual text.
+   - Fixes applied:
+      - `apps/doWhat-web/src/app/create/venueDiscovery.ts`
+         - added `suggestVenueOptions(...)` ranked matcher:
+            - exact label match,
+            - prefix match,
+            - substring/token match,
+            - deterministic tie-breakers by label length + name.
+      - `apps/doWhat-web/src/app/create/page.tsx`
+         - integrated `venueNameSuggestions` derived from typed manual text + nearby venue options,
+         - added inline “Matching nearby venues (optional)” suggestion list under venue name input,
+         - clicking `Use` applies selected suggestion into venue/place selection,
+         - user can ignore suggestions and keep manual typing unchanged.
+   - Tests added/updated:
+      - `apps/doWhat-web/src/app/create/__tests__/venueDiscovery.test.ts`
+         - added suggestion coverage for typed label matching and empty-query behavior.
+   - Validation:
+      - targeted Jest passed (`8/8`) for `venueDiscovery` + `venueSelection` suites,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+2. **Deep events visibility fix: newly created sessions no longer hidden by historical-session starvation**
+   - User-reported issue: multiple newly created events were not showing across surfaces.
+   - Root cause (verified with live API inspection):
+      - `/api/events` session fallback queried `sessions` ordered by `starts_at` ascending with a hard limit,
+      - when no explicit `from` was passed, old historical sessions consumed the limit window,
+      - newly created/recent sessions were excluded from payload despite existing in DB.
+   - Fix applied:
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+         - introduced default recent lookback for session fallback (`24h`) when `from` is omitted,
+         - session fallback now always applies `starts_at >= effectiveFromIso` to prioritize recent/upcoming sessions.
+   - Tests added/updated:
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+         - added regression test asserting session fallback applies a default `starts_at` lower bound and includes recent session-origin events when `from` is absent.
+   - Validation:
+      - targeted Jest passed (`14/14`) for events payload + sessions server suites,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - live `/api/events?limit=200` now includes recent session-origin events that were previously omitted.
+
+3. **Deep follow-up: timezone-safe create payloads + feed/map visibility windows**
+   - User-reported issue persisted: newly created events still did not appear on main feed and map in some flows.
+   - Additional root causes found:
+      - `datetime-local` values from create form were being sent without timezone context and parsed on the server, which can shift intended local times,
+      - map events query was hard-gated to highly verified entries (`verifiedOnly + minAccuracy`), excluding fresh session-origin events,
+      - home/map windows were strict `starts_at >= now`, which can hide just-created/just-started sessions under timezone/skew edge cases.
+   - Fixes applied:
+      - `apps/doWhat-web/src/app/create/dateTime.ts` (new)
+         - added `formatDateTimeLocalInput(...)` for proper local `datetime-local` defaults,
+         - added `toUtcIsoFromDateTimeLocal(...)` to convert local picker values into explicit UTC ISO before API submit.
+      - `apps/doWhat-web/src/app/create/page.tsx`
+         - replaced UTC-sliced defaults (`toISOString().slice(0,16)`) with local formatter,
+         - submit payload now sends timezone-safe ISO timestamps derived on client from local picker values.
+      - `apps/doWhat-web/src/app/page.tsx`
+         - added 12h recent lookback for upcoming feed query to reduce false-empty states around skew/timezone boundaries.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - added 12h lookback for map events window,
+         - removed default strict verification gating in events query args so newly created session-origin events are visible by default.
+   - Tests added/updated:
+      - `apps/doWhat-web/src/app/create/__tests__/dateTime.test.ts` (new)
+         - covers local formatting, local→UTC conversion, and invalid format rejection.
+   - Validation:
+      - targeted Jest passed (`11/11`) for `create/dateTime`, `create/venueDiscovery`, and `/api/events` payload tests,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+4. **Follow-up remediation: include ongoing sessions + stabilize map event recall**
+   - User-reported issue after previous pass: map still showed zero events while feed showed at least one, and one expected live event remained missing.
+   - Additional causes addressed:
+      - session/event queries were still start-time-centric, so currently-running sessions could be dropped when `starts_at` fell just outside the lower bound,
+      - map event API query bounds could stay too narrow relative to radius intent, causing events near edge-of-radius to be omitted before client filtering.
+   - Fixes applied:
+      - `apps/doWhat-web/src/app/page.tsx`
+         - home feed session query now includes ongoing sessions via OR lower-bound logic:
+            - `starts_at >= lookback` OR `ends_at >= now`.
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+         - session fallback now includes ongoing sessions using:
+            - `starts_at >= effectiveFromIso` OR `ends_at >= effectiveFromIso`.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - events query bounds now always expand around query center with at least `25km` envelope,
+         - prevents premature omission of candidate events due narrow viewport-derived bounds.
+   - Tests updated:
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+         - added assertion for OR-based fallback filtering (`starts_at` + `ends_at`).
+   - Validation:
+      - targeted Jest passed (`3/3`) for `/api/events` payload suite,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+5. **Map events empty-state hardening (fallback visibility when location/radius constraints are too strict)**
+   - User-reported issue persisted: main feed could show active content while map events column still rendered empty.
+   - Additional adjustments in `apps/doWhat-web/src/app/map/page.tsx`:
+      - when precise location is unavailable (`locationErrored`), events query omits strict bounds so map can still load event candidates,
+      - events list filtering now has a fallback chain:
+         - first prefer nearby radius matches,
+         - if none found, fall back to fetched events payload (instead of hard-empty state).
+   - Result:
+      - map events panel no longer remains falsely empty under center/radius/location edge conditions.
+   - Validation:
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+6. **Starvation mitigation pass: increase session fetch budgets on Home + Events fallback**
+   - User follow-up indicated one expected event still missing after map rendering fixes.
+   - Additional likely source: global ordering with hard limits can starve locally relevant rows before downstream filtering.
+   - Changes applied:
+      - `apps/doWhat-web/src/app/page.tsx`
+         - increased `HOME_QUERY_LIMIT` from `80` to `500` so upcoming feed has a wider candidate window before grouping.
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+         - session fallback now overfetches before bounds filtering using guarded limits:
+            - min fetch: `500`,
+            - multiplier: `limit * 5`,
+            - max fetch cap: `2000`.
+         - this reduces false omissions when many global sessions exist in the same date window.
+   - Validation:
+      - targeted Jest (`/api/events` payload) passed (`3/3`),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+7. **Newly-created session safety net: include `created_at` in visibility windows**
+   - User reported a second event was created successfully but still missing from both home and map.
+   - Additional hardening applied to account for schedule timestamp skew/edge cases right after creation:
+      - `apps/doWhat-web/src/app/page.tsx`
+         - home feed lower-bound OR now includes `created_at.gte(lookback)` in addition to `starts_at`/`ends_at`.
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+         - session fallback selector now includes `created_at.gte(effectiveFromIso)` alongside `starts_at`/`ends_at`.
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+         - updated expectation to assert OR filter includes `created_at` branch.
+   - Validation:
+      - targeted Jest (`/api/events` payload) passed (`3/3`),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+## 2026-02-27
+
+1. **Profile location edit resilience fix (ENOTFOUND during save)**
+   - User-reported issue: editing profile location failed with `getaddrinfo ENOTFOUND ...supabase.co` surfaced in the edit modal.
+   - Root cause:
+      - `apps/doWhat-web/src/app/api/profile/[id]/update/route.ts` called `ensureProfileColumns()` before update,
+      - when local DB hostname resolution/connectivity failed, the route returned `500` immediately,
+      - this blocked otherwise valid profile updates (name/bio/location/socials) that can be persisted through Supabase API without the optional schema check.
+   - Fixes applied:
+      - `apps/doWhat-web/src/app/api/profile/[id]/update/route.ts`
+         - changed ensure step to best-effort warning only (no hard-fail response),
+         - route now proceeds with profile upsert even if schema ensure cannot reach DB host.
+      - `apps/doWhat-web/src/lib/db/ensureProfileColumns.ts`
+         - added non-fatal connectivity error classification (`ENOTFOUND`, `EAI_AGAIN`, `ECONNREFUSED`, `ETIMEDOUT`, `ENETUNREACH`, host-translation patterns),
+         - migration helper now skips gracefully on transient/unreachable DB connectivity and logs a warning instead of throwing.
+   - Tests added:
+      - `apps/doWhat-web/src/app/api/profile/[id]/update/__tests__/route.test.ts`
+         - verifies update route still returns success and performs upsert when ensure step throws `ENOTFOUND`.
+   - Validation:
+      - targeted Jest passed:
+         - new route test (`/api/profile/[id]/update`),
+         - existing `ProfilePage.integration.test.tsx` (3/3),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+2. **Cross-city discovery parity upgrade (Hanoi/Bucharest vs Bangkok)**
+   - User-reported issue: Hanoi returned significantly fewer activities than Bangkok for comparable map usage.
+   - Deep findings (same endpoint/settings, radius `2.5km`, `limit=2000`, `refresh=1`, `explain=1`):
+      - before fix:
+         - Hanoi: `count=78`, `afterFallbackMerge=207`, mostly `supabase-places`,
+         - Bangkok: `count=426`, `afterFallbackMerge=594`.
+      - key difference was not ranking logic divergence; it was **supply hydration depth**:
+         - Bangkok had deeper warmed inventory,
+         - non-Bangkok cities relied more on pre-existing place rows with lower immediate in-radius depth.
+   - Improvements applied:
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - added sparse-city on-demand bootstrap path (`maybeBootstrapSparseCityPlaces(...)`),
+         - when query is unfiltered + small radius + sparse results, engine now force-refreshes place supply for query bounds and re-merges places fallback in the same request,
+         - added nearest-city inference for known warm centers (Bangkok, Hanoi, Bucharest) with safe distance guard.
+      - `apps/doWhat-web/src/lib/places/hanoiWarm.ts`
+         - `DEFAULT_TILE_COUNT: 10 -> 20`.
+      - `apps/doWhat-web/src/lib/places/bucharestWarm.ts`
+         - `DEFAULT_TILE_COUNT: 10 -> 20`.
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - bumped discovery cache key version to `v=3` so old lower-depth cached payloads are invalidated.
+   - Validation:
+      - live `/api/nearby` after fix (Hanoi center, same settings):
+         - `count: 78 -> 128`,
+         - `afterFallbackMerge: 207 -> 257`.
+      - Bangkok remained strong after update (same settings):
+         - `count=472`, `afterFallbackMerge=640`.
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+3. **Selective city-wide expansion for filtered map queries (performance-safe)**
+   - User requirement: increase place/activity breadth for filtered exploration without slowing initial/general map access.
+   - Implementation in `apps/doWhat-web/src/app/map/page.tsx`:
+      - added `filteredAugmentedQuery` (25km + high limit) that activates **only when**:
+         - user is authenticated,
+         - there is at least one active structured filter,
+         - no free-text search is active,
+      - merged augmented candidates with base nearby candidates before final client-side filtering,
+      - sparse-filter radius expansion now applies to **any active structured filter** (not only activity-type filters), including the zero-results case.
+   - Performance behavior:
+      - default map load path unchanged (no extra filtered augmentation request),
+      - broader retrieval cost is paid only for explicit filtered intent.
+   - Validation:
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - live evidence (Hanoi, `types=climbing`):
+         - `2.5km: 0`,
+         - `25km: 2` (expanded filtered recall available when augmentation engages).
+
+   4. **Map UX rule update: remove activity "View details" CTA (events-only details)**
+      - User requirement: `View details` should not appear for activities; it should exist only for events.
+      - Changes applied:
+         - `apps/doWhat-web/src/components/WebMap.tsx`
+            - removed activity popup `View details →` button,
+            - removed `onRequestActivityDetails` prop from map component API.
+         - `apps/doWhat-web/src/app/map/page.tsx`
+            - removed `handleActivityDetails` handler and tracking event,
+            - removed `onRequestActivityDetails` wiring into `WebMap`,
+            - removed activity list-card `View details →` button.
+      - Result:
+         - activity surfaces now expose only `View events` (when available), `Create event`, and `Show on map`,
+         - event popup/list behavior remains unchanged with event-level `View details` intact.
+
+   5. **Intermittent zero-results fix for specialty filters/search (e.g. `climb`)**
+      - User-reported issue: map occasionally showed `0 activities` for climbing intent even when a matching place existed.
+      - Deep root cause (verified via `/api/nearby?...types=climbing&explain=1`):
+         - discovery had one valid typed match after fallback (`afterMetadataFilter: 1`),
+         - the global generic-label quality gate removed it (`dropped.genericLabels: 1`),
+         - final result became empty (`count: 0`).
+      - Why this looked intermittent:
+         - it happens in sparse specialty scenarios where the only matching candidate is a generic-labeled place,
+         - in richer areas, non-generic matches exist so the gate does not zero out results.
+      - Fix in `apps/doWhat-web/src/lib/discovery/engine.ts`:
+         - introduced a guarded fallback path: for explicit `activityTypes`/`tags` filtered queries,
+         - when generic filtering would drop **all** remaining candidates,
+         - preserve those candidates instead of returning a false empty result.
+      - Validation:
+         - before: `types=climbing` at Hanoi query returned `count=0` with `dropped.genericLabels=1`,
+         - after: same query returns `count=1` (`Nearby spot`, `activity_types` includes `climbing`, `tags` includes `climbing`),
+         - unfiltered quality gate behavior remains intact (`dropped.genericLabels` still non-zero on broad queries),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   6. **Create Event venue picker now location-scoped + filter-adaptive expansion**
+      - User requirement: while creating an event, venue/place choices must be near the person’s location, and search area should expand when filters are active.
+      - Root cause:
+         - `apps/doWhat-web/src/app/create/page.tsx` previously loaded venue options from `venues` table ordered by name globally,
+         - this produced cross-city options unrelated to the current user location.
+      - Fixes applied:
+         - added `apps/doWhat-web/src/app/create/venueDiscovery.ts`:
+            - builds location-aware nearby query config,
+            - uses adaptive radius/limit:
+               - base (no activity filter): `12.5km`,
+               - filtered (activity intent detected): `25km`,
+            - maps nearby discovery activities into deduplicated venue/place options ordered by distance.
+         - updated `apps/doWhat-web/src/app/create/page.tsx`:
+            - venue dropdown now fetches from `/api/nearby` using current `lat/lng`,
+            - applies activity-derived `types` tokens when activity filter is present,
+            - replaces global venue list with nearby location-scoped options,
+            - added user-facing status text for loading/error/fallback-manual input.
+      - Tests added:
+         - `apps/doWhat-web/src/app/create/__tests__/venueDiscovery.test.ts`
+            - verifies radius expansion when filter exists,
+            - verifies token derivation for activity intent,
+            - verifies dedupe-by-label with nearest-first ordering.
+      - Validation:
+         - targeted Jest passed (`venueDiscovery.test.ts`: 3/3),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   7. **Map redirect reliability fix for newly created events (`highlightSession`)**
+      - User-reported issue:
+         - after event creation redirect to `/map?highlightSession=...`, event was often not visible,
+         - event appeared only after clicking the related activity card (which recenters map), giving the impression it was created only as an activity.
+      - Deep root cause:
+         - map highlight flow only attempted to resolve the target session inside already-loaded `filteredEvents`,
+         - `events` are fetched by current map bounds, so if current center/bounds did not include the new session location, match failed and no recenter occurred,
+         - once user clicked activity, center moved and the same event became visible in the events column.
+      - Fixes applied:
+         - added `apps/doWhat-web/src/app/map/highlightSession.ts` to resolve coordinates from session payload (priority: `place` → `venue` → `activity` → direct coords),
+         - updated `apps/doWhat-web/src/app/map/page.tsx` highlight effect:
+            - if highlighted event is not yet in `filteredEvents`, performs one-shot fetch to `/api/sessions/[sessionId]`,
+            - recenters map/query center to session coordinates,
+            - ensures `both` mode and preselects the highlighted event id,
+            - keeps existing behavior to remove `highlightSession` param once event is actually resolved in the events feed.
+      - Tests added:
+         - `apps/doWhat-web/src/app/map/__tests__/highlightSession.test.ts` (3 tests) for coordinate resolution fallback chain and null handling.
+      - Validation:
+         - targeted Jest passed (`highlightSession.test.ts`: 3/3),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   8. **Deep follow-up fix: stale activity focus + low-quality generic cards in filtered map views**
+      - User-reported regression after initial redirect fix:
+         - newly created event context could still be overshadowed by stale `activity` query focus,
+         - low-quality generic card (`Nearby spot`) appeared in filtered/search view even when meaningful matches existed.
+      - Root causes:
+         - `activity` query-param focus effect still ran while `highlightSession` handling was active,
+         - highlight resolver recentered center/query but did not force bounds update immediately,
+         - search/filter result set lacked a final quality-pruning pass to suppress generic tag-only cards when better type-aligned cards were present.
+      - Fixes applied:
+         - `apps/doWhat-web/src/app/map/page.tsx`
+            - while `highlightSession` exists, skip stale activity-param auto-focus effect,
+            - on highlight match, clear selected activity and remove both `highlightSession` and `activity` params,
+            - when resolving center from `/api/sessions/[sessionId]`, also set bounds around that center to force immediate events query coverage,
+            - integrated final low-quality pruning pass for filtered/search results before rendering.
+         - `apps/doWhat-web/src/app/map/resultQuality.ts` (new)
+            - added `pruneLowQualitySearchActivities(...)` to drop generic label cards (e.g. `Nearby spot`) when meaningful alternatives exist,
+            - retains generic fallback only when it is the only available match.
+         - tests added:
+            - `apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts` (2 tests),
+            - existing `apps/doWhat-web/src/app/map/__tests__/highlightSession.test.ts` retained for center-resolution chain.
+      - Validation:
+         - targeted Jest passed (`resultQuality` + `highlightSession`: 5/5),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   9. **Second deep remediation for unresolved map regressions (event visibility + quality guard hardening)**
+      - User follow-up: issues persisted in real flow (`search=climb`) with generic `Nearby spot` still visible and event visibility still inconsistent.
+      - Additional root causes found:
+         - events fetch remained viewport-bounds constrained even during active text search / highlight flow,
+         - generic candidates could still pass search via tag-only text matching before final prune in some combinations.
+      - Additional fixes applied:
+         - `apps/doWhat-web/src/app/map/page.tsx`
+            - events query bounds now auto-expand to ~25km around current center whenever text search is active or `highlightSession` is present,
+            - this ensures newly created nearby session-events are fetched even when initial viewport is narrow (e.g. ~2.5km),
+            - added stricter in-search guard: generic display cards are rejected unless their `activity_types` include user intent tokens,
+            - retained and applied final low-quality prune stage for strict and expanded result paths.
+         - `apps/doWhat-web/src/app/map/resultQuality.ts`
+            - exported reusable helpers `isGenericActivityDisplay(...)` and `hasTypeIntentMatch(...)` for stricter pipeline enforcement.
+      - Regression validation:
+         - targeted Jest suites passed:
+            - `searchTokens`, `searchMatching`, `searchPipeline.integration`, `highlightSession`, `resultQuality` (19/19),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   10. **Duplicate activity card fix (`VietClimb` shown twice) + place-aware session creation hardening**
+      - User-reported issue: same venue (`VietClimb`) appeared twice in map activities list.
+      - Root cause:
+         - one record came from `supabase-venues` (`venue:...`) and another from `supabase-places` (`place:...`) with same label + near-identical coordinates,
+         - they had different `place_id` values so backend place-key dedupe did not collapse them,
+         - create flow accepted nearby place options but treated selected option ID as `venueId`, causing new venue materialization in some place-driven flows.
+      - Fixes applied:
+         - `apps/doWhat-web/src/app/create/page.tsx`
+            - added explicit `placeId` handling in prefill/state/submit,
+            - parse venue dropdown IDs by prefix (`place:...`, `venue:...`) instead of assuming everything is `venueId`,
+            - preserve selected dropdown value separately and keep manual venue input disabled when either venue/place is selected.
+         - `apps/doWhat-web/src/lib/sessions/server.ts`
+            - `extractSessionPayload(...)` now parses `placeId` / `place_id`.
+         - `apps/doWhat-web/src/app/api/sessions/route.ts`
+            - POST now prioritizes explicit `placeId` and only materializes a venue when needed (`venueId` present OR no place and manual venue name provided).
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+            - PATCH applies the same place-first / conditional-venue logic.
+         - `apps/doWhat-web/src/app/map/resultQuality.ts`
+            - added `dedupeNearDuplicateActivities(...)` (label + proximity dedupe, quality-scored winner selection),
+            - exported helpers used by map search quality guard.
+         - `apps/doWhat-web/src/app/map/page.tsx`
+            - integrated near-duplicate dedupe in unfiltered/filtered/expanded result paths.
+      - Validation:
+         - API inspection confirmed duplicate source shape (`supabase-venues` + `supabase-places`) before fix,
+         - targeted Jest passed (`resultQuality` + `sessions/server`: 10/10),
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   11. **Refresh persistence fix for highlighted newly-created event**
+      - User-reported issue: after page refresh, newly-created event disappeared again.
+      - Root cause:
+         - map highlight flow removed `highlightSession` from URL immediately after first successful match,
+         - refresh then lost the session context and reverted to bounds-only event loading.
+      - Fix applied in `apps/doWhat-web/src/app/map/page.tsx`:
+         - keep `highlightSession` in URL,
+         - remove only stale `activity` param so focused activity does not override event context.
+      - Result:
+         - refreshing `/map` continues to re-focus and re-fetch the highlighted session event reliably.
+      - Validation:
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   12. **Additional resilience: recover created-session highlight even when URL param is missing**
+      - User follow-up indicated refresh/context loss still occurred in some navigation paths where `highlightSession` was absent.
+      - Fixes:
+         - `apps/doWhat-web/src/app/create/page.tsx`
+            - on successful create, persist session context to `sessionStorage` (`dowhat:last-created-session` with id + timestamp).
+         - `apps/doWhat-web/src/app/map/page.tsx`
+            - added fallback highlight recovery from `sessionStorage` (24h freshness window),
+            - map highlight/event focus flow now uses `effectiveHighlightSessionId` (`URL param` or `storage fallback`),
+            - stale activity focus suppression and expanded event bounds now also honor this effective highlight id.
+      - Result:
+         - refreshes and intermediate navigations no longer rely solely on URL query persistence to re-display the created event.
+      - Validation:
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   13. **Focused-activity recenter on load/refresh to restore event visibility**
+      - User follow-up: events still missing after refresh in flows where an `activity` param remained in URL.
+      - Root cause:
+         - focused activity selection from URL did not recenter map/query bounds,
+         - events API remained bound to previous/default viewport, so events near the focused activity were excluded.
+      - Fix in `apps/doWhat-web/src/app/map/page.tsx`:
+         - when `selectedActivity` resolves, map now recenters once per activity id,
+         - synchronizes `center` + `queryCenter` and rebuilds bounds around the focused activity,
+         - uses a one-shot ref guard to avoid repeated recenter loops.
+      - Result:
+         - refreshing a focused-activity map URL now aligns events query area with the focused activity location, restoring event display.
+      - Validation:
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   14. **Reinforcement regression test pass across historical fixes (`changes_log` audit)**
+      - User request: review prior incidents and add preventive tests so map/create/session/profile regressions do not resurface.
+      - Added/updated test coverage:
+         - `apps/doWhat-web/src/app/create/__tests__/venueSelection.test.ts` (new)
+            - verifies robust parsing of prefixed selector values (`place:*`, `venue:*`) and unknown/empty handling.
+         - `apps/doWhat-web/src/lib/db/__tests__/ensureProfileColumns.test.ts` (new)
+            - verifies non-fatal handling/classification for DB connectivity failures (e.g. `ENOTFOUND`) and throw behavior for non-connectivity errors.
+         - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts` (updated)
+            - added payload parsing coverage for `placeId` / `place_id` aliases,
+            - clarified parser contract to normalize/forward non-empty string ids for downstream UUID validation at API/domain layers.
+         - `apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts` (updated)
+            - added near-duplicate suppression scenario for same-label/same-location candidates (e.g. venue/place dual-source duplication).
+      - Validation:
+         - targeted Jest reinforcement batch passed (`25/25`), including:
+            - `venueSelection.test.ts`,
+            - `ensureProfileColumns.test.ts`,
+            - `server.test.ts`,
+            - `resultQuality.test.ts`,
+            - `highlightSession.test.ts`,
+            - `venueDiscovery.test.ts`.
+
+   15. **Attendance consistency fix: `late_cancel` / `no_show` no longer remain `Going`**
+      - User-reported issue: host recorded attendee as `Late cancel`, but session still displayed attendee as `Going` (badge + going counter remained inflated).
+      - Deep root cause:
+         - host attendance endpoint (`POST /api/sessions/[sessionId]/attendance/host`) only updated `attendance_status`,
+         - RSVP status (`session_attendees.status`) was left unchanged,
+         - session counters and roster badges derive from RSVP status (`going`/`interested`), so UI kept showing `Going`.
+      - Fixes applied:
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`
+            - added final-status → RSVP sync during host attendance writes:
+               - `attended` -> `status=going`
+               - `late_cancel` -> `status=declined`
+               - `no_show` -> `status=declined`
+               - `registered` -> preserve existing RSVP status (no forced overwrite)
+            - kept existing verified normalization (`checked_in` only true for `attended`).
+      - Tests added/expanded:
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+            - asserts RSVP sync payload for `attended`, `late_cancel`, and `no_show`,
+            - asserts `registered` does not write/override RSVP `status`.
+      - Validation:
+         - targeted attendance suites passed (`17/17`):
+            - host/join/leave attendance API routes,
+            - `SessionAttendancePanel`, `SessionAttendanceQuickActions`, `SessionAttendanceBadges` component tests,
+            - reliability normalization tests.
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   16. **Deep follow-up remediation: effective attendance status enforced across counts, roster, and session page**
+      - User follow-up: despite prior host-route patch, UI still showed `Going` after marking attendee `late_cancel`.
+      - Additional root cause:
+         - multiple read paths still trusted raw RSVP status (`session_attendees.status`) without reconciling final attendance outcome,
+         - legacy rows where `status=going` + `attendance_status=late_cancel|no_show` could still surface as going in some views.
+      - Additional fixes applied:
+         - `apps/doWhat-web/src/lib/sessions/server.ts`
+            - `getAttendanceCounts(...)` now excludes `attendance_status in (late_cancel,no_show)` from `going` count,
+            - `getUserAttendanceStatus(...)` now resolves effective status (`going + late_cancel/no_show -> declined`).
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`
+            - host roster GET now returns effective RSVP status so late-cancel/no-show attendees are surfaced as declined immediately.
+         - `apps/doWhat-web/src/components/SessionAttendanceList.tsx`
+            - list query now includes `attendance_status`,
+            - client rendering maps `going + late_cancel/no_show` to `declined` before filtering/display.
+         - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+            - participant loading for post-session voting excludes `late_cancel`/`no_show` rows even if legacy RSVP remained `going`,
+            - page-level user attendance status resolver now returns effective status (declined for late-cancel/no-show).
+      - Tests added/expanded:
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+            - added GET test proving roster maps `going + late_cancel` to `declined`.
+         - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+            - added `getUserAttendanceStatus(...)` coverage for late-cancel remap and registered pass-through.
+      - Validation:
+         - targeted Jest suites passed (`29/29`) across sessions server + host/join/leave attendance routes + attendance UI suites,
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   17. **Roster display fix: registered attendance outcomes now visibly reflected in host roster surfaces**
+      - User follow-up: attendance was recorded (e.g. `late_cancel`) but host-facing roster area still looked empty / not considered.
+      - Root cause:
+         - `SessionAttendanceList` defaulted to loading only `going` and `interested`,
+         - host controls used that same list for the detailed roster,
+         - once effective status became `declined`, attendee disappeared from that roster block.
+      - Fixes applied:
+         - `apps/doWhat-web/src/components/SessionAttendanceList.tsx`
+            - added `includeDeclined` prop,
+            - query/status filtering now conditionally includes `declined`,
+            - detailed badge rendering now supports and labels `Declined` explicitly,
+            - event-driven updates preserve/remove declined rows based on `includeDeclined` mode.
+         - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+            - host detailed roster now enables `includeDeclined`, so recorded late-cancel/no-show attendees remain visible in host controls.
+      - Tests added:
+         - `apps/doWhat-web/src/components/__tests__/SessionAttendanceList.test.tsx` (new)
+            - verifies default mode hides declined,
+            - verifies host mode (`includeDeclined`) displays declined attendee rows with correct badge.
+      - Validation:
+         - targeted attendance suites passed (`26/26`) including the new list test,
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   18. **App-wide live-update responsiveness hardening (mutation-triggered refresh bridge)**
+      - User-reported issue: many in-app changes were not visible immediately and appeared only after manual refresh or unrelated interaction.
+      - Deep findings:
+         - much of the app relies on plain fetch/server-component reads without shared invalidation,
+         - there was no global success-mutation refresh signal,
+         - query-level freshness policy was conservative (`refetchOnWindowFocus: false`).
+      - Fixes applied:
+         - added `apps/doWhat-web/src/components/AppLiveUpdates.tsx`:
+            - global client bridge that listens for successful same-origin `/api/*` mutations (`POST`/`PATCH`/`PUT`/`DELETE`),
+            - dispatches a debounced app refresh (`router.refresh`) after mutation success,
+            - refreshes on tab focus/visibility return with cooldown to avoid over-refresh loops.
+         - added `apps/doWhat-web/src/lib/liveUpdates.ts`:
+            - centralized mutation detection helpers (`isMutationMethod`, `shouldBroadcastMutation`, etc.) used by the bridge.
+         - wired bridge into root app shell:
+            - `apps/doWhat-web/src/app/layout.tsx` now mounts `AppLiveUpdates` once for whole-web-app coverage.
+         - improved React Query defaults in `apps/doWhat-web/src/app/providers.tsx`:
+            - `refetchOnWindowFocus: true`,
+            - `refetchOnReconnect: true`.
+      - Tests added:
+         - `apps/doWhat-web/src/lib/__tests__/liveUpdates.test.ts` (new)
+            - verifies mutation method detection,
+            - verifies same-origin API mutation broadcast eligibility.
+      - Validation:
+         - targeted Jest suites passed (`16/16`) including new live-updates tests,
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
+   19. **Attendance UX correction: `registered` no longer leaves attendee stuck as declined**
+      - User-reported issue (session details host flow): after host changed final status back to `Registered`, attendee still appeared as `Declined` and counters/roster felt inconsistent.
+      - Root cause:
+         - previous fix physically wrote `status=declined` for `late_cancel`/`no_show`,
+         - reverting final status to `registered` did not always restore RSVP state.
+      - Fixes applied in `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`:
+         - host updates now read current attendee state before write,
+         - attendance updates no longer force RSVP to declined for `late_cancel`/`no_show` (effective-declined is handled in read layer),
+         - when transitioning from `late_cancel|no_show` back to `registered` and row is currently declined, route restores `status=going`.
+      - Tests updated:
+         - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+            - verifies no forced RSVP status write for `late_cancel`/`no_show`,
+            - verifies `registered` transition restores going in the stale-declined case.
+      - Validation:
+         - targeted Jest suites passed (`19/19`) across host route + sessions server + attendance list,
+         - workspace `typecheck` passed,
+         - workspace `lint` passed.
+
 ## 2026-02-26
 
 1. **Hanoi + Bucharest parity with Bangkok discovery warm-up**
@@ -28,6 +579,237 @@
    - Validation:
       - `pnpm -w run typecheck` passed,
       - `pnpm -w run lint` passed.
+
+2. **Map quality fix: remove noisy "Unnamed place" labels**
+   - Investigated reports of many cards showing placeholder place names (`Unnamed place`) in map/list results.
+   - Root cause:
+      - source place rows sometimes carry placeholder names,
+      - label hydration treated those placeholders as valid display labels,
+      - discovery mapping surfaced them directly into `name`/`place_label`.
+   - Fixes applied:
+      - `apps/doWhat-web/src/lib/places/labels.ts`
+         - fallback label changed from `Unnamed spot` to `Nearby spot`,
+         - `normalizePlaceLabel(...)` now ignores placeholder candidates such as `Unnamed place`, `Unknown`, `N/A`, etc.
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - added display sanitization for discovery items across postgis/fallback/places/venues flows,
+         - placeholder names are replaced with better available alternatives (`venue`, `placeLabel`, activity-derived labels) before API response.
+      - tests updated/added:
+         - `apps/doWhat-web/src/lib/places/__tests__/labels.test.ts`
+         - API payload test expectations updated to shared fallback behavior.
+   - Validation:
+      - targeted tests passed (11/11),
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - live `/api/nearby` verification for the reported search scenario returned:
+         - `unnamed_name = 0`,
+         - `unnamed_label = 0`.
+
+3. **Deep discovery quality pass: prioritize genuinely named places over generic fallback rows**
+   - Follow-up issue: replacing `Unnamed` with `Nearby spot` still surfaced low-value generic cards in dense map queries.
+   - Root cause:
+      - fallback candidate selection and final limiting could include many generic records before named records,
+      - internal ordering did not explicitly prioritize meaningful display labels.
+   - Fixes applied in `apps/doWhat-web/src/lib/discovery/engine.ts`:
+      - added `hasMeaningfulDiscoveryDisplay(...)` and `prioritizeMeaningfulActivities(...)`,
+      - increased fallback activity scan window before final reduction (`max(limit * 4, 400)`),
+      - prioritize meaningful named/place-labeled activities both in fallback mapping output and before final limit truncation.
+   - Validation:
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - targeted tests passed,
+      - live query (`q=climbing,billiards,chess,swimming`, Bangkok radius 2.5km, limit 60) improved from many generic rows to `generic_like = 0` with named places dominating the top results.
+
+4. **Final remediation: eliminate stale/generic place cards and enforce source-name quality**
+   - User-reported issue persisted in UI due stale cache entries and generic low-value fallback records still eligible in dense queries.
+   - Fixes applied:
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - introduced discovery cache key schema version (`v=2`) so old cached payloads containing generic labels are invalidated automatically.
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts` + `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - added debug metric `dropped.genericLabels`,
+         - strict filtering removes generic/non-meaningful discovery rows before final ranking/output,
+         - keeps named places prioritized in final map payload.
+      - `apps/doWhat-web/src/lib/places/providers/osm.ts`
+         - added source-name quality gate for Overpass results,
+         - skips placeholder/unnamed OSM records instead of persisting `Unnamed place` style entries.
+      - tests:
+         - `apps/doWhat-web/src/lib/__tests__/placesProviders.test.ts` now validates unnamed OSM records are skipped.
+   - Validation:
+      - targeted tests passed,
+      - `pnpm -w run typecheck` passed,
+      - `pnpm -w run lint` passed,
+      - live `/api/nearby` check (Bangkok, radius 2.5km, limit 400, explain=1):
+         - `nearby_mentions = 0`,
+         - debug shows placeholder rows removed (`dropped.genericLabels = 168`),
+         - top results are genuine named places.
+
+5. **Bangkok-only depth expansion (user clarification follow-up)**
+   - User clarified that the expectation was Bangkok completeness specifically.
+   - Increased effective capacity so Bangkok discovery is no longer clipped at the previous 600-item ceiling:
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - `MAX_CACHE_ITEMS: 600 -> 2000`.
+      - `apps/doWhat-web/src/lib/filters.ts`
+         - nearby `limit` clamp increased to `2000`.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - `MAP_NEARBY_LIMIT: 1200`,
+         - `MAP_SEARCH_AUGMENT_LIMIT: 2000`.
+   - Validation (Bangkok center `13.7563,100.5018`, `limit=2000`, `refresh=1`):
+      - radius 2.5km -> 416,
+      - radius 5km -> 663,
+      - radius 10km -> 690,
+      - radius 25km -> 686.
+   - Quality remained intact after expansion:
+      - `nearby_mentions = 0` for the expanded 25km/686-result payload.
+
+6. **Quality-preserving low-result map search expansion (strict aliases, no noisy broadening)**
+   - Follow-up for low-count mixed queries (e.g. `billiards, climbing, poker, chess`) where strict inventory is sparse.
+   - Improvements applied without broad generic matching:
+      - `apps/doWhat-web/src/app/map/searchTokens.ts`
+         - `extractSearchTerms(...)` now parses comma/semicolon/pipe/slash separated queries safely,
+         - added `extractSearchPhrases(...)` with strict curated phrase expansions:
+            - `billiards` -> `snooker`, `pool hall`, `pool club`, `pool table`
+            - `climbing` -> `bouldering`, `rock climbing`, `climbing gym`
+            - `chess` -> `chess club`, `chess cafe`, `chess academy`
+            - `poker` -> `poker room`, `poker club`, `texas hold em`, `holdem`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - activities/events text filtering now uses expanded strict phrases for better recall while preserving intent.
+      - tests updated:
+         - `apps/doWhat-web/src/app/map/__tests__/searchTokens.test.ts` now covers comma-separated parsing + strict phrase expansions.
+   - Validation:
+      - targeted Jest passed (`searchTokens.test.ts`: 6/6),
+      - file diagnostics clean (no new TypeScript/ESLint issues in changed files).
+
+7. **Low-result follow-up after user refresh: widened search fetch + poker taxonomy support**
+   - User still observed the same low count after refresh for mixed search intent.
+   - Additional improvements applied:
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - search augmentation now always widens active text search to `25km` + high limit **without prefiltering by derived activity types**,
+         - this prevents valid text matches from being excluded before client-side relevance filtering.
+      - `packages/shared/src/activities/catalog.ts`
+         - added new strict activity preset: `poker` (keywords for poker rooms / card rooms / hold'em), enabling fallback classification where source text supports it.
+      - `apps/doWhat-web/src/app/map/searchTokens.ts`
+         - added poker aliases (`holdem`, `texas hold em`) and strict phrase expansions (`card room`, `casino poker`).
+      - `apps/doWhat-web/src/app/map/__tests__/searchTokens.test.ts`
+         - added coverage for poker alias and phrase expansion behavior.
+   - Validation:
+      - targeted Jest passed (`searchTokens.test.ts`: 6/6),
+      - workspace typecheck passed,
+      - Bangkok reseed executed (`seed:places:bangkok` with cron auth),
+      - strict mixed-intent supply remains sparse in current local inventory (quality-preserving candidate ceiling remains low), indicating a source-coverage bottleneck rather than filtering logic.
+
+8. **Provider health diagnosis for Bangkok coverage bottleneck**
+   - Investigated why mixed strict filters still return ~5 results after logic improvements and reseeding.
+   - Findings:
+      - Foursquare provider requests return `401` (unauthorized), so no Foursquare inventory is being ingested.
+      - Google Places API responds successfully, but current ingestion keeps Google entries transient/non-persisted by design.
+      - Effective persisted supply for this scenario remains predominantly OSM-derived, which is sparse for `poker`/`chess` in the tested Bangkok area.
+   - Additional warm-coverage tuning:
+      - `apps/doWhat-web/src/lib/places/bangkokWarm.ts`
+         - widened warm tile precision (`6 -> 5`) and expanded tile limits (default/max).
+      - result: broader Bangkok warm sweep succeeds, but strict query counts remain bounded by provider data availability.
+
+9. **Foursquare migration fix (service keys + new Places endpoint)**
+   - Follow-up after service-key clarification:
+      - migrated provider base URL from legacy `api.foursquare.com/v3/...` to `places-api.foursquare.com/...`,
+      - switched auth to `Authorization: Bearer <SERVICE_KEY>`,
+      - added required header `X-Places-Api-Version: 2025-06-17`,
+      - updated query params for new API (`fsq_category_ids`),
+      - updated response parsing to support new fields (`fsq_place_id`, `latitude`, `longitude`) with backward compatibility.
+   - Additional adjustment:
+      - reduced requested response fields to a credit-friendly set to avoid premium-field credit failures.
+   - Validation:
+      - direct migrated endpoint call returns HTTP `200` with results,
+      - Bangkok seed now reports non-zero Foursquare provider pulls per tile,
+      - workspace typecheck passed.
+
+10. **Adaptive sparse-filter expansion for map activity types**
+   - User follow-up: known climbing venue (`Rock Domain`) disappeared when strict map radius remained narrow.
+   - Improvement in `apps/doWhat-web/src/app/map/page.tsx`:
+      - when activity-type filters are active (without free-text search),
+      - and strict in-radius results are sparse but non-zero,
+      - client automatically expands candidate radius up to 25km and reapplies the **same strict filters**.
+   - This increases recall for valid long-tail categories (e.g. climbing) without introducing low-quality loose matches.
+   - Validation:
+      - workspace typecheck passed,
+      - no diagnostics in changed file.
+
+11. **Deep search retrieval fix for missing known specialty venues (Rock Domain case)**
+   - User reported `Rock Domain` (known climbing venue) no longer appearing in map search.
+   - Root-cause findings:
+      - `Rock Domain` remains present in strict climbing discovery payload at 25km,
+      - but text-search retrieval pipeline relied mainly on an unfiltered augmentation feed,
+      - so specialty venues could be absent from the candidate set used for final text filtering when provider ranking/candidate mix shifted.
+   - Fix in `apps/doWhat-web/src/app/map/page.tsx`:
+      - added a second search augmentation query that applies derived `activityTypes` tokens (`searchAugmentedTypeQuery`),
+      - merged three sources for search candidate pool:
+         1) base nearby results,
+         2) unfiltered search augmentation,
+         3) token-filtered search augmentation,
+      - preserves strict filtering quality while improving specialty recall consistency.
+   - Validation:
+      - simulation of merged candidate pool confirms `Rock Domain` is retained for `climbing/poker/chess` style search,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+12. **Map multi-activity search precision fix (removed massage leakage under strict comma filters)**
+   - User-reported issue: when using a strict comma-separated search like `climbing, billiards, chess, poker, swimming`, unrelated cards such as `Massage` could still appear.
+   - Root cause in `apps/doWhat-web/src/app/map/page.tsx` + `apps/doWhat-web/src/app/map/searchTokens.ts`:
+      - structured multi-activity matching used expanded tokens (for recall),
+      - expansion terms such as `pool` (from `billiards`) were treated as strict match tokens,
+      - this allowed non-target activities with overlapping generic tags to pass.
+   - Fixes applied:
+      - added `extractStructuredActivityTokens(...)` in `apps/doWhat-web/src/app/map/searchTokens.ts` to derive canonical strict tokens from user input terms (no broad expansions),
+      - updated structured comma-separated matching in `apps/doWhat-web/src/app/map/page.tsx` to use strict tokens only for `activity_types` / tag fallback checks.
+   - Tests:
+      - updated `apps/doWhat-web/src/app/map/__tests__/searchTokens.test.ts` with regressions ensuring structured token extraction:
+         - preserves canonical intents (`climbing`, `billiards`, `chess`, `poker`, `swimming`),
+         - excludes broad expansion tokens (`pool`, `snooker`, `bouldering`, `holdem`),
+         - keeps alias normalization (`pool` -> `billiards`, `texas hold em` -> `poker`).
+
+13. **Map search algorithm deep hardening + central matching utility**
+   - Follow-up deep pass on the map filtering algorithm to reduce future drift and ensure strict intent behavior remains stable.
+   - Improvements:
+      - added `apps/doWhat-web/src/app/map/searchMatching.ts` with centralized `matchesActivitySearch(...)` logic,
+      - structured multi-activity mode now explicitly uses canonical intent tokens only,
+      - strict matching checks `activity_types` + tag fallback with exact token membership,
+      - non-structured search behavior (free text + phrase expansions + token recall) preserved.
+   - Refactor:
+      - `apps/doWhat-web/src/app/map/page.tsx` now delegates search match decisions to the shared helper to avoid duplicated inline logic and reduce regression risk.
+   - Regression tests:
+      - added `apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts` covering:
+         - exclusion of unrelated `Massage` card for strict comma intent input,
+         - canonical type-token matches,
+         - canonical tag fallback matches,
+         - non-structured phrase-recall behavior.
+   - Validation:
+      - targeted Jest passed (`searchTokens` + `searchMatching`: 12/12),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+14. **Map search pipeline integration coverage (user-confirmed semantics)**
+   - User confirmed expected behavior:
+      - comma-separated search remains OR semantics,
+      - tag fallback remains enabled for sparse `activity_types`.
+   - Added integration-level coverage in `apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`:
+      - verifies comma multi-intent search returns matching intents while excluding unrelated `massage` rows,
+      - verifies tag fallback still matches canonical intent tokens when `activity_types` is empty.
+   - Validation:
+      - targeted Jest passed (`searchTokens` + `searchMatching` + `searchPipeline.integration`: 14/14),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+15. **Playwright UI-level validation for map structured search behavior**
+   - Added browser-level scenario in `apps/doWhat-web/tests/e2e/map-search-structured.spec.ts` to validate real UI behavior end-to-end:
+      - opens map,
+      - applies comma-separated search input (`climbing, billiards, chess, poker, swimming`),
+      - verifies OR semantics by keeping matching cards,
+      - verifies unrelated `Massage` card is excluded.
+   - Added explicit test-only map auth bypass path in `apps/doWhat-web/src/app/map/page.tsx`:
+      - enabled only when `NEXT_PUBLIC_E2E_ADMIN_BYPASS=true` and query includes `e2e=1`,
+      - keeps production behavior unchanged while enabling deterministic map e2e coverage.
+   - Validation:
+      - Playwright spec passed (`map-search-structured.spec.ts`, chromium),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
 
 ## 2026-02-24
 

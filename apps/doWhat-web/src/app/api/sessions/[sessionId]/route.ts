@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
+import { isUuid } from '@dowhat/shared';
 import {
   ensureActivity,
   ensureVenue,
@@ -53,6 +54,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const body = await req.json();
     const payload = extractSessionPayload(body);
 
+    const explicitPlaceId = isUuid(payload.placeId ?? null) ? payload.placeId : null;
     const canResolvePlace =
       typeof payload.lat === 'number' && Number.isFinite(payload.lat) &&
       typeof payload.lng === 'number' && Number.isFinite(payload.lng);
@@ -64,6 +66,7 @@ export async function PATCH(req: Request, context: RouteContext) {
           source: 'session-api',
         })
       : null;
+    const resolvedPlaceId = explicitPlaceId ?? placeResolution?.placeId ?? null;
 
     const updates: Record<string, unknown> = {};
     if (payload.startsAt) updates.starts_at = payload.startsAt;
@@ -72,8 +75,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (payload.maxAttendees != null) updates.max_attendees = payload.maxAttendees;
     if (payload.visibility) updates.visibility = payload.visibility;
     if (payload.description !== undefined) updates.description = payload.description;
-    if (placeResolution) {
-      updates.place_id = placeResolution.placeId;
+    if (resolvedPlaceId) {
+      updates.place_id = resolvedPlaceId;
     }
 
     if (payload.startsAt || payload.endsAt) {
@@ -92,20 +95,23 @@ export async function PATCH(req: Request, context: RouteContext) {
         lat: payload.lat,
         lng: payload.lng,
         venueName: payload.venueName,
-        placeId: placeResolution?.placeId,
+        placeId: resolvedPlaceId,
       });
       updates.activity_id = activityId;
     }
 
     const venueUpdateRequested = payload.venueId !== undefined || payload.venueName !== undefined;
     if (venueUpdateRequested) {
-      const venueId = await ensureVenue(service, {
-        venueId: payload.venueId,
-        venueName: payload.venueName,
-        lat: payload.lat,
-        lng: payload.lng,
-      });
-      updates.venue_id = venueId;
+      const shouldMaterializeVenue = Boolean(payload.venueId) || (!resolvedPlaceId && Boolean(payload.venueName));
+      if (shouldMaterializeVenue) {
+        const venueId = await ensureVenue(service, {
+          venueId: payload.venueId,
+          venueName: payload.venueName,
+          lat: payload.lat,
+          lng: payload.lng,
+        });
+        updates.venue_id = venueId;
+      }
     }
 
     if (!Object.keys(updates).length) {

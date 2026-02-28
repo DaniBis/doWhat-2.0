@@ -102,6 +102,7 @@ export type ParsedSessionPayload = {
   activityId?: string | null;
   activityName?: string | null;
   venueId?: string | null;
+  placeId?: string | null;
   venueName?: string | null;
   lat?: number | null;
   lng?: number | null;
@@ -280,6 +281,12 @@ export function extractSessionPayload(body: unknown, options: SessionPayloadOpti
   });
   assignOptionalId(raw, 'venue_id', (value) => {
     parsed.venueId = value;
+  });
+  assignOptionalId(raw, 'placeId', (value) => {
+    parsed.placeId = value;
+  });
+  assignOptionalId(raw, 'place_id', (value) => {
+    parsed.placeId = value;
   });
   assignOptionalText(raw, 'venueName', (value) => {
     parsed.venueName = value;
@@ -904,11 +911,15 @@ async function countByStatus(
   sessionId: string,
   status: SessionAttendeeRow['status'],
 ): Promise<number> {
-  const { count, error } = await service
+  let query = service
     .from('session_attendees')
     .select('status', { count: 'exact', head: true })
     .eq('session_id', sessionId)
     .eq('status', status);
+  if (status === 'going') {
+    query = query.not('attendance_status', 'in', '("late_cancel","no_show")');
+  }
+  const { count, error } = await query;
   if (error) throw error;
   return count ?? 0;
 }
@@ -931,10 +942,14 @@ export async function getUserAttendanceStatus(
 ): Promise<SessionAttendeeRow['status'] | null> {
   const { data, error } = await service
     .from('session_attendees')
-    .select('status')
+    .select('status, attendance_status')
     .eq('session_id', sessionId)
     .eq('user_id', userId)
-    .maybeSingle<{ status: SessionAttendeeRow['status'] }>();
+    .maybeSingle<{ status: SessionAttendeeRow['status']; attendance_status?: string | null }>();
   if (error) throw error;
-  return data?.status ?? null;
+  if (!data?.status) return null;
+  if (data.status === 'going' && (data.attendance_status === 'late_cancel' || data.attendance_status === 'no_show')) {
+    return 'declined';
+  }
+  return data.status;
 }

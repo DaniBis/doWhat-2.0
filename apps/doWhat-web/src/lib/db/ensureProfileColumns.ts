@@ -5,6 +5,26 @@ type QueryablePool = {
   end: () => Promise<void>;
 };
 
+const NON_FATAL_CONNECTION_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ENETUNREACH',
+]);
+
+export const isNonFatalConnectionError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const withCode = error as Error & { code?: string; cause?: unknown };
+  const code = typeof withCode.code === 'string' ? withCode.code.toUpperCase() : '';
+  if (code && NON_FATAL_CONNECTION_ERROR_CODES.has(code)) return true;
+  const message = error.message.toLowerCase();
+  if (message.includes('getaddrinfo enotfound')) return true;
+  if (message.includes('could not translate host name')) return true;
+  if (withCode.cause) return isNonFatalConnectionError(withCode.cause);
+  return false;
+};
+
 function getConnectionString(): string | null {
   return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || null;
 }
@@ -35,6 +55,12 @@ async function runEnsure(): Promise<void> {
   });
   try {
     await migrateProfiles(pool);
+  } catch (error) {
+    if (isNonFatalConnectionError(error)) {
+      console.warn('ensureProfileColumns: skipped due to database connectivity issue', error);
+      return;
+    }
+    throw error;
   } finally {
     await pool.end();
   }

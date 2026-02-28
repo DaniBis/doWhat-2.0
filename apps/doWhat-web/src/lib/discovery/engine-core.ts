@@ -96,6 +96,7 @@ export type DiscoveryDebug = {
   dropped: {
     notPlaceBacked: number;
     lowConfidence: number;
+    genericLabels: number;
     deduped: number;
   };
   ranking: {
@@ -135,7 +136,8 @@ const DEFAULT_RADIUS_METERS = 2_000;
 
 export const CACHE_TTL_MS = 5 * 60 * 1000;
 export const MAX_CACHE_ENTRIES = 30;
-export const MAX_CACHE_ITEMS = 600;
+export const MAX_CACHE_ITEMS = 2000;
+const DISCOVERY_CACHE_KEY_VERSION = 3;
 
 const CAPACITY_KEYS = new Set<CapacityFilterKey>(['any', 'couple', 'small', 'medium', 'large']);
 const TIME_WINDOW_KEYS = new Set<TimeWindowKey>(['any', 'open_now', 'morning', 'afternoon', 'evening', 'late']);
@@ -209,6 +211,7 @@ export const buildDiscoveryCacheKey = (kind: string, query: DiscoveryQuery): str
     : null;
 
   const payload = {
+    v: DISCOVERY_CACHE_KEY_VERSION,
     kind,
     center: {
       lat: roundCoordinate(query.center.lat, 5),

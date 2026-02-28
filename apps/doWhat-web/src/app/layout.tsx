@@ -4,6 +4,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import Providers from "./providers";
 import { OnboardingNavLink } from "@/components/nav/OnboardingNavLink";
+import AppLiveUpdates from "@/components/AppLiveUpdates";
 
 type AuthButtonsProps = {
   variant?: "panel" | "inline";
@@ -49,6 +50,7 @@ export default async function RootLayout({
         {/* Geolocation requirement banner */}
         <GeoRequirementBanner />
         <Providers>
+          <AppLiveUpdates />
           <main className="relative">{children}</main>
         </Providers>
       </body>

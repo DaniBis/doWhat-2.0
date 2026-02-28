@@ -14,6 +14,36 @@ interface OverpassElement {
   tags?: Record<string, string>;
 }
 
+const PLACEHOLDER_NAME_PATTERNS = [
+  /^unnamed(?:\s+(?:place|spot|venue|location))?$/i,
+  /^unknown(?:\s+(?:place|spot|venue|location))?$/i,
+  /^no\s*name$/i,
+  /^n\/?a$/i,
+  /^none$/i,
+  /^null$/i,
+];
+
+const normalizeMeaningfulName = (value: string | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (PLACEHOLDER_NAME_PATTERNS.some((pattern) => pattern.test(trimmed))) return null;
+  return trimmed;
+};
+
+const resolveOsmName = (tags: Record<string, string>): string | null => {
+  return (
+    normalizeMeaningfulName(tags.name)
+    ?? normalizeMeaningfulName(tags['name:en'])
+    ?? normalizeMeaningfulName(tags.int_name)
+    ?? normalizeMeaningfulName(tags.official_name)
+    ?? normalizeMeaningfulName(tags.short_name)
+    ?? normalizeMeaningfulName(tags.brand)
+    ?? normalizeMeaningfulName(tags.operator)
+    ?? normalizeMeaningfulName(tags['addr:housename'])
+  );
+};
+
 const describeAddress = (tags: Record<string, string> | undefined) => {
   if (!tags) return { address: undefined, locality: undefined, region: undefined, country: undefined, postcode: undefined };
   const addressParts = [tags['addr:housenumber'], tags['addr:street'], tags['addr:neighbourhood'], tags['addr:suburb']]
@@ -167,7 +197,8 @@ out center ${Math.min(query.limit ?? 200, 300)};
     const lng = element.lon ?? element.center?.lon;
     if (typeof lat !== 'number' || typeof lng !== 'number') return;
     const tags = element.tags ?? {};
-    const name = tags.name || tags['name:en'] || tags['alt_name'] || 'Unnamed place';
+    const name = resolveOsmName(tags);
+    if (!name) return;
     const derivedCategories = categoriesFromTags(tags);
     const normalizedCategories = mergeCategories(categories, derivedCategories);
     const categoriesForPlace = normalizedCategories.length ? normalizedCategories : ['activity'];

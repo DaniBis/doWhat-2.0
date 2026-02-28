@@ -6,9 +6,9 @@ import type { PlacesQuery } from './types';
 const CITY_SLUG = 'bangkok';
 const CENTER_LAT = 13.7563;
 const CENTER_LNG = 100.5018;
-const TILE_PRECISION = 6;
-const DEFAULT_TILE_COUNT = 10;
-const MAX_TILE_COUNT = 20;
+const TILE_PRECISION = 5;
+const DEFAULT_TILE_COUNT = 20;
+const MAX_TILE_COUNT = 80;
 
 const buildTiles = (target: number): string[] => {
   const centerTile = ngeohash.encode(CENTER_LAT, CENTER_LNG, TILE_PRECISION);

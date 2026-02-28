@@ -85,6 +85,40 @@ describe("attendance host route", () => {
         ],
       });
     });
+
+    it("maps late-cancel attendance to declined roster status", async () => {
+      mockResolveApiUser.mockResolvedValueOnce({ id: "host-1" } as never);
+      mockGetSessionOrThrow.mockResolvedValueOnce({ host_user_id: "host-1" } as never);
+      const rosterRows = [
+        {
+          user_id: "user-2",
+          status: "going",
+          attendance_status: "late_cancel",
+          checked_in: false,
+          profiles: { full_name: "Jordan", username: "jord" },
+        },
+      ];
+      mockCreateServiceClient.mockReturnValueOnce(
+        createRosterServiceStub({ data: rosterRows, error: null }) as unknown as ReturnType<typeof createServiceClient>,
+      );
+
+      const response = await GET(createRequest(), createContext("session-2"));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        sessionId: "session-2",
+        attendees: [
+          {
+            userId: "user-2",
+            status: "declined",
+            attendanceStatus: "late_cancel",
+            verified: false,
+            fullName: "Jordan",
+            username: "jord",
+          },
+        ],
+      });
+    });
   });
 
   describe("POST", () => {
@@ -112,6 +146,7 @@ describe("attendance host route", () => {
           updates: [
             { userId: "user-77", attendanceStatus: "attended", verified: true },
             { userId: "user-88", attendanceStatus: "late_cancel", verified: true },
+            { userId: "user-99", attendanceStatus: "no_show", verified: true },
           ],
         }),
         createContext("session-apply"),
@@ -119,9 +154,62 @@ describe("attendance host route", () => {
 
       expect(mockNormalizeVerifiedFlag).toHaveBeenNthCalledWith(1, "attended", true);
       expect(mockNormalizeVerifiedFlag).toHaveBeenNthCalledWith(2, "late_cancel", true);
-      expect(updateStub.updateMock).toHaveBeenCalledTimes(2);
+      expect(mockNormalizeVerifiedFlag).toHaveBeenNthCalledWith(3, "no_show", true);
+      expect(updateStub.updateMock).toHaveBeenCalledTimes(3);
+      expect(updateStub.updateMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          attendance_status: "attended",
+          checked_in: true,
+          status: "going",
+        }),
+      );
+      expect(updateStub.updateMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          attendance_status: "late_cancel",
+          checked_in: false,
+        }),
+      );
+      expect(updateStub.updateMock.mock.calls[1]?.[0]).not.toHaveProperty("status");
+      expect(updateStub.updateMock).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({
+          attendance_status: "no_show",
+          checked_in: false,
+        }),
+      );
+      expect(updateStub.updateMock.mock.calls[2]?.[0]).not.toHaveProperty("status");
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ sessionId: "session-apply", applied: 2 });
+      await expect(response.json()).resolves.toEqual({ sessionId: "session-apply", applied: 3 });
+    });
+
+    it("restores RSVP going when moving from late_cancel back to registered", async () => {
+      mockResolveApiUser.mockResolvedValueOnce({ id: "host-1" } as never);
+      mockGetSessionOrThrow.mockResolvedValueOnce({ host_user_id: "host-1" } as never);
+      const updateStub = createUpdateServiceStub({
+        "user-99": { status: "declined", attendance_status: "late_cancel" },
+      });
+      mockCreateServiceClient.mockReturnValueOnce(updateStub.service as unknown as ReturnType<typeof createServiceClient>);
+
+      const response = await POST(
+        createRequest({
+          updates: [{ userId: "user-99", attendanceStatus: "registered", verified: true }],
+        }),
+        createContext("session-registered"),
+      );
+
+      expect(updateStub.updateMock).toHaveBeenCalledTimes(1);
+      expect(updateStub.updateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attendance_status: "registered",
+          checked_in: false,
+          attended_at: null,
+          status: "going",
+        }),
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ sessionId: "session-registered", applied: 1 });
     });
   });
 });
@@ -146,11 +234,31 @@ function createRosterServiceStub(result: { data: unknown; error: unknown }) {
   return { from };
 }
 
-function createUpdateServiceStub() {
-  const select = jest.fn(async () => ({ data: [{ user_id: "user-77" }], error: null }));
-  const eqUser = jest.fn(() => ({ select }));
-  const eqSession = jest.fn(() => ({ eq: eqUser }));
-  const updateMock = jest.fn(() => ({ eq: eqSession }));
-  const from = jest.fn(() => ({ update: updateMock }));
+function createUpdateServiceStub(
+  existingByUser: Record<string, { status: "going" | "interested" | "declined"; attendance_status: "registered" | "attended" | "late_cancel" | "no_show" }> = {},
+) {
+  const pendingUserRef: { current: string | null } = { current: null };
+
+  const maybeSingle = jest.fn(async () => {
+    const userId = pendingUserRef.current;
+    const existing = (userId && existingByUser[userId]) || { status: "going", attendance_status: "registered" };
+    return { data: existing, error: null };
+  });
+  const eqUserForRead = jest.fn((column: string, value?: string) => {
+    if (column === "user_id") pendingUserRef.current = value ?? null;
+    return { maybeSingle };
+  });
+  const eqSessionForRead = jest.fn(() => ({ eq: eqUserForRead }));
+  const selectForRead = jest.fn(() => ({ eq: eqSessionForRead }));
+
+  const selectForUpdate = jest.fn(async () => ({ data: [{ user_id: pendingUserRef.current ?? "user-77" }], error: null }));
+  const eqUserForUpdate = jest.fn((column: string, value?: string) => {
+    if (column === "user_id") pendingUserRef.current = value ?? null;
+    return { select: selectForUpdate };
+  });
+  const eqSessionForUpdate = jest.fn(() => ({ eq: eqUserForUpdate }));
+  const updateMock = jest.fn((_payload: Record<string, unknown>) => ({ eq: eqSessionForUpdate }));
+
+  const from = jest.fn(() => ({ select: selectForRead, update: updateMock }));
   return { service: { from }, updateMock };
 }

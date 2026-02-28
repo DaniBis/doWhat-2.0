@@ -14,7 +14,7 @@ export type NearbyQuery = {
   limit?: number
 };
 
-const MAX_NEARBY_LIMIT = 600;
+const MAX_NEARBY_LIMIT = 2000;
 
 export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
   const lat = parseFloat(searchParams.get('lat') || '0');

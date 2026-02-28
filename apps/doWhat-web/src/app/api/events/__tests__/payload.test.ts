@@ -1,4 +1,5 @@
 import type { EventSummary } from '@dowhat/shared';
+import { PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 
 const jsonMock = jest.fn();
 
@@ -23,6 +24,7 @@ type MockQuery = {
   select: (...args: unknown[]) => MockQuery;
   order: (...args: unknown[]) => MockQuery;
   limit: (...args: unknown[]) => MockQuery;
+  or: (...args: unknown[]) => MockQuery;
   gte: (...args: unknown[]) => MockQuery;
   lte: (...args: unknown[]) => MockQuery;
   overlaps: (...args: unknown[]) => MockQuery;
@@ -38,6 +40,7 @@ const createQuery = (result: QueryResult): MockQuery => {
   query.select = jest.fn(() => query);
   query.order = jest.fn(() => query);
   query.limit = jest.fn(() => query);
+  query.or = jest.fn(() => query);
   query.gte = jest.fn(() => query);
   query.lte = jest.fn(() => query);
   query.overlaps = jest.fn(() => query);
@@ -96,7 +99,7 @@ describe('/api/events payload', () => {
     expect(jsonMock).toHaveBeenCalledTimes(1);
     const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
     expect(Array.isArray(payload.events)).toBe(true);
-    expect(payload.events[0]?.place_label).toBe('Unnamed spot');
+    expect(payload.events[0]?.place_label).toBe(PLACE_FALLBACK_LABEL);
   });
 
   it('filters out events that do not satisfy verifiedOnly + minAccuracy constraints', async () => {
@@ -177,5 +180,45 @@ describe('/api/events payload', () => {
     const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
     expect(payload.events).toHaveLength(1);
     expect(payload.events[0]?.id).toBe('event-high');
+  });
+
+  it('queries session fallback with default recent lookback when no from filter is provided', async () => {
+    const now = Date.now();
+    const sessionRow = {
+      id: 'session-new',
+      activity_id: null,
+      venue_id: null,
+      place_id: null,
+      host_user_id: 'host-1',
+      starts_at: new Date(now + 60 * 60 * 1000).toISOString(),
+      ends_at: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
+      price_cents: 0,
+      visibility: 'public',
+      max_attendees: 20,
+      place_label: 'City Hub',
+      reliability_score: null,
+      description: null,
+      created_at: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    };
+
+    const sessionsQuery = createQuery({ data: [sessionRow], error: null });
+    const eventsQuery = createQuery({ data: [], error: null });
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return eventsQuery;
+      if (table === 'sessions') return sessionsQuery;
+      if (table === 'activities') return createQuery({ data: [], error: null });
+      if (table === 'venues') return createQuery({ data: [], error: null });
+      if (table === 'places') return createQuery({ data: [], error: null });
+      if (table === 'profiles') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({ url: 'http://localhost/api/events?limit=20' } as unknown as Request);
+
+    expect(sessionsQuery.or).toHaveBeenCalledWith(expect.stringMatching(/starts_at\.gte\..*ends_at\.gte\..*created_at\.gte\./));
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    expect(payload.events.some((event) => event.id === 'session-new')).toBe(true);
   });
 });
