@@ -30,7 +30,7 @@ const { trackOnboardingEntry } = jest.requireMock("@dowhat/shared") as {
   trackOnboardingEntry: jest.Mock;
 };
 
-const createProfilesQuery = (data: { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }) => {
+const createProfilesQuery = (data: { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values: string[] | null }) => {
   const builder: Record<string, unknown> = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
@@ -60,6 +60,7 @@ function mockSupabaseResponses({
   playStyle = null,
   pledgeAck = null,
   skillLevel = null,
+  coreValues = null,
 }: {
   user: { id: string } | null;
   traitsCount?: number;
@@ -67,11 +68,12 @@ function mockSupabaseResponses({
   playStyle?: string | null;
   pledgeAck?: string | null;
   skillLevel?: string | null;
+  coreValues?: string[] | null;
 }) {
   supabase.auth.getUser.mockResolvedValue({ data: { user } });
   supabase.from.mockImplementation((table: string) => {
     if (table === "profiles") {
-      return createProfilesQuery({ primary_sport: primarySport ?? null, play_style: playStyle ?? null, reliability_pledge_ack_at: pledgeAck ?? null });
+      return createProfilesQuery({ primary_sport: primarySport ?? null, play_style: playStyle ?? null, reliability_pledge_ack_at: pledgeAck ?? null, core_values: coreValues ?? null });
     }
     if (table === "user_base_traits") {
       return createTraitsQuery(traitsCount ?? 0);
@@ -102,7 +104,7 @@ describe("OnboardingNavLink", () => {
     render(<OnboardingNavLink />);
 
     await waitFor(() => expect(screen.getByText(/Finish onboarding/i)).toBeInTheDocument());
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
     expect(screen.getByText(/Next: Pick 5 base traits/i)).toBeInTheDocument();
     const link = screen.getByRole("link", { name: /Finish onboarding/i });
     expect(link).toHaveAttribute("href", "/onboarding/traits");
@@ -113,8 +115,8 @@ describe("OnboardingNavLink", () => {
     expect(trackOnboardingEntry).toHaveBeenCalledWith({
       source: "nav",
       platform: "web",
-      steps: ["traits", "sport", "pledge"],
-      pendingSteps: 3,
+      steps: ["traits", "values", "sport", "pledge"],
+      pendingSteps: 4,
       step: "traits",
       nextStep: "/onboarding/traits",
     });
@@ -128,6 +130,7 @@ describe("OnboardingNavLink", () => {
       playStyle: "competitive",
       pledgeAck: "2025-12-01T00:00:00.000Z",
       skillLevel: null,
+      coreValues: ["reliable", "kind", "disciplined"],
     });
 
     render(<OnboardingNavLink />);
@@ -147,6 +150,7 @@ describe("OnboardingNavLink", () => {
       playStyle: "competitive",
       pledgeAck: "2025-12-01T00:00:00.000Z",
       skillLevel: "3.0 - Consistent drives",
+      coreValues: ["reliable", "kind", "disciplined"],
     });
 
     const { container } = render(<OnboardingNavLink />);

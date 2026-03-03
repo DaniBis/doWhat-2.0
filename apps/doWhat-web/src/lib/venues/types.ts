@@ -48,9 +48,11 @@ export interface RankedVenueActivity {
   userNoVotes: number;
   categoryMatch: boolean;
   keywordMatch: boolean;
+  trustScore: number;
   score: number;
   verified: boolean;
   needsVerification: boolean;
+  verificationState: 'suggested' | 'verified' | 'needs_votes';
 }
 
 export interface ActivityAvailabilitySummary {

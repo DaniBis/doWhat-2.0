@@ -50,15 +50,22 @@ const STEP_DEFINITIONS: ReadonlyArray<StepDefinition> = [
     href: "/onboarding-traits",
   },
   {
+    id: "values",
+    title: "Step 2 · Core values",
+    description: "Type 3 values that shape how you show up with teammates and hosts.",
+    actionLabel: "Add core values",
+    href: "/onboarding/core-values",
+  },
+  {
     id: "sport",
-    title: "Step 2 · Sport & skill",
+    title: "Step 3 · Sport & skill",
     description: "Tell us your primary sport, play style, and skill so we can fill the right open spots.",
     actionLabel: "Set sport preferences",
     href: "/onboarding/sports",
   },
   {
     id: "pledge",
-    title: "Step 3 · Reliability pledge",
+    title: "Step 4 · Reliability pledge",
     description: "Confirm the four doWhat commitments so hosts know they can count on you.",
     actionLabel: "Review pledge",
     href: "/onboarding/reliability-pledge",
@@ -67,6 +74,7 @@ const STEP_DEFINITIONS: ReadonlyArray<StepDefinition> = [
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
   traits: "Pick 5 base traits",
+  values: "Add 3 core values",
   sport: "Set your sport & skill",
   pledge: "Confirm the reliability pledge",
 };
@@ -100,6 +108,7 @@ const OnboardingHomeScreen: React.FC = () => {
   const [playStyle, setPlayStyle] = useState<PlayStyle | null>(null);
   const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
   const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
+  const [coreValues, setCoreValues] = useState<string[]>([]);
 
   const fetchProgress = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
@@ -114,6 +123,7 @@ const OnboardingHomeScreen: React.FC = () => {
         setPlayStyle(null);
         setSportSkillLevel(null);
         setPledgeAckAt(null);
+        setCoreValues([]);
         return;
       }
 
@@ -121,9 +131,9 @@ const OnboardingHomeScreen: React.FC = () => {
         supabase.from("user_base_traits").select("trait_id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase
           .from("profiles")
-          .select("primary_sport, play_style, reliability_pledge_ack_at")
+          .select("primary_sport, play_style, reliability_pledge_ack_at, core_values")
           .eq("id", user.id)
-          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>(),
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values?: string[] | null }>(),
       ]);
 
       if (traitsResult.error && traitsResult.error.code !== "PGRST116") {
@@ -144,6 +154,7 @@ const OnboardingHomeScreen: React.FC = () => {
         : null;
       setPlayStyle(normalizedPlayStyle);
       setPledgeAckAt(profileResult.data?.reliability_pledge_ack_at ?? null);
+      setCoreValues(Array.isArray(profileResult.data?.core_values) ? profileResult.data.core_values.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : []);
 
       if (normalizedSport) {
         const { data: sportProfile, error: sportProfileError } = await supabase
@@ -193,6 +204,12 @@ const OnboardingHomeScreen: React.FC = () => {
             complete: savedTraits >= TRAIT_GOAL,
             statusNote: savedTraits >= TRAIT_GOAL ? `Completed (${savedTraits}/${TRAIT_GOAL} vibes)` : `${savedTraits}/${TRAIT_GOAL} vibes saved`,
           };
+        case "values":
+          return {
+            ...step,
+            complete: coreValues.length >= 3,
+            statusNote: coreValues.length >= 3 ? `Saved (${coreValues.length}/3 values)` : `${coreValues.length}/3 values saved`,
+          };
         case "sport": {
           const sportLabel = primarySport ? getSportLabel(primarySport) : null;
           return {
@@ -219,18 +236,19 @@ const OnboardingHomeScreen: React.FC = () => {
           };
       }
     });
-  }, [playStyle, pledgeAckAt, primarySport, sportComplete, traitCount]);
+  }, [coreValues.length, playStyle, pledgeAckAt, primarySport, sportComplete, traitCount]);
 
   const pendingStepIds = useMemo(
     () =>
       derivePendingOnboardingSteps({
         traitCount,
+        coreValues,
         primarySport,
         playStyle,
         skillLevel: sportSkillLevel,
         pledgeAckAt,
       }),
-    [traitCount, primarySport, playStyle, sportSkillLevel, pledgeAckAt],
+    [traitCount, coreValues, primarySport, playStyle, sportSkillLevel, pledgeAckAt],
   );
   const pendingStepCount = pendingStepIds.length;
   const prioritizedStepId = pendingStepIds[0] ?? null;

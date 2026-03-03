@@ -11,8 +11,7 @@ describe('venue search helpers', () => {
       categoryMatch: true,
       keywordMatch: false,
     });
-    // 0.9 * 0.6 + 20 - 10 + 15 = 25.54
-    expect(score).toBeCloseTo(25.54, 2);
+    expect(score).toBeCloseTo(61.987, 2);
   });
 
   test('resolveActivityConfidence parses numeric values', () => {

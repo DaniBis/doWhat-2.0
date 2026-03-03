@@ -17,6 +17,10 @@ jest.mock('@/lib/supabase/browser', () => ({
   },
 }));
 
+jest.mock('@/lib/access/useCoreAccessGuard', () => ({
+  useCoreAccessGuard: jest.fn(() => 'allowed'),
+}));
+
 jest.mock('@/components/SaveToggleButton', () => {
   return {
     __esModule: true,
@@ -111,6 +115,8 @@ const baseVenue: RankedVenueActivity = {
   score: 92,
   verified: true,
   needsVerification: false,
+  trustScore: 0.95,
+  verificationState: 'verified',
 };
 
 const needsReviewVenue: RankedVenueActivity = {
@@ -122,6 +128,8 @@ const needsReviewVenue: RankedVenueActivity = {
   score: 78,
   verified: false,
   needsVerification: true,
+  trustScore: 0.76,
+  verificationState: 'needs_votes',
 };
 
 const aiOnlyVenue: RankedVenueActivity = {
@@ -133,6 +141,8 @@ const aiOnlyVenue: RankedVenueActivity = {
   score: 61,
   verified: false,
   needsVerification: false,
+  trustScore: 0.61,
+  verificationState: 'suggested',
   categoryMatch: false,
   keywordMatch: false,
 };
@@ -219,6 +229,24 @@ const findVenueList = async () => {
 };
 
 describe('VenueVerificationPage', () => {
+  it('renders without crashing when nearby payloads are empty', async () => {
+    fetchMock.mockImplementation(async (...args: FetchArgs) => {
+      const url = resolveFetchUrl(args[0]);
+      if (url.includes('/api/list-activities')) {
+        return createJsonResponse({ activities: [] });
+      }
+      if (url.includes('/api/search-venues')) {
+        return createJsonResponse({ activity: 'chess', results: [] });
+      }
+      throw new Error(`Unexpected fetch call for ${url}`);
+    });
+
+    renderPage();
+
+    expect(await screen.findByLabelText(/Search venues/i)).toBeInTheDocument();
+    expect(screen.getByText(/No venues match this filter yet/i)).toBeInTheDocument();
+  });
+
   it('filters venues via status chips', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -236,7 +264,7 @@ describe('VenueVerificationPage', () => {
     expect(within(list).queryByText('Verified Venue')).not.toBeInTheDocument();
     expect(within(list).queryByText('AI Only Venue')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /AI only/i }));
+    await user.click(screen.getByRole('button', { name: /Suggested/i }));
 
     await waitFor(() => {
       expect(within(list).getByText('AI Only Venue')).toBeInTheDocument();

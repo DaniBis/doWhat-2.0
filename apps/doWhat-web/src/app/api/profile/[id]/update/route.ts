@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { ensureProfileColumns } from '@/lib/db/ensureProfileColumns';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
+import { normalizeCoreValues } from '@dowhat/shared';
 
 // Simple authenticated update route for name/avatar fields.
 export async function POST(req: Request, { params }: { params: { id: string } }) {
@@ -98,6 +99,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   } else if (body.bio === null) {
     update.bio = null;
   }
+  if (Array.isArray(body.coreValues)) {
+    update.core_values = normalizeCoreValues(body.coreValues);
+  } else if (body.coreValues === null) {
+    update.core_values = [];
+  }
   if (body.socials && typeof body.socials === 'object') {
     const socials = body.socials as Record<string, unknown>;
     if ('instagram' in socials) {
@@ -120,7 +126,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({ ok: true });
   }
 
-  const missingColumnMatch = /column/iu.test(error.message) && /(bio|location|instagram|whatsapp)/iu.test(error.message);
+  const missingColumnMatch = /column/iu.test(error.message) && /(bio|location|core_values|instagram|whatsapp)/iu.test(error.message);
   if (!missingColumnMatch) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -129,6 +135,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const fallbackUpdate: Record<string, unknown> = { ...update };
   delete fallbackUpdate.bio;
   delete fallbackUpdate.location;
+  delete fallbackUpdate.core_values;
   delete fallbackUpdate.instagram;
   delete fallbackUpdate.whatsapp;
 

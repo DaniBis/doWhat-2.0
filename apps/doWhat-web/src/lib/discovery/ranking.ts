@@ -1,4 +1,5 @@
 import { haversineMeters } from '@/lib/places/utils';
+import { computeTrustScore } from './trust';
 
 import type { DiscoveryItem, NormalizedDiscoveryFilters } from './engine-core';
 import { normalizeList, roundCoordinate } from './engine-core';
@@ -83,14 +84,15 @@ const scoreQuality = (item: DiscoveryItem): number => {
   return clamp01(score);
 };
 
-const toRankScore = (breakdown: RankingBreakdown): number => {
+const toRankScore = (breakdown: RankingBreakdown, trustScore: number): number => {
   const score =
     WEIGHTS.relevance * breakdown.relevance +
     WEIGHTS.proximity * breakdown.proximity +
     WEIGHTS.temporal * breakdown.temporal +
     WEIGHTS.socialProof * breakdown.socialProof +
     WEIGHTS.quality * breakdown.quality;
-  return Number(score.toFixed(6));
+  const blended = score * 0.58 + trustScore * 0.42;
+  return Number(blended.toFixed(6));
 };
 
 export const rankDiscoveryItems = (
@@ -105,12 +107,30 @@ export const rankDiscoveryItems = (
       socialProof: scoreSocialProof(item),
       quality: scoreQuality(item),
     };
-    const rankScore = toRankScore(breakdown);
+    const freshnessHours = item.refreshed_at
+      ? Math.max(0, (Date.now() - Date.parse(item.refreshed_at)) / (60 * 60 * 1000))
+      : Number.NaN;
+    const trust = computeTrustScore({
+      aiConfidence: item.place_match_confidence ?? item.quality_confidence ?? null,
+      qualityConfidence: breakdown.quality,
+      sourceConfidence: item.source_confidence ?? null,
+      verified: item.verification_state === 'verified',
+      needsVerification: item.verification_state === 'needs_votes',
+      userYesVotes: 0,
+      userNoVotes: 0,
+      ratingCount: item.rating_count ?? null,
+      popularityScore: item.popularity_score ?? null,
+      eventCount: item.upcoming_session_count ?? 0,
+      freshnessHours,
+    });
+    const rankScore = toRankScore(breakdown, trust.trustScore);
     return {
       ...item,
       dedupe_key: buildDedupeKey(item),
       quality_confidence: Number(breakdown.quality.toFixed(4)),
       place_match_confidence: item.place_id ? Number(breakdown.quality.toFixed(4)) : null,
+      trust_score: trust.trustScore,
+      verification_state: item.verification_state ?? trust.verificationState,
       rank_score: rankScore,
       rank_breakdown: {
         ...breakdown,

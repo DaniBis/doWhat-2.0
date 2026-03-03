@@ -9,6 +9,7 @@ import {
 } from '@/lib/venues/constants';
 import type { ActivityName } from '@/lib/venues/constants';
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from '@/lib/venues/types';
+import { computeTrustScore, type VerificationState } from '@/lib/discovery/trust';
 import type { Json, VenueRow } from '@/types/database';
 
 const ACTIVITY_SET = new Set<ActivityName>(ACTIVITY_NAMES);
@@ -270,12 +271,32 @@ function buildRankedActivity(
   const aiConfidence = resolveActivityConfidence(row.ai_confidence_scores, activity) ?? (verifiedSet.has(activity) ? 1 : 0);
   const userYesVotes = votes?.yes ?? 0;
   const userNoVotes = votes?.no ?? 0;
+  const verificationState = deriveVenueVerificationState({
+    verified: verifiedSet.has(activity),
+    needsVerification: Boolean(row.needs_verification && aiTags.has(activity) && !verifiedSet.has(activity)),
+    aiConfidence,
+    userYesVotes,
+    userNoVotes,
+  });
+  const trust = computeTrustScore({
+    aiConfidence,
+    verified: verificationState === 'verified',
+    needsVerification: verificationState === 'needs_votes',
+    userYesVotes,
+    userNoVotes,
+    ratingCount: discovery.rating != null ? Math.max(1, Math.round((discovery.rating ?? 0) * 10)) : 0,
+    popularityScore: discovery.rating ?? 0,
+    freshnessHours: row.last_ai_update
+      ? Math.max(0, (Date.now() - Date.parse(row.last_ai_update)) / (60 * 60 * 1000))
+      : Number.NaN,
+  });
   const score = calculateActivityScore({
     aiConfidence,
     userYesVotes,
     userNoVotes,
     categoryMatch,
     keywordMatch,
+    trustScore: trust.trustScore,
   });
   const displayAddress = formatVenueAddress(row, discovery);
 
@@ -297,9 +318,11 @@ function buildRankedActivity(
     userNoVotes,
     categoryMatch,
     keywordMatch,
+    trustScore: trust.trustScore,
     score,
-    verified: verifiedSet.has(activity),
-    needsVerification: Boolean(row.needs_verification && aiTags.has(activity) && !verifiedSet.has(activity)),
+    verified: verificationState === 'verified',
+    needsVerification: verificationState === 'needs_votes',
+    verificationState,
   };
 }
 
@@ -309,14 +332,36 @@ export function calculateActivityScore(input: {
   userNoVotes: number;
   categoryMatch: boolean;
   keywordMatch: boolean;
+  trustScore?: number | null;
 }): number {
-  const baseConfidence = Math.max(0, Math.min(1, input.aiConfidence ?? 0));
-  const yesComponent = input.userYesVotes * 10;
-  const noComponent = input.userNoVotes * 10;
-  const categoryComponent = input.categoryMatch ? 15 : 0;
-  const keywordComponent = input.keywordMatch ? 5 : 0;
-  const score = baseConfidence * 0.6 + yesComponent - noComponent + categoryComponent + keywordComponent;
-  return Number(score.toFixed(3));
+  const trustScore =
+    typeof input.trustScore === 'number' && Number.isFinite(input.trustScore)
+      ? Math.max(0, Math.min(1, input.trustScore))
+      : computeTrustScore({
+          aiConfidence: input.aiConfidence,
+          userYesVotes: input.userYesVotes,
+          userNoVotes: input.userNoVotes,
+        }).trustScore;
+  const categoryComponent = input.categoryMatch ? 0.06 : 0;
+  const keywordComponent = input.keywordMatch ? 0.03 : 0;
+  const score = Math.max(0, Math.min(1, trustScore + categoryComponent + keywordComponent));
+  return Number((score * 100).toFixed(3));
+}
+
+function deriveVenueVerificationState(input: {
+  verified: boolean;
+  needsVerification: boolean;
+  aiConfidence: number;
+  userYesVotes: number;
+  userNoVotes: number;
+}): VerificationState {
+  if (input.verified || (input.userYesVotes >= 3 && input.userNoVotes === 0)) {
+    return 'verified';
+  }
+  if (input.needsVerification || input.aiConfidence >= 0.72 || input.userYesVotes + input.userNoVotes > 0) {
+    return 'needs_votes';
+  }
+  return 'suggested';
 }
 
 export function resolveActivityConfidence(scores: Json | null, activity: ActivityName): number | null {

@@ -159,6 +159,8 @@ export default function PeopleFilterScreen() {
 	const [isLoading, setIsLoading] = useState(true);
 	const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
 	const [traitCountLoading, setTraitCountLoading] = useState(false);
+	const [coreValues, setCoreValues] = useState<string[]>([]);
+	const [coreValuesHydrated, setCoreValuesHydrated] = useState(false);
 	const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
 	const [, setPledgeVersion] = useState<string | null>(null);
 	const [pledgeHydrated, setPledgeHydrated] = useState(false);
@@ -195,6 +197,8 @@ export default function PeopleFilterScreen() {
 				setUserId(user?.id ?? null);
 
 				if (!user?.id) {
+					setCoreValues([]);
+					setCoreValuesHydrated(false);
 					setPledgeAckAt(null);
 					setPledgeVersion(null);
 					setPledgeHydrated(false);
@@ -205,15 +209,16 @@ export default function PeopleFilterScreen() {
 						try {
 							const { data: pledgeRow, error: pledgeError } = await supabase
 								.from('profiles')
-								.select('reliability_pledge_ack_at, reliability_pledge_version')
+								.select('reliability_pledge_ack_at, reliability_pledge_version, core_values')
 								.eq('id', user.id)
-								.maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null }>();
+								.maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null; core_values?: string[] | null }>();
 							if (!cancelled) {
 								if (pledgeError && pledgeError.code !== 'PGRST116') {
 									throw pledgeError;
 								}
 								setPledgeAckAt(pledgeRow?.reliability_pledge_ack_at ?? null);
 								setPledgeVersion(pledgeRow?.reliability_pledge_version ?? null);
+								setCoreValues(Array.isArray(pledgeRow?.core_values) ? pledgeRow.core_values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : []);
 							}
 						} catch (error) {
 							if (__DEV__) {
@@ -222,9 +227,11 @@ export default function PeopleFilterScreen() {
 							if (!cancelled) {
 								setPledgeAckAt(null);
 								setPledgeVersion(null);
+								setCoreValues([]);
 							}
 						} finally {
 							if (!cancelled) {
+								setCoreValuesHydrated(true);
 								setPledgeHydrated(true);
 							}
 						}
@@ -454,12 +461,13 @@ export default function PeopleFilterScreen() {
 		() =>
 			derivePendingOnboardingSteps({
 				traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+				coreValues,
 				primarySport,
 				playStyle,
 				skillLevel: sportSkillLevel,
 				pledgeAckAt,
 			}),
-		[baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+		[baseTraitCount, coreValues, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
 	);
 	const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
 		() =>
@@ -470,12 +478,15 @@ export default function PeopleFilterScreen() {
 				if (step === 'sport') {
 					return !sportProfileLoading;
 				}
+				if (step === 'values') {
+					return coreValuesHydrated;
+				}
 				if (step === 'pledge') {
 					return pledgeHydrated;
 				}
 				return true;
 			}),
-		[rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, pledgeHydrated],
+		[rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, coreValuesHydrated, pledgeHydrated],
 	);
 	const pendingOnboardingCount = pendingOnboardingSteps.length;
 	const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');

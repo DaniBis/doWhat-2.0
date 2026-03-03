@@ -43,6 +43,7 @@ type ProfileProgressRow = {
   primary_sport: string | null;
   play_style: string | null;
   reliability_pledge_ack_at: string | null;
+  core_values?: string[] | null;
 };
 
 type SportProfileRow = {
@@ -101,7 +102,7 @@ export const useOnboardingProgress = (): UseOnboardingProgressResult => {
         .eq('user_id', user.id);
       const profilePromise = supabase
         .from('profiles')
-        .select('primary_sport, play_style, reliability_pledge_ack_at')
+        .select('primary_sport, play_style, reliability_pledge_ack_at, core_values')
         .eq('id', user.id)
         .maybeSingle<ProfileProgressRow>();
 
@@ -132,6 +133,7 @@ export const useOnboardingProgress = (): UseOnboardingProgressResult => {
       }
       const steps = derivePendingOnboardingSteps({
         traitCount,
+        coreValues: profileResult.data?.core_values ?? [],
         primarySport: normalizedSport,
         playStyle: normalizedPlayStyle,
         skillLevel,

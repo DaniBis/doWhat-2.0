@@ -115,8 +115,8 @@ const mockSupabase = supabase as unknown as {
 const mockAuthGetUser = () =>
   mockSupabase.auth.getUser as jest.MockedFunction<typeof mockSupabase.auth.getUser>;
 
-type ProfileRowData = { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null };
-let profileRowData: ProfileRowData = { primary_sport: null, play_style: null, reliability_pledge_ack_at: null };
+type ProfileRowData = { primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values: string[] | null };
+let profileRowData: ProfileRowData = { primary_sport: null, play_style: null, reliability_pledge_ack_at: null, core_values: null };
 
 let sportProfileSkill: string | null = null;
 
@@ -125,6 +125,7 @@ const setupSupabaseProfileQueries = (overrides: Partial<ProfileRowData> = {}) =>
     primary_sport: overrides.primary_sport ?? null,
     play_style: overrides.play_style ?? null,
     reliability_pledge_ack_at: overrides.reliability_pledge_ack_at ?? null,
+    core_values: overrides.core_values ?? null,
   };
   mockSupabase.from.mockImplementation((table: string) => {
     if (table === 'profiles') {
@@ -168,6 +169,7 @@ type MountOptions = {
   playStyle?: string | null;
   sportSkillLevel?: string | null;
   pledgeAck?: string | null;
+  coreValues?: string[] | null;
 };
 
 const mountProfilePage = async (traits: Array<ReturnType<typeof buildTrait>>, options: MountOptions = {}) => {
@@ -197,6 +199,7 @@ const mountProfilePage = async (traits: Array<ReturnType<typeof buildTrait>>, op
     primary_sport: options.primarySport ?? null,
     play_style: options.playStyle ?? null,
     reliability_pledge_ack_at: options.pledgeAck ?? null,
+    core_values: options.coreValues ?? null,
   });
   sportProfileSkill = options.sportSkillLevel ?? null;
 
@@ -255,8 +258,8 @@ describe('ProfilePage trait onboarding banner', () => {
       source: 'traits-banner',
       platform: 'web',
       step: 'traits',
-      steps: ['traits', 'sport', 'pledge'],
-      pendingSteps: 3,
+      steps: ['traits', 'values', 'sport', 'pledge'],
+      pendingSteps: 4,
       nextStep: '/onboarding/traits',
     });
   });
@@ -275,7 +278,7 @@ describe('ProfilePage onboarding progress banner', () => {
     ]);
 
     await waitFor(() => {
-      expect(screen.getByTestId('onboarding-progress-banner')).toHaveTextContent('traits,sport,pledge');
+      expect(screen.getByTestId('onboarding-progress-banner')).toHaveTextContent('traits,values,sport,pledge');
     });
   });
 
@@ -293,6 +296,7 @@ describe('ProfilePage onboarding progress banner', () => {
         playStyle: 'competitive',
         sportSkillLevel: '3.0 - Consistent drives',
         pledgeAck: '2025-12-01T00:00:00.000Z',
+        coreValues: ['reliable', 'curious', 'respectful'],
       }
     );
 

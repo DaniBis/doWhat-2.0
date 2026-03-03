@@ -19,7 +19,41 @@ kill_port 8082
 kill_port 19000
 kill_port 19001
 
-IOS_SIMULATOR_NAME=${IOS_SIMULATOR_NAME:-"iPhone 16 Pro"}
+resolve_ios_simulator_name() {
+  local preferred=${IOS_SIMULATOR_NAME:-}
+  local available
+  available=$(xcrun simctl list devices available 2>/dev/null || true)
+
+  if [[ -n "${preferred}" ]] && grep -Fq "${preferred} (" <<<"${available}"; then
+    echo "${preferred}"
+    return
+  fi
+
+  local booted
+  booted=$(xcrun simctl list devices booted 2>/dev/null || true)
+  if grep -Fq "iPhone" <<<"${booted}"; then
+    echo "$(awk -F'(' '/iPhone/ {gsub(/^ +| +$/,"",$1); print $1; exit}' <<<"${booted}")"
+    return
+  fi
+
+  for candidate in "iPhone 16 Plus" "iPhone 16 Pro" "iPhone 15 Pro"; do
+    if grep -Fq "${candidate} (" <<<"${available}"; then
+      echo "${candidate}"
+      return
+    fi
+  done
+
+  local firstIphone
+  firstIphone=$(awk -F'(' '/iPhone/ {gsub(/^ +| +$/,"",$1); print $1; exit}' <<<"${available}")
+  if [[ -n "${firstIphone}" ]]; then
+    echo "${firstIphone}"
+    return
+  fi
+
+  echo "iPhone 16 Plus"
+}
+
+IOS_SIMULATOR_NAME=$(resolve_ios_simulator_name)
 APP_BUNDLE_ID=${APP_BUNDLE_ID:-"com.dowhat.app"}
 PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(cd "${PROJECT_DIR}/../.." && pwd)
@@ -148,7 +182,7 @@ resolve_dev_host() {
 rebuild_dev_client() {
   echo "Rebuilding Expo dev client with native module updates..."
   pnpm --filter doWhat-mobile run prebuild:ios
-  pnpm --filter doWhat-mobile run run:ios:sim
+  pnpm --filter doWhat-mobile run ios -- --device "${IOS_SIMULATOR_NAME}"
   echo "${DESIRED_SIGNATURE}" > "${SENTINEL_FILE}"
 }
 

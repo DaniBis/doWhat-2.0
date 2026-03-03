@@ -36,7 +36,7 @@ export type {
   DiscoveryDebug,
   DiscoverySourceBreakdown,
 } from './engine-core';
-import { ACTIVITY_CATALOG_PRESETS, filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
+import { ACTIVITY_CATALOG_PRESETS, defaultTier3Index, filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
 import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
@@ -45,6 +45,7 @@ import { fetchPlacesForViewport } from '@/lib/places/aggregator';
 import { rankDiscoveryItems } from '@/lib/discovery/ranking';
 import { hydratePlaceLabel, normalizePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 import { haversineMeters } from '@/lib/places/utils';
+import { matchActivitiesForPlaces } from '@/lib/places/activityMatching';
 import { getOptionalServiceClient } from '@/lib/supabase/service';
 import { searchVenueActivities } from '@/lib/venues/search';
 import type { ActivityName } from '@/lib/venues/constants';
@@ -67,6 +68,7 @@ type DiscoveryCacheEntry = {
   filterSupport: DiscoveryFilterSupport;
   sourceBreakdown: DiscoverySourceBreakdown;
   source?: string;
+  providerCounts?: Record<string, number>;
   venues?: RankedVenueActivity[];
 };
 
@@ -392,6 +394,73 @@ const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
 const ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8;
 const SPARSE_CITY_BOOTSTRAP_MIN_RESULTS = 180;
 const SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS = 5_000;
+const SPARSE_INVENTORY_SEED_MIN_RESULTS = 24;
+const SPARSE_INVENTORY_SEED_LIMIT_MAX = 900;
+
+type DiscoverySeedMeta = {
+  seeded: boolean;
+  cacheHit: boolean;
+  providerCounts: Record<string, number>;
+  matcherRan: boolean;
+  matcherError?: string | null;
+};
+
+const createEmptyProviderCounts = (): Record<string, number> => ({
+  openstreetmap: 0,
+  foursquare: 0,
+  google_places: 0,
+});
+
+const discoveryDebugRollup = {
+  requests: 0,
+  cacheHits: 0,
+  dedupeInput: 0,
+  dedupeDropped: 0,
+};
+
+const shouldPrintDebugMetrics = (enabled?: boolean): boolean =>
+  process.env.NODE_ENV !== 'production' && Boolean(enabled || process.env.DISCOVERY_DEBUG_METRICS === '1');
+
+const logDiscoveryDebugMetrics = (input: {
+  enabled?: boolean;
+  cacheHit: boolean;
+  dedupeInput: number;
+  dedupeDropped: number;
+  providerCounts?: Record<string, number> | null;
+  source: string | null | undefined;
+  reason: string;
+  filterDrops?: {
+    notPlaceBacked: number;
+    lowConfidence: number;
+    genericLabels: number;
+    deduped: number;
+  } | null;
+}) => {
+  if (!shouldPrintDebugMetrics(input.enabled)) return;
+  discoveryDebugRollup.requests += 1;
+  if (input.cacheHit) discoveryDebugRollup.cacheHits += 1;
+  discoveryDebugRollup.dedupeInput += Math.max(0, input.dedupeInput);
+  discoveryDebugRollup.dedupeDropped += Math.max(0, input.dedupeDropped);
+
+  const cacheHitRate = discoveryDebugRollup.requests > 0
+    ? discoveryDebugRollup.cacheHits / discoveryDebugRollup.requests
+    : 0;
+  const dedupeDropRate = discoveryDebugRollup.dedupeInput > 0
+    ? discoveryDebugRollup.dedupeDropped / discoveryDebugRollup.dedupeInput
+    : 0;
+
+  console.info('[discovery.debug.metrics]', JSON.stringify({
+    reason: input.reason,
+    source: input.source ?? null,
+    providerCounts: input.providerCounts ?? createEmptyProviderCounts(),
+    cacheHit: input.cacheHit,
+    cacheHitRate: Number(cacheHitRate.toFixed(4)),
+    dedupeDropRate: Number(dedupeDropRate.toFixed(4)),
+    dedupeDropped: Math.max(0, input.dedupeDropped),
+    dedupeInput: Math.max(0, input.dedupeInput),
+    filterDrops: input.filterDrops ?? null,
+  }));
+};
 
 const CITY_BOOTSTRAP_CENTERS: Array<{ slug: string; lat: number; lng: number }> = [
   { slug: 'bangkok', lat: 13.7563, lng: 100.5018 },
@@ -435,25 +504,114 @@ const maybeBootstrapSparseCityPlaces = async (
   query: DiscoveryQuery,
   filters: NormalizedDiscoveryFilters,
   currentCount: number,
-): Promise<boolean> => {
-  if (currentCount >= SPARSE_CITY_BOOTSTRAP_MIN_RESULTS) return false;
-  if (query.radiusMeters > SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS) return false;
-  if (hasActiveDiscoveryFilters(filters)) return false;
+): Promise<DiscoverySeedMeta | null> => {
+  if (currentCount >= SPARSE_CITY_BOOTSTRAP_MIN_RESULTS) return null;
+  if (query.radiusMeters > SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS) return null;
+  if (hasActiveDiscoveryFilters(filters)) return null;
 
   const bounds = resolveDiscoveryBounds(query);
   const inferredCity = inferBootstrapCitySlug(query.center);
+  const forceLimit = Math.min(
+    SPARSE_INVENTORY_SEED_LIMIT_MAX,
+    Math.max(Math.min(query.limit * 6, 750), 300),
+  );
 
   try {
-    await fetchPlacesForViewport({
+    const seeded = await fetchPlacesForViewport({
       bounds,
-      limit: Math.max(Math.min(query.limit, 600), 300),
+      limit: forceLimit,
       forceRefresh: true,
       city: inferredCity,
     });
-    return true;
+    let matcherRan = false;
+    let matcherError: string | null = null;
+    try {
+      const shouldRunMatcher = currentCount < SPARSE_INVENTORY_SEED_MIN_RESULTS;
+      if (shouldRunMatcher) {
+        matcherRan = true;
+        await matchActivitiesForPlaces({
+          limit: Math.min(500, Math.max(query.limit * 5, 180)),
+          city: inferredCity,
+        });
+      }
+    } catch (error) {
+      matcherError = error instanceof Error ? error.message : String(error);
+      console.warn('[nearby] sparse-city activity matcher failed', error);
+    }
+
+    return {
+      seeded: true,
+      cacheHit: seeded.cacheHit,
+      providerCounts: seeded.providerCounts,
+      matcherRan,
+      matcherError,
+    };
   } catch (error) {
     console.warn('[nearby] sparse-city bootstrap failed', error);
-    return false;
+    return {
+      seeded: false,
+      cacheHit: false,
+      providerCounts: createEmptyProviderCounts(),
+      matcherRan: false,
+      matcherError: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const maybeSeedViewportInventory = async (
+  query: DiscoveryQuery,
+  filters: NormalizedDiscoveryFilters,
+  currentCount: number,
+): Promise<DiscoverySeedMeta | null> => {
+  const hasFilters = hasActiveDiscoveryFilters(filters);
+  const sparseThreshold = hasFilters
+    ? Math.max(8, Math.ceil(query.limit * 0.35))
+    : Math.max(SPARSE_INVENTORY_SEED_MIN_RESULTS, Math.ceil(query.limit * 0.6));
+  if (currentCount >= sparseThreshold) return null;
+
+  const bounds = resolveDiscoveryBounds(query);
+  const inferredCity = inferBootstrapCitySlug(query.center);
+  const forceLimit = Math.min(
+    SPARSE_INVENTORY_SEED_LIMIT_MAX,
+    Math.max(Math.min(query.limit * 8, 900), 240),
+  );
+
+  try {
+    const seeded = await fetchPlacesForViewport({
+      bounds,
+      limit: forceLimit,
+      forceRefresh: true,
+      city: inferredCity,
+    });
+    let matcherRan = false;
+    let matcherError: string | null = null;
+    try {
+      matcherRan = true;
+      await matchActivitiesForPlaces({
+        limit: Math.min(500, Math.max(query.limit * 6, 200)),
+        city: inferredCity,
+      });
+    } catch (error) {
+      matcherError = error instanceof Error ? error.message : String(error);
+      console.warn('[nearby] viewport activity matcher failed', error);
+    }
+
+    return {
+      seeded: true,
+      cacheHit: seeded.cacheHit,
+      providerCounts: seeded.providerCounts,
+      matcherRan,
+      matcherError,
+    };
+  } catch (error) {
+    console.warn('[nearby] viewport inventory seed failed', error);
+    return {
+      seeded: false,
+      cacheHit: false,
+      providerCounts: createEmptyProviderCounts(),
+      matcherRan: false,
+      matcherError: error instanceof Error ? error.message : String(error),
+    };
   }
 };
 
@@ -524,6 +682,7 @@ const ensureCacheEntry = (result: DiscoveryResult, venues?: RankedVenueActivity[
     filterSupport: result.filterSupport,
     sourceBreakdown: result.sourceBreakdown,
     source: result.source,
+    providerCounts: result.providerCounts,
     venues: venues?.slice(0, MAX_CACHE_ITEMS),
   };
 };
@@ -546,6 +705,7 @@ const buildCacheResult = (
     facets: buildFacets(limited),
     sourceBreakdown: buildSourceBreakdown(limited),
     source: entry.source,
+    providerCounts: entry.providerCounts,
     cache: { key: cacheKey, hit: true },
   };
 };
@@ -606,11 +766,193 @@ type PlaceFallbackRow = {
   lng: number | string | null;
   tags?: string[] | null;
   categories?: string[] | null;
+  rating_count?: number | null;
+  popularity_score?: number | null;
+  source_confidence?: number | null;
+  cached_at?: string | null;
   updated_at?: string | null;
 };
 
 type UpcomingSessionRow = {
   activity_id: string | null;
+};
+
+type VenueActivityMatchRow = {
+  venue_id: string;
+  activity_id: number;
+  confidence: number | null;
+  source: 'manual' | 'category' | 'keyword';
+};
+
+type ActivityCatalogLookupRow = {
+  id: number;
+  slug: string;
+  name: string;
+  keywords: string[] | null;
+};
+
+type PlaceActivityInference = {
+  activityTypes: string[] | null;
+  taxonomyCategories: string[] | null;
+  maxConfidence: number | null;
+  verificationState: 'suggested' | 'verified' | 'needs_votes';
+};
+
+const addToSetMap = (map: Map<string, Set<string>>, key: string, value: string) => {
+  const bucket = map.get(key) ?? new Set<string>();
+  bucket.add(value);
+  map.set(key, bucket);
+};
+
+const tokenizeForTaxonomyLookup = (value: string): string[] => {
+  const normalized = normalizeActivityToken(value);
+  if (!normalized) return [];
+  const tokens = [normalized];
+  normalized
+    .split(' ')
+    .filter((part) => part.length >= 4)
+    .forEach((part) => tokens.push(part));
+  return Array.from(new Set(tokens));
+};
+
+const TAXONOMY_TOKEN_MAP = (() => {
+  const map = new Map<string, Set<string>>();
+  defaultTier3Index.forEach((entry) => {
+    [entry.id, entry.label, ...(entry.tags ?? [])].forEach((value) => {
+      tokenizeForTaxonomyLookup(value).forEach((token) => {
+        addToSetMap(map, token, entry.id);
+      });
+    });
+  });
+  return map;
+})();
+
+const inferTaxonomyCategoriesFromTokens = (values: Array<string | null | undefined>): string[] | null => {
+  const found = new Set<string>();
+  values.forEach((value) => {
+    if (!value || typeof value !== 'string') return;
+    tokenizeForTaxonomyLookup(value).forEach((token) => {
+      const matches = TAXONOMY_TOKEN_MAP.get(token);
+      if (!matches) return;
+      matches.forEach((id) => found.add(id));
+    });
+  });
+  if (!found.size) return null;
+  return Array.from(found).sort((a, b) => a.localeCompare(b));
+};
+
+const normalizeCatalogEntry = (entry: ActivityCatalogLookupRow): ActivityCatalogLookupRow => ({
+  ...entry,
+  keywords: Array.isArray(entry.keywords) ? entry.keywords : [],
+});
+
+const loadActivityCatalogLookup = async (client: SupabaseClient): Promise<ActivityCatalogLookupRow[]> => {
+  try {
+    const { data, error } = await client
+      .from('activity_catalog')
+      .select('id,slug,name,keywords')
+      .order('id', { ascending: true })
+      .returns<ActivityCatalogLookupRow[]>();
+    if (error) throw error;
+    if (Array.isArray(data) && data.length) {
+      return data.map(normalizeCatalogEntry);
+    }
+  } catch (error) {
+    const isMissing =
+      error != null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string | null }).code === '42P01';
+    if (!isMissing) {
+      console.warn('[discovery] failed loading activity catalog lookup', error);
+    }
+  }
+
+  return ACTIVITY_CATALOG_PRESETS.map((entry) => ({
+    id: entry.id,
+    slug: entry.slug,
+    name: entry.name,
+    keywords: entry.keywords ?? [],
+  }));
+};
+
+const loadPlaceActivityInferences = async (
+  client: SupabaseClient,
+  placeIds: string[],
+): Promise<Map<string, PlaceActivityInference>> => {
+  const map = new Map<string, PlaceActivityInference>();
+  if (!placeIds.length) return map;
+
+  try {
+    const { data: matchRows, error: matchError } = await client
+      .from('venue_activities')
+      .select('venue_id,activity_id,confidence,source')
+      .in('venue_id', placeIds)
+      .returns<VenueActivityMatchRow[]>();
+    if (matchError) throw matchError;
+
+    const rows = matchRows ?? [];
+    if (!rows.length) return map;
+
+    const catalog = await loadActivityCatalogLookup(client);
+    const catalogById = new Map<number, ActivityCatalogLookupRow>(
+      catalog.map((entry) => [entry.id, normalizeCatalogEntry(entry)]),
+    );
+
+    const grouped = new Map<string, VenueActivityMatchRow[]>();
+    rows.forEach((row) => {
+      const bucket = grouped.get(row.venue_id) ?? [];
+      bucket.push(row);
+      grouped.set(row.venue_id, bucket);
+    });
+
+    grouped.forEach((activityRows, placeId) => {
+      const activityTypes = new Set<string>();
+      const taxonomy = new Set<string>();
+      let maxConfidence: number | null = null;
+      let hasManual = false;
+
+      activityRows.forEach((row) => {
+        const activity = catalogById.get(row.activity_id);
+        if (!activity) return;
+        activityTypes.add(activity.slug);
+        const inferredTaxonomy = inferTaxonomyCategoriesFromTokens([
+          activity.slug,
+          activity.name,
+          ...(activity.keywords ?? []),
+        ]);
+        inferredTaxonomy?.forEach((taxonomyId) => taxonomy.add(taxonomyId));
+        if (row.source === 'manual') hasManual = true;
+        if (typeof row.confidence === 'number' && Number.isFinite(row.confidence)) {
+          maxConfidence = maxConfidence == null ? row.confidence : Math.max(maxConfidence, row.confidence);
+        }
+      });
+
+      const verificationState: PlaceActivityInference['verificationState'] = hasManual
+        ? 'verified'
+        : (maxConfidence ?? 0) >= 0.72
+          ? 'needs_votes'
+          : 'suggested';
+
+      map.set(placeId, {
+        activityTypes: activityTypes.size ? Array.from(activityTypes).sort((a, b) => a.localeCompare(b)) : null,
+        taxonomyCategories: taxonomy.size ? Array.from(taxonomy).sort((a, b) => a.localeCompare(b)) : null,
+        maxConfidence,
+        verificationState,
+      });
+    });
+  } catch (error) {
+    const isTableMissing =
+      error != null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string | null }).code === '42P01';
+    if (!isTableMissing) {
+      console.warn('[discovery] failed loading place activity inferences', error);
+    }
+  }
+
+  return map;
 };
 
 const toMapActivityFromVenue = (
@@ -621,12 +963,26 @@ const toMapActivityFromVenue = (
   const lat = sanitizeCoordinate(row.lat);
   const lng = sanitizeCoordinate(row.lng);
   if (lat == null || lng == null) return null;
+  const verifiedTypes = displayStringList(row.verified_activities ?? null);
+  const aiTags = displayStringList(row.ai_activity_tags ?? null);
+  const inferredTypes = Array.from(new Set([...(verifiedTypes ?? []), ...(aiTags ?? [])]));
+  const taxonomyCategories = inferTaxonomyCategoriesFromTokens([
+    row.name,
+    row.address,
+    ...(verifiedTypes ?? []),
+    ...(aiTags ?? []),
+  ]);
+  const verificationState: DiscoveryItem['verification_state'] = verifiedTypes?.length
+    ? 'verified'
+    : aiTags?.length
+      ? 'needs_votes'
+      : 'suggested';
   const resolved = resolveDiscoveryDisplay({
     name: row.name,
     venue: row.address,
     placeLabel: normalizePlaceLabel(row.name, row.address),
-    activityTypes: displayStringList(row.verified_activities ?? null),
-    tags: displayStringList(row.ai_activity_tags ?? null),
+    activityTypes: inferredTypes,
+    tags: aiTags,
   });
   return {
     id: `venue:${row.id}`,
@@ -637,9 +993,12 @@ const toMapActivityFromVenue = (
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
-    activity_types: displayStringList(row.verified_activities ?? null),
-    tags: displayStringList(row.ai_activity_tags ?? null),
+    activity_types: inferredTypes.length ? inferredTypes : null,
+    tags: aiTags,
     traits: null,
+    taxonomy_categories: taxonomyCategories,
+    verification_state: verificationState,
+    refreshed_at: row.updated_at ?? null,
     source: 'supabase-venues',
   };
 };
@@ -712,11 +1071,13 @@ const fetchVenueFallbackActivities = async (
     .filter((activity): activity is DiscoveryItem => Boolean(activity))
     .sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
 
+  const taxonomySupported = items.some((item) => (item.taxonomy_categories?.length ?? 0) > 0);
+
   const support: DiscoveryFilterSupport = {
     activityTypes: includeVerified,
     tags: includeTags,
     traits: false,
-    taxonomyCategories: false,
+    taxonomyCategories: taxonomySupported,
     priceLevels: false,
     capacityKey: false,
     timeWindow: false,
@@ -728,12 +1089,23 @@ const fetchVenueFallbackActivities = async (
 const toMapActivityFromPlace = (
   row: PlaceFallbackRow,
   origin: { lat: number; lng: number },
+  inference?: PlaceActivityInference | null,
 ): DiscoveryItem | null => {
   if (!row?.id) return null;
   const lat = sanitizeCoordinate(row.lat);
   const lng = sanitizeCoordinate(row.lng);
   if (lat == null || lng == null) return null;
-  const derivedTypes = buildPlaceActivityTypes(row);
+  const inferredTypes = inference?.activityTypes ?? null;
+  const derivedTypes = inferredTypes ?? buildPlaceActivityTypes(row);
+  const inferredTaxonomy = inference?.taxonomyCategories ?? null;
+  const fallbackTaxonomy = inferTaxonomyCategoriesFromTokens([
+    row.name,
+    row.address,
+    ...(derivedTypes ?? []),
+    ...(row.categories ?? []),
+    ...(row.tags ?? []),
+  ]);
+  const taxonomyCategories = inferredTaxonomy ?? fallbackTaxonomy;
   const resolved = resolveDiscoveryDisplay({
     name: row.name,
     venue: row.address,
@@ -753,16 +1125,24 @@ const toMapActivityFromPlace = (
     activity_types: derivedTypes,
     tags: displayStringList(row.tags ?? null),
     traits: null,
+    taxonomy_categories: taxonomyCategories,
+    place_match_confidence: inference?.maxConfidence ?? row.source_confidence ?? null,
+    verification_state: inference?.verificationState ?? 'suggested',
+    rating_count: row.rating_count ?? null,
+    popularity_score: row.popularity_score ?? null,
+    source_confidence: row.source_confidence ?? null,
+    refreshed_at: row.cached_at ?? row.updated_at ?? null,
     source: 'supabase-places',
   };
 };
 
-const normalizeActivityToken = (value: string): string =>
-  value
+function normalizeActivityToken(value: string): string {
+  return value
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .replace(/\s+/g, ' ');
+}
 
 const buildPlaceActivityTypes = (row: PlaceFallbackRow): string[] | null => {
   const categories = displayStringList(row.categories ?? null) ?? [];
@@ -812,12 +1192,20 @@ const fetchPlacesFallbackActivities = async (
   let includeTags = true;
   let includeCategories = true;
   let includeUpdatedAt = true;
+  let includeRatingCount = true;
+  let includePopularity = true;
+  let includeSourceConfidence = true;
+  let includeCachedAt = true;
 
   const buildPlacesQuery = () => {
     const columns = [...baseColumns];
     if (includeTags) columns.push('tags');
     if (includeCategories) columns.push('categories');
     if (includeUpdatedAt) columns.push('updated_at');
+    if (includeRatingCount) columns.push('rating_count');
+    if (includePopularity) columns.push('popularity_score');
+    if (includeSourceConfidence) columns.push('source_confidence');
+    if (includeCachedAt) columns.push('cached_at');
     let queryBuilder = client
       .from('places')
       .select(columns.join(','))
@@ -855,6 +1243,22 @@ const fetchPlacesFallbackActivities = async (
       includeCategories = false;
       continue;
     }
+    if (includeRatingCount && isMissingColumnError(error, 'rating_count')) {
+      includeRatingCount = false;
+      continue;
+    }
+    if (includePopularity && isMissingColumnError(error, 'popularity_score')) {
+      includePopularity = false;
+      continue;
+    }
+    if (includeSourceConfidence && isMissingColumnError(error, 'source_confidence')) {
+      includeSourceConfidence = false;
+      continue;
+    }
+    if (includeCachedAt && isMissingColumnError(error, 'cached_at')) {
+      includeCachedAt = false;
+      continue;
+    }
     break;
   }
 
@@ -862,16 +1266,24 @@ const fetchPlacesFallbackActivities = async (
     throw error;
   }
 
+  const placeIds = (data ?? [])
+    .map((row) => row.id)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const inferenceByPlaceId = await loadPlaceActivityInferences(client, placeIds);
+
   const items = (data ?? [])
-    .map((row) => toMapActivityFromPlace(row, query.center))
+    .map((row) => toMapActivityFromPlace(row, query.center, row.id ? inferenceByPlaceId.get(row.id) ?? null : null))
     .filter((activity): activity is DiscoveryItem => Boolean(activity))
     .sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
 
+  const activityTypesSupported = items.some((item) => (item.activity_types?.length ?? 0) > 0);
+  const taxonomySupported = items.some((item) => (item.taxonomy_categories?.length ?? 0) > 0);
+
   const support: DiscoveryFilterSupport = {
-    activityTypes: includeCategories,
+    activityTypes: includeCategories || activityTypesSupported,
     tags: includeTags,
     traits: false,
-    taxonomyCategories: false,
+    taxonomyCategories: taxonomySupported,
     priceLevels: false,
     capacityKey: false,
     timeWindow: false,
@@ -1255,6 +1667,7 @@ const hydrateActivitiesWithPlaces = async (
 type DiscoverNearbyOptions = {
   bypassCache?: boolean;
   includeDebug?: boolean;
+  debugMetrics?: boolean;
 };
 
 export async function discoverNearbyActivities(
@@ -1275,9 +1688,20 @@ export async function discoverNearbyActivities(
   const { entry, record } = await readDiscoveryCache(cacheClient, tileKey, cacheKey);
   const bypassCache = Boolean(options?.bypassCache);
   const includeDebug = Boolean(options?.includeDebug);
+  const debugMetrics = Boolean(options?.debugMetrics);
 
   if (!bypassCache && entry) {
     const cached = buildCacheResult(entry, normalizedQuery, cacheKey);
+    const cachedDedupeDropped = Math.max(0, entry.items.length - cached.items.length);
+    logDiscoveryDebugMetrics({
+      enabled: debugMetrics,
+      cacheHit: true,
+      dedupeInput: entry.items.length,
+      dedupeDropped: cachedDedupeDropped,
+      providerCounts: entry.providerCounts ?? null,
+      source: cached.source ?? null,
+      reason: 'cache-hit',
+    });
     if (includeDebug) {
       cached.debug = {
         cacheHit: true,
@@ -1353,6 +1777,32 @@ export async function discoverNearbyActivities(
   debug.candidateCounts.afterFallbackMerge = activities.length;
 
   let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
+  let providerCounts: Record<string, number> | undefined;
+
+  const seededViewportInventory = await maybeSeedViewportInventory(
+    normalizedQuery,
+    normalizedFilters,
+    activities.length,
+  );
+
+  if (seededViewportInventory?.seeded) {
+    providerCounts = seededViewportInventory.providerCounts;
+    const refreshedPlacesFallback = await fetchPlacesFallbackActivities(
+      supabase,
+      normalizedQuery,
+      Math.max(normalizedQuery.limit, 320),
+    );
+    const filteredRefreshedPlaces = filterByQuery(
+      refreshedPlacesFallback.items,
+      normalizedFilters,
+      refreshedPlacesFallback.support,
+    );
+    if (filteredRefreshedPlaces.length) {
+      filterSupport = applyFilterSupport(filterSupport, refreshedPlacesFallback.support);
+      activities = mergeActivitiesWithFallback(activities, filteredRefreshedPlaces);
+      fallbackMeta.fallbackSource = 'supabase-places';
+    }
+  }
 
   const bootstrappedSparseCity = await maybeBootstrapSparseCityPlaces(
     normalizedQuery,
@@ -1360,7 +1810,8 @@ export async function discoverNearbyActivities(
     activities.length,
   );
 
-  if (bootstrappedSparseCity) {
+  if (bootstrappedSparseCity?.seeded) {
+    providerCounts = bootstrappedSparseCity.providerCounts;
     const refreshedPlacesFallback = await fetchPlacesFallbackActivities(
       supabase,
       normalizedQuery,
@@ -1469,9 +1920,21 @@ export async function discoverNearbyActivities(
     sourceBreakdown: buildSourceBreakdown(limited),
     cache: { key: cacheKey, hit: false },
     source: source ?? fallbackMeta.fallbackSource ?? 'client-filter',
+    providerCounts,
     debug: includeDebug ? debug : undefined,
     ...fallbackMeta,
   };
+
+  logDiscoveryDebugMetrics({
+    enabled: debugMetrics,
+    cacheHit: false,
+    dedupeInput: debug.candidateCounts.afterConfidenceGate,
+    dedupeDropped: debug.dropped.deduped,
+    providerCounts: providerCounts ?? null,
+    source: result.source ?? null,
+    reason: 'fresh-fetch',
+    filterDrops: debug.dropped,
+  });
 
   const cacheEntry = ensureCacheEntry(result);
   void writeDiscoveryCache(cacheClient, tileKey, cacheKey, cacheEntry, record);
@@ -1537,6 +2000,9 @@ export async function discoverNearbyVenues(
       activity_types: [activity],
       tags: row.primaryCategories?.length ? row.primaryCategories : null,
       traits: null,
+      trust_score: row.trustScore,
+      verification_state: row.verificationState,
+      rank_score: row.trustScore,
       source: 'venues',
     }));
 

@@ -152,6 +152,36 @@ const activityPlaceLabel = (activity: MapActivity | null | undefined): string | 
   return label === PLACE_FALLBACK_LABEL ? null : label;
 };
 
+const resolveActivityVerificationState = (activity: MapActivity | null | undefined): 'suggested' | 'verified' | 'needs_votes' => {
+  if (!activity) return 'suggested';
+  if (activity.verification_state === 'verified') return 'verified';
+  if (activity.verification_state === 'needs_votes') return 'needs_votes';
+  if (activity.verification_state === 'suggested') return 'suggested';
+  const tags = new Set((activity.tags ?? []).filter((value): value is string => typeof value === 'string'));
+  if (tags.has('verified')) return 'verified';
+  if (tags.has('needs_votes') || tags.has('needs_verification')) return 'needs_votes';
+  return 'suggested';
+};
+
+const activityVerificationLabel = (activity: MapActivity | null | undefined): string => {
+  const state = resolveActivityVerificationState(activity);
+  if (state === 'verified') return 'Verified';
+  if (state === 'needs_votes') return 'Needs votes';
+  return 'Suggested';
+};
+
+const activityVerificationClass = (activity: MapActivity | null | undefined): string => {
+  const state = resolveActivityVerificationState(activity);
+  if (state === 'verified') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
+  if (state === 'needs_votes') return 'border-amber-300 bg-amber-50 text-amber-800';
+  return 'border-slate-300 bg-slate-100 text-slate-700';
+};
+
+const formatTrustPercent = (value?: number | null): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+};
+
 const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -460,6 +490,14 @@ function WebMap({
           >
             <div className="space-y-xs text-sm text-ink-strong">
               <div className="font-semibold text-ink">{selectedActivity.name}</div>
+              <div className="flex flex-wrap items-center gap-xxs text-[11px] font-semibold">
+                <span className={`rounded-full border px-xs py-hairline ${activityVerificationClass(selectedActivity)}`}>
+                  {activityVerificationLabel(selectedActivity)}
+                </span>
+                <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                  Trust {formatTrustPercent(selectedActivity.trust_score)}
+                </span>
+              </div>
               <div>
                 <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
               </div>

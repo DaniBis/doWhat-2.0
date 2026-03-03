@@ -8,8 +8,8 @@ import clsx from "clsx";
 import WebMap from "@/components/WebMap";
 import SaveToggleButton from "@/components/SaveToggleButton";
 import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
-import AuthGate from "@/components/AuthGate";
 import { buildCreateEventQuery, buildPrefillContextSummary } from "@/lib/adminPrefill";
+import { useCoreAccessGuard } from "@/lib/access/useCoreAccessGuard";
 import {
   ACTIVITY_DISTANCE_OPTIONS,
   type MapActivity,
@@ -89,7 +89,7 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string; helper: string
   { value: 'all', label: 'All matches', helper: 'Every AI + verified venue' },
   { value: 'verified', label: 'Verified', helper: 'Community-confirmed spots' },
   { value: 'needs_review', label: 'Needs votes', helper: 'AI confident but awaiting people' },
-  { value: 'ai_only', label: 'AI only', helper: 'Fresh suggestions without votes' },
+  { value: 'ai_only', label: 'Suggested', helper: 'Early leads that still need confirmation' },
 ];
 
 const DEFAULT_ACTIVITY_NAME: ActivityName = ACTIVITY_NAMES[0];
@@ -109,6 +109,7 @@ export default function VenueVerificationPage() {
     if (!pathname) return "/venues";
     return params ? `${pathname}?${params}` : pathname;
   }, [pathname, searchParams]);
+  const coreAccessState = useCoreAccessGuard(redirectTarget);
   const [selectedActivity, setSelectedActivityRaw] = useState<ActivityName>(DEFAULT_ACTIVITY_NAME);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(() => {
     const entry = taxonomySupport.tier3ByActivity.get(DEFAULT_ACTIVITY_NAME);
@@ -589,6 +590,8 @@ export default function VenueVerificationPage() {
         place_label: normalizePlaceLabel(row.venueName, row.displayAddress, formatActivityLabel(row.activity)),
         lat,
         lng,
+        trust_score: row.trustScore,
+        verification_state: row.verificationState,
         tags: buildMapTags(row),
       }];
     })
@@ -653,12 +656,14 @@ export default function VenueVerificationPage() {
             prev.map((row) => {
               if (row.venueId !== venueId) return row;
               const verified = verification?.verifiedActivities?.includes(selectedActivity) ?? row.verified;
+              const needsVotes = verification?.needsVerification ?? row.needsVerification;
               return {
                 ...row,
                 userYesVotes: totals.yes,
                 userNoVotes: totals.no,
                 verified,
-                needsVerification: verification?.needsVerification ?? row.needsVerification,
+                needsVerification: needsVotes,
+                verificationState: verified ? 'verified' : needsVotes ? 'needs_votes' : 'suggested',
               };
             }),
           );
@@ -704,7 +709,7 @@ export default function VenueVerificationPage() {
     keywordSignalOnly ||
     priceLevelFilters.length > 0;
 
-  if (authStatus === "loading") {
+  if (coreAccessState !== 'allowed' || authStatus !== "authed") {
     return (
       <div className="mx-auto min-h-screen max-w-6xl px-4 py-12">
         <div className="animate-pulse space-y-4">
@@ -712,18 +717,6 @@ export default function VenueVerificationPage() {
           <div className="h-4 w-80 rounded bg-ink-subtle" />
           <div className="h-64 rounded-3xl bg-ink-subtle" />
         </div>
-      </div>
-    );
-  }
-
-  if (authStatus === "anon") {
-    return (
-      <div className="mx-auto min-h-screen max-w-4xl px-4 py-16">
-        <AuthGate
-          title="Sign in to verify venues"
-          description="Venue verification is available to members only. Sign in to review spots and vote."
-          redirectTo={redirectTarget}
-        />
       </div>
     );
   }
@@ -1171,7 +1164,26 @@ export default function VenueVerificationPage() {
             ) : visibleVenues.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-slate-500">
                 <p>No venues match this filter yet.</p>
-                <p className="text-sm">Try switching filters or moving the map.</p>
+                <p className="text-sm">Try switching filters, widening the radius, or refreshing your current map area.</p>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-400"
+                  >
+                    Clear filters
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBounds(null);
+                      setRadiusMeters((prev) => Math.min(prev * 2, 50_000));
+                    }}
+                    className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                  >
+                    Widen radius
+                  </button>
+                </div>
               </div>
             ) : (
               <ul className="space-y-4">
@@ -1401,13 +1413,13 @@ async function safeJson(response: Response) {
 }
 
 function renderStatusBadge(venue: RankedVenueActivity) {
-  if (venue.verified) {
+  if (venue.verificationState === 'verified') {
     return <span className="rounded-full bg-emerald-600/90 px-2 py-0.5 text-white">Verified</span>;
   }
-  if (venue.needsVerification) {
-    return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">Needs verification</span>;
+  if (venue.verificationState === 'needs_votes') {
+    return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">Needs votes</span>;
   }
-  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">AI suggestion</span>;
+  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">Suggested</span>;
 }
 
 function renderOpenStatusPill(openNow: boolean | null) {
@@ -1419,8 +1431,9 @@ function renderOpenStatusPill(openNow: boolean | null) {
 
 function buildMapTags(venue: RankedVenueActivity) {
   const tags: string[] = [];
-  if (venue.verified) tags.push("verified");
-  if (venue.needsVerification) tags.push("needs_verification");
+  if (venue.verificationState === 'verified') tags.push("verified");
+  if (venue.verificationState === 'needs_votes') tags.push("needs_votes");
+  if (venue.verificationState === 'suggested') tags.push("suggested");
   if (venue.categoryMatch) tags.push("category");
   if (venue.keywordMatch) tags.push("keyword");
   return tags;

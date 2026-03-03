@@ -5,12 +5,12 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { isUuid, type MapActivity } from "@dowhat/shared";
-import AuthGate from "@/components/AuthGate";
 import LocationPickerMap from "@/components/create/LocationPickerMap";
 import { extractSessionId, type CreateSessionResponse } from "./extractSessionId";
 import { formatDateTimeLocalInput, toUtcIsoFromDateTimeLocal } from './dateTime';
 import { supabase } from "@/lib/supabase/browser";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
+import { useCoreAccessGuard } from "@/lib/access/useCoreAccessGuard";
 import {
   buildVenueDiscoveryQuery,
   mapActivitiesToVenueOptions,
@@ -90,6 +90,7 @@ export default function CreateEventPage() {
     if (!pathname) return "/create";
     return params ? `${pathname}?${params}` : pathname;
   }, [pathname, searchParams]);
+  const coreAccessState = useCoreAccessGuard(redirectTarget);
   const hasPrefilledCoords = Boolean(prefill.lat && prefill.lng);
   const [activities, setActivities] = useState<Option[]>([]);
   const [venues, setVenues] = useState<Option[]>([]);
@@ -393,7 +394,7 @@ export default function CreateEventPage() {
     }
   }
 
-  if (authStatus === "loading") {
+  if (coreAccessState !== 'allowed' || authStatus !== "authed") {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16">
         <div className="animate-pulse space-y-4">
@@ -405,25 +406,13 @@ export default function CreateEventPage() {
     );
   }
 
-  if (authStatus === "anon") {
-    return (
-      <main className="mx-auto max-w-3xl px-4 py-16">
-        <AuthGate
-          title="Sign in to create an event"
-          description="Creating events is available to members only. Sign in to publish a session and invite others."
-          redirectTo={redirectTarget}
-        />
-      </main>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
       <button
         onClick={() => router.back()}
         className="mb-6 text-brand-teal hover:underline"
       >
-        ← Back
+        ← Go back
       </button>
       
       <h1 className="mb-6 text-3xl font-bold">Create Event</h1>

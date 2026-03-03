@@ -33,6 +33,8 @@ describe("buildVenueSavePayload", () => {
     score: 87,
     verified: true,
     needsVerification: false,
+    trustScore: 0.94,
+    verificationState: 'verified',
     photoUrl: null,
     openNow: true,
     hoursSummary: null,
@@ -55,8 +57,10 @@ describe("buildVenueSavePayload", () => {
         activity: "yoga",
         aiConfidence: 0.92,
         score: 87,
+        trustScore: 0.94,
         verified: true,
         needsVerification: false,
+        verificationState: "verified",
       },
     });
   });

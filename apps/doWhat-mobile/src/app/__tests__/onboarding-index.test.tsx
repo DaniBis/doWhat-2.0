@@ -8,6 +8,7 @@ type ProfileRow = {
   primary_sport: string | null;
   play_style: string | null;
   reliability_pledge_ack_at: string | null;
+  core_values?: string[] | null;
 };
 
 type SportProfileRow = { skill_level: string | null };
@@ -53,7 +54,7 @@ jest.mock('../../lib/supabase', () => {
   } = {
     user: { id: 'user-1' },
     traitCount: 0,
-    profile: { primary_sport: null, play_style: null, reliability_pledge_ack_at: null },
+    profile: { primary_sport: null, play_style: null, reliability_pledge_ack_at: null, core_values: [] },
     sportProfile: { skill_level: null },
   };
 
@@ -98,7 +99,7 @@ jest.mock('../../lib/supabase', () => {
       reset: () => {
         state.user = { id: 'user-1' };
         state.traitCount = 0;
-        state.profile = { primary_sport: null, play_style: null, reliability_pledge_ack_at: null };
+        state.profile = { primary_sport: null, play_style: null, reliability_pledge_ack_at: null, core_values: [] };
         state.sportProfile = { skill_level: null };
         auth.getUser.mockClear();
       },
@@ -156,8 +157,8 @@ describe('OnboardingHomeScreen', () => {
       source: 'onboarding-summary-mobile',
       platform: 'mobile',
       step: 'traits',
-      steps: ['traits', 'sport', 'pledge'],
-      pendingSteps: 3,
+      steps: ['traits', 'values', 'sport', 'pledge'],
+      pendingSteps: 4,
       nextStep: '/onboarding-traits',
     });
   });
@@ -168,6 +169,7 @@ describe('OnboardingHomeScreen', () => {
       primary_sport: 'padel',
       play_style: 'competitive',
       reliability_pledge_ack_at: '2025-12-10T00:00:00.000Z',
+      core_values: ['reliable', 'kind', 'disciplined'],
     });
     __supabaseMock.setSportProfileRow({ skill_level: '3.0 - Consistent drives' });
 
@@ -176,7 +178,7 @@ describe('OnboardingHomeScreen', () => {
 
     await waitFor(() => expect(screen.getByText('Return to Home')).toBeTruthy());
     expect(screen.queryByText(/Next up:/i)).toBeNull();
-    expect(screen.getAllByText('Review step').length).toBe(3);
+    expect(screen.getAllByText('Review step').length).toBe(4);
 
     fireEvent.press(screen.getByText('Return to Home'));
     expect(trackOnboardingEntry).not.toHaveBeenCalled();

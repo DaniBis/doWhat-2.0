@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Sparkles } from "lucide-react";
 
 import { TraitOnboardingSection } from "@/components/traits/TraitOnboardingSection";
 import { createClient } from "@/lib/supabase/server";
+import { sanitizeRedirectPath } from "@/lib/access/coreAccess";
 
 const ONBOARDING_PATH = "/onboarding/traits";
 
@@ -27,7 +28,11 @@ export const metadata = {
   description: "Set your five base traits so discovery, profiles, and people filters reflect your vibe.",
 };
 
-export default async function TraitOnboardingPage() {
+type TraitOnboardingPageProps = {
+  searchParams?: { next?: string };
+};
+
+export default async function TraitOnboardingPage({ searchParams }: TraitOnboardingPageProps) {
   const supabase = createClient();
   const {
     data: { user },
@@ -35,8 +40,10 @@ export default async function TraitOnboardingPage() {
 
   if (!user) {
     const nextParam = encodeURIComponent(ONBOARDING_PATH);
-    redirect(`/auth/login?next=${nextParam}`);
+    redirect(`/auth?intent=signin&next=${nextParam}`);
   }
+
+  const requestedNext = sanitizeRedirectPath(searchParams?.next ?? null, "/onboarding/core-values");
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900 text-white">
@@ -47,7 +54,7 @@ export default async function TraitOnboardingPage() {
           </Link>
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-sm font-medium text-emerald-200">
-              <Sparkles className="h-4 w-4" /> Step 3 · Personalize
+              <Sparkles className="h-4 w-4" /> Step 1 · Traits
             </div>
             <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
               Lock in your base vibe
@@ -69,7 +76,7 @@ export default async function TraitOnboardingPage() {
           </dl>
         </div>
         <div className="flex-1">
-          <TraitOnboardingSection className="shadow-2xl shadow-emerald-500/20" />
+          <TraitOnboardingSection className="shadow-2xl shadow-emerald-500/20" redirectPath={requestedNext} />
         </div>
       </div>
     </div>

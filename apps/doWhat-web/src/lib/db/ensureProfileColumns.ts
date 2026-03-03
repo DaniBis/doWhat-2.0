@@ -35,7 +35,8 @@ async function migrateProfiles(pool: QueryablePool) {
       ADD COLUMN IF NOT EXISTS bio text,
       ADD COLUMN IF NOT EXISTS location text,
       ADD COLUMN IF NOT EXISTS instagram text,
-      ADD COLUMN IF NOT EXISTS whatsapp text;
+      ADD COLUMN IF NOT EXISTS whatsapp text,
+      ADD COLUMN IF NOT EXISTS core_values text[] NOT NULL DEFAULT '{}'::text[];
   `);
 }
 

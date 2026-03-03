@@ -1,5 +1,232 @@
 # Changes Log
 
+## 2026-03-03
+
+1. **iOS Home search false-negative fix: climbing places in Hanoi were present but filtered out**
+   - User-reported issue: searching `Climb` on iOS Home returned no results despite known Hanoi climbing venues.
+   - Deep diagnosis:
+      - inspected `/api/nearby` payload around Hanoi (`lat=21.0285,lng=105.8542,radius=12km,limit=300`),
+      - confirmed climbing entries exist with strong confidence:
+         - `VietClimb` (`quality_confidence=0.92`, `place_match_confidence=0.92`, `rank_score=0.437`),
+         - `Beefy Boulders Tay Ho` (`quality_confidence=0.92`, `place_match_confidence=0.92`, `rank_score=0.421`),
+      - root cause: Home gate in `isStrictNearbyActivity` required `rank_score >= 0.5`, which excluded all climbing candidates in this dataset even though quality/place confidence were high.
+   - Fix applied in `apps/doWhat-mobile/src/app/home.tsx`:
+      - relaxed Home-only rank gate from `0.5` → `0.35` while keeping strict quality guards:
+         - `quality_confidence >= 0.72`,
+         - `place_match_confidence >= 0.65`.
+   - Verification evidence:
+      - API comparison check showed:
+         - `climbTotal = 3`,
+         - `passOldGate = 0`,
+         - `passNewGate = 3`.
+   - Validation:
+      - workspace `typecheck` passed,
+      - iOS Expo Go launch successful (`exp://127.0.0.1:8081`).
+
+2. **iOS Home controls fix: search input + filter button reliability**
+   - User-reported issue (screenshot): top Home controls felt non-functional (`Search for activities...` input + filter/options button).
+   - Deep root cause analysis:
+      - Home filter action used `router.push('/filter')`, but root stack did not register `filter` route,
+      - same stack omission applied to `people-filter`, which could make top CTA navigation unreliable,
+      - SearchBar relied on local-only input state, which could desync from Home screen state after rerenders/clear actions.
+   - Fixes applied:
+      - `apps/doWhat-mobile/src/app/_layout.tsx`
+         - added missing stack routes:
+            - `filter`
+            - `people-filter`
+      - `apps/doWhat-mobile/src/components/SearchBar.tsx`
+         - added optional controlled `value` prop,
+         - synced internal query with `value` using `useEffect`,
+         - improved iOS input UX (`returnKeyType='search'`, `autoCorrect={false}`, `autoCapitalize='none'`, `clearButtonMode='while-editing'`),
+         - expanded filter icon tap target with `hitSlop`.
+      - `apps/doWhat-mobile/src/app/home.tsx`
+         - wired `searchQuery` into `SearchBar` as controlled `value`.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - iOS simulator relaunch successful in Expo Go (`exp://127.0.0.1:8081`).
+
+3. **Deep Home search/filter fix: search now matches activities metadata; filters now affect results**
+   - User-reported issue: Home search behaved like place-name search, and Filter action remained functionally useless.
+   - Root causes found:
+      - Home search scoring was effectively based on `activity.name` only (often place-like labels from nearby feed).
+      - Activity filter preferences (`activity_filters`) were persisted in Filter screen but never consumed by Home nearby fetch logic.
+   - Fixes in `apps/doWhat-mobile/src/app/home.tsx`:
+      - added structured search metadata per nearby item (`searchText`) built from:
+         - activity name,
+         - place label,
+         - `activity_types`,
+         - `taxonomy_categories`,
+         - tags.
+      - updated ranking input to score against combined metadata, so queries like `climb` match entries tagged/category-marked for climbing even if the visible name is venue-like.
+      - integrated `activity_filters` loading into Home (`user_preferences` + local fallback `activity_filters:v1`) and normalized it via shared helpers.
+      - wired loaded preferences into nearby API calls:
+         - radius now follows selected distance preference,
+         - taxonomy categories forwarded as query filters,
+         - time-of-day preference mapped to supported map `timeWindow` values.
+      - fallback Supabase nearby path now includes `activities.activity_types` and uses preference-driven radius for consistency.
+   - Supporting reliability updates:
+      - maintained controlled SearchBar integration from Home state,
+      - filter route remains registered in root stack to ensure navigation action resolves.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - iOS Expo Go launch successful (`exp://127.0.0.1:8081`).
+
+4. **Filter button hardening + Metro warning clarification (stream disconnect)**
+   - User follow-up: search/filter still felt broken and a warning appeared: `Disconnected from Metro (1001: Stream end encountered)`.
+   - Additional findings:
+      - filter button path relied on parent callback only; if callback path failed/interrupted, button could appear non-functional,
+      - Metro warning is transport/runtime (dev server stream ended), not business-logic failure in filters/search.
+   - Final fixes:
+      - `apps/doWhat-mobile/src/components/SearchBar.tsx`
+         - made `onFilter` optional,
+         - added built-in route fallback in button handler (`router.push('/filter')`) so filter screen opens even if callback path is disrupted,
+         - retained enlarged tap target (`hitSlop`) and controlled search behavior.
+      - `apps/doWhat-mobile/src/app/home.tsx`
+         - removed duplicate Home-level filter push callback to avoid double-navigation race and keep single-source routing from SearchBar.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - iOS Expo Go restarted on fresh Metro session (`exp://127.0.0.1:8081`) with app booting successfully.
+
+## 2026-03-02
+
+1. **Mobile Home UI/UX pass: resolve overlap, improve CTA clarity, and tighten card readability**
+   - User-reported issue: mobile surfaces had overlap and visual ambiguity (place cards looked crowded, save badge conflicted with content, CTA hierarchy unclear).
+   - Fixes applied in `apps/doWhat-mobile/src/app/home.tsx`:
+      - **Top action buttons refined**:
+         - improved visual hierarchy and readability for `Find People` vs `Create event`,
+         - centered labels/icons and strengthened contrast,
+         - added border treatment to secondary button for clearer primary/secondary action distinction.
+      - **Popular nearby places cards restructured**:
+         - removed absolute-position save badge that could visually clash with card title/content,
+         - moved save control into a dedicated top row,
+         - added right spacing (`marginRight`) and explicit card sizing/min-height to prevent cramped rendering in horizontal scroll,
+         - preserved locality/update metadata while reducing collision risk.
+      - **Nearby Activities labels clarified**:
+         - replaced unclear `Activity: X` badge text with explicit `X sessions nearby`.
+   - Result:
+      - improved layout stability on iOS simulator,
+      - better button intent clarity,
+      - cleaner information hierarchy with fewer overlapping visual elements.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - iOS simulator smoke run successful in Expo Go (`exp://127.0.0.1:8081`), app bundled and loaded.
+
+2. **Nearby Activities redesign (mobile): cleaner cards + reduced render cost**
+   - User follow-up: improve Nearby Activities design quality and make the section more efficient.
+   - Changes in `apps/doWhat-mobile/src/app/home.tsx`:
+      - introduced memoized activity presentation pipeline:
+         - `activitiesToDisplay` with capped render budget (`MAX_HOME_ACTIVITY_CARDS = 40`),
+         - `activityCardModels` computed with derived counts/save state,
+         - grouped two-column `activityCardRows` for stable layout and less render churn.
+      - upgraded Nearby Activities card UX:
+         - clearer hierarchy (`Nearby` label + save action in dedicated top row),
+         - removed crowded absolute overlays,
+         - consistent card height and spacing to avoid visual collisions,
+         - explicit affordance copy (`Tap to view places and sessions`).
+      - clarified metadata wording:
+         - `Activity: X` replaced with `X sessions nearby`.
+      - added list feedback when capping applies:
+         - `Showing top 40 results for faster browsing`.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - iOS simulator smoke run successful in Expo Go (`exp://127.0.0.1:8081`), app launched and bundled.
+
+## 2026-03-01
+
+1. **Mobile Home quality gate: show only high-confidence, accurate places/activities/sessions**
+   - User-reported issue: Home displayed low-quality entries (generic/incorrect names) in “Popular nearby places” and related activity/session surfaces.
+   - Fixes applied in `apps/doWhat-mobile/src/app/home.tsx`:
+      - Added strict label-quality validation to reject placeholder/generic/noisy names (e.g. `everywhere`, `unknown`, `nearby place`, repeated-character garbage, test/dummy values).
+      - Home now uses web-equivalent nearby discovery API (`/api/nearby` via `createNearbyActivitiesFetcher`) as the primary source for nearby activities/places.
+      - Enforced confidence thresholds for nearby candidates before rendering:
+         - `quality_confidence >= 0.72`
+         - `place_match_confidence >= 0.65`
+         - `rank_score >= 0.5`
+      - Added strict mapping/gating for place cards so only entries with valid labels plus context (address/locality/categories/tags) are shown.
+      - Kept Supabase/OSM as resilience fallback, but applied the same quality filters before display.
+      - Applied quality filtering to Upcoming Sessions rows (invalid activity/venue labels are hidden).
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed for modified files,
+      - workspace `lint` passed.
+
+2. **Mobile deep parity hardening (iOS + Android): strict quality pipeline + improved search relevance + events API parity**
+   - User concern: mobile experience looked unreliable (low-quality labels, missing parity with web discovery/events behavior, weak search matching).
+   - Deep review findings:
+      - mobile `supabasePlaces` mapper still allowed generic fallback labels (`Nearby venue` / `Nearby place`) to enter UI,
+      - map nearby pipeline accepted low-confidence candidates from `/api/nearby` without strict confidence thresholds,
+      - native map events path preferred direct Supabase fallback instead of web `/api/events` logic,
+      - Home search used only plain substring matching, causing weak relevance for sport aliases and variants.
+   - Fixes applied:
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+         - removed generic fallback naming behavior,
+         - now rejects low-quality/placeholders and keeps only valid venue/place labels.
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+         - added strict label quality validation and nearby confidence gates,
+         - nearby map candidates now require:
+            - `quality_confidence >= 0.72`
+            - `place_match_confidence >= 0.65`
+            - `rank_score >= 0.5`
+         - filters map place output to quality-approved entries only,
+         - expanded generic-name rejection set (`nearby place`, `nearby venue`, `everywhere`, etc.),
+         - events fetcher now uses web `/api/events` path as primary on native too, with Supabase fallback only when needed.
+      - `apps/doWhat-mobile/src/app/home.tsx`
+         - replaced plain contains-search with ranked tokenized search relevance,
+         - added alias expansion for common sport terms (e.g., climbing/bouldering, billiards/pool/snooker, poker/holdem),
+         - search suggestions now come from ranked matches.
+   - Result:
+      - mobile discovery/feed/map now uses stricter quality standards and closer web parity,
+      - reduces placeholder/noisy entries,
+      - improves search relevance for real user terms,
+      - keeps fallback resilience when upstream sources are unavailable.
+   - Validation:
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - repo test task (`test:passWithNoTests`) passed for executed suites.
+
+3. **Mobile Home geolocation correctness fix: honor user-selected city/location (e.g., Hanoi) over device GPS**
+   - User-reported issue: Home feed/cards showed places/activities not matching selected profile location (`Hanoi`).
+   - Root causes:
+      - Home load sequence preferred device location first, then profile coordinates,
+      - upcoming sessions list was not location-bounded and could include global rows.
+   - Fixes applied in `apps/doWhat-mobile/src/app/home.tsx`:
+      - profile location is now treated as source-of-truth for discovery when present,
+      - if profile has a location label, app geocodes it and uses those coordinates for Home discovery,
+      - best-effort sync updates `profiles.last_lat/last_lng` to match selected location coordinates,
+      - device GPS/background/profile fallback chain is now only used when no valid profile-selected location is available,
+      - Upcoming Sessions query now joins venue coordinates and applies radius filtering around selected location (`25km`) before rendering,
+      - strict label quality gating remains in place to prevent fake/placeholder rows from rendering.
+   - Additional tooling:
+      - added `scripts/cleanup-fake-location-data.mjs`:
+         - audits suspicious placeholder/fake names in `places`, `venues`, `activities`,
+         - supports dry-run by default,
+         - supports guarded deletion (`APPLY=1`) only for rows not referenced by sessions/events.
+   - Data cleanup execution status:
+      - direct DB host remained unresolved (`ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`),
+      - switched diagnostics/cleanup to Supabase pooler endpoint (`aws-1-eu-west-2.pooler.supabase.com:6543`) and confirmed connectivity,
+      - dry-run + apply run found one suspicious venue label (`Everywhere`), but guarded deletion removed `0` rows because the row is still referenced (safety condition prevented destructive delete).
+   - Validation:
+      - mobile typecheck passed (`pnpm --filter doWhat-mobile run typecheck`),
+      - workspace lint passed,
+      - targeted tests passed (`12/12`).
+
+4. **iOS simulator launch stability fix (ERR_NGROK_3200): default mobile task now uses localhost Expo Go**
+   - User-reported issue: app launch failed in simulator with `ERR_NGROK_3200` (`*.exp.direct` endpoint offline).
+   - Root cause:
+      - default workspace mobile task relied on ngrok tunnel transport, which was intermittently dropping.
+   - Fix applied:
+      - `.vscode/tasks.json`
+         - `mobile:dev` now runs Expo Go in localhost mode (`expo start -c --go --host localhost --port 8081`) to remove tunnel dependency for simulator runs.
+   - Additional environment finding:
+      - local `xcrun simctl` currently reports pending Xcode license acceptance, which blocks `expo run:ios` dev-client installs until accepted.
+
 ## 2026-02-28
 
 1. **Create Event venue-name suggestions from nearby matches (optional adopt, manual typing preserved)**
@@ -134,6 +361,98 @@
          - updated expectation to assert OR filter includes `created_at` branch.
    - Validation:
       - targeted Jest (`/api/events` payload) passed (`3/3`),
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+8. **Mobile iOS Google OAuth callback fix (localhost dead-end in simulator browser)**
+   - User-reported issue (with screenshot): after Google sign-in on iOS simulator, auth flow landed on `localhost` in Safari and failed to connect.
+   - Root cause:
+      - OAuth authorize URL occasionally carried a loopback `redirect_to` (`localhost` / `127.0.0.1`) in Expo Go flows,
+      - this redirect is valid for web but not for iOS deep-link completion, producing a dead-end browser page instead of app callback.
+   - Fixes applied:
+      - added `apps/doWhat-mobile/src/lib/oauthRedirect.ts`:
+         - canonical app callback resolver (`dowhat://auth-callback`),
+         - `redirect_to` parser,
+         - loopback detection,
+         - auth URL redirect normalization.
+      - updated `apps/doWhat-mobile/src/components/AuthButtons.tsx`:
+         - standardized redirect target to app scheme callback,
+         - normalizes Supabase OAuth URL `redirect_to` away from loopback before opening auth session,
+         - logs warning in dev when loopback is detected.
+      - updated `apps/doWhat-mobile/src/lib/auth.ts`:
+         - reuses shared redirect normalization for non-UI auth entry points.
+   - Tests added:
+      - `apps/doWhat-mobile/src/lib/__tests__/oauthRedirect.test.ts`
+         - parses `redirect_to`,
+         - detects loopback values,
+         - rewrites loopback redirects,
+         - injects callback when missing.
+   - Validation:
+      - targeted Jest passed (`4/4`) for new oauth redirect helpers,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed.
+
+9. **iOS map sparse places remediation (4 places in view)**
+   - User-reported issue on iOS map: only 4 places appeared in-view despite rich nearby place inventory.
+   - Root cause:
+      - native map places fetch path prioritized Supabase-only results,
+      - OpenStreetMap fallback was used only when Supabase returned zero places,
+      - in sparse viewport slices, non-zero but low Supabase counts (e.g., 4) prevented fallback enrichment.
+   - Fix applied:
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+         - added sparse threshold augmentation (`SPARSE_SUPABASE_PLACES_THRESHOLD = 24`),
+         - when Supabase returns low-but-nonzero place count, fetches OSM fallback and merges/dedupes results,
+         - preserves Supabase-first behavior while improving map density in sparse tiles,
+         - exposes merged provider counts and attributions.
+   - Validation:
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - file diagnostics clean.
+
+10. **Expo Go iOS connectivity fix (LAN URL connection failure)**
+   - User-reported issue: iOS simulator showed “Could not connect to the server” for `exp://192.168...` LAN URL.
+   - Root cause:
+      - Expo Go was launched in LAN mode; simulator/network state can block LAN route resolution.
+   - Fixes applied:
+      - restarted mobile dev server in tunnel mode:
+         - `expo start -c --go --ios --tunnel`,
+      - updated workspace mobile task default to tunnel transport:
+         - `.vscode/tasks.json` `mobile:dev` now runs `pnpm --filter doWhat-mobile exec expo start -c --go --tunnel`.
+   - User-flow validation:
+      - tunnel connected and ready,
+      - iOS simulator was opened with `exp://...exp.direct` endpoint,
+      - Metro bundling resumed successfully.
+
+11. **iOS map count fix: fetch from Supabase `places` in addition to `venues`**
+   - User follow-up: map still showed only 4 activities in view.
+   - Root cause:
+      - native map place loader queried only `venues` bounds,
+      - this under-represented available inventory compared to nearby discovery surfaces backed by `places`.
+   - Fixes applied:
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+         - added secondary bounded query to `places` table,
+         - maps canonical place rows into `PlaceSummary`,
+         - merges + dedupes `venues` and `places` datasets,
+         - keeps bounded result cap (`queryLimit`) and graceful fallback behavior when `places` query is unavailable.
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+         - updated provider hint copy to reflect merged source (`venues + places`, fallback OSM).
+   - Validation:
+      - file diagnostics clean on modified files,
+      - workspace `lint` passed,
+      - workspace `typecheck` task remained healthy on changed files.
+
+12. **iOS/web map algorithm parity: mobile now uses the same strict `/api/nearby` ranking/filter rules as web**
+   - User request: apply the same strict map algorithm on iOS as on web.
+   - Changes applied:
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+         - mobile places fetcher now calls shared nearby pipeline first via `createNearbyActivitiesFetcher` against `/api/nearby`,
+         - uses web-equivalent map query geometry (`center + radius` derived from viewport bounds),
+         - forwards active taxonomy category filters to nearby query (`filters.taxonomyCategories`),
+         - maps nearby activities into `PlaceSummary` for existing mobile rendering,
+         - keeps existing Supabase/OSM fallback only when nearby API is empty/unavailable.
+   - Result:
+      - iOS map candidate selection/ranking now matches web’s strict nearby logic for the primary path, with resilience fallback retained.
+   - Validation:
       - workspace `typecheck` passed,
       - workspace `lint` passed.
 
@@ -1782,3 +2101,367 @@
          - workspace typecheck passed,
          - workspace lint completed,
          - `/api/health` passed.
+
+## 2026-03-03
+
+1. **Discovery Phase 1+2 implementation pass (venue seeding + inferred taxonomy + trust-state plumbing)**
+   - Timestamp: 2026-03-03 15:01:52 +07
+   - Files touched:
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-web/src/lib/discovery/trust.ts`
+      - `apps/doWhat-web/src/lib/discovery/telemetry.ts`
+      - `apps/doWhat-web/src/lib/filters.ts`
+      - `apps/doWhat-web/src/lib/venues/search.ts`
+      - `apps/doWhat-web/src/lib/venues/types.ts`
+      - `apps/doWhat-web/src/lib/venues/savePayload.ts`
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/components/WebMap.tsx`
+      - `apps/doWhat-web/src/app/venues/page.tsx`
+      - `packages/shared/src/map/types.ts`
+      - discovery/venues test files updated for new contracts
+   - Reason:
+      - Implement Phase 1/2 from the competitor plan with DB-backed venue seeding + persisted venue activity inference, and align trust/state outputs across map + venues.
+   - Before:
+      - Sparse tiles often stayed under-seeded unless specific city bootstrap paths triggered.
+      - Place fallback activity typing depended mainly on lightweight keyword inference, without directly consuming persisted `venue_activities` mappings.
+      - Map/Venues used different trust/ranking semantics and state labels (`AI suggestion`/`Needs verification`).
+      - Debug output did not expose provider counts + running cache/dedupe rates via a request toggle.
+   - After:
+      - Discovery engine now triggers viewport seeding on sparse requests (`fetchPlacesForViewport(... forceRefresh: true)`) and attempts persisted matcher refresh (`matchActivitiesForPlaces`) for DB-backed inventory growth.
+      - Place fallback now reads persisted `venue_activities` + `activity_catalog`, maps inferred activities to taxonomy IDs, and projects confidence/state onto discovery items.
+      - Added shared trust scoring (`computeTrustScore`) and propagated `trust_score` + `verification_state` (`suggested` / `verified` / `needs_votes`) through ranking, nearby/discovery APIs, map UI, and venues UI.
+      - Added debug metrics toggle support (`debug=1`) with server logs for provider counts, cache hit rate, and dedupe drop rate.
+      - Added actionable empty-state actions on map/venues instead of passive blank messaging.
+   - Commands run:
+      - `sed -n ...` / `tail -n ...` across discovery, map, venues, tests, and logs
+      - `rg -n ...` / `rg --files ...` for flow tracing and impact search
+      - `find ...` to locate external plan artifacts
+      - `python3 -m pip install --user pypdf` + PDF extraction command for plan details
+      - multiple `apply_patch` edits across listed files
+
+2. **Discovery implementation verification + handoff log refresh**
+   - Timestamp: 2026-03-03 15:13:34 +07
+   - Files touched:
+      - `changes_log.md`
+   - Reason:
+      - Record the latest verification run and PR-ready handoff details after implementing discovery Phase 1/2.
+   - Before:
+      - Prior entry documented implementation details, but did not include a dedicated follow-up note for the final scoped test/typecheck rerun and handoff output pass.
+   - After:
+      - Added a follow-up log entry with exact validation command outcomes and updated status for the discovery workstream.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- src/lib/discovery/__tests__/trust.test.ts src/app/api/discovery/activities/__tests__/route.test.ts src/app/api/nearby/__tests__/payload.test.ts src/lib/__tests__/venueSearch.test.ts src/lib/venues/__tests__/filters.test.ts src/lib/venues/__tests__/savePayload.test.ts src/app/venues/__tests__/page.test.tsx` (passed: 7 suites, 31 tests)
+      - `pnpm --filter dowhat-web run typecheck` (passed)
+      - `git status --short` and targeted `rg -n` / `sed -n` checks for discovery flow + contract fields
+
+3. **Gap map before auth/onboarding/location hardening pass**
+   - Timestamp: 2026-03-03 15:54:33 +07
+   - Files touched:
+      - `changes_log.md`
+   - What changed:
+      - Added a pre-implementation gap map with concrete file-path evidence for requirements A-F and a verified/missing checklist.
+   - Why:
+      - Required by task brief before coding, and needed to avoid duplicating existing onboarding/discovery work.
+   - Gap map (exists vs missing):
+      - Auth/session UI exists but not strict redirects on all core pages:
+         - `apps/doWhat-web/src/app/create/page.tsx` uses client `AuthGate` card (not redirect).
+         - `apps/doWhat-web/src/app/map/page.tsx` uses client `AuthGate` and action-level auth redirects.
+         - `apps/doWhat-web/src/app/venues/page.tsx` uses client auth state + gate card.
+         - `apps/doWhat-web/src/app/page.tsx` is server-rendered and still usable anonymously.
+      - Live update bridge already exists and is mounted:
+         - `apps/doWhat-web/src/components/AppLiveUpdates.tsx`
+         - `apps/doWhat-web/src/app/layout.tsx`
+      - Onboarding exists (traits/sport/pledge) but core-values step missing:
+         - `packages/shared/src/onboarding/progress.ts`
+         - `apps/doWhat-web/src/app/onboarding/page.tsx`
+         - `apps/doWhat-web/src/lib/onboardingSteps.ts`
+      - Email confirmation gate missing:
+         - no `email_confirmed_at` checks found in web/mobile/shared source.
+      - Create/session place resolution mostly exists but has override risk:
+         - `apps/doWhat-web/src/app/api/sessions/route.ts` prioritizes explicit payload `placeId` before activity canonical place.
+         - `apps/doWhat-web/src/lib/sessions/server.ts` contains canonical place helpers (`resolveSessionPlaceId`, `deriveSessionPlaceLabel`).
+      - Home page lacks requested split filter/search panel:
+         - `apps/doWhat-web/src/app/page.tsx` has hero + grouped activity feed, no people filter section.
+      - Map page already has search/filter/save and debug support, but debug logging needs explicit dev-only guard:
+         - `apps/doWhat-web/src/app/map/page.tsx`
+         - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - Checklist status (verified only):
+      - `[x]` A.4 Reuse existing live updates bridge and confirm mounted.
+      - `[ ]` A Auth required redirect gating on `/`, `/map`, `/venues`, `/create`, and save/vote/create flows.
+      - `[ ]` A Email-confirmed gate with resend support.
+      - `[ ]` A Onboarding guard includes 5 traits + 3 core values + reliability pledge.
+      - `[ ]` B Activity/event place invariants fully enforced (activity inheritance precedence + standalone unresolved with coords).
+      - `[ ]` C Home design/functionality upgrade (search + split filters + real data + no duplicate sections/empties).
+      - `[ ]` D Map parity + deep debug validation on sparse diversity collapse.
+      - `[ ]` E Venues/Profile only parity/gating/core-values support updates.
+      - `[ ]` F Requirement-vs-current comparison completed and tracked with small-step implementation entries.
+   - Plan of attack (small commits):
+      - Commit slice 1: shared web access guard (`auth + email-confirm + onboarding redirect`) and apply to `/`, `/map`, `/venues`, `/create`.
+      - Commit slice 2: onboarding core-values contract (DB migration + shared progress logic + `/onboarding/core-values` UI + profile support).
+      - Commit slice 3: create/session place invariant hardening + create-page “Go back” label + tests.
+      - Commit slice 4: home page search/filter split panel + save parity + no duplicate sections/empty states.
+      - Commit slice 5: map debug dev-only logging + diversity/drop diagnostics tests.
+      - Commit slice 6: full lint/typecheck/targeted tests and final log/handoff.
+   - How verified:
+      - Code inspection commands:
+         - `tail -n 200 changes_log.md`
+         - `tail -n 220 ASSISTANT_CHANGES_LOG.md`
+         - `sed -n ...` on core pages/routes/components
+         - `rg -n` across auth/onboarding/discovery/create/profile/session helpers
+   - Remaining risks:
+      - Adding a new profile column (`core_values`) requires migration + local type sync.
+      - Existing tests assert onboarding step unions; adding a step can require broad fixture/test updates.
+      - Redirect enforcement must preserve query strings and avoid loops with `/auth` and onboarding routes.
+
+4. **Core access guard foundation (auth + email-confirm + onboarding redirects)**
+   - Timestamp: 2026-03-03 16:02:00 +07
+   - Files touched:
+      - `packages/shared/src/onboarding/coreValues.ts`
+      - `packages/shared/src/index.ts`
+      - `apps/doWhat-web/src/lib/access/coreAccess.ts`
+      - `apps/doWhat-web/src/lib/access/serverGuard.ts`
+      - `apps/doWhat-web/src/lib/access/useCoreAccessGuard.ts`
+      - `apps/doWhat-web/src/app/auth/confirm-email/page.tsx`
+      - `apps/doWhat-web/src/app/page.tsx`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/venues/page.tsx`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+   - What changed:
+      - Added reusable core-values normalization helpers in shared package (web/mobile reusable contract).
+      - Added centralized web access guard primitives for:
+         - auth redirect (`/auth?redirect=...`)
+         - email confirmation gate redirect (`/auth/confirm-email?redirect=...`)
+         - onboarding step redirect (`/onboarding/{traits|core-values|reliability-pledge}?next=...`)
+      - Added server-side guard for home page and client-side guard hook for map/venues/create.
+      - Added new `/auth/confirm-email` page with resend flow + continue check.
+      - Updated create UI back button copy to explicit “Go back”.
+   - Why:
+      - Requirement A needs strict redirect-based gating (not passive gate cards) and an email-confirm checkpoint before app unlock.
+   - How verified:
+      - `sed -n ...` and `rg -n ...` confirmed:
+         - `AppLiveUpdates` remains mounted in `app/layout.tsx`
+         - core pages now use guard paths/hooks instead of `AuthGate` card fallbacks for anon access
+      - Static read-through verified redirect target preservation code paths include query strings.
+   - Remaining risks:
+      - Guard logic depends on onboarding data reads; pending `core_values` DB column rollout is still required.
+      - Client guard and local auth-state listeners now coexist on map/venues/create; should be smoke-tested for race flicker.
+
+5. **Home filter panel + access tests scaffolding**
+   - Timestamp: 2026-03-03 16:24:00 +07
+   - Files touched:
+      - `apps/doWhat-web/src/lib/home/filtering.ts` (new)
+      - `apps/doWhat-web/src/app/page.tsx`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/lib/home/__tests__/filtering.test.ts` (new)
+      - `apps/doWhat-web/src/lib/access/__tests__/coreAccess.test.ts` (new)
+      - `apps/doWhat-web/src/lib/access/__tests__/serverGuard.test.ts` (new)
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Extracted home feed filtering/grouping into reusable, testable helper (`buildHomeCards`) with category normalization and area scoping.
+      - Rebuilt `/` page UI to include a visible search bar plus split filter panel sections: `Activities & events filters` and `People filters`.
+      - Added explicit actionable empty-state copy for filtered-empty vs genuinely-empty inventories.
+      - Updated map filter drawer copy/layout to explicitly separate activities/events filters from people filters.
+      - Added targeted Jest suites for:
+         - auth redirect preservation + email confirmation + onboarding gate helpers
+         - server guard redirect behavior
+         - home search/filter behavior stability.
+   - Why:
+      - Complete requirement C (home design/functionality) and add the required targeted coverage for requirement A/C/D guardrails.
+   - How verified:
+      - `apply_patch` and file writes completed cleanly.
+      - `sed -n` / `rg -n` spot checks confirmed new filter headings and helper imports are wired.
+      - Full lint/typecheck/test verification is queued next (not executed yet for this slice).
+   - Remaining risks:
+      - New tests may require Jest mock adjustments once executed.
+      - Home page rewrite may surface minor typing/format issues on first typecheck run.
+
+6. **Guard bugfix + full verification pass**
+   - Timestamp: 2026-03-03 16:28:04 +07
+   - Files touched:
+      - `apps/doWhat-web/src/lib/access/serverGuard.ts`
+      - `apps/doWhat-web/src/lib/access/useCoreAccessGuard.ts`
+      - `apps/doWhat-web/src/app/auth/confirm-email/page.tsx`
+      - `apps/doWhat-web/src/app/onboarding/traits/__tests__/page.test.tsx`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/venues/__tests__/page.test.tsx`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Fixed a redirect-control bug in `enforceServerCoreAccess`: onboarding redirects thrown by Next (`NEXT_REDIRECT`) were being swallowed by a broad `catch`, which could incorrectly allow access.
+      - Added redirect-signal detection and rethrow logic in `serverGuard.ts`.
+      - Fixed strict route typing in client redirects (`useCoreAccessGuard`, confirm-email page).
+      - Updated affected tests for new page signatures and stricter TS behavior.
+      - Updated venues page test to mock the core access guard so behavior assertions run past loading skeleton state.
+   - Why:
+      - Required to make auth/onboarding enforcement reliable and to complete mandatory lint/typecheck/test verification cleanly.
+   - How verified:
+      - `pnpm --filter dowhat-web test -- src/lib/access/__tests__/coreAccess.test.ts src/lib/access/__tests__/serverGuard.test.ts src/app/api/sessions/__tests__/route.test.ts src/lib/home/__tests__/filtering.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts` (passed: 5 suites, 14 tests)
+      - `pnpm -w lint` (passed)
+      - `pnpm -w typecheck` (passed)
+      - `pnpm --filter dowhat-web test -- src/lib/discovery/__tests__/trust.test.ts src/lib/discovery/__tests__/telemetry.test.ts src/app/api/discovery/activities/__tests__/route.test.ts src/app/api/nearby/__tests__/payload.test.ts src/lib/venues/__tests__/filters.test.ts src/app/venues/__tests__/page.test.tsx` (passed: 6 suites, 28 tests)
+   - Remaining risks:
+      - Core-page guards for map/venues/create remain client-side redirects (fast, but still post-hydration). Consider middleware/server-route-level gating later if pre-hydration enforcement becomes mandatory.
+      - Home filter panel currently uses a simple comma-separated category input; chip/selector UX can be refined in a follow-up.
+
+7. **QA Test Gap Map (auth/create/discovery/runtime/CI)**
+   - Timestamp: 2026-03-03 17:02:57 +07
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Added a fresh inventory + gap map of existing tests/guardrails before implementing the new QA/CI hardening batch.
+   - Why:
+      - Required by workplan step 1/2 to avoid duplicating coverage and to target only missing high-risk protections.
+   - Test gap map (with file evidence):
+      - **A) Auth + onboarding gates**
+         - Exists:
+            - `apps/doWhat-web/src/lib/access/__tests__/coreAccess.test.ts`
+            - `apps/doWhat-web/src/lib/access/__tests__/serverGuard.test.ts`
+         - Missing:
+            - No direct client guard hook tests for `useCoreAccessGuard` redirect branches + query preservation.
+      - **B) Create Event invariants**
+         - Exists:
+            - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts` (activity place override protection)
+         - Missing:
+            - No tests for standalone fallback label behavior.
+            - No tests for rejection/handling of empty `place_label` outcomes.
+            - No route-level timestamp/timezone stability assertion.
+      - **C) Discovery / Map / Venues contracts**
+         - Exists:
+            - `apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts`
+            - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+            - `apps/doWhat-web/src/lib/discovery/__tests__/{trust.test.ts,telemetry.test.ts}`
+            - `apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`
+         - Missing:
+            - No contract test that filters invalid place-backed rows (`name`/`place_label` empty) at route boundary.
+            - No test asserting facets stay aligned with returned items after sanitation.
+            - No explicit map keep-previous-data regression test at page integration boundary.
+      - **D) Hardcoded/fake discovery detection**
+         - Missing:
+            - No repository-level CI script to fail on hardcoded discovery placeholders/fallback arrays.
+      - **E) Runtime crash prevention**
+         - Partial exists:
+            - unit coverage for map helper utilities (`search*`, `resultQuality`, etc.)
+         - Missing:
+            - no dedicated static smell scan for risky `forEach/map` on possibly undefined values.
+            - no TDZ smell scan script.
+      - **F) Single strict verify command**
+         - Exists now:
+            - root `verify:dowhat` points to `node scripts/verify-dowhat.mjs` (seed/data validation), not full matrix runner.
+         - Missing:
+            - fail-fast matrix command covering lint/typecheck/web/mobile/playwright/shared/policies/health in one entrypoint.
+   - How verified:
+      - `git status --short`
+      - `cat package.json`
+      - `sed -n '1,260p' scripts/verify-dowhat.mjs`
+      - `rg --files ... | rg '__tests__|\.test\.(ts|tsx)$'`
+      - targeted `sed -n` on auth/create/discovery test files
+      - `rg -n "AppLiveUpdates" apps/doWhat-web/src/app/layout.tsx apps/doWhat-web/src/components/AppLiveUpdates.tsx` (confirmed mounted, no second invalidation system added)
+   - Remaining risks:
+      - Current workspace has extensive unrelated WIP changes; new guardrail edits must avoid destabilizing existing suites.
+      - Full strict matrix execution may require local tools/env availability (Playwright browsers, Expo doctor, Supabase env).
+
+8. **Auth client-guard + create invariant test expansion**
+   - Timestamp: 2026-03-03 17:05:58 +07
+   - Files touched:
+      - `apps/doWhat-web/src/lib/access/__tests__/useCoreAccessGuard.test.tsx` (new)
+      - `apps/doWhat-web/src/app/api/sessions/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Added client-guard tests for `useCoreAccessGuard` covering:
+         - unauth redirect with query-string preservation
+         - unconfirmed-email redirect
+         - pending-onboarding redirect
+         - successful allow path.
+      - Hardened `/api/sessions` route with explicit non-empty `place_label` guard before insert.
+      - Expanded `/api/sessions` route tests with:
+         - standalone fallback label case
+         - empty resolved label rejection case (`400`)
+         - existing activity place inheritance case retained.
+      - Added timezone normalization test for `extractSessionPayload` (`+07:00` => UTC ISO).
+   - Why:
+      - Cover missing high-risk flow tests in requirements A/B and prevent regressions around session place invariants.
+   - How verified:
+      - `pnpm --filter dowhat-web test -- src/lib/access/__tests__/useCoreAccessGuard.test.tsx src/app/api/sessions/__tests__/route.test.ts src/lib/sessions/__tests__/server.test.ts`
+      - Result: passed (`3 suites`, `19 tests`).
+   - Remaining risks:
+      - Session route place-label guard currently depends on runtime resolver output; schema-level DB constraints are still recommended as defense-in-depth.
+
+9. **Onboarding regression test alignment (values step + route updates)**
+   - Timestamp: 2026-03-03 17:16:46 +07
+   - Files touched:
+      - `apps/doWhat-web/src/app/profile/__tests__/page.test.tsx`
+      - `apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx`
+      - `apps/doWhat-web/src/app/onboarding/__tests__/page.test.tsx`
+      - `apps/doWhat-web/src/components/nav/__tests__/OnboardingNavLink.test.tsx`
+      - `apps/doWhat-web/src/app/onboarding/traits/__tests__/page.test.tsx`
+      - `apps/doWhat-web/src/components/traits/__tests__/TraitOnboardingSection.test.tsx`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Updated outdated onboarding assertions to match current step order and semantics: `traits -> values -> sport -> pledge`.
+      - Updated pending-step counts/arrays in profile, people-filter, onboarding-home, and nav-link analytics assertions.
+      - Updated trait onboarding unauth redirect expectation to `/auth?intent=signin&next=...`.
+      - Updated trait onboarding hero copy expectation to `Step 1 · Traits`.
+      - Updated `TraitOnboardingSection` default completion redirect expectation to `/onboarding/core-values`.
+   - Why:
+      - `verify:dowhat` was blocked by stale tests after onboarding flow was expanded with core values and redirect behavior changed.
+   - How verified:
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/profile/__tests__/page.test.tsx src/app/people-filter/__tests__/page.test.tsx src/app/onboarding/__tests__/page.test.tsx src/components/nav/__tests__/OnboardingNavLink.test.tsx src/app/onboarding/traits/__tests__/page.test.tsx src/components/traits/__tests__/TraitOnboardingSection.test.tsx`
+      - Result: passed (`6 suites`, `24 tests`).
+   - Remaining risks:
+      - Full strict matrix (`pnpm verify:dowhat`) still needs to be rerun end-to-end; additional non-onboarding failures may still surface.
+      - This batch updates expectations only; it does not change onboarding runtime behavior.
+
+10. **Mobile onboarding test suite alignment + strict verify unblock**
+   - Timestamp: 2026-03-03 17:19:55 +07
+   - Files touched:
+      - `apps/doWhat-mobile/src/components/__tests__/OnboardingNavPill.test.tsx`
+      - `apps/doWhat-mobile/src/components/__tests__/OnboardingNavPrompt.test.tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/people-filter.test.tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/onboarding-index.test.tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/profile.simple.cta.test.tsx`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Updated mobile onboarding analytics expectations to include the new `values` step and new pending-step totals.
+      - Extended mobile profile mock rows to include `core_values` so “onboarding complete” tests can model a fully completed state.
+      - Updated onboarding-home complete-state expectation to 4 review cards (traits/values/sport/pledge).
+      - Updated mobile profile progress-priority assertion to reflect current default priority (`values`) when traits are complete but values are missing.
+   - Why:
+      - `pnpm verify:dowhat` failed in the mobile Jest phase due stale tests after onboarding flow expansion.
+   - How verified:
+      - Failure captured from strict matrix run: `pnpm verify:dowhat` (failed at `Mobile Jest` with onboarding expectation mismatches).
+      - `pnpm --filter doWhat-mobile test -- --maxWorkers=50% src/components/__tests__/OnboardingNavPill.test.tsx src/components/__tests__/OnboardingNavPrompt.test.tsx src/app/__tests__/people-filter.test.tsx src/app/__tests__/onboarding-index.test.tsx src/app/__tests__/profile.simple.cta.test.tsx`
+      - Result: passed (`5 suites`, `30 tests`).
+   - Remaining risks:
+      - Full strict matrix must be rerun to validate downstream steps after mobile Jest (expo doctor/shared tests/health).
+      - Mobile home tests still emit expected dev-console warnings around mocked web URL helpers; these do not fail suites but can mask new warnings.
+
+11. **Strict verify matrix rerun (post-mobile fixes) + environment blocker capture**
+   - Timestamp: 2026-03-03 17:21:24 +07
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - What changed:
+      - Re-ran full strict guardrail matrix via `pnpm verify:dowhat` after mobile onboarding test fixes.
+      - Confirmed `AppLiveUpdates` remains mounted in app layout and no alternate invalidation bridge was introduced.
+   - Why:
+      - Requirement mandates end-to-end verification of guardrails and explicit confirmation of live refresh bridge continuity.
+   - How verified:
+      - `pnpm verify:dowhat`
+      - Matrix stage results:
+         - Passed: no-hardcoded-discovery, required-fields, discovery-contract, lint, typecheck, web jest (90/90), web playwright smoke (1/1), mobile jest (19/19), expo doctor (15/15), onboarding progress checks (web+mobile), shared tests (8/8), trait policy verifier.
+         - Failed: workspace health step (`pnpm -w run health`) with `migrations-health` DNS error: `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.
+      - `rg -n "AppLiveUpdates" apps/doWhat-web/src/app/layout.tsx apps/doWhat-web/src/components/AppLiveUpdates.tsx` (confirmed mounted in layout).
+   - Remaining risks:
+      - Final strict matrix currently blocked by local environment/network reachability to Supabase host in health migrations check.
+      - Until DB host resolution is restored (or health target env is updated), `verify:dowhat` cannot complete green locally despite code/test guardrails passing.

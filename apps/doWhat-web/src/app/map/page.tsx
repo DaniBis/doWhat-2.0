@@ -32,7 +32,6 @@ import {
   type TimeWindowKey,
 } from "@dowhat/shared";
 import SaveToggleButton from "@/components/SaveToggleButton";
-import AuthGate from "@/components/AuthGate";
 
 import WebMap, { type MapMovePayload, type ViewBounds } from "@/components/WebMap";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
@@ -40,6 +39,7 @@ import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { haversineMeters } from '@/lib/places/utils';
 import { supabase } from "@/lib/supabase/browser";
 import { buildMapActivitySavePayload as createMapActivitySavePayload } from "@/lib/savePayloads";
+import { useCoreAccessGuard } from '@/lib/access/useCoreAccessGuard';
 import { parseCoordinateLabel, resolveMapCenterFromProfile, type MapProfileLocationPayload } from './profileCenter';
 import {
   clampReliabilityScore,
@@ -270,6 +270,35 @@ type FilterSupportFlags = {
 const roundCoordinate = (value: number, precision = 6) =>
   Number.isFinite(value) ? Number(value.toFixed(precision)) : 0;
 
+const resolveActivityVerificationState = (activity: MapActivity): 'suggested' | 'verified' | 'needs_votes' => {
+  if (activity.verification_state === 'verified') return 'verified';
+  if (activity.verification_state === 'needs_votes') return 'needs_votes';
+  if (activity.verification_state === 'suggested') return 'suggested';
+  const tags = new Set((activity.tags ?? []).filter((value): value is string => typeof value === 'string'));
+  if (tags.has('verified')) return 'verified';
+  if (tags.has('needs_votes') || tags.has('needs_verification')) return 'needs_votes';
+  return 'suggested';
+};
+
+const activityVerificationLabel = (activity: MapActivity): string => {
+  const state = resolveActivityVerificationState(activity);
+  if (state === 'verified') return 'Verified';
+  if (state === 'needs_votes') return 'Needs votes';
+  return 'Suggested';
+};
+
+const activityVerificationClass = (activity: MapActivity): string => {
+  const state = resolveActivityVerificationState(activity);
+  if (state === 'verified') return 'border-emerald-300 bg-emerald-50 text-emerald-800';
+  if (state === 'needs_votes') return 'border-amber-300 bg-amber-50 text-amber-800';
+  return 'border-slate-300 bg-slate-100 text-slate-700';
+};
+
+const formatTrustPercent = (value?: number | null): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+};
+
 const normaliseBounds = (value: Bounds): Bounds => ({
   sw: { lat: roundCoordinate(value.sw.lat, 5), lng: roundCoordinate(value.sw.lng, 5) },
   ne: { lat: roundCoordinate(value.ne.lat, 5), lng: roundCoordinate(value.ne.lng, 5) },
@@ -345,6 +374,10 @@ export default function MapPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsString = useMemo(() => searchParams?.toString() ?? '', [searchParams]);
+  const debugDiscovery =
+    searchParams?.get('debug') === '1'
+    || searchParams?.get('debugDiscovery') === '1'
+    || process.env.NEXT_PUBLIC_DISCOVERY_DEBUG === '1';
   const e2eBypassAuth =
     process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === 'true'
     && searchParams?.get('e2e') === '1';
@@ -352,6 +385,7 @@ export default function MapPage() {
     if (!pathname) return '/map';
     return searchParamsString ? `${pathname}?${searchParamsString}` : pathname;
   }, [pathname, searchParamsString]);
+  const coreAccessState = useCoreAccessGuard(redirectTarget);
   const highlightSessionId = searchParams?.get('highlightSession');
   const [storedHighlightSessionId, setStoredHighlightSessionId] = useState<string | null>(null);
   const effectiveHighlightSessionId = highlightSessionId ?? storedHighlightSessionId;
@@ -794,11 +828,11 @@ export default function MapPage() {
         buildUrl: () => {
           const origin = typeof window !== 'undefined' ? window.location.origin : '';
           if (!origin) throw new Error('Unable to determine origin for nearby fetcher');
-          return `${origin}/api/nearby`;
+          return debugDiscovery ? `${origin}/api/nearby?debug=1` : `${origin}/api/nearby`;
         },
         includeCredentials: true,
       }),
-    [],
+    [debugDiscovery],
   );
 
   const eventsFetcher = useMemo(
@@ -1856,6 +1890,21 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     eventsQuery,
   ]);
 
+  const handleWidenRadius = useCallback(() => {
+    const nextRadius = Math.min(radiusMeters * 2, 50_000);
+    setRadiusMeters(nextRadius);
+    track('map_widen_radius', { from: radiusMeters, to: nextRadius });
+    showToast(`Radius widened to ~${formatKilometres(nextRadius)}`, 'info');
+  }, [radiusMeters, setRadiusMeters, showToast, track]);
+
+  const handleCreateFromCenter = useCallback(() => {
+    const params = new URLSearchParams();
+    if (queryCenter?.lat != null) params.set('lat', queryCenter.lat.toFixed(6));
+    if (queryCenter?.lng != null) params.set('lng', queryCenter.lng.toFixed(6));
+    const target = `/create?${params.toString()}`;
+    router.push(target as Route);
+  }, [queryCenter, router]);
+
   const unsupportedFilters = useMemo<UnsupportedFilterNotice[]>(() => {
     if (!filterSupport) return [];
     const notices: UnsupportedFilterNotice[] = [];
@@ -1948,7 +1997,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }, [dataMode, syncFocusedActivityParam]);
 
   const sortedActivities = useMemo(() => {
-    return [...filteredActivities].sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
+    return [...filteredActivities].sort((a, b) => {
+      const trustA = a.trust_score ?? -1;
+      const trustB = b.trust_score ?? -1;
+      if (trustA !== trustB) return trustB - trustA;
+      const rankA = a.rank_score ?? -1;
+      const rankB = b.rank_score ?? -1;
+      if (rankA !== rankB) return rankB - rankA;
+      return (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY);
+    });
   }, [filteredActivities]);
 
   const selectedActivity = useMemo(() => {
@@ -2000,6 +2057,9 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       chips,
       upcomingSessions: selectedActivity.upcoming_session_count ?? 0,
       source: selectedActivity.source ?? null,
+      trustScore: selectedActivity.trust_score ?? null,
+      verificationLabel: activityVerificationLabel(selectedActivity),
+      verificationClass: activityVerificationClass(selectedActivity),
     };
   }, [selectedActivity]);
 
@@ -2081,23 +2141,11 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     ? `No events match "${searchTerm}". Try another name or clear the search.`
     : "No events match those filters yet. Try widening your search.";
 
-  if (isAuthenticated === null && !e2eBypassAuth) {
+  if (!e2eBypassAuth && (coreAccessState !== 'allowed' || isAuthenticated !== true)) {
     return (
       <div className="flex h-[calc(100dvh-64px)] items-center justify-center text-sm text-ink-muted">
-        Checking your account…
+        Redirecting to your access checkpoint…
       </div>
-    );
-  }
-
-  if (isAuthenticated === false && !e2eBypassAuth) {
-    return (
-      <main className="mx-auto flex min-h-[calc(100dvh-64px)] max-w-3xl items-center px-4 py-12">
-        <AuthGate
-          title="Sign in to use the map"
-          description="The discovery map is personalized for members only. Sign in to see nearby activity and event data."
-          redirectTo={redirectTarget}
-        />
-      </main>
     );
   }
 
@@ -2265,6 +2313,14 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     <span aria-hidden>📍</span>
                     <span>{selectedActivitySummary.place}</span>
                   </div>
+                  <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
+                    <span className={`rounded-full border px-xs py-hairline ${selectedActivitySummary.verificationClass}`}>
+                      {selectedActivitySummary.verificationLabel}
+                    </span>
+                    <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                      Trust {formatTrustPercent(selectedActivitySummary.trustScore)}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex flex-col items-end gap-xxs text-right">
                   {selectedActivitySummary.source ? (
@@ -2353,7 +2409,30 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 )}
                 {activityListEmpty && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-muted">
-                    {activityEmptyCopy}
+                    <p>{activityEmptyCopy}</p>
+                    <div className="mt-xs flex flex-wrap gap-xs">
+                      <button
+                        type="button"
+                        onClick={handleRefreshSearch}
+                        className="rounded-full border border-midnight-border/40 bg-white px-sm py-xxs text-[11px] font-semibold text-ink hover:border-brand-teal/60 hover:text-brand-teal"
+                      >
+                        Refresh search
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleWidenRadius}
+                        className="rounded-full border border-brand-teal/40 bg-brand-teal/5 px-sm py-xxs text-[11px] font-semibold text-brand-teal hover:border-brand-teal"
+                      >
+                        Widen radius
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateFromCenter}
+                        className="rounded-full bg-brand-teal px-sm py-xxs text-[11px] font-semibold text-white hover:bg-brand-dark"
+                      >
+                        Create event here
+                      </button>
+                    </div>
                   </div>
                 )}
                 <ul className="flex flex-col gap-sm">
@@ -2365,6 +2444,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const placeLabel = activityPlaceLabel(activity);
                     const activitySubtitle = placeLabel ?? PLACE_FALLBACK_LABEL;
                     const metadataChips = buildActivityMetadataChips(activity);
+                    const verificationLabel = activityVerificationLabel(activity);
+                    const verificationClass = activityVerificationClass(activity);
                     return (
                       <li key={activity.id}>
                         <div
@@ -2389,7 +2470,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 <span>{activitySubtitle}</span>
                               </div>
                               <div className="text-base font-semibold text-ink">{activity.name}</div>
-                              <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up</p>
+                              <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
+                                <span className={`rounded-full border px-xs py-hairline ${verificationClass}`}>
+                                  {verificationLabel}
+                                </span>
+                                <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                                  Trust {formatTrustPercent(activity.trust_score)}
+                                </span>
+                              </div>
+                              <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up backed by nearby venues.</p>
                               {activity.activity_types && activity.activity_types.length > 0 && (
                                 <div className="mt-xs flex flex-wrap gap-xxs">
                                   {activity.activity_types.slice(0, 3).map((type) => (
@@ -2626,6 +2715,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto px-lg py-md space-y-xl">
+              <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">Activities &amp; events filters</h3>
+                <p className="mt-xxs text-[11px] text-ink-muted">
+                  Search and refine what appears on both map pins and list cards.
+                </p>
+              </section>
               <div>
                 <label htmlFor="map-filter-search" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
                   Search by name
@@ -2682,8 +2777,9 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                       })}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">People traits</div>
+                  <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">People filters</h3>
+                    <p className="mt-xxs text-[11px] text-ink-muted">Control preferred vibe traits for participants.</p>
                     <div className="mt-sm flex flex-wrap gap-xs">
                       {!traitsSupported ? (
                         <p className="text-xs text-ink-muted">People traits are temporarily unavailable.</p>
@@ -2704,7 +2800,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         );
                       })}
                     </div>
-                  </div>
+                  </section>
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Taxonomy categories</div>
                     <div className="mt-sm flex flex-wrap gap-xs">

@@ -3,12 +3,14 @@ import type { OnboardingStep } from '@dowhat/shared';
 
 export const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
   traits: 'Pick 5 base traits',
+  values: 'Add 3 core values',
   sport: 'Set your sport & skill',
   pledge: 'Confirm the reliability pledge',
 };
 
 export const ONBOARDING_STEP_ROUTES = {
   traits: '/onboarding/traits',
+  values: '/onboarding/core-values',
   sport: '/onboarding/sports',
   pledge: '/onboarding/reliability-pledge',
 } as const satisfies Record<OnboardingStep, Route>;

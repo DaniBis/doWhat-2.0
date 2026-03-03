@@ -1,8 +1,9 @@
 import * as WebBrowser from 'expo-web-browser';
 
+import { ensureAuthUrlRedirectTo, parseAuthUrlRedirectTo, resolveOAuthRedirectTo } from './oauthRedirect';
 import { supabase } from './supabase';
 
-const REDIRECT_URL = 'dowhat://auth-callback';
+const REDIRECT_URL = resolveOAuthRedirectTo();
 
 type AuthSessionResponse = { type: 'success' | 'cancel' | 'dismiss'; url?: string };
 
@@ -31,8 +32,13 @@ export async function startGoogleSignIn() {
     if (__DEV__) console.log('[auth] missing auth url, aborting');
     return;
   }
+  const redirectBefore = parseAuthUrlRedirectTo(data.url);
+  const authUrl = ensureAuthUrlRedirectTo(data.url, REDIRECT_URL);
+  if (__DEV__ && redirectBefore && redirectBefore !== REDIRECT_URL) {
+    console.log('[auth] normalized oauth redirect_to', { before: redirectBefore, after: REDIRECT_URL });
+  }
   if (__DEV__) console.log('[auth] opening browser for auth');
-  const result = (await WebBrowser.openAuthSessionAsync(data.url, REDIRECT_URL)) as AuthSessionResponse;
+  const result = (await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URL)) as AuthSessionResponse;
   if (__DEV__) console.log('[auth] auth result', result);
   if (result.type !== 'success' || !result.url) {
     return;

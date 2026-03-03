@@ -74,12 +74,14 @@ const supabaseState = {
   traitCount: 0,
   pledgeAckAt: '2024-01-01T00:00:00.000Z' as string | null,
   pledgeVersion: 'v1' as string | null,
+  coreValues: [] as string[],
 };
 
 const resetSupabaseState = () => {
   supabaseState.traitCount = 0;
   supabaseState.pledgeAckAt = '2024-01-01T00:00:00.000Z';
   supabaseState.pledgeVersion = 'v1';
+  supabaseState.coreValues = [];
 };
 
 const setTraitCount = (count: number) => {
@@ -107,6 +109,7 @@ const createProfileBuilder = () => {
       data: {
         reliability_pledge_ack_at: supabaseState.pledgeAckAt,
         reliability_pledge_version: supabaseState.pledgeVersion,
+        core_values: supabaseState.coreValues,
       },
       error: null,
     }),
@@ -207,8 +210,8 @@ describe('PeopleFilterPage trait onboarding banner', () => {
         source: 'people-filter-banner',
         platform: 'web',
         step: 'traits',
-        steps: ['traits', 'sport'],
-        pendingSteps: 2,
+        steps: ['traits', 'values', 'sport'],
+        pendingSteps: 3,
         nextStep: '/onboarding/traits',
       }),
     );
@@ -260,8 +263,8 @@ describe('PeopleFilterPage reliability pledge banner', () => {
         source: 'people-filter-banner',
         platform: 'web',
         step: 'pledge',
-        steps: ['sport', 'pledge'],
-        pendingSteps: 2,
+        steps: ['values', 'sport', 'pledge'],
+        pendingSteps: 3,
         nextStep: '/onboarding/reliability-pledge',
       }),
     );

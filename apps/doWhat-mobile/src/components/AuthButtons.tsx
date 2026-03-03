@@ -1,11 +1,11 @@
 import * as WebBrowser from 'expo-web-browser';
-import Constants from 'expo-constants';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, TextInput, ActivityIndicator, Linking, Platform } from 'react-native';
+import { View, Text, Pressable, TextInput, ActivityIndicator, Linking } from 'react-native';
 
 import { supabase } from '../lib/supabase';
 import { getDeepLinkParam } from '../lib/deepLinking';
 import { maybeResetInvalidSession } from '../lib/auth';
+import { ensureAuthUrlRedirectTo, isLoopbackRedirect, parseAuthUrlRedirectTo, resolveOAuthRedirectTo } from '../lib/oauthRedirect';
 
 type AuthSessionLike = {
   makeRedirectUri: (options?: { useProxy?: boolean; path?: string; scheme?: string }) => string;
@@ -117,40 +117,7 @@ export default function AuthButtons() {
   const [traitInput, setTraitInput] = useState('');
   const [traitError, setTraitError] = useState<string | null>(null);
 
-  const redirectTo = useMemo(() => {
-    const scheme = (Constants?.expoConfig?.scheme as string | undefined) ?? FALLBACK_SCHEME;
-    const appOwnership = Constants?.appOwnership ?? null;
-    const expoConfig = (Constants?.expoConfig ?? null) as { owner?: string; slug?: string } | null;
-    const executionEnvironment = (Constants as { executionEnvironment?: string } | undefined)?.executionEnvironment ?? null;
-    const isStandalone = appOwnership === 'standalone' || executionEnvironment === 'standalone';
-    const isExpoGo = appOwnership === 'expo' || executionEnvironment === 'storeClient';
-    const hasProjectIdentity = Boolean(expoConfig?.owner && expoConfig?.slug);
-    // Proxy redirects require a full Expo project identifier (owner/slug) and are only needed in Expo Go.
-    const shouldUseProxy = Platform.OS !== 'web' && !isStandalone && isExpoGo && hasProjectIdentity;
-    let proxyRedirect: string | null = null;
-
-    if (shouldUseProxy && AuthSession.getRedirectUrl) {
-      try {
-        proxyRedirect = AuthSession.getRedirectUrl('auth-callback');
-      } catch (error) {
-        if (__DEV__) console.log('[auth] getRedirectUrl failed; using scheme fallback', error);
-      }
-    }
-
-    try {
-      if (__DEV__) {
-        console.log('[auth] redirect env', { appOwnership, executionEnvironment, shouldUseProxy });
-      }
-      return proxyRedirect ?? AuthSession.makeRedirectUri({
-        path: 'auth-callback',
-        scheme,
-        useProxy: shouldUseProxy,
-      });
-    } catch (error) {
-      if (__DEV__) console.log('[auth] makeRedirectUri failed; using scheme fallback', error);
-      return `${scheme}://auth-callback`;
-    }
-  }, []);
+  const redirectTo = useMemo(() => resolveOAuthRedirectTo(), []);
 
   const startAuthFlow = useMemo(() => {
     return async (authUrl: string) => {
@@ -236,7 +203,18 @@ export default function AuthButtons() {
         throw new Error('Unable to start Google sign-in.');
       }
 
-      const result = await startAuthFlow(data.url);
+      const redirectBefore = parseAuthUrlRedirectTo(data.url);
+      if (redirectBefore && isLoopbackRedirect(redirectBefore)) {
+        if (__DEV__) {
+          console.warn('[auth] Supabase OAuth URL returned loopback redirect_to; normalizing.', {
+            redirectBefore,
+            redirectTo,
+          });
+        }
+      }
+      const authUrl = ensureAuthUrlRedirectTo(data.url, redirectTo);
+
+      const result = await startAuthFlow(authUrl);
       if (__DEV__) console.log('[auth] auth result', result);
       if (!result || typeof result !== 'object') {
         return;

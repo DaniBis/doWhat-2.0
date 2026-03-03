@@ -31,10 +31,74 @@ const EMPTY_FACETS: DiscoveryFacets = {
   timeWindow: [],
 };
 
+const toTrimmed = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const alignFacetsWithItems = (facets: DiscoveryFacets, items: Array<{
+  activity_types?: string[] | null;
+  tags?: string[] | null;
+  traits?: string[] | null;
+  taxonomy_categories?: string[] | null;
+  price_levels?: Array<number | null> | null;
+  capacity_key?: string | null;
+  time_window?: string | null;
+}>): DiscoveryFacets => {
+  const activityTypes = new Set<string>();
+  const tags = new Set<string>();
+  const traits = new Set<string>();
+  const taxonomyCategories = new Set<string>();
+  const priceLevels = new Set<string>();
+  const capacityKey = new Set<string>();
+  const timeWindow = new Set<string>();
+
+  items.forEach((item) => {
+    (item.activity_types ?? []).forEach((value) => {
+      const cleaned = toTrimmed(value);
+      if (cleaned) activityTypes.add(cleaned);
+    });
+    (item.tags ?? []).forEach((value) => {
+      const cleaned = toTrimmed(value);
+      if (cleaned) tags.add(cleaned);
+    });
+    (item.traits ?? []).forEach((value) => {
+      const cleaned = toTrimmed(value);
+      if (cleaned) traits.add(cleaned);
+    });
+    (item.taxonomy_categories ?? []).forEach((value) => {
+      const cleaned = toTrimmed(value);
+      if (cleaned) taxonomyCategories.add(cleaned);
+    });
+    (item.price_levels ?? []).forEach((value) => {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        priceLevels.add(String(Math.round(value)));
+      }
+    });
+    const capacity = toTrimmed(item.capacity_key);
+    if (capacity) capacityKey.add(capacity);
+    const window = toTrimmed(item.time_window);
+    if (window) timeWindow.add(window);
+  });
+
+  return {
+    activityTypes: (facets.activityTypes ?? []).filter((entry) => activityTypes.has(entry.value)),
+    tags: (facets.tags ?? []).filter((entry) => tags.has(entry.value)),
+    traits: (facets.traits ?? []).filter((entry) => traits.has(entry.value)),
+    taxonomyCategories: (facets.taxonomyCategories ?? []).filter((entry) => taxonomyCategories.has(entry.value)),
+    priceLevels: (facets.priceLevels ?? []).filter((entry) => priceLevels.has(entry.value)),
+    capacityKey: (facets.capacityKey ?? []).filter((entry) => capacityKey.has(entry.value)),
+    timeWindow: (facets.timeWindow ?? []).filter((entry) => timeWindow.has(entry.value)),
+  };
+};
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const bounds = parseBounds(url);
   const refresh = parseBoolean(url.searchParams.get('refresh'));
+  const debug = parseBoolean(url.searchParams.get('debug'));
+  const explain = parseBoolean(url.searchParams.get('explain'));
 
   const center = resolveCenter(url, bounds);
   if (!center) {
@@ -52,27 +116,42 @@ export async function GET(request: Request) {
         limit,
         bounds: bounds ?? undefined,
       },
-      { bypassCache: refresh },
+      { bypassCache: refresh, includeDebug: debug || explain, debugMetrics: debug },
     );
 
-    const items = (result.items ?? []).map((item) => ({
-      ...item,
-      place_label: normalizePlaceLabel(item.place_label, item.venue),
-    }));
+    const items = (result.items ?? [])
+      .map((item) => {
+        const normalizedName = toTrimmed(item.name);
+        const normalizedPlaceLabel = normalizePlaceLabel(item.place_label, item.venue);
+        return {
+          ...item,
+          name: normalizedName ?? '',
+          place_label: normalizedPlaceLabel,
+        };
+      })
+      .filter((item) => {
+        if (!item.name.trim()) return false;
+        if (item.place_id && !item.place_label.trim()) return false;
+        return true;
+      });
+
+    const alignedFacets = alignFacetsWithItems(result.facets ?? EMPTY_FACETS, items);
 
     return NextResponse.json({
       center: result.center,
       radiusMeters: result.radiusMeters,
-      count: result.count ?? items.length,
+      count: items.length,
       items,
       filterSupport: result.filterSupport ?? DEFAULT_FILTER_SUPPORT,
-      facets: result.facets ?? EMPTY_FACETS,
+      facets: alignedFacets,
       sourceBreakdown: result.sourceBreakdown ?? {},
+      providerCounts: result.providerCounts ?? {},
       cache: result.cache ?? { key: null, hit: false },
       source: result.source ?? null,
       degraded: result.degraded ?? false,
       fallbackError: result.fallbackError ?? null,
       fallbackSource: result.fallbackSource ?? null,
+      debug: debug || explain ? result.debug ?? null : undefined,
     });
   } catch (error) {
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });

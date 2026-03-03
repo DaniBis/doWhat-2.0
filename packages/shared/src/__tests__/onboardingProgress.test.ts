@@ -2,13 +2,14 @@ import { derivePendingOnboardingSteps, hasCompletedSportStep, ONBOARDING_TRAIT_G
 
 describe('onboarding progress utilities', () => {
   it('returns every onboarding step when nothing is complete', () => {
-    const steps = derivePendingOnboardingSteps({ traitCount: 0, primarySport: null, playStyle: null, skillLevel: null, pledgeAckAt: null });
-    expect(steps).toEqual(['traits', 'sport', 'pledge']);
+    const steps = derivePendingOnboardingSteps({ traitCount: 0, coreValues: [], primarySport: null, playStyle: null, skillLevel: null, pledgeAckAt: null });
+    expect(steps).toEqual(['traits', 'values', 'sport', 'pledge']);
   });
 
   it('keeps the sport step pending until skill level is present', () => {
     const steps = derivePendingOnboardingSteps({
       traitCount: ONBOARDING_TRAIT_GOAL,
+      coreValues: ['Respect', 'Curiosity', 'Punctuality'],
       primarySport: 'padel',
       playStyle: 'competitive',
       skillLevel: null,
@@ -20,6 +21,7 @@ describe('onboarding progress utilities', () => {
   it('only leaves the pledge step when sport + traits are complete', () => {
     const steps = derivePendingOnboardingSteps({
       traitCount: ONBOARDING_TRAIT_GOAL,
+      coreValues: ['Respect', 'Curiosity', 'Punctuality'],
       primarySport: 'padel',
       playStyle: 'competitive',
       skillLevel: '3.0 - Consistent drives',
@@ -31,6 +33,7 @@ describe('onboarding progress utilities', () => {
   it('returns an empty list when fully onboarded', () => {
     const steps = derivePendingOnboardingSteps({
       traitCount: ONBOARDING_TRAIT_GOAL,
+      coreValues: ['Respect', 'Curiosity', 'Punctuality'],
       primarySport: 'padel',
       playStyle: 'competitive',
       skillLevel: '3.0 - Consistent drives',

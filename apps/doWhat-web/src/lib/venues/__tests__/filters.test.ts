@@ -25,9 +25,11 @@ const buildVenue = (overrides: Partial<RankedVenueActivity> = {}): RankedVenueAc
     userNoVotes: overrides.userNoVotes ?? 0,
     categoryMatch: overrides.categoryMatch ?? false,
     keywordMatch: overrides.keywordMatch ?? false,
-    score: overrides.score ?? 0.5,
+    score: overrides.score ?? 50,
     verified: overrides.verified ?? false,
     needsVerification: overrides.needsVerification ?? false,
+    trustScore: overrides.trustScore ?? 0.5,
+    verificationState: overrides.verificationState ?? ((overrides.verified ?? false) ? 'verified' : ((overrides.needsVerification ?? false) ? 'needs_votes' : 'suggested')),
   };
 };
 

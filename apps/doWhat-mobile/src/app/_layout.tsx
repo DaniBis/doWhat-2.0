@@ -35,6 +35,8 @@ export default function Layout() {
               <Stack>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="add-event" options={{ headerShown: false }} />
+                <Stack.Screen name="filter" options={{ headerShown: false }} />
+                <Stack.Screen name="people-filter" options={{ headerShown: false }} />
                 <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
               </Stack>
             </AuthGate>

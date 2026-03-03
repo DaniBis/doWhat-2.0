@@ -29,4 +29,5 @@ export * from "./sports/taxonomy";
 export * from "./recommendations/rankSessions";
 export * from "./reliability/badges";
 export * from "./onboarding/progress";
+export * from "./onboarding/coreValues";
 // badges type definitions are TypeScript-only; skip exporting compiled .js to avoid jest resolution issues

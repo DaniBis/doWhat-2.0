@@ -58,7 +58,9 @@ export async function POST(req: Request) {
     });
 
     const service = createServiceClient();
-    const explicitPlaceId = isUuid(payload.placeId ?? null) ? payload.placeId : null;
+    const hasExistingActivity = isUuid(payload.activityId ?? null);
+    // Existing activities own their canonical place. Ignore incoming place overrides in that path.
+    const explicitPlaceId = hasExistingActivity ? null : (isUuid(payload.placeId ?? null) ? payload.placeId : null);
     const placeId = explicitPlaceId
       ?? await resolveSessionPlaceId(service, {
         activityId: payload.activityId,
@@ -89,6 +91,10 @@ export async function POST(req: Request) {
       activityId,
       venueName: payload.venueName ?? null,
     });
+
+    if (!placeLabel || !placeLabel.trim()) {
+      throw new SessionValidationError('Resolved place label cannot be empty.', 400);
+    }
 
     const sessionInsert = {
       activity_id: activityId,

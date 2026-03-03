@@ -52,8 +52,8 @@ describe('TraitOnboardingPage', () => {
 
     const TraitOnboardingPage = await loadTraitOnboardingPage();
 
-    await expect(TraitOnboardingPage()).rejects.toThrow('redirect called');
-    expect(redirectMock).toHaveBeenCalledWith('/auth/login?next=%2Fonboarding%2Ftraits');
+    await expect(TraitOnboardingPage({})).rejects.toThrow('redirect called');
+    expect(redirectMock).toHaveBeenCalledWith('/auth?intent=signin&next=%2Fonboarding%2Ftraits');
     expect(mockClient.auth.getUser).toHaveBeenCalled();
   });
 
@@ -62,11 +62,11 @@ describe('TraitOnboardingPage', () => {
     createClientMock.mockReturnValue(mockClient as unknown as SupabaseClient);
 
     const TraitOnboardingPage = await loadTraitOnboardingPage();
-    const ui = await TraitOnboardingPage();
+    const ui = await TraitOnboardingPage({});
     render(ui);
 
     expect(screen.getByText('Lock in your base vibe')).toBeInTheDocument();
-    expect(screen.getByText('Step 3 · Personalize')).toBeInTheDocument();
+    expect(screen.getByText('Step 1 · Traits')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Back to profile/i })).toHaveAttribute('href', '/profile');
     expect(screen.getByTestId('trait-onboarding-section')).toHaveAttribute('data-classname', 'shadow-2xl shadow-emerald-500/20');
   });

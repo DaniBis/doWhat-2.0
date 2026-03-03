@@ -59,7 +59,7 @@ export type VerifiedMatchesRecordedPayload = {
 export const trackVerifiedMatchesRecorded = (payload: VerifiedMatchesRecordedPayload) =>
   trackAnalyticsEvent('session_verified_matches_recorded', payload);
 
-export type OnboardingStep = 'traits' | 'sport' | 'pledge';
+export type OnboardingStep = 'traits' | 'values' | 'sport' | 'pledge';
 
 export type OnboardingEntryPayload = {
   source:

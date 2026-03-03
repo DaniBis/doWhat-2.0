@@ -12,12 +12,12 @@ type TraitOnboardingSectionProps = {
 };
 
 export function TraitOnboardingSection({
-  redirectPath = "/profile?onboarding=traits",
+  redirectPath = "/onboarding/core-values",
   className,
 }: TraitOnboardingSectionProps) {
   const router = useRouter();
   const handleCompleted = useCallback(() => {
-    const target = (redirectPath ?? "/profile?onboarding=traits") as Route;
+    const target = (redirectPath ?? "/onboarding/core-values") as Route;
     router.push(target);
   }, [redirectPath, router]);
 

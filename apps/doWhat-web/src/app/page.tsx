@@ -1,123 +1,56 @@
-import Link from "next/link";
-import ActivityCard from "@/components/ActivityCard";
-import { normalizeCategoryKey } from "@/lib/places/categories";
-import { createClient } from "@/lib/supabase/server";
+import Link from 'next/link';
+
+import ActivityCard from '@/components/ActivityCard';
+import { enforceServerCoreAccess } from '@/lib/access/serverGuard';
+import { buildHomeCards, friendlyCategoryLabel, normalizeCategoryId, type HomeSessionRow } from '@/lib/home/filtering';
 
 type SearchParams = { [k: string]: string | string[] | undefined };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  activity: "Activities",
-  arts_culture: "Arts & Culture",
-  coffee: "Coffee",
-  community: "Social",
-  education: "Learning",
-  event_space: "Entertainment",
-  fitness: "Fitness",
-  food: "Food & Drink",
-  kids: "Kids",
-  nightlife: "Nightlife",
-  outdoors: "Outdoor",
-  shopping: "Shopping",
-  spiritual: "Spiritual",
-  wellness: "Wellness",
-  workspace: "Workspace",
-};
-
-const toArray = (input: unknown): string[] => {
-  if (Array.isArray(input)) return input.filter((value): value is string => typeof value === "string");
-  if (typeof input === "string") return [input];
-  return [];
-};
-
-const normalizeCategoryId = (value?: string | null): string | null => {
-  if (!value) return null;
-  const normalized = normalizeCategoryKey(value);
-  if (normalized) return normalized;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return null;
-  return trimmed.replace(/[\s]+/g, "_");
-};
-
-const friendlyCategoryLabel = (category: string): string => {
-  const label = CATEGORY_LABELS[category];
-  if (label) return label;
-  const spaced = category.replace(/[_-]+/g, " ");
-  return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
-};
-
-const gatherCategorySignals = (values: unknown): { canonical: Set<string>; display: Set<string> } => {
-  const canonical = new Set<string>();
-  const display = new Set<string>();
-  toArray(values).forEach((entry) => {
-    const id = normalizeCategoryId(entry);
-    if (id) {
-      canonical.add(id);
-      display.add(friendlyCategoryLabel(id));
-    } else if (typeof entry === "string" && entry.trim()) {
-      display.add(entry.trim());
-    }
-  });
-  return { canonical, display };
-};
-
-const analyseActivityCategories = (
-  activity: {
-    name?: string | null;
-    activity_types?: unknown;
-    tags?: unknown;
-  },
-  filters: string[],
-) => {
-  const fromTypes = gatherCategorySignals(activity.activity_types);
-  const fromTags = gatherCategorySignals(activity.tags);
-  const canonical = new Set<string>([...fromTypes.canonical, ...fromTags.canonical]);
-  const display = new Set<string>([...fromTypes.display, ...fromTags.display]);
-  const matchedFilters = new Set<string>();
-
-  const name = activity.name?.toLowerCase() ?? "";
-  filters.forEach((filter) => {
-    const filterAlreadyPresent = canonical.has(filter);
-    if (filterAlreadyPresent) {
-      matchedFilters.add(filter);
-      return;
-    }
-    const candidateTerms = new Set<string>([
-      filter.replace(/_/g, " "),
-      friendlyCategoryLabel(filter).toLowerCase(),
-    ]);
-    const hasTermInName = Array.from(candidateTerms).some((term) => term && name.includes(term));
-    if (hasTermInName) {
-      matchedFilters.add(filter);
-    }
-  });
-
-  matchedFilters.forEach((filter) => {
-    canonical.add(filter);
-    display.add(friendlyCategoryLabel(filter));
-  });
-
-  const matches = filters.length === 0 || matchedFilters.size > 0;
-
-  return { matches, canonical, display };
-};
-
 const HOME_QUERY_LIMIT = 500;
 const HOME_RECENT_LOOKBACK_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_HOME_RADIUS_KM = 25;
+const RELIABILITY_OPTIONS = [0, 50, 70, 85] as const;
+const RADIUS_OPTIONS = [5, 10, 25, 50, 100] as const;
+
+const toSearchString = (searchParams?: SearchParams): string => {
+  if (!searchParams) return '';
+  const params = new URLSearchParams();
+  Object.entries(searchParams).forEach(([key, rawValue]) => {
+    if (Array.isArray(rawValue)) {
+      rawValue.forEach((entry) => {
+        if (typeof entry === 'string') {
+          params.append(key, entry);
+        }
+      });
+      return;
+    }
+    if (typeof rawValue === 'string') {
+      params.set(key, rawValue);
+    }
+  });
+  return params.toString();
+};
+
+const readQueryValue = (value: string | string[] | undefined): string => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0) return value[0] ?? '';
+  return '';
+};
+
+const parseNumberQuery = (value: string, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 export default async function HomePage({ searchParams }: { searchParams?: SearchParams }) {
-  const supabase = createClient();
+  const redirectSearch = toSearchString(searchParams);
+  const redirectTarget = redirectSearch ? `/?${redirectSearch}` : '/';
+  const { supabase, user } = await enforceServerCoreAccess(redirectTarget);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const isSignedIn = Boolean(user);
-
-  const typesCsv = (typeof searchParams?.types === 'string'
-    ? searchParams?.types
-    : Array.isArray(searchParams?.types)
-    ? searchParams?.types[0]
-    : '') || '';
-  const rawFilterTypes = typesCsv.split(',').map((s) => s.trim()).filter(Boolean);
+  const searchInput = readQueryValue(searchParams?.q);
+  const searchQuery = searchInput.trim().toLowerCase();
+  const typesCsv = readQueryValue(searchParams?.types);
+  const rawFilterTypes = typesCsv.split(',').map((value) => value.trim()).filter(Boolean);
   const normalizedFilterTypes = Array.from(
     new Set(
       rawFilterTypes
@@ -125,17 +58,30 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
         .filter((value): value is string => Boolean(value)),
     ),
   );
-  const priceMin = Number(typeof searchParams?.price_min === 'string' ? searchParams?.price_min : Array.isArray(searchParams?.price_min) ? searchParams?.price_min[0] : '0') || 0;
-  const priceMax = Number(typeof searchParams?.price_max === 'string' ? searchParams?.price_max : Array.isArray(searchParams?.price_max) ? searchParams?.price_max[0] : '100') || 100;
+
+  const priceMin = Math.max(0, parseNumberQuery(readQueryValue(searchParams?.price_min), 0));
+  const priceMax = Math.max(priceMin, parseNumberQuery(readQueryValue(searchParams?.price_max), 100));
+  const radiusKm = Math.max(2, Math.min(100, parseNumberQuery(readQueryValue(searchParams?.radius_km), DEFAULT_HOME_RADIUS_KM)));
+  const minReliability = Math.max(0, Math.min(100, Math.round(parseNumberQuery(readQueryValue(searchParams?.min_reliability), 0))));
+  const hostSelfOnly = readQueryValue(searchParams?.host_self) === '1';
+
+  const { data: profileRow } = await supabase
+    .from('profiles')
+    .select('last_lat,last_lng')
+    .eq('id', user.id)
+    .maybeSingle<{ last_lat: number | null; last_lng: number | null }>();
+
+  const userLat = typeof profileRow?.last_lat === 'number' ? profileRow.last_lat : null;
+  const userLng = typeof profileRow?.last_lng === 'number' ? profileRow.last_lng : null;
 
   let query = supabase
-    .from("sessions")
+    .from('sessions')
     .select(
-      "id, host_user_id, price_cents, starts_at, ends_at, venue_id, " +
-        "activities!inner(id,name,description,activity_types,tags), " +
-        "venues(id,name,lat:lat,lng:lng)"
+      'id, host_user_id, price_cents, starts_at, ends_at, venue_id, reliability_score, '
+      + 'activities!inner(id,name,description,activity_types,tags), '
+      + 'venues(id,name,lat:lat,lng:lng)',
     )
-    .order("starts_at", { ascending: true })
+    .order('starts_at', { ascending: true })
     .limit(HOME_QUERY_LIMIT);
 
   const lookbackIso = new Date(Date.now() - HOME_RECENT_LOOKBACK_MS).toISOString();
@@ -146,160 +92,47 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
   if (priceMax < 100) query = query.lte('price_cents', Math.round(priceMax * 100));
 
   const { data, error } = await query;
-
   if (error) {
     return <pre>Error: {error.message}</pre>;
   }
 
-  type SessionRow = {
-    id: string;
-    host_user_id?: string | null;
-    price_cents?: number | null;
-    starts_at?: string | null;
-    ends_at?: string | null;
-    venue_id?: string | null;
-    activities?:
-      | {
-          id?: string;
-          name?: string | null;
-          description?: string | null;
-          activity_types?: string[] | null;
-          tags?: string[] | null;
-        }
-      | Array<{
-          id?: string;
-          name?: string | null;
-          description?: string | null;
-          activity_types?: string[] | null;
-          tags?: string[] | null;
-        }>;
-    venues?:
-      | {
-          id?: string | null;
-          name?: string | null;
-          lat?: number | null;
-          lng?: number | null;
-        }
-      | Array<{
-          id?: string | null;
-          name?: string | null;
-          lat?: number | null;
-          lng?: number | null;
-        }>;
-  };
+  const rows: HomeSessionRow[] = Array.isArray(data) ? (data as unknown as HomeSessionRow[]) : [];
+  const cards = buildHomeCards({
+    rows,
+    userId: user.id,
+    searchQuery,
+    normalizedFilterTypes,
+    minReliability,
+    hostSelfOnly,
+    userLat,
+    userLng,
+    radiusKm,
+    limit: 20,
+  });
 
-  const rows: SessionRow[] = Array.isArray(data) ? (data as unknown as SessionRow[]) : [];
+  const hasActiveFilters = Boolean(
+    searchQuery
+      || normalizedFilterTypes.length
+      || priceMin > 0
+      || priceMax < 100
+      || minReliability > 0
+      || hostSelfOnly
+      || radiusKm !== DEFAULT_HOME_RADIUS_KM,
+  );
 
-  type Group = {
-    activity: {
-      id?: string;
-      name?: string | null;
-      description?: string | null;
-      activity_types?: string[] | null;
-      tags?: string[] | null;
-    };
-    canonicalCategories: Set<string>;
-    displayCategories: Set<string>;
-    sessions: Array<{
-      id?: string;
-      host_user_id?: string | null;
-      price_cents?: number | null;
-      starts_at?: string | null;
-      ends_at?: string | null;
-      venue_id?: string | null;
-      venues?: VenueRef | VenueRef[] | null;
-    }>;
-  };
+  const activeFilterLabels = [
+    ...(searchQuery ? [`Search: ${searchInput.trim()}`] : []),
+    ...(normalizedFilterTypes.length ? [`Types: ${normalizedFilterTypes.map((value) => friendlyCategoryLabel(value)).join(', ')}`] : []),
+    ...(priceMin > 0 || priceMax < 100 ? [`Price: ${priceMin} - ${priceMax}`] : []),
+    ...(minReliability > 0 ? [`Reliability >= ${minReliability}`] : []),
+    ...(hostSelfOnly ? ['Hosted by you'] : []),
+    ...(radiusKm !== DEFAULT_HOME_RADIUS_KM ? [`Radius: ${radiusKm} km`] : []),
+  ];
 
-  type VenueRef = {
-    id?: string | null;
-    name?: string | null;
-    lat?: number | null;
-    lng?: number | null;
-  };
-
-  const grouped = new Map<string, Group>();
-
-  for (const session of rows) {
-    const activityRel = Array.isArray(session.activities)
-      ? session.activities[0]
-      : session.activities;
-    if (!activityRel) continue;
-
-    const analysis = analyseActivityCategories(
-      {
-        name: activityRel.name,
-        activity_types: activityRel.activity_types,
-        tags: activityRel.tags,
-      },
-      normalizedFilterTypes,
-    );
-
-    if (!analysis.matches) continue;
-
-    const key = activityRel.id ?? activityRel.name ?? session.id;
-    if (!grouped.has(key)) {
-      const activityTags = toArray(activityRel.tags);
-      grouped.set(key, {
-        activity: {
-          id: activityRel.id ?? undefined,
-          name: activityRel.name ?? null,
-          description: activityRel.description ?? null,
-          activity_types: null,
-          tags: activityTags.length ? activityTags : null,
-        },
-        canonicalCategories: new Set<string>(),
-        displayCategories: new Set<string>(),
-        sessions: [],
-      });
-    }
-
-    const bucket = grouped.get(key)!;
-    analysis.canonical.forEach((category) => bucket.canonicalCategories.add(category));
-    analysis.display.forEach((label) => bucket.displayCategories.add(label));
-
-    bucket.sessions.push({
-      id: session.id,
-      host_user_id: session.host_user_id ?? null,
-      price_cents: session.price_cents ?? null,
-      starts_at: session.starts_at ?? null,
-      ends_at: session.ends_at ?? null,
-      venue_id: session.venue_id ?? null,
-      venues: session.venues ?? null,
-    });
-  }
-
-  const cards = Array.from(grouped.values())
-    .map((group) => {
-      const activityTypes = group.displayCategories.size
-        ? Array.from(group.displayCategories).sort((a, b) => a.localeCompare(b))
-        : null;
-      const firstStart = group.sessions.reduce((min, s) => {
-        if (!s.starts_at) return min;
-        const time = new Date(s.starts_at).getTime();
-        return min == null || time < min ? time : min;
-      }, null as number | null);
-      return {
-        activity: {
-          ...group.activity,
-          activity_types: activityTypes,
-        },
-        sessions: group.sessions,
-        firstStart,
-      };
-    })
-    .sort((a, b) => {
-      if (a.firstStart == null && b.firstStart == null) return 0;
-      if (a.firstStart == null) return 1;
-      if (b.firstStart == null) return -1;
-      return a.firstStart - b.firstStart;
-    })
-    .slice(0, 20)
-    .map((entry) => {
-      const { firstStart, ...rest } = entry;
-      void firstStart;
-      return rest;
-    });
+  const emptyHeading = hasActiveFilters ? 'No activities match your filters yet' : 'No events nearby yet';
+  const emptyBody = hasActiveFilters
+    ? 'Try broadening radius, reducing reliability threshold, or clearing category filters.'
+    : 'Be the first to create an event in your area.';
 
   return (
     <main className="min-h-screen">
@@ -313,59 +146,161 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
               <div className="space-y-3">
                 <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Upcoming Activities</h1>
                 <p className="text-lg text-ink-medium">
-                  {isSignedIn
-                    ? "Created events and nearby results, tuned to your filters and location."
-                    : "Discover what is happening nearby. Sign in to join sessions, save favorites, and create your own events."}
+                  Real sessions from the database, scoped to your area and current filters.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
-                {isSignedIn ? (
-                  <>
-                    <Link href="/create" className="btn-primary">
-                      Create an event
-                    </Link>
-                    <Link href="/filter?from=home" className="btn-outline">
-                      Filters
-                    </Link>
-                  </>
-                ) : (
-                  <>
-                    <Link href="/auth?intent=signup&redirect=%2F" className="btn-primary">
-                      Create account
-                    </Link>
-                    <Link href="/auth?intent=signin&redirect=%2F" className="btn-outline">
-                      Sign in
-                    </Link>
-                  </>
-                )}
+                <Link href="/create" className="btn-primary">
+                  Create an event
+                </Link>
                 <Link href="/map" className="btn-outline">
                   Open map
+                </Link>
+                <Link href="/venues" className="btn-outline">
+                  Verify venues
                 </Link>
               </div>
               <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
                 <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1">
-                  {cards.length} active activity{cards.length === 1 ? "" : "ies"}
+                  {cards.length} active activity{cards.length === 1 ? '' : 'ies'}
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1">
-                  Upcoming sessions only
+                  Radius {radiusKm} km
                 </span>
               </div>
             </div>
 
             <div className="soft-card p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-brand-teal">New</p>
-              <h3 className="mt-3 text-lg font-semibold text-ink-strong">Verify where activities really happen</h3>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-brand-teal">Discovery quality</p>
+              <h3 className="mt-3 text-lg font-semibold text-ink-strong">No fake items, only persisted inventory</h3>
               <p className="mt-2 text-sm text-ink-medium">
-                Help confirm AI suggestions, upvote the best venues, and keep the discovery map accurate for everyone.
+                Suggestions are provider-backed and ranked with trust scoring. If nothing matches, you see why and what to do next.
               </p>
-              <Link href="/venues" className="btn-primary mt-5 w-full">
-                Open verification hub →
-              </Link>
               <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-xs text-ink-medium">
-                Tip: The verification hub works best when you keep location services enabled.
+                Tip: keep location enabled so area filters stay accurate.
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="mt-8 soft-card p-6">
+          <form action="/" method="get" className="space-y-5">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">Activities &amp; events filters</h2>
+                  <p className="text-xs text-ink-muted">Search by activity, place, category, distance, and price.</p>
+                </div>
+                <label className="block text-sm text-ink-medium">
+                  Search
+                  <input
+                    type="search"
+                    name="q"
+                    defaultValue={searchInput}
+                    placeholder="Try chess, running, coffee"
+                    className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                  />
+                </label>
+                <label className="block text-sm text-ink-medium">
+                  Activity categories (comma-separated)
+                  <input
+                    type="text"
+                    name="types"
+                    defaultValue={typesCsv}
+                    placeholder="fitness, community, coffee"
+                    className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                  />
+                </label>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="block text-sm text-ink-medium">
+                    Radius
+                    <select
+                      name="radius_km"
+                      defaultValue={String(radiusKm)}
+                      className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                    >
+                      {RADIUS_OPTIONS.map((option) => (
+                        <option key={option} value={String(option)}>{option} km</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-sm text-ink-medium">
+                    Min price
+                    <input
+                      type="number"
+                      name="price_min"
+                      min={0}
+                      max={100}
+                      defaultValue={String(priceMin)}
+                      className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                    />
+                  </label>
+                  <label className="block text-sm text-ink-medium">
+                    Max price
+                    <input
+                      type="number"
+                      name="price_max"
+                      min={0}
+                      max={100}
+                      defaultValue={String(priceMax)}
+                      className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">People filters</h2>
+                  <p className="text-xs text-ink-muted">Control host reliability and whether to only show your hosted sessions.</p>
+                </div>
+                <label className="block text-sm text-ink-medium">
+                  Minimum host reliability
+                  <select
+                    name="min_reliability"
+                    defaultValue={String(minReliability)}
+                    className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
+                  >
+                    {RELIABILITY_OPTIONS.map((option) => (
+                      <option key={option} value={String(option)}>
+                        {option === 0 ? 'Any reliability' : `${option}+`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm text-ink-medium">
+                  <input
+                    type="checkbox"
+                    name="host_self"
+                    value="1"
+                    defaultChecked={hostSelfOnly}
+                    className="h-4 w-4 rounded border-midnight-border/50 text-brand-teal focus:ring-brand-teal"
+                  />
+                  Show only events hosted by me
+                </label>
+                <p className="rounded-xl border border-midnight-border/30 bg-surface-alt px-3 py-2 text-xs text-ink-muted">
+                  People filters are reusable contracts for mobile and web map feeds.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="submit" className="btn-primary">Apply filters</button>
+              <Link href="/" className="btn-outline">Clear filters</Link>
+              <Link href="/map" className="btn-outline">Open map view</Link>
+            </div>
+
+            {activeFilterLabels.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+                <span className="font-semibold uppercase tracking-wide text-ink">Active</span>
+                {activeFilterLabels.map((label) => (
+                  <span key={label} className="inline-flex items-center rounded-full border border-midnight-border/30 bg-white px-2 py-1">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </form>
         </section>
 
         <section className="mt-10">
@@ -375,33 +310,43 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
               <p className="text-sm text-ink-medium">All sessions scheduled near you in the next few days.</p>
             </div>
             <div className="text-xs text-ink-muted">
-              Showing {cards.length} activity{cards.length === 1 ? "" : "ies"}
+              Showing {cards.length} activity{cards.length === 1 ? '' : 'ies'}
             </div>
           </div>
 
           {cards.length === 0 ? (
             <div className="soft-card py-16 text-center">
               <div className="text-5xl">🎯</div>
-              <h3 className="mt-4 text-xl font-semibold text-ink-strong">No events nearby yet</h3>
-              <p className="mt-2 text-sm text-ink-medium">Be the first to create an event in your area.</p>
-              <Link href="/create" className="btn-primary mt-6">
-                ✨ Create First Event
-              </Link>
+              <h3 className="mt-4 text-xl font-semibold text-ink-strong">{emptyHeading}</h3>
+              <p className="mt-2 text-sm text-ink-medium">{emptyBody}</p>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                {hasActiveFilters ? (
+                  <Link href="/" className="btn-outline">
+                    Clear filters
+                  </Link>
+                ) : null}
+                <Link href="/create" className="btn-primary">
+                  Create event
+                </Link>
+                <Link href="/map" className="btn-outline">
+                  Check map area
+                </Link>
+              </div>
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
               {cards.map((group) => {
                 const key =
-                  group.activity.id ??
-                  group.activity.name ??
-                  group.sessions[0]?.id ??
-                  `${group.sessions[0]?.starts_at ?? "group"}`;
+                  group.activity.id
+                  ?? group.activity.name
+                  ?? group.sessions[0]?.id
+                  ?? `${group.sessions[0]?.starts_at ?? 'group'}`;
                 return (
                   <ActivityCard
                     key={key}
                     activity={group.activity}
                     sessions={group.sessions}
-                    currentUserId={user?.id}
+                    currentUserId={user.id}
                   />
                 );
               })}

@@ -6,6 +6,7 @@ import {
   derivePendingOnboardingSteps,
   isPlayStyle,
   isSportType,
+  normalizeCoreValues,
   ONBOARDING_TRAIT_GOAL,
   trackOnboardingEntry,
   type OnboardingStep,
@@ -68,6 +69,7 @@ export default function ProfilePage() {
   const [sportSkillLevel, setSportSkillLevel] = useState<string | null>(null);
   const [sportProfileLoading, setSportProfileLoading] = useState(true);
   const [reliabilityPledgeAckAt, setReliabilityPledgeAckAt] = useState<string | null>(null);
+  const [coreValues, setCoreValues] = useState<string[]>([]);
   const [reliabilityPledgeLoading, setReliabilityPledgeLoading] = useState(true);
   const normalizedLocationKeysRef = useRef<Set<string>>(new Set());
   const baseTraitCount = traits.reduce((count, trait) => (trait.baseCount > 0 ? count + 1 : count), 0);
@@ -77,6 +79,7 @@ export default function ProfilePage() {
     if (!onboardingProgressReady) return [];
     return derivePendingOnboardingSteps({
       traitCount: baseTraitCount,
+      coreValues,
       primarySport,
       playStyle,
       skillLevel: sportSkillLevel,
@@ -168,6 +171,7 @@ export default function ProfilePage() {
           setSportSkillLevel(null);
           setReliabilityPledgeAckAt(null);
           setPlayStyle(null);
+          setCoreValues([]);
           setSportProfileLoading(false);
           setReliabilityPledgeLoading(false);
         }
@@ -178,9 +182,9 @@ export default function ProfilePage() {
       try {
         const { data: profileRow, error: profileError } = await supabase
           .from('profiles')
-          .select('primary_sport, play_style, reliability_pledge_ack_at')
+          .select('primary_sport, play_style, reliability_pledge_ack_at, core_values')
           .eq('id', userId)
-          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>();
+          .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values?: string[] | null }>();
         if (profileError && profileError.code !== 'PGRST116') {
           throw profileError;
         }
@@ -192,6 +196,7 @@ export default function ProfilePage() {
           setPrimarySport(normalized);
           setPlayStyle(normalizedPlayStyle);
           setReliabilityPledgeAckAt(profileRow?.reliability_pledge_ack_at ?? null);
+          setCoreValues(normalizeCoreValues(profileRow?.core_values ?? []));
         }
         if (normalized) {
           const { data: sportRow, error: sportError } = await supabase
@@ -218,6 +223,7 @@ export default function ProfilePage() {
           setSportSkillLevel(null);
           setReliabilityPledgeAckAt(null);
           setPlayStyle(null);
+          setCoreValues([]);
         }
       } finally {
         if (!cancelled) {

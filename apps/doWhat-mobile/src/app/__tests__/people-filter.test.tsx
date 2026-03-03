@@ -27,6 +27,7 @@ const supabaseState = {
   baseTraitCount: 0,
   reliabilityPledgeAckAt: null as string | null,
   reliabilityPledgeVersion: null as string | null,
+  coreValues: [] as string[],
   primarySport: null as SportType | null,
   playStyle: null as PlayStyle | null,
   sportSkillLevel: null as string | null,
@@ -47,6 +48,7 @@ const createProfilesBuilder = () => {
     data: {
       reliability_pledge_ack_at: supabaseState.reliabilityPledgeAckAt,
       reliability_pledge_version: supabaseState.reliabilityPledgeVersion,
+      core_values: supabaseState.coreValues,
       primary_sport: supabaseState.primarySport,
       play_style: supabaseState.playStyle,
     },
@@ -102,6 +104,9 @@ jest.mock('../../lib/supabase', () => {
         supabaseState.playStyle = playStyle;
         supabaseState.sportSkillLevel = skillLevel;
       },
+      setCoreValues: (values: string[]) => {
+        supabaseState.coreValues = values;
+      },
     },
   };
 });
@@ -121,6 +126,7 @@ const { __supabaseMock } = jest.requireMock('../../lib/supabase') as {
     setBaseTraitCount: (count: number) => void;
     setPledgeState: (state: { ackAt: string | null; version?: string | null }) => void;
     setSportProfile: (state: { primarySport: SportType | null; playStyle: PlayStyle | null; skillLevel: string | null }) => void;
+    setCoreValues: (values: string[]) => void;
   };
 };
 
@@ -180,6 +186,7 @@ describe('PeopleFilterScreen trait onboarding banner', () => {
       playStyle: 'competitive',
       skillLevel: '3.5 - Consistent rallies',
     });
+    __supabaseMock.setCoreValues([]);
   });
 
   it('shows the CTA when fewer than five base traits exist', async () => {
@@ -216,8 +223,8 @@ describe('PeopleFilterScreen trait onboarding banner', () => {
       source: 'people-filter-banner',
       platform: 'mobile',
       step: 'traits',
-      steps: ['traits'],
-      pendingSteps: 1,
+      steps: ['traits', 'values'],
+      pendingSteps: 2,
       nextStep: '/onboarding-traits',
     });
     expect(router.push).toHaveBeenCalledWith('/onboarding-traits');
@@ -236,6 +243,7 @@ describe('PeopleFilterScreen reliability pledge banner', () => {
       skillLevel: '3.5 - Consistent rallies',
     });
     __supabaseMock.setPledgeState({ ackAt: '2024-01-01T00:00:00.000Z', version: 'v1' });
+    __supabaseMock.setCoreValues([]);
   });
 
   it('shows the CTA when the pledge has not been acknowledged', async () => {
@@ -274,8 +282,8 @@ describe('PeopleFilterScreen reliability pledge banner', () => {
       source: 'people-filter-banner',
       platform: 'mobile',
       step: 'pledge',
-      steps: ['pledge'],
-      pendingSteps: 1,
+      steps: ['values', 'pledge'],
+      pendingSteps: 2,
       nextStep: '/onboarding/reliability-pledge',
     });
     expect(router.push).toHaveBeenCalledWith('/onboarding/reliability-pledge');
@@ -290,6 +298,7 @@ describe('PeopleFilterScreen sport onboarding banner', () => {
     router.push.mockClear();
     __supabaseMock.setPledgeState({ ackAt: '2024-01-01T00:00:00.000Z', version: 'v1' });
     __supabaseMock.setBaseTraitCount(5);
+    __supabaseMock.setCoreValues([]);
   });
 
   it('shows the CTA when sport data is incomplete', async () => {
@@ -315,8 +324,8 @@ describe('PeopleFilterScreen sport onboarding banner', () => {
       source: 'people-filter-banner',
       platform: 'mobile',
       step: 'sport',
-      steps: ['sport'],
-      pendingSteps: 1,
+      steps: ['values', 'sport'],
+      pendingSteps: 2,
       nextStep: '/onboarding/sports',
     });
     expect(router.push).toHaveBeenCalledWith('/onboarding/sports');

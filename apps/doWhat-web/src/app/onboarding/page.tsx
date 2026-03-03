@@ -38,15 +38,22 @@ const STEP_ORDER: ReadonlyArray<OnboardingStepDefinition> = [
     actionLabel: "Go to trait onboarding",
   },
   {
+    id: "values",
+    title: "Step 2 · Core values",
+    description: "Type 3 core values so teammates understand how you show up before sessions start.",
+    href: "/onboarding/core-values",
+    actionLabel: "Add core values",
+  },
+  {
     id: "sport",
-    title: "Step 2 · Sport & skill",
+    title: "Step 3 · Sport & skill",
     description: "Tell us the sport you host or play most often so we can fill openings with the right crew.",
     href: "/onboarding/sports",
     actionLabel: "Set sport preferences",
   },
   {
     id: "pledge",
-    title: "Step 3 · Reliability pledge",
+    title: "Step 4 · Reliability pledge",
     description: "Confirm the four doWhat commitments so hosts know they can count on you.",
     href: "/onboarding/reliability-pledge",
     actionLabel: "Review pledge",
@@ -80,9 +87,9 @@ export default async function OnboardingHomePage() {
   const [{ data: profileRow, error: profileError }, traitsCountResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("primary_sport, play_style, reliability_pledge_ack_at")
+      .select("primary_sport, play_style, reliability_pledge_ack_at, core_values")
       .eq("id", user.id)
-      .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>(),
+      .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values?: string[] | null }>(),
     supabase
       .from("user_base_traits")
       .select("trait_id", { count: "exact", head: true })
@@ -125,6 +132,7 @@ export default async function OnboardingHomePage() {
   const formattedAck = formatAckDate(pledgeAckAt);
   const pendingStepIds = derivePendingOnboardingSteps({
     traitCount: baseTraitCount,
+    coreValues: profileRow?.core_values ?? [],
     primarySport: normalizedSport,
     playStyle: normalizedPlayStyle,
     skillLevel: sportSkillLevel,
@@ -146,6 +154,14 @@ export default async function OnboardingHomePage() {
           ...step,
           complete: sportComplete,
           statusNote: sportComplete && sportLabel ? `Primary sport: ${sportLabel}` : "Sport or skill missing",
+        };
+      }
+      case "values": {
+        const values = Array.isArray(profileRow?.core_values) ? profileRow.core_values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+        return {
+          ...step,
+          complete: values.length >= 3,
+          statusNote: values.length >= 3 ? `Saved (${values.length} values)` : `${values.length}/3 values saved`,
         };
       }
       case "pledge":

@@ -29,6 +29,8 @@ describe('adminPrefill helpers', () => {
     score: 91,
     verified: true,
     needsVerification: false,
+    trustScore: 0.93,
+    verificationState: 'verified',
   };
 
   it('buildCreateEventQuery includes coordinates, address, and taxonomy metadata', () => {

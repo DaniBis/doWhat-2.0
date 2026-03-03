@@ -114,6 +114,8 @@ export default function PeopleFilterPage() {
   const [initialised, setInitialised] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
+  const [coreValues, setCoreValues] = useState<string[]>([]);
+  const [coreValuesHydrated, setCoreValuesHydrated] = useState(false);
   const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
   const [, setPledgeVersion] = useState<string | null>(null);
   const [pledgeHydrated, setPledgeHydrated] = useState(false);
@@ -130,12 +132,13 @@ export default function PeopleFilterPage() {
     () =>
       derivePendingOnboardingSteps({
         traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        coreValues,
         primarySport,
         playStyle,
         skillLevel: sportSkillLevel,
         pledgeAckAt,
       }),
-    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+    [baseTraitCount, coreValues, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
   );
   const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
     () =>
@@ -146,15 +149,19 @@ export default function PeopleFilterPage() {
         if (step === 'sport') {
           return !sportProfileLoading;
         }
+        if (step === 'values') {
+          return coreValuesHydrated;
+        }
         if (step === 'pledge') {
           return pledgeHydrated;
         }
         return true;
       }),
-    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, pledgeHydrated],
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileLoading, coreValuesHydrated, pledgeHydrated],
   );
   const pendingOnboardingCount = pendingOnboardingSteps.length;
   const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsCoreValuesOnboarding = pendingOnboardingSteps.includes('values');
   const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
   const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
   const traitShortfall = needsTraitOnboarding
@@ -356,34 +363,40 @@ export default function PeopleFilterPage() {
     if (!userId) {
       setPledgeAckAt(null);
       setPledgeVersion(null);
+      setCoreValues([]);
+      setCoreValuesHydrated(true);
       setPledgeHydrated(true);
       return () => {
         cancelled = true;
       };
     }
 
+    setCoreValuesHydrated(false);
     setPledgeHydrated(false);
     (async () => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('reliability_pledge_ack_at, reliability_pledge_version')
+          .select('reliability_pledge_ack_at, reliability_pledge_version, core_values')
           .eq('id', userId)
-          .maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null }>();
+          .maybeSingle<{ reliability_pledge_ack_at: string | null; reliability_pledge_version: string | null; core_values?: string[] | null }>();
         if (cancelled) return;
         if (error && error.code !== 'PGRST116') {
           throw error;
         }
         setPledgeAckAt(data?.reliability_pledge_ack_at ?? null);
         setPledgeVersion(data?.reliability_pledge_version ?? null);
+        setCoreValues(Array.isArray(data?.core_values) ? data.core_values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : []);
       } catch (error) {
         console.warn('[people-filters] failed to fetch reliability pledge state', error);
         if (!cancelled) {
           setPledgeAckAt(null);
           setPledgeVersion(null);
+          setCoreValues([]);
         }
       } finally {
         if (!cancelled) {
+          setCoreValuesHydrated(true);
           setPledgeHydrated(true);
         }
       }
@@ -905,6 +918,33 @@ export default function PeopleFilterPage() {
               className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500"
             >
               Go to onboarding
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        )}
+        {needsCoreValuesOnboarding && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-200 bg-cyan-50/80 p-4 text-sm text-cyan-900">
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-cyan-900">Add your 3 core values</p>
+              <p>
+                Core values help us rank people and sessions around reliability and compatibility.
+              </p>
+            </div>
+            <Link
+              href="/onboarding/core-values"
+              onClick={() =>
+                trackOnboardingEntry({
+                  source: 'people-filter-banner',
+                  platform: 'web',
+                  step: 'values',
+                  steps: pendingOnboardingSteps,
+                  pendingSteps: pendingOnboardingCount,
+                  nextStep: '/onboarding/core-values',
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+            >
+              Add values
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>

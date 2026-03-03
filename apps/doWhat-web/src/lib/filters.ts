@@ -4,6 +4,7 @@ export type NearbyQuery = {
   radiusMeters?: number
   refresh?: boolean
   explain?: boolean
+  debug?: boolean
   activityTypes?: string[]
   tags?: string[]
   traits?: string[]
@@ -22,6 +23,7 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
   const radiusMeters = parseInt(searchParams.get('radius') || '2000');
   const refresh = searchParams.get('refresh') === '1' || searchParams.get('refresh') === 'true';
   const explain = searchParams.get('explain') === '1' || searchParams.get('explain') === 'true';
+  const debug = searchParams.get('debug') === '1' || searchParams.get('debug') === 'true';
   const activityTypes = (searchParams.get('types') || '').split(',').filter(Boolean);
   const tags = (searchParams.get('tags') || '').split(',').filter(Boolean);
   const traits = (searchParams.get('traits') || '').split(',').filter(Boolean);
@@ -43,6 +45,7 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
     radiusMeters,
     refresh,
     explain,
+    debug,
     activityTypes,
     tags,
     traits,

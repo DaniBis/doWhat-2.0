@@ -45,6 +45,7 @@ const profileState = {
     play_style: null as string | null,
     reliability_pledge_ack_at: null as string | null,
     reliability_pledge_version: null as string | null,
+    core_values: [] as string[] | null,
   },
 };
 
@@ -336,6 +337,7 @@ const resetTestState = () => {
   profileState.profileRow.reliability_pledge_version = null;
   profileState.profileRow.primary_sport = null;
   profileState.profileRow.play_style = null;
+  profileState.profileRow.core_values = [];
   sportProfileState.skill_level = null;
   __supabaseMock.setBaseTraitCount(0);
   badgeState.owned = [];
@@ -404,8 +406,8 @@ describe('Mobile Profile sport onboarding CTA', () => {
       source: 'sport-banner',
       platform: 'mobile',
       step: 'sport',
-      steps: ['traits', 'sport', 'pledge'],
-      pendingSteps: 3,
+      steps: ['traits', 'values', 'sport', 'pledge'],
+      pendingSteps: 4,
       nextStep: '/onboarding/sports',
     });
   });
@@ -454,8 +456,8 @@ describe('Mobile Profile trait onboarding CTA', () => {
       source: 'profile-traits-banner',
       platform: 'mobile',
       step: 'traits',
-      steps: ['traits', 'sport', 'pledge'],
-      pendingSteps: 3,
+      steps: ['traits', 'values', 'sport', 'pledge'],
+      pendingSteps: 4,
       nextStep: '/onboarding-traits',
     });
   });
@@ -497,8 +499,8 @@ describe('Mobile Profile reliability pledge CTA', () => {
       source: 'profile-pledge-banner',
       platform: 'mobile',
       step: 'pledge',
-      steps: ['traits', 'sport', 'pledge'],
-      pendingSteps: 3,
+      steps: ['traits', 'values', 'sport', 'pledge'],
+      pendingSteps: 4,
       nextStep: '/onboarding/reliability-pledge',
     });
   });
@@ -529,16 +531,16 @@ describe('Mobile Profile onboarding progress banner', () => {
     render(<ProfileScreen />);
     await act(async () => {});
 
-    await waitFor(() => expect(screen.getByText(/Next up: Set your sport & skill/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Next up: Add 3 core values/i)).toBeTruthy());
     fireEvent.press(screen.getByText('Go to next step'));
 
     expect(trackOnboardingEntry).toHaveBeenCalledWith({
       source: 'profile-progress-banner',
       platform: 'mobile',
-      step: 'sport',
-      steps: ['sport', 'pledge'],
-      pendingSteps: 2,
-      nextStep: '/onboarding/sports',
+      step: 'values',
+      steps: ['values', 'sport', 'pledge'],
+      pendingSteps: 3,
+      nextStep: '/onboarding/core-values',
     });
   });
 });

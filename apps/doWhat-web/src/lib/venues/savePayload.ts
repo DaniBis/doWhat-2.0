@@ -44,8 +44,10 @@ export function buildVenueSavePayload(venue: RankedVenueActivity | null | undefi
       activity: venue.activity,
       aiConfidence: venue.aiConfidence,
       score: venue.score,
+      trustScore: venue.trustScore,
       verified: venue.verified,
       needsVerification: venue.needsVerification,
+      verificationState: venue.verificationState,
     },
   } satisfies SavePayload;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,14 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { theme } from '@dowhat/shared';
 
 type SearchBarProps = {
   onSearch: (query: string) => void;
-  onFilter: () => void;
+  onFilter?: () => void;
+  value?: string;
+  filterHref?: string;
   placeholder?: string;
   showFilterButton?: boolean;
   suggestedSearches?: string[];
@@ -21,12 +24,20 @@ type SearchBarProps = {
 const SearchBar: React.FC<SearchBarProps> = ({
   onSearch,
   onFilter,
+  value,
+  filterHref = '/filter',
   placeholder = 'Search activities...',
   showFilterButton = true,
   suggestedSearches = [],
 }) => {
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (typeof value !== 'string') return;
+    if (value === query) return;
+    setQuery(value);
+  }, [value, query]);
 
   const handleSearch = (searchQuery: string) => {
     setQuery(searchQuery);
@@ -41,6 +52,17 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const clearSearch = () => {
     setQuery('');
     onSearch('');
+  };
+
+  const handleFilterPress = () => {
+    try {
+      onFilter?.();
+    } catch {
+      // ignore callback errors and continue with route fallback
+    }
+    if (filterHref) {
+      router.push(filterHref as never);
+    }
   };
 
   return (
@@ -59,6 +81,10 @@ const SearchBar: React.FC<SearchBarProps> = ({
             placeholder={placeholder}
             value={query}
             onChangeText={handleSearch}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             placeholderTextColor={theme.colors.ink40}
@@ -72,7 +98,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         </View>
 
         {showFilterButton && (
-          <TouchableOpacity style={styles.filterButton} onPress={onFilter}>
+          <TouchableOpacity style={styles.filterButton} onPress={handleFilterPress} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
             <Ionicons name="options" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         )}

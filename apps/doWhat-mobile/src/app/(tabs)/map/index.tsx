@@ -20,6 +20,7 @@ import {
   CITY_SWITCHER_ENABLED,
   DEFAULT_CITY_SLUG,
   OPENSTREETMAP_FALLBACK_ATTRIBUTION,
+  createNearbyActivitiesFetcher,
   buildPlaceSavePayload,
   createEventsFetcher,
   defaultTier3Index,
@@ -42,7 +43,7 @@ import {
   type CityConfig,
   type PlacesViewportQuery,
 } from '@dowhat/shared';
-import type { EventSummary, FetchPlaces, PlaceSummary } from '@dowhat/shared';
+import type { EventSummary, FetchPlaces, MapActivity, PlaceSummary } from '@dowhat/shared';
 
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, type MapViewProps } from 'react-native-maps';
 import ngeohash from 'ngeohash';
@@ -115,6 +116,65 @@ const isAbortLikeError = (error: unknown): boolean => {
   return name === 'aborterror' || message.includes('abort');
 };
 
+const BLOCKED_LABELS = new Set([
+  'activity',
+  'activities',
+  'anywhere',
+  'everywhere',
+  'nearbyplace',
+  'nearbyplaces',
+  'nearbyvenue',
+  'nearbyvenues',
+  'n/a',
+  'na',
+  'none',
+  'null',
+  'placeholder',
+  'place',
+  'sample',
+  'test',
+  'unknown',
+  'unnamed',
+  'venue',
+]);
+
+const normalizeLabelKey = (value: string): string => value.trim().toLowerCase().replace(/[^a-z0-9/]+/g, '');
+
+const isHighQualityLabel = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.length < 3 || trimmed.length > 90) return false;
+  if (/^https?:\/\//i.test(trimmed)) return false;
+  if (/(.)\1{4,}/i.test(trimmed)) return false;
+  if (/\b(test|dummy|sample|placeholder)\b/i.test(trimmed)) return false;
+
+  const key = normalizeLabelKey(trimmed);
+  if (!key || BLOCKED_LABELS.has(key)) return false;
+
+  const letters = (trimmed.match(/[a-z]/gi) ?? []).length;
+  if (letters < 3) return false;
+  return true;
+};
+
+const isStrictNearbyActivity = (activity: MapActivity): boolean => {
+  if (!isHighQualityLabel(activity?.name)) return false;
+  const quality = typeof activity.quality_confidence === 'number' ? activity.quality_confidence : 0;
+  const placeMatch = typeof activity.place_match_confidence === 'number' ? activity.place_match_confidence : 0;
+  const rankScore = typeof activity.rank_score === 'number' ? activity.rank_score : 0;
+  return quality >= 0.72 && placeMatch >= 0.65 && rankScore >= 0.5;
+};
+
+const isHighQualityPlaceSummary = (place: PlaceSummary): boolean => {
+  if (!isHighQualityLabel(place.name)) return false;
+  const hasContext = Boolean(
+    (place.address && place.address.trim()) ||
+      (place.locality && place.locality.trim()) ||
+      (Array.isArray(place.categories) && place.categories.length > 0) ||
+      (Array.isArray(place.tags) && place.tags.length > 0),
+  );
+  return hasContext;
+};
+
 type SupabaseEventRow = {
   id: string | null;
   title: string | null;
@@ -159,6 +219,7 @@ type SupabaseSessionRow = {
 };
 
 const MAX_EVENTS_FALLBACK_LIMIT = 200;
+const SPARSE_SUPABASE_PLACES_THRESHOLD = 24;
 
 const pickFirstRelation = <T,>(value: T | T[] | null | undefined): T | null => {
   if (!value) return null;
@@ -400,6 +461,58 @@ const describeEventReliability = (score: number | null): { label: string; helper
     return { label: `${score}% trusted`, helper: 'Community signal', color: '#FBBF24' };
   }
   return { label: `${score}% trusted`, helper: 'Needs confirmations', color: '#F87171' };
+};
+
+const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string): PlaceSummary | null => {
+  if (!activity || typeof activity !== 'object') return null;
+  if (!activity.id || typeof activity.id !== 'string') return null;
+  if (!Number.isFinite(activity.lat) || !Number.isFinite(activity.lng)) return null;
+
+  if (!isStrictNearbyActivity(activity)) return null;
+
+  const categories = Array.isArray(activity.activity_types)
+    ? activity.activity_types.filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    : [];
+  const tags = Array.isArray(activity.tags)
+    ? activity.tags.filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    : [];
+  const name = typeof activity.name === 'string' && activity.name.trim() ? activity.name.trim() : '';
+  const placeLabel = typeof activity.place_label === 'string' && activity.place_label.trim()
+    ? activity.place_label.trim()
+    : null;
+  const venueLabel = typeof activity.venue === 'string' && activity.venue.trim()
+    ? activity.venue.trim()
+    : null;
+  const labelCandidates: Array<unknown> = [placeLabel, venueLabel, name];
+  const resolvedName = labelCandidates.find((candidate) => isHighQualityLabel(candidate));
+  if (!resolvedName) return null;
+
+  return {
+    id: activity.id,
+    slug: null,
+    name: resolvedName,
+    lat: activity.lat,
+    lng: activity.lng,
+    categories,
+    tags,
+    address: placeLabel ?? venueLabel,
+    city: citySlug,
+    locality: null,
+    region: null,
+    country: null,
+    postcode: null,
+    aggregatedFrom: [activity.source ?? 'nearby-api'],
+    attributions: [],
+    metadata: {
+      fallbackSource: 'nearby-api',
+      source: activity.source ?? null,
+      placeId: activity.place_id ?? null,
+      rankScore: activity.rank_score ?? null,
+      qualityConfidence: activity.quality_confidence ?? null,
+      placeMatchConfidence: activity.place_match_confidence ?? null,
+    },
+    transient: true,
+  };
 };
 
 type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
@@ -1328,7 +1441,7 @@ const formatShortAddress = (place: PlaceSummary) => {
   return null;
 };
 
-const GENERIC_NAME_RE = /^(unnamed|unknown|activity spot)$/i;
+const GENERIC_NAME_RE = /^(unnamed|unknown|activity spot|nearby place|nearby venue|place|venue|everywhere|anywhere)$/i;
 
 const resolvePlaceName = (place: PlaceSummary) => {
   const metadata = toPlaceMetadata(place.metadata);
@@ -1349,13 +1462,13 @@ const resolvePlaceName = (place: PlaceSummary) => {
     return cleaned;
   };
 
-  const primary = evaluate(place.name);
+  const primary = evaluate(isHighQualityLabel(place.name) ? place.name : null);
   if (primary) return primary;
   for (const candidate of fallbackCandidates) {
     const resolved = evaluate(typeof candidate === 'string' ? candidate : null);
     if (resolved) return resolved;
   }
-  return cleanString(place.name) ?? 'Activity spot';
+  return 'Activity spot';
 };
 
 const normaliseWebsiteUrl = (value: string | null | undefined) => {
@@ -1807,6 +1920,11 @@ export default function MapScreen() {
   }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery, syncViewportQuery]);
 
   const supabasePlacesFetcher = useMemo<FetchPlaces>(() => {
+    const nearbyFetcher = createNearbyActivitiesFetcher({
+      buildUrl: () => buildWebUrl('/api/nearby'),
+      includeCredentials: true,
+    });
+
     return async ({ bounds, limit, city: queryCity, signal }) => {
       const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
         ? performance.now()
@@ -1825,10 +1943,11 @@ export default function MapScreen() {
           latencyMs,
         };
       };
+      const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
+      const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
+      const radiusMeters = estimateRadiusFromBounds(bounds);
       const citySlugForQuery = queryCity ?? city.slug ?? DEFAULT_CITY_SLUG;
       const fetchFallbackPlaces = async () => {
-        const centerLat = (bounds.ne.lat + bounds.sw.lat) / 2;
-        const centerLng = (bounds.ne.lng + bounds.sw.lng) / 2;
         const fallbackRadius = estimateRadiusFromBounds(bounds);
         const fallbackPlaces = await fetchOverpassPlaceSummaries({
           lat: centerLat,
@@ -1851,16 +1970,62 @@ export default function MapScreen() {
           latencyMs,
         };
       };
+
+      try {
+        const nearbyResponse = await nearbyFetcher({
+          center: { lat: centerLat, lng: centerLng },
+          radiusMeters,
+          limit: limit ?? 400,
+          filters: categoriesForQuery?.length
+            ? { taxonomyCategories: categoriesForQuery }
+            : undefined,
+          signal,
+          refresh: true,
+        });
+
+        const mappedNearbyPlaces = nearbyResponse.activities
+          .filter((activity) => isStrictNearbyActivity(activity))
+          .map((activity) => mapNearbyActivityToPlaceSummary(activity, citySlugForQuery))
+          .filter((place): place is PlaceSummary => Boolean(place))
+          .filter((place) => isHighQualityPlaceSummary(place));
+
+        if (mappedNearbyPlaces.length > 0) {
+          const latencyMs = Math.round(
+            (typeof performance !== 'undefined' && typeof performance.now === 'function'
+              ? performance.now()
+              : Date.now()) - startedAt,
+          );
+          return {
+            cacheHit: nearbyResponse.cache?.hit ?? false,
+            places: mappedNearbyPlaces,
+            providerCounts: nearbyResponse.sourceBreakdown ?? { nearby: mappedNearbyPlaces.length },
+            attribution: [],
+            latencyMs,
+          };
+        }
+      } catch (nearbyError) {
+        if (__DEV__ && !isAbortLikeError(nearbyError)) {
+          console.info('[Map] Nearby API fetch failed, falling back to direct Supabase/OSM', nearbyError);
+        }
+        if (isAbortLikeError(nearbyError)) {
+          return buildEmptyResponse();
+        }
+      }
+
       try {
         const places = await fetchSupabasePlacesWithinBounds({
           bounds,
           citySlug: citySlugForQuery,
           limit: limit ?? 400,
         });
-        if (!places.length) {
+        let mergedPlaces = places.filter((place) => isHighQualityPlaceSummary(place));
+        let mergedAttribution: Array<{ text: string; url?: string; license?: string }> = [];
+
+        if (!mergedPlaces.length) {
           try {
             const fallback = await fetchFallbackPlaces();
             if (fallback.places.length > 0) {
+              fallback.places = fallback.places.filter((place) => isHighQualityPlaceSummary(place));
               return fallback;
             }
           } catch (fallbackError) {
@@ -1871,18 +2036,46 @@ export default function MapScreen() {
               console.info('[Map] Empty Supabase results and fallback fetch failed', fallbackError);
             }
           }
+        } else if (mergedPlaces.length < SPARSE_SUPABASE_PLACES_THRESHOLD) {
+          try {
+            const fallback = await fetchFallbackPlaces();
+            const strictFallback = fallback.places.filter((place) => isHighQualityPlaceSummary(place));
+            if (strictFallback.length > 0) {
+              const deduped = new Map<string, PlaceSummary>();
+              for (const place of mergedPlaces) {
+                deduped.set(place.id, place);
+              }
+              for (const place of strictFallback) {
+                if (!deduped.has(place.id)) {
+                  deduped.set(place.id, place);
+                }
+              }
+              mergedPlaces = Array.from(deduped.values()).slice(0, limit ?? 400);
+              mergedAttribution = fallback.attribution;
+            }
+          } catch (fallbackError) {
+            if (isAbortLikeError(fallbackError)) {
+              return buildEmptyResponse();
+            }
+            if (__DEV__) {
+              console.info('[Map] Sparse Supabase results and fallback fetch failed', fallbackError);
+            }
+          }
         }
         const latencyMs = Math.round(
           (typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()
             : Date.now()) - startedAt,
         );
-        const providerCounts: Record<string, number> = { supabase: places.length };
+        const providerCounts: Record<string, number> = { supabase: mergedPlaces.length };
+        if (mergedPlaces.length > (places?.length ?? 0)) {
+          providerCounts.openstreetmap = Math.max(0, mergedPlaces.length - (places?.length ?? 0));
+        }
         return {
           cacheHit: true,
-          places,
+          places: mergedPlaces,
           providerCounts,
-          attribution: [],
+          attribution: mergedAttribution,
           latencyMs,
         };
       } catch (primaryError) {
@@ -1909,7 +2102,7 @@ export default function MapScreen() {
         }
       }
     };
-  }, [city.slug]);
+  }, [categoriesForQuery, city.slug]);
 
   const placesQuery = usePlaces(query, {
     fetcher: supabasePlacesFetcher,
@@ -1920,21 +2113,12 @@ export default function MapScreen() {
   const loading = placesQuery.isFetching;
   const error = placesQuery.error?.message ?? null;
   const friendlyError = error ? error.replace(/^TypeError:\s*/i, '').trim() || null : null;
-  const places = placesQuery.data?.places ?? [];
+  const places = useMemo(
+    () => (placesQuery.data?.places ?? []).filter((place) => isHighQualityPlaceSummary(place)),
+    [placesQuery.data?.places],
+  );
 
   const eventsFetcher = useMemo(() => {
-    if (Platform.OS !== 'web') {
-      return async (args: Parameters<typeof fetchSupabaseEventsFallback>[0]) => {
-        try {
-          return await fetchSupabaseEventsFallback(args);
-        } catch (fallbackError) {
-          if (__DEV__) {
-            console.info('[Map] Native events fallback failed', fallbackError);
-          }
-          return { events: [] };
-        }
-      };
-    }
     const webEventsFetcher = createEventsFetcher({
       buildUrl: () => buildWebUrl('/api/events'),
       includeCredentials: true,
@@ -2209,7 +2393,7 @@ export default function MapScreen() {
 
   const providerHint = useMemo(() => {
     if (!filteredPlaces.length) return null;
-    return 'Venues synced from Supabase (fallback: OpenStreetMap).';
+    return 'Places synced from Supabase (venues + places, fallback: OpenStreetMap).';
   }, [filteredPlaces.length]);
 
   const shouldShowEventsRail = eventsQuery.isFetching || eventHighlights.length > 0 || eventsQuery.isError;

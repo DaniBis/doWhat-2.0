@@ -142,6 +142,7 @@ export type ProfileRow = {
   primary_sport: SportType | null;
   play_style: PlayStyle | null;
   availability_window: Json;
+  core_values: string[];
   reliability_pledge_ack_at: string | null;
   reliability_pledge_version: string | null;
 };

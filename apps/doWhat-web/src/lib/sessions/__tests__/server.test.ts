@@ -265,6 +265,19 @@ describe('extractSessionPayload', () => {
     const parsed = extractSessionPayload({ placeId: '  not-a-uuid  ' });
     expect(parsed.placeId).toBe('not-a-uuid');
   });
+
+  it('normalizes timezone offsets to UTC ISO strings', () => {
+    const parsed = extractSessionPayload(
+      {
+        startsAt: '2026-03-10T09:00:00+07:00',
+        endsAt: '2026-03-10T11:30:00+07:00',
+      },
+      { requireSchedule: true },
+    );
+
+    expect(parsed.startsAt).toBe('2026-03-10T02:00:00.000Z');
+    expect(parsed.endsAt).toBe('2026-03-10T04:30:00.000Z');
+  });
 });
 
 describe("getUserAttendanceStatus", () => {

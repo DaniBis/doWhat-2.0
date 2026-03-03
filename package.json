@@ -35,7 +35,11 @@
     "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs",
     "seed:dowhat": "node scripts/seed-dowhat.mjs",
     "rollback:dowhat": "node scripts/rollback-dowhat.mjs",
-    "verify:dowhat": "node scripts/verify-dowhat.mjs",
+    "verify:dowhat": "node scripts/verify-dowhat-guardrails.mjs",
+    "verify:dowhat:data": "node scripts/verify-dowhat.mjs",
+    "verify:no-hardcoded-discovery": "node scripts/verify-no-hardcoded-discovery.mjs",
+    "verify:required-fields": "node scripts/verify-required-fields.mjs",
+    "verify:discovery-contract": "node scripts/verify-discovery-contract.mjs",
     "test:onboarding-progress": "pnpm --filter dowhat-web test -- OnboardingProgressBanner apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx && pnpm --filter doWhat-mobile test -- onboarding-index profile.simple.cta OnboardingNavPrompt OnboardingNavPill people-filter"
   },
   "devDependencies": {

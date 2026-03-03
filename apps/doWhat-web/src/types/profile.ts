@@ -39,6 +39,7 @@ export type ProfileUser = {
   locationLng?: number;
   avatarUrl?: string;
   bio?: string;
+  coreValues?: string[];
   socials?: { instagram?: string | null; whatsapp?: string | null };
 };
 

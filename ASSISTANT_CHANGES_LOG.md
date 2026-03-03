@@ -479,3 +479,232 @@
   - Added safe helpers to coerce Supabase rows into plain records and pick trimmed string fields.
   - Eliminated `as Record<string, unknown>` casts so `pnpm -w run typecheck` now passes across packages again.
 - Authored `ENGINEERING_ROADMAP_2025.md` to capture the next engineering milestones (session_attendees migration, SavedActivities fixes, trait onboarding, cross-platform parity, migrations hygiene, admin monitoring, and ongoing documentation updates).
+
+## 2026-03-03
+- Timestamp: 2026-03-03 15:01:52 +07
+- Files touched: `apps/doWhat-web/src/lib/discovery/{engine.ts,engine-core.ts,ranking.ts,trust.ts,telemetry.ts}`, `apps/doWhat-web/src/lib/{filters.ts,venues/search.ts,venues/types.ts,venues/savePayload.ts}`, `apps/doWhat-web/src/app/api/{nearby/route.ts,discovery/activities/route.ts}`, `apps/doWhat-web/src/app/{map/page.tsx,venues/page.tsx}`, `apps/doWhat-web/src/components/WebMap.tsx`, `packages/shared/src/map/types.ts`, and related discovery/venues tests.
+- Reason: Implement discovery Phase 1+2 (provider-backed venue seeding + persisted venue inference), unify trust scoring/state across map and venues, and add debug metrics toggle plumbing.
+- Before: sparse fallback inventories relied mostly on lightweight keywords; map/venues ranking/state semantics diverged; debug output lacked provider/cache/dedupe rates behind a dedicated request toggle.
+- After: discovery now seeds sparse viewports from providers and consumes persisted `venue_activities` mappings (with taxonomy inference), emits `trust_score` + `verification_state` (`suggested`/`verified`/`needs_votes`) across APIs/UI, and supports `debug=1` metrics logging for provider counts, cache-hit rate, and dedupe drop rate.
+- Commands run: `rg`, `sed`, `tail`, `find`, PDF extraction commands (`python3` + `pypdf`), and `apply_patch` edits.
+- Timestamp: 2026-03-03 15:13:34 +07
+- Files touched: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`
+- Reason: Record the final verification rerun + handoff update pass after Phase 1/2 implementation.
+- Before: logs contained implementation details but no dedicated follow-up note for final targeted validation output.
+- After: both logs now include the latest status entry with exact scoped test/typecheck outcomes.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- src/lib/discovery/__tests__/trust.test.ts src/app/api/discovery/activities/__tests__/route.test.ts src/app/api/nearby/__tests__/payload.test.ts src/lib/__tests__/venueSearch.test.ts src/lib/venues/__tests__/filters.test.ts src/lib/venues/__tests__/savePayload.test.ts src/app/venues/__tests__/page.test.tsx` (passed: 7 suites, 31 tests)
+  - `pnpm --filter dowhat-web run typecheck` (passed)
+  - `git status --short` plus targeted `rg -n` / `sed -n` flow checks
+- Timestamp: 2026-03-03 15:54:33 +07
+- Files touched: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`
+- What changed: Added the required pre-coding gap map (exists/missing evidence + checklist + plan) for requirements A-F.
+- Why: Required by brief before coding and used to scope safe incremental implementation.
+- How verified:
+  - `tail -n 200 changes_log.md`
+  - `tail -n 220 ASSISTANT_CHANGES_LOG.md`
+  - `sed -n ...` on `app/layout.tsx`, `components/AppLiveUpdates.tsx`, `app/{page,map/venues/create}/page.tsx`, onboarding pages, and session/profile APIs
+  - `rg -n ...` across auth/onboarding/email-confirm/place-resolution paths
+- Remaining risks:
+  - New `profiles.core_values` storage requires migration + type sync.
+  - Onboarding step union expansion will impact analytics/types/tests.
+  - Redirect guard logic must avoid `/auth`/onboarding loops while preserving query strings.
+- Timestamp: 2026-03-03 16:02:00 +07
+- Files touched:
+  - `packages/shared/src/onboarding/coreValues.ts`
+  - `packages/shared/src/index.ts`
+  - `apps/doWhat-web/src/lib/access/{coreAccess.ts,serverGuard.ts,useCoreAccessGuard.ts}`
+  - `apps/doWhat-web/src/app/auth/confirm-email/page.tsx`
+  - `apps/doWhat-web/src/app/{page.tsx,map/page.tsx,venues/page.tsx,create/page.tsx}`
+  - `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`
+- What changed:
+  - Added reusable core-values normalization helpers.
+  - Added centralized redirect guard logic for auth/email-confirm/onboarding.
+  - Added `/auth/confirm-email` gate page with resend + continue controls.
+  - Applied server/client guards to `/`, `/map`, `/venues`, `/create`.
+  - Updated create-page back CTA copy to “Go back”.
+- Why:
+  - Enforce requirement A with redirect-based access control and query-preserving return paths.
+- How verified:
+  - `rg -n` / `sed -n` checks confirmed guard wiring + removal of passive auth gate rendering in core page branches.
+  - Manual code audit confirmed redirect target construction preserves query strings.
+- Remaining risks:
+  - `core_values` DB column still pending migration and end-to-end wiring.
+  - Need test coverage for redirect preservation and email/onboarding guard behavior (planned next slice).
+- Timestamp: 2026-03-03 16:24:00 +07
+- Files touched:
+  - `apps/doWhat-web/src/lib/home/filtering.ts` (new)
+  - `apps/doWhat-web/src/app/page.tsx`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/lib/home/__tests__/filtering.test.ts` (new)
+  - `apps/doWhat-web/src/lib/access/__tests__/coreAccess.test.ts` (new)
+  - `apps/doWhat-web/src/lib/access/__tests__/serverGuard.test.ts` (new)
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Implement home search/filter UX split (activities/events + people), keep empty states explanatory, and add targeted tests for core access/onboarding guard semantics.
+- Before:
+  - Home page had query parsing but no visible split filter panel.
+  - No dedicated tests covered core-access redirect gating or home filter result behavior.
+- After:
+  - Home feed filtering moved into `buildHomeCards` helper for testability.
+  - `/` now includes a search bar + split filter panel and context-aware empty-state actions.
+  - Map drawer now explicitly labels people filter section separately from activities/events.
+  - New tests added for `coreAccess`, `enforceServerCoreAccess`, and home filter pipeline behavior.
+- Commands run:
+  - `mkdir -p apps/doWhat-web/src/lib/home`
+  - file writes via `cat > ...` for helper/page/tests
+  - `apply_patch` on `apps/doWhat-web/src/app/map/page.tsx`
+  - `date '+%Y-%m-%d %H:%M:%S %z'`
+  - `tail -n ...` / `rg -n ...` / `sed -n ...` verification checks
+- How verified:
+  - Static code inspection only for this step; lint/typecheck/tests pending next.
+- Remaining risks:
+  - Jest mocking for server redirect behavior may need one iteration once tests run.
+  - Home rewrite needs full typecheck/lint validation.
+- Timestamp: 2026-03-03 16:28:04 +07
+- Files touched:
+  - `apps/doWhat-web/src/lib/access/serverGuard.ts`
+  - `apps/doWhat-web/src/lib/access/useCoreAccessGuard.ts`
+  - `apps/doWhat-web/src/app/auth/confirm-email/page.tsx`
+  - `apps/doWhat-web/src/app/onboarding/traits/__tests__/page.test.tsx`
+  - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/app/venues/__tests__/page.test.tsx`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Resolve typecheck/test breakages and harden onboarding redirect enforcement.
+- Before:
+  - `serverGuard` swallowed redirect exceptions from onboarding flow due a broad try/catch.
+  - Typecheck failed on Route-typed `router.replace` calls and strict test tuple indexing.
+  - Venue page tests stayed in loading skeleton because core-access guard wasn’t mocked.
+- After:
+  - Added `NEXT_REDIRECT` signal detection + rethrow in `serverGuard`.
+  - Route casts added in `confirm-email` + `useCoreAccessGuard` client redirects.
+  - Related tests adjusted and now pass.
+  - Workspace lint/typecheck plus targeted auth/home/map/create/discovery/venues test suites all pass.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- src/lib/access/__tests__/coreAccess.test.ts src/lib/access/__tests__/serverGuard.test.ts src/app/api/sessions/__tests__/route.test.ts src/lib/home/__tests__/filtering.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+  - `pnpm -w lint`
+  - `pnpm -w typecheck`
+  - `pnpm --filter dowhat-web test -- src/lib/discovery/__tests__/trust.test.ts src/lib/discovery/__tests__/telemetry.test.ts src/app/api/discovery/activities/__tests__/route.test.ts src/app/api/nearby/__tests__/payload.test.ts src/lib/venues/__tests__/filters.test.ts src/app/venues/__tests__/page.test.tsx`
+- How verified:
+  - All commands above completed successfully (except one intermediate failing discovery run before test mock fix; rerun succeeded and recorded).
+- Remaining risks:
+  - Core page gating for some routes is still client-hook based (post-hydration redirect).
+  - Home category filter UX is functional but still text-input oriented.
+- Timestamp: 2026-03-03 17:02:57 +07
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Establish an explicit QA Test Gap Map before writing additional tests/scripts/CI guardrails.
+- Before:
+  - Multiple test suites existed, but missing-coverage boundaries were not captured in one place for auth client guard, create invariants, hardcoded discovery scans, runtime smell scans, and strict verify command wiring.
+- After:
+  - Added a requirement-indexed gap map with direct file-path evidence for what exists vs what is still missing.
+  - Reconfirmed `AppLiveUpdates` remains mounted in `apps/doWhat-web/src/app/layout.tsx`.
+- Commands run:
+  - `git status --short`
+  - `cat package.json`
+  - `sed -n '1,260p' scripts/verify-dowhat.mjs`
+  - `rg --files apps/doWhat-web/src | rg '__tests__|\.test\.(ts|tsx)$'`
+  - `rg --files apps/doWhat-mobile/src | rg '__tests__|\.test\.(ts|tsx)$'`
+  - `sed -n ...` on discovery/nearby/sessions/auth test files
+  - `rg -n "AppLiveUpdates" apps/doWhat-web/src/app/layout.tsx apps/doWhat-web/src/components/AppLiveUpdates.tsx`
+- How verified:
+  - Manual source inspection and scripted file inventory.
+- Remaining risks:
+  - Need to implement and execute the strict matrix command; environment prerequisites may gate full local completion.
+- Timestamp: 2026-03-03 17:05:58 +07
+- Files touched:
+  - `apps/doWhat-web/src/lib/access/__tests__/useCoreAccessGuard.test.tsx` (new)
+  - `apps/doWhat-web/src/app/api/sessions/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Add missing auth/onboarding client guard coverage and strengthen create-session place invariants.
+- Before:
+  - No direct unit tests for `useCoreAccessGuard` redirect branches.
+  - `/api/sessions` trusted derived place label without explicit non-empty enforcement.
+  - Route test coverage only covered activity place override.
+- After:
+  - Added `useCoreAccessGuard` tests for auth/email/onboarding/allow flows.
+  - Added explicit non-empty place-label guard in session creation route.
+  - Added standalone fallback-label + empty-label rejection route tests.
+  - Added timezone normalization assertion in `extractSessionPayload` tests.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- src/lib/access/__tests__/useCoreAccessGuard.test.tsx src/app/api/sessions/__tests__/route.test.ts src/lib/sessions/__tests__/server.test.ts`
+- How verified:
+  - Command above passed (`3 suites`, `19 tests`).
+- Remaining risks:
+  - DB-level NOT NULL/non-empty constraints should still be confirmed/added for full invariant hardening.
+
+- Timestamp: 2026-03-03 17:16:46 +07
+- Files touched:
+  - `apps/doWhat-web/src/app/profile/__tests__/page.test.tsx`
+  - `apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx`
+  - `apps/doWhat-web/src/app/onboarding/__tests__/page.test.tsx`
+  - `apps/doWhat-web/src/components/nav/__tests__/OnboardingNavLink.test.tsx`
+  - `apps/doWhat-web/src/app/onboarding/traits/__tests__/page.test.tsx`
+  - `apps/doWhat-web/src/components/traits/__tests__/TraitOnboardingSection.test.tsx`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Fix strict-matrix blockers caused by stale onboarding tests after the new core-values step and updated redirect flow.
+- Before:
+  - Web Jest failed with mismatched pending-step counts/arrays, old auth redirect target assertions, and old trait onboarding completion redirect expectation.
+- After:
+  - Updated tests now reflect the actual onboarding contract and all six previously failing suites pass.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/profile/__tests__/page.test.tsx src/app/people-filter/__tests__/page.test.tsx src/app/onboarding/__tests__/page.test.tsx src/components/nav/__tests__/OnboardingNavLink.test.tsx src/app/onboarding/traits/__tests__/page.test.tsx src/components/traits/__tests__/TraitOnboardingSection.test.tsx`
+- How verified:
+  - Command passed (`6 suites`, `24 tests`).
+- Remaining risks:
+  - Need to rerun full `pnpm verify:dowhat` for end-to-end guardrail confirmation.
+
+- Timestamp: 2026-03-03 17:19:55 +07
+- Files touched:
+  - `apps/doWhat-mobile/src/components/__tests__/OnboardingNavPill.test.tsx`
+  - `apps/doWhat-mobile/src/components/__tests__/OnboardingNavPrompt.test.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/people-filter.test.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/onboarding-index.test.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/profile.simple.cta.test.tsx`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Fix mobile Jest breakages surfaced by `verify:dowhat` after onboarding flow added the core-values step.
+- Before:
+  - Mobile tests still expected pre-values step arrays/counts and complete-state fixtures without `core_values`.
+- After:
+  - Updated expectations and fixtures now match current mobile onboarding contract and all previously failing suites pass.
+- Commands run:
+  - `pnpm verify:dowhat` (failed at `Mobile Jest`, used as failure signal)
+  - `pnpm --filter doWhat-mobile test -- --maxWorkers=50% src/components/__tests__/OnboardingNavPill.test.tsx src/components/__tests__/OnboardingNavPrompt.test.tsx src/app/__tests__/people-filter.test.tsx src/app/__tests__/onboarding-index.test.tsx src/app/__tests__/profile.simple.cta.test.tsx`
+- How verified:
+  - Targeted mobile command passed (`5 suites`, `30 tests`).
+- Remaining risks:
+  - Full strict matrix rerun is still required to confirm all post-mobile steps pass.
+
+- Timestamp: 2026-03-03 17:21:24 +07
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Record post-fix full strict matrix execution and the remaining non-code blocker.
+- Before:
+  - `verify:dowhat` previously failed at `Mobile Jest` due stale onboarding expectations.
+- After:
+  - `Mobile Jest` and all downstream test/policy stages pass; final failure is now isolated to `Workspace health` DNS resolution for Supabase migrations check.
+- Commands run:
+  - `pnpm verify:dowhat`
+  - `rg -n "AppLiveUpdates" apps/doWhat-web/src/app/layout.tsx apps/doWhat-web/src/components/AppLiveUpdates.tsx`
+- How verified:
+  - `verify:dowhat` stage outcomes:
+    - passed: guard scripts + lint/typecheck + web jest + playwright + mobile jest + expo doctor + onboarding checks + shared tests + trait policy verifier
+    - failed: workspace health (`getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`)
+  - App live refresh bridge is still mounted in `apps/doWhat-web/src/app/layout.tsx`.
+- Remaining risks:
+  - Environment-level DNS/DB connectivity prevents a fully green strict matrix locally.

@@ -6,6 +6,7 @@ import {
   formatPrice,
   formatDateRange,
   formatPlaceUpdatedLabel,
+  createNearbyActivitiesFetcher,
   DEFAULT_CITY_SLUG,
   getCityConfig,
   theme,
@@ -16,19 +17,27 @@ import {
   trackFindA4thImpression,
   fetchOverpassPlaceSummaries,
   estimateRadiusFromBounds,
+  DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  loadUserPreference,
+  normaliseActivityFilterPreferences,
   type PlaceSummary,
   type PlacesViewportQuery,
+  type MapActivity,
+  type TimeWindowKey,
   type ActivityRow,
+  type ActivityFilterPreferences,
   type SavePayload,
 } from "@dowhat/shared";
+import { buildWebUrl } from "../lib/web";
 import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
 const { Link, useFocusEffect, router } = ExpoRouter;
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Dimensions, Platform, Alert } from "react-native";
+import { View, Text, Pressable, RefreshControl, TouchableOpacity, ScrollView, StatusBar, Platform, Alert } from "react-native";
 import type { StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 import Brand from '../components/Brand';
@@ -44,8 +53,7 @@ import type { Session } from '@supabase/supabase-js';
 import { resolveCategoryAppearance, resolvePrimaryCategoryKey, formatCategoryLabel } from '../lib/placeCategories';
 import { useSavedActivities } from "../contexts/SavedActivitiesContext";
 import { useRankedOpenSessions } from '../hooks/useRankedOpenSessions';
-
-const { width: screenWidth } = Dimensions.get('window');
+import { geocodeLabelToCoords } from '../lib/geocode';
 
 // Map activity names/ids to icons and colors (customize as needed)
 const activityVisuals: Record<string, { icon: string; color: string; bgColor: string }> = {
@@ -136,11 +144,191 @@ const SaveBadge = ({ saved, saving = false, disabled = false, variant = 'light',
   );
 };
 
-type NearbyActivity = { id: string; name: string; count: number };
+type NearbyActivity = { id: string; name: string; count: number; searchText: string };
+
+type ActivityCardModel = {
+  activity: NearbyActivity;
+  visual: { icon: string; color: string; bgColor: string };
+  derivedCount: number;
+  payload: SavePayload | null;
+  saved: boolean;
+  saving: boolean;
+};
 
 type ProfileLocationRow = {
+  location: string | null;
   last_lat: number | null;
   last_lng: number | null;
+};
+
+const HOME_SESSION_RADIUS_METERS = 25_000;
+const ACTIVITY_LOCAL_KEY = 'activity_filters:v1';
+
+const BLOCKED_LABELS = new Set([
+  'activity',
+  'activities',
+  'anywhere',
+  'everywhere',
+  'nearbyplace',
+  'nearbyplaces',
+  'nearbyvenue',
+  'nearbyvenues',
+  'n/a',
+  'na',
+  'none',
+  'null',
+  'placeholder',
+  'place',
+  'sample',
+  'test',
+  'unknown',
+  'unnamed',
+  'venue',
+]);
+
+const normalizeLabelKey = (value: string): string => value.trim().toLowerCase().replace(/[^a-z0-9/]+/g, '');
+
+const isHighQualityLabel = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.length < 3 || trimmed.length > 90) return false;
+  if (/^https?:\/\//i.test(trimmed)) return false;
+  if (/(.)\1{4,}/i.test(trimmed)) return false;
+  if (/\b(test|dummy|sample|placeholder)\b/i.test(trimmed)) return false;
+
+  const key = normalizeLabelKey(trimmed);
+  if (!key || BLOCKED_LABELS.has(key)) return false;
+
+  const letters = (trimmed.match(/[a-z]/gi) ?? []).length;
+  if (letters < 3) return false;
+  return true;
+};
+
+const isStrictNearbyActivity = (activity: MapActivity): boolean => {
+  if (!isHighQualityLabel(activity?.name)) return false;
+  const quality = typeof activity.quality_confidence === 'number' ? activity.quality_confidence : 0;
+  const placeMatch = typeof activity.place_match_confidence === 'number' ? activity.place_match_confidence : 0;
+  const rankScore = typeof activity.rank_score === 'number' ? activity.rank_score : 0;
+  // Home search should avoid false negatives for niche but real venues (e.g. climbing gyms)
+  // while still enforcing strict quality/place matching.
+  return quality >= 0.72 && placeMatch >= 0.65 && rankScore >= 0.35;
+};
+
+const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string): PlaceSummary | null => {
+  if (!Number.isFinite(activity.lat) || !Number.isFinite(activity.lng)) return null;
+
+  const labelCandidates = [activity.place_label, activity.venue, activity.name];
+  const label = labelCandidates.find((candidate) => isHighQualityLabel(candidate));
+  if (!label) return null;
+
+  const categories = Array.isArray(activity.taxonomy_categories) && activity.taxonomy_categories.length
+    ? activity.taxonomy_categories.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    : Array.isArray(activity.activity_types)
+      ? activity.activity_types.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+      : [];
+  const tags = Array.isArray(activity.tags)
+    ? activity.tags.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    : [];
+
+  return {
+    id: activity.place_id?.trim() || activity.id,
+    slug: null,
+    name: label,
+    lat: activity.lat,
+    lng: activity.lng,
+    categories,
+    tags,
+    address: activity.place_label ?? activity.venue ?? null,
+    city: citySlug,
+    locality: null,
+    region: null,
+    country: null,
+    postcode: null,
+    aggregatedFrom: [activity.source ?? 'nearby-api'],
+    attributions: [],
+    metadata: {
+      fallbackSource: 'nearby-api',
+      rankScore: activity.rank_score ?? null,
+      qualityConfidence: activity.quality_confidence ?? null,
+      placeMatchConfidence: activity.place_match_confidence ?? null,
+      placeId: activity.place_id ?? null,
+    },
+    transient: true,
+  };
+};
+
+const isHighQualityPlaceSummary = (place: PlaceSummary): boolean => {
+  if (!isHighQualityLabel(place.name)) return false;
+  const hasContext = Boolean(
+    (place.address && place.address.trim()) ||
+    (place.locality && place.locality.trim()) ||
+    (Array.isArray(place.categories) && place.categories.length > 0) ||
+    (Array.isArray(place.tags) && place.tags.length > 0),
+  );
+  return hasContext;
+};
+
+const SEARCH_ALIASES: Record<string, string[]> = {
+  climbing: ['bouldering', 'rock climbing', 'climb'],
+  billiards: ['pool', 'snooker'],
+  poker: ['holdem', 'texas holdem', 'texas hold em'],
+  roller: ['roller skating', 'rollerskating'],
+};
+
+const tokenizeSearch = (value: string): string[] =>
+  value
+    .trim()
+    .toLowerCase()
+    .split(/[\s,;|/]+/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 2);
+
+const expandSearchTokens = (tokens: string[]): string[] => {
+  const expanded = new Set<string>(tokens);
+  tokens.forEach((token) => {
+    Object.entries(SEARCH_ALIASES).forEach(([canonical, aliases]) => {
+      if (token === canonical || aliases.includes(token)) {
+        expanded.add(canonical);
+        aliases.forEach((alias) => expanded.add(alias));
+      }
+    });
+  });
+  return Array.from(expanded);
+};
+
+const scoreActivitySearchMatch = (name: string, query: string): number => {
+  const normalizedName = name.trim().toLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedName || !normalizedQuery) return 0;
+  if (normalizedName === normalizedQuery) return 120;
+  if (normalizedName.startsWith(normalizedQuery)) return 90;
+  if (normalizedName.includes(normalizedQuery)) return 70;
+
+  const tokens = expandSearchTokens(tokenizeSearch(normalizedQuery));
+  if (!tokens.length) return 0;
+
+  let score = 0;
+  tokens.forEach((token) => {
+    if (normalizedName === token) {
+      score += 40;
+      return;
+    }
+    if (normalizedName.startsWith(token)) {
+      score += 28;
+      return;
+    }
+    if (normalizedName.includes(token)) {
+      score += 18;
+    }
+  });
+  return score;
+};
+
+const buildSearchText = (parts: Array<string | null | undefined>): string => {
+  const tokens = parts
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter(Boolean);
+  return Array.from(new Set(tokens)).join(' ');
 };
 
 
@@ -150,6 +338,25 @@ const lookingForPlayersFeatureEnabled = !(
 );
 
 const FIND_A_FOURTH_SURFACE = 'home_find_fourth';
+const MAX_HOME_ACTIVITY_CARDS = 40;
+
+const mapActivityTimeToMapTimeWindow = (values: readonly string[]): TimeWindowKey | undefined => {
+  if (!values.length) return undefined;
+  const normalized = values.map((entry) => entry.trim().toLowerCase());
+  if (normalized.some((entry) => entry.includes('early') || entry.includes('morning'))) {
+    return 'morning';
+  }
+  if (normalized.some((entry) => entry.includes('afternoon'))) {
+    return 'afternoon';
+  }
+  if (normalized.some((entry) => entry.includes('evening'))) {
+    return 'evening';
+  }
+  if (normalized.some((entry) => entry.includes('night') || entry.includes('late'))) {
+    return 'late';
+  }
+  return undefined;
+};
 
 
 function HomeScreen() {
@@ -163,7 +370,9 @@ function HomeScreen() {
   const [session, setSession] = useState<Session | null>(null);
   const [activities, setActivities] = useState<NearbyActivity[] | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [filteredActivities, setFilteredActivities] = useState<NearbyActivity[]>([]);
+  const [activityPreferences, setActivityPreferences] = useState<ActivityFilterPreferences>(
+    DEFAULT_ACTIVITY_FILTER_PREFERENCES,
+  );
   const nearbyApiFailureLogged = useRef(false);
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceSummary[]>([]);
   const [placesError, setPlacesError] = useState<string | null>(null);
@@ -176,8 +385,14 @@ function HomeScreen() {
     refresh: refreshRankedOpenSessions,
   } = useRankedOpenSessions({ enabled: lookingForPlayersFeatureEnabled, autoRefresh: false });
   const defaultCity = useMemo(() => getCityConfig(DEFAULT_CITY_SLUG), []);
-
-    const FALLBACK_RADIUS_METERS = 2500;
+  const nearbyFetcher = useMemo(
+    () =>
+      createNearbyActivitiesFetcher({
+        buildUrl: () => buildWebUrl('/api/nearby'),
+        includeCredentials: true,
+      }),
+    [],
+  );
 
     const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
       const R = 6371000;
@@ -192,12 +407,13 @@ function HomeScreen() {
       return R * c;
     };
 
-    const fetchNearbyFromSupabase = useCallback(async (latNow: number, lngNow: number) => {
+    const fetchNearbyFromSupabase = useCallback(async (latNow: number, lngNow: number, prefs?: ActivityFilterPreferences) => {
+      const radiusMeters = Math.max(1000, Math.min(50_000, (prefs?.radius ?? 2.5) * 1000));
       const { data, error } = await supabase
         .from('sessions')
         .select(
           `id, activity_id,
-           activities!inner(id, name),
+             activities!inner(id, name, activity_types),
            venues!inner(id, name, venue_lat:lat, venue_lng:lng)`
         )
         .not('venues.lat', 'is', null)
@@ -231,7 +447,7 @@ function HomeScreen() {
               : NaN;
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return acc;
         const distance = haversineMeters(latNow, lngNow, lat, lng);
-        if (!Number.isFinite(distance) || distance > FALLBACK_RADIUS_METERS) return acc;
+        if (!Number.isFinite(distance) || distance > radiusMeters) return acc;
         const idRaw =
           (row.activity_id as string | null | undefined) ??
           (activities?.id as string | null | undefined) ??
@@ -242,35 +458,107 @@ function HomeScreen() {
         const name = typeof activities?.name === 'string' && activities.name.trim()
           ? activities.name
           : key;
+        if (!isHighQualityLabel(name)) return acc;
+        const activityTypes = Array.isArray(activities?.activity_types)
+          ? activities.activity_types.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+          : [];
+        const searchText = buildSearchText([name, ...activityTypes]);
         const groupKey = normaliseActivityName(name);
         const existing = acc[groupKey];
         if (existing) {
           existing.count += 1;
+          existing.searchText = buildSearchText([existing.searchText, searchText]);
         } else {
-          acc[groupKey] = { id: groupKey, name, count: 1 };
+          acc[groupKey] = { id: groupKey, name, count: 1, searchText };
         }
         return acc;
       }, {});
       return Object.values(grouped).sort((a, b) => b.count - a.count);
     }, []);
 
-  const fetchNearbyActivities = useCallback(async (latNow: number | null, lngNow: number | null) => {
+  const fetchNearbyFromApi = useCallback(async (
+    latNow: number,
+    lngNow: number,
+    prefs?: ActivityFilterPreferences,
+  ): Promise<NearbyActivity[]> => {
+    const radiusMeters = Math.max(1000, Math.min(50_000, (prefs?.radius ?? 2.5) * 1000));
+    const timeWindow = mapActivityTimeToMapTimeWindow(prefs?.timeOfDay ?? []);
+    const response = await nearbyFetcher({
+      center: { lat: latNow, lng: lngNow },
+      radiusMeters,
+      limit: 300,
+      filters: {
+        ...(prefs?.categories?.length ? { taxonomyCategories: prefs.categories } : {}),
+        ...(timeWindow ? { timeWindow } : {}),
+      },
+      refresh: true,
+    });
+
+    const grouped = new Map<string, NearbyActivity>();
+    response.activities.forEach((activity) => {
+      if (!isStrictNearbyActivity(activity)) return;
+      const name = activity.name.trim();
+      const activityTypes = Array.isArray(activity.activity_types)
+        ? activity.activity_types.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+        : [];
+      const taxonomyCategories = Array.isArray(activity.taxonomy_categories)
+        ? activity.taxonomy_categories.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+        : [];
+      const tags = Array.isArray(activity.tags)
+        ? activity.tags.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+        : [];
+      const searchText = buildSearchText([
+        name,
+        activity.place_label ?? undefined,
+        ...activityTypes,
+        ...taxonomyCategories,
+        ...tags,
+      ]);
+      const key = normaliseActivityName(name);
+      const count = Math.max(1, Number(activity.upcoming_session_count ?? 0));
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.count += count;
+        existing.searchText = buildSearchText([existing.searchText, searchText]);
+      } else {
+        grouped.set(key, { id: key, name, count, searchText });
+      }
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
+  }, [nearbyFetcher]);
+
+  const fetchNearbyActivities = useCallback(async (
+    latNow: number | null,
+    lngNow: number | null,
+    prefs?: ActivityFilterPreferences,
+  ) => {
     if (latNow == null || lngNow == null) {
       setActivities([]);
       return;
     }
     try {
-      const grouped = await fetchNearbyFromSupabase(latNow, lngNow);
-      setActivities(grouped);
+      const grouped = await fetchNearbyFromApi(latNow, lngNow, prefs);
+      if (grouped.length > 0) {
+        setActivities(grouped);
+      } else {
+        const fallback = await fetchNearbyFromSupabase(latNow, lngNow, prefs);
+        setActivities(fallback.filter((item) => isHighQualityLabel(item.name)));
+      }
       nearbyApiFailureLogged.current = false;
     } catch (error) {
       if (__DEV__ && !nearbyApiFailureLogged.current) {
         nearbyApiFailureLogged.current = true;
         console.info('[Home] Nearby Supabase query failed', error);
       }
-      setActivities([]);
+      try {
+        const fallback = await fetchNearbyFromSupabase(latNow, lngNow, prefs);
+        setActivities(fallback.filter((item) => isHighQualityLabel(item.name)));
+      } catch {
+        setActivities([]);
+      }
     }
-  }, [fetchNearbyFromSupabase]);
+  }, [fetchNearbyFromApi, fetchNearbyFromSupabase]);
 
   const fetchPlacesViewport = useCallback(
     async (latNow: number | null, lngNow: number | null) => {
@@ -292,13 +580,41 @@ function HomeScreen() {
       let primaryError: unknown = null;
       const fallbackCenterLat = (bounds.ne.lat + bounds.sw.lat) / 2;
       const fallbackCenterLng = (bounds.ne.lng + bounds.sw.lng) / 2;
+      const fallbackRadiusMeters = estimateRadiusFromBounds(bounds);
+
+      try {
+        const nearby = await nearbyFetcher({
+          center: { lat: fallbackCenterLat, lng: fallbackCenterLng },
+          radiusMeters: fallbackRadiusMeters,
+          limit: 120,
+          refresh: true,
+        });
+
+        const strictNearbyPlaces = nearby.activities
+          .filter((activity) => isStrictNearbyActivity(activity))
+          .map((activity) => mapNearbyActivityToPlaceSummary(activity, city.slug))
+          .filter((entry): entry is PlaceSummary => Boolean(entry))
+          .filter((place) => isHighQualityPlaceSummary(place));
+
+        if (strictNearbyPlaces.length > 0) {
+          setNearbyPlaces(strictNearbyPlaces.slice(0, 80));
+          setPlacesError(null);
+          placesFetchFailureLogged.current = false;
+          return;
+        }
+      } catch (nearbyError) {
+        if (__DEV__ && !placesFetchFailureLogged.current) {
+          console.warn('[Home] Nearby API places fetch failed', nearbyError);
+        }
+      }
+
       try {
         const supabasePlaces = await fetchSupabasePlacesWithinBounds({
           bounds,
           citySlug: city.slug,
           limit: 80,
         });
-        setNearbyPlaces(supabasePlaces ?? []);
+        setNearbyPlaces((supabasePlaces ?? []).filter((place) => isHighQualityPlaceSummary(place)));
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
         return;
@@ -311,15 +627,15 @@ function HomeScreen() {
       }
 
       try {
-        const fallbackRadiusMeters = estimateRadiusFromBounds(bounds);
         const fallbackPlaces = await fetchOverpassPlaceSummaries({
           lat: fallbackCenterLat,
           lng: fallbackCenterLng,
           radiusMeters: fallbackRadiusMeters,
           limit: 30,
         });
-        if (fallbackPlaces.length) {
-          setNearbyPlaces(fallbackPlaces);
+        const strictFallbackPlaces = fallbackPlaces.filter((place) => isHighQualityPlaceSummary(place));
+        if (strictFallbackPlaces.length) {
+          setNearbyPlaces(strictFallbackPlaces);
           setPlacesError('Showing fallback nearby venues while Supabase recovers.');
           return;
         }
@@ -335,7 +651,7 @@ function HomeScreen() {
         primaryError instanceof Error ? `${defaultMessage}\n${primaryError.message}` : defaultMessage,
       );
     },
-    [defaultCity],
+    [defaultCity, nearbyFetcher],
   );
 
   const load = useCallback(async () => {
@@ -344,20 +660,104 @@ function HomeScreen() {
       const { data: auth } = await supabase.auth.getSession();
       setSession(auth.session ?? null);
       const userId = auth.session?.user?.id ?? null;
+      let resolvedPrefs = DEFAULT_ACTIVITY_FILTER_PREFERENCES;
+
+      const loadLocalPreferences = async (): Promise<ActivityFilterPreferences | null> => {
+        try {
+          const raw = await AsyncStorage.getItem(ACTIVITY_LOCAL_KEY);
+          if (!raw) return null;
+          return normaliseActivityFilterPreferences(JSON.parse(raw) as ActivityFilterPreferences);
+        } catch {
+          return null;
+        }
+      };
+
+      if (userId) {
+        try {
+          const remotePrefs = await loadUserPreference<ActivityFilterPreferences>(supabase, userId, 'activity_filters');
+          if (remotePrefs) {
+            resolvedPrefs = normaliseActivityFilterPreferences(remotePrefs);
+          }
+        } catch {
+          // fall through to local preferences
+        }
+      }
+
+      if (resolvedPrefs === DEFAULT_ACTIVITY_FILTER_PREFERENCES) {
+        const localPrefs = await loadLocalPreferences();
+        if (localPrefs) {
+          resolvedPrefs = localPrefs;
+        }
+      }
+      setActivityPreferences(resolvedPrefs);
 
       let latNow: number | null = null;
       let lngNow: number | null = null;
-      try {
-        const perm = await Location.getForegroundPermissionsAsync();
-        if (perm.status !== 'granted') {
-          await Location.requestForegroundPermissionsAsync();
-        }
-        const last = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
-        if (last?.coords) {
-          latNow = Number(last.coords.latitude.toFixed(6));
-          lngNow = Number(last.coords.longitude.toFixed(6));
-        }
-      } catch {}
+      let profileLocationLabel: string | null = null;
+
+      if (userId) {
+        try {
+          const { data } = await supabase
+            .from('profiles')
+            .select('location,last_lat,last_lng')
+            .eq('id', userId)
+            .maybeSingle<ProfileLocationRow>();
+
+          const storedLat = typeof data?.last_lat === 'number' && Number.isFinite(data.last_lat)
+            ? Number(data.last_lat.toFixed(6))
+            : null;
+          const storedLng = typeof data?.last_lng === 'number' && Number.isFinite(data.last_lng)
+            ? Number(data.last_lng.toFixed(6))
+            : null;
+          profileLocationLabel = typeof data?.location === 'string' && data.location.trim()
+            ? data.location.trim()
+            : null;
+
+          if (profileLocationLabel) {
+            const geocoded = await geocodeLabelToCoords(profileLocationLabel);
+            if (geocoded) {
+              latNow = Number(geocoded.lat.toFixed(6));
+              lngNow = Number(geocoded.lng.toFixed(6));
+              const shouldSyncCoords =
+                storedLat == null ||
+                storedLng == null ||
+                Math.abs(storedLat - latNow) > 0.001 ||
+                Math.abs(storedLng - lngNow) > 0.001;
+              if (shouldSyncCoords) {
+                void (async () => {
+                  try {
+                    await supabase
+                      .from('profiles')
+                      .update({ last_lat: latNow, last_lng: lngNow })
+                      .eq('id', userId);
+                  } catch {
+                    // Best-effort sync only.
+                  }
+                })();
+              }
+            }
+          }
+
+          if ((latNow == null || lngNow == null) && storedLat != null && storedLng != null) {
+            latNow = storedLat;
+            lngNow = storedLng;
+          }
+        } catch {}
+      }
+
+      if (latNow == null || lngNow == null) {
+        try {
+          const perm = await Location.getForegroundPermissionsAsync();
+          if (perm.status !== 'granted') {
+            await Location.requestForegroundPermissionsAsync();
+          }
+          const last = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
+          if (last?.coords) {
+            latNow = Number(last.coords.latitude.toFixed(6));
+            lngNow = Number(last.coords.longitude.toFixed(6));
+          }
+        } catch {}
+      }
       if (latNow == null || lngNow == null) {
         try {
           const cached = await getLastKnownBackgroundLocation();
@@ -367,38 +767,70 @@ function HomeScreen() {
           }
         } catch {}
       }
-      if (latNow == null || lngNow == null) {
-        try {
-          if (userId) {
-            const { data } = await supabase
-              .from('profiles')
-              .select('last_lat,last_lng')
-              .eq('id', userId)
-              .maybeSingle<ProfileLocationRow>();
-            const la = data?.last_lat ?? null;
-            const ln = data?.last_lng ?? null;
-            if (la != null && ln != null) {
-              latNow = la;
-              lngNow = ln;
-            }
-          }
-        } catch {}
+
+      if (__DEV__ && profileLocationLabel && latNow != null && lngNow != null) {
+        console.info('[Home] Using profile-selected location for discovery', {
+          label: profileLocationLabel,
+          lat: latNow,
+          lng: lngNow,
+        });
       }
 
-      await fetchNearbyActivities(latNow, lngNow);
+      if (latNow == null || lngNow == null) {
+        const cityFallback = defaultCity.center;
+        latNow = cityFallback.lat;
+        lngNow = cityFallback.lng;
+      }
+
+      await fetchNearbyActivities(latNow, lngNow, resolvedPrefs);
       await fetchPlacesViewport(latNow, lngNow);
-  await refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } });
+      await refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } });
       
-      // Get current sessions with future start times
+      // Get current sessions with future start times, constrained to the chosen location radius.
       const now = new Date().toISOString();
       const { data, error } = await supabase
         .from("sessions")
-        .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name)")
-        .gte("starts_at", now) // Only future sessions
+        .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name,lat,lng)")
+        .gte("starts_at", now)
         .order("starts_at", { ascending: true })
-        .limit(20);
+        .limit(120);
       if (error) setError(error.message);
-      else setRows((data ?? []) as ActivityRow[]);
+      else {
+        const strictRows = ((data ?? []) as ActivityRow[]).filter((row) => {
+          const activityName = row.activities?.name;
+          if (!isHighQualityLabel(activityName)) return false;
+          const venueName = row.venues?.name;
+          if (typeof venueName === 'string' && venueName.trim() && !isHighQualityLabel(venueName)) {
+            return false;
+          }
+
+          const venueRecord = row.venues as unknown as { lat?: unknown; lng?: unknown } | null;
+          const venueLatRaw = venueRecord?.lat;
+          const venueLngRaw = venueRecord?.lng;
+          const venueLat =
+            typeof venueLatRaw === 'number'
+              ? venueLatRaw
+              : typeof venueLatRaw === 'string' && venueLatRaw.trim()
+                ? Number(venueLatRaw)
+                : NaN;
+          const venueLng =
+            typeof venueLngRaw === 'number'
+              ? venueLngRaw
+              : typeof venueLngRaw === 'string' && venueLngRaw.trim()
+                ? Number(venueLngRaw)
+                : NaN;
+
+          if (!Number.isFinite(venueLat) || !Number.isFinite(venueLng)) {
+            return false;
+          }
+          const distance = haversineMeters(latNow!, lngNow!, venueLat, venueLng);
+          if (!Number.isFinite(distance) || distance > HOME_SESSION_RADIUS_METERS) {
+            return false;
+          }
+          return true;
+        });
+        setRows(strictRows.slice(0, 20));
+      }
     } catch (err) {
       console.error('Home screen load error:', err);
       setError('Failed to load activities. Please check your internet connection and try again.');
@@ -429,39 +861,65 @@ function HomeScreen() {
           (loc: Location.LocationObject) => {
             const la = Number(loc.coords.latitude.toFixed(6));
             const ln = Number(loc.coords.longitude.toFixed(6));
-            fetchNearbyActivities(la, ln);
+            fetchNearbyActivities(la, ln, activityPreferences);
             fetchPlacesViewport(la, ln);
           }
         );
       } catch {}
     })();
     return () => { sub?.remove(); };
-  }, [fetchNearbyActivities, fetchPlacesViewport]);
+  }, [activityPreferences, fetchNearbyActivities, fetchPlacesViewport]);
 
-  // Derive search suggestions from real nearby activity names.
-  const searchSuggestions = activities ? activities
-    .filter(activity =>
-      activity.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
-      activity.name.toLowerCase() !== searchQuery.toLowerCase()
-    )
-    .slice(0, 3)
-    .map(activity => activity.name) : [];
+  const rankedSearchActivities = useMemo(() => {
+    const source = activities ?? [];
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) return source;
 
-  useEffect(() => {
-    if (activities) {
-      const filtered = activities.filter(activity =>
-        activity.name.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setFilteredActivities(filtered);
-    }
+    return source
+      .map((activity) => ({
+        activity,
+        score: scoreActivitySearchMatch(
+          `${activity.name} ${(activity.searchText ?? '').trim()}`,
+          trimmedQuery,
+        ),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.activity.count !== a.activity.count) return b.activity.count - a.activity.count;
+        return a.activity.name.localeCompare(b.activity.name);
+      })
+      .map((entry) => entry.activity);
   }, [activities, searchQuery]);
+
+  // Derive search suggestions from ranked nearby activity names.
+  const searchSuggestions = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return (activities ?? []).slice(0, 3).map((activity) => activity.name);
+    }
+    return rankedSearchActivities
+      .filter((activity) => activity.name.trim().toLowerCase() !== searchQuery.trim().toLowerCase())
+      .slice(0, 3)
+      .map((activity) => activity.name);
+  }, [activities, rankedSearchActivities, searchQuery]);
+
+  const filteredActivities = useMemo(
+    () => (searchQuery.trim() ? rankedSearchActivities : activities ?? []),
+    [activities, rankedSearchActivities, searchQuery],
+  );
+
+  const activitiesToDisplay = useMemo(() => {
+    const source = searchQuery.trim() ? filteredActivities : (activities ?? []);
+    return source.slice(0, MAX_HOME_ACTIVITY_CARDS);
+  }, [activities, filteredActivities, searchQuery]);
+
+  const hiddenActivitiesCount = useMemo(() => {
+    const total = (searchQuery.trim() ? filteredActivities : (activities ?? [])).length;
+    return Math.max(0, total - activitiesToDisplay.length);
+  }, [activities, activitiesToDisplay.length, filteredActivities, searchQuery]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
-  };
-
-  const handleFilter = () => {
-    router.push('/filter');
   };
 
   const handleTogglePlaceSave = useCallback(async (place: PlaceSummary) => {
@@ -518,6 +976,36 @@ function HomeScreen() {
     },
     [activityEventCounts]
   );
+
+  const activityCardModels = useMemo<ActivityCardModel[]>(() => {
+    return activitiesToDisplay.map((activity) => {
+      const sessionCount = getActivitySessionCount(activity);
+      const derivedCount = Math.max(sessionCount, activity.count ?? 0);
+      const visual = activityVisuals[activity.name] || defaultVisual;
+      const payload = buildActivitySavePayload(activity, rows, {
+        source: 'mobile_home_activity_card',
+      });
+      const payloadId = payload?.id ?? null;
+      const saved = payloadId ? isSaved(payloadId) : false;
+      const saving = payloadId ? pendingIds.has(payloadId) : false;
+      return {
+        activity,
+        visual,
+        derivedCount,
+        payload,
+        saved,
+        saving,
+      };
+    });
+  }, [activitiesToDisplay, getActivitySessionCount, isSaved, pendingIds, rows]);
+
+  const activityCardRows = useMemo(() => {
+    const rowsGrouped: ActivityCardModel[][] = [];
+    for (let i = 0; i < activityCardModels.length; i += 2) {
+      rowsGrouped.push(activityCardModels.slice(i, i + 2));
+    }
+    return rowsGrouped;
+  }, [activityCardModels]);
 
   const standaloneSessions = useMemo(() => {
     if (rows.length === 0) return rows;
@@ -690,25 +1178,46 @@ function HomeScreen() {
             elevation: 4,
           }}>
             <SearchBar
+              value={searchQuery}
               onSearch={handleSearch}
-              onFilter={handleFilter}
+              filterHref="/filter"
               suggestedSearches={searchSuggestions}
               placeholder="Search for activities..."
             />
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
               <TouchableOpacity
                 onPress={() => router.push('/people-filter')}
-                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(100,116,255,0.08)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(100,116,255,0.08)',
+                  borderRadius: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(99,102,241,0.2)',
+                }}
               >
                 <Ionicons name="people" size={16} color="#6366F1" />
-                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#3730A3' }}>Find People</Text>
+                <Text style={{ marginLeft: 8, fontWeight: '700', color: '#3730A3' }}>Find People</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => router.push('/add-event')}
-                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 }}
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#10B981',
+                  borderRadius: 12,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                }}
               >
                 <Ionicons name="add" size={16} color="#FFFFFF" />
-                <Text style={{ marginLeft: 8, fontWeight: '600', color: '#FFFFFF' }}>Create Event</Text>
+                <Text style={{ marginLeft: 8, fontWeight: '700', color: '#FFFFFF' }}>Create event</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -735,7 +1244,7 @@ function HomeScreen() {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, columnGap: 14 }}
+                contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, paddingRight: 6 }}
               >
                 {topPlaces.map((place) => {
                   const appearance = resolveCategoryAppearance(place);
@@ -754,7 +1263,8 @@ function HomeScreen() {
                       key={place.id}
                       onPress={() => router.push('/(tabs)/map')}
                       style={{
-                        width: 240,
+                        width: 252,
+                        marginRight: 14,
                         borderRadius: 18,
                         padding: 16,
                         backgroundColor: '#0F172A',
@@ -763,16 +1273,10 @@ function HomeScreen() {
                         shadowRadius: 10,
                         shadowOffset: { width: 0, height: 6 },
                         elevation: 4,
+                        minHeight: 148,
                       }}
                     >
-                      <SaveBadge
-                        saved={placeSaved}
-                        saving={placeSaving}
-                        variant="dark"
-                        style={{ position: 'absolute', top: 12, right: 12 }}
-                        onPress={() => handleTogglePlaceSave(place)}
-                      />
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                         <View
                           style={{
                             width: 52,
@@ -787,20 +1291,26 @@ function HomeScreen() {
                         >
                           <Text style={{ fontSize: 24 }}>{appearance.emoji}</Text>
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text numberOfLines={1} style={{ color: '#F8FAFC', fontSize: 16, fontWeight: '700' }}>
-                            {place.name}
+                        <SaveBadge
+                          saved={placeSaved}
+                          saving={placeSaving}
+                          variant="dark"
+                          onPress={() => handleTogglePlaceSave(place)}
+                        />
+                      </View>
+                      <View style={{ marginTop: 12 }}>
+                        <Text numberOfLines={1} style={{ color: '#F8FAFC', fontSize: 16, fontWeight: '700' }}>
+                          {place.name}
+                        </Text>
+                        <Text style={{ color: '#E2E8F0', fontSize: 13, marginTop: 4 }}>{categoryLabel}</Text>
+                        {locality ? (
+                          <Text numberOfLines={1} style={{ color: '#CBD5E1', fontSize: 12, marginTop: 4 }}>
+                            {locality}
                           </Text>
-                          <Text style={{ color: '#E2E8F0', fontSize: 13, marginTop: 4 }}>{categoryLabel}</Text>
-                          {locality ? (
-                            <Text numberOfLines={1} style={{ color: '#CBD5E1', fontSize: 12, marginTop: 4 }}>
-                              {locality}
-                            </Text>
-                          ) : null}
-                          <Text style={{ color: '#CBD5E1', fontSize: 11, marginTop: locality ? 4 : 6 }}>
-                            {updatedLabel}
-                          </Text>
-                        </View>
+                        ) : null}
+                        <Text style={{ color: '#CBD5E1', fontSize: 11, marginTop: locality ? 4 : 6 }}>
+                          {updatedLabel}
+                        </Text>
                       </View>
                     </Pressable>
                   );
@@ -893,105 +1403,121 @@ function HomeScreen() {
                   fontWeight: '500',
                 }}>
                   {searchQuery 
-                    ? `${filteredActivities.length} activities found`
+                    ? `${(searchQuery.trim() ? filteredActivities : activities ?? []).length} activities found`
                     : `${activities?.length ?? 0} activities in your area`
                   }
                 </Text>
+                {hiddenActivitiesCount > 0 ? (
+                  <Text style={{ marginTop: 6, color: '#64748B', fontSize: 12 }}>
+                    Showing top {activitiesToDisplay.length} results for faster browsing.
+                  </Text>
+                ) : null}
               </View>
               
               {/* Activities Grid */}
               <View style={{
-                flexDirection: 'row',
-                flexWrap: 'wrap',
-                justifyContent: 'space-between',
-                gap: 16,
+                gap: 14,
               }}>
-                {(searchQuery ? filteredActivities : (activities ?? [])).map((activity) => {
-                  const sessionCount = getActivitySessionCount(activity);
-                  const derivedCount = Math.max(sessionCount, activity.count ?? 0);
-                  const visual = activityVisuals[activity.name] || defaultVisual;
-                  const activityPayload = buildActivitySavePayload(activity, rows, {
-                    source: 'mobile_home_activity_card',
-                  });
-                  const activityPayloadId = activityPayload?.id ?? null;
-                  const saved = activityPayloadId ? isSaved(activityPayloadId) : false;
-                  const saving = activityPayloadId ? pendingIds.has(activityPayloadId) : false;
-                  return (
-                    <Link
-                      key={activity.id}
-                      href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
-                      asChild
-                    >
-                      <Pressable style={{
-                        width: (screenWidth - 56) / 2, // Account for padding and gap
-                        backgroundColor: '#FFFFFF',
-                        borderRadius: 20,
-                        padding: 20,
-                        alignItems: 'center',
-                        shadowColor: '#000',
-                        shadowOpacity: 0.08,
-                        shadowRadius: 12,
-                        shadowOffset: { width: 0, height: 4 },
-                        elevation: 4,
-                        marginBottom: 16,
-                      }}>
-                        <SaveBadge
-                          saved={saved}
-                          saving={saving}
-                          disabled={!activityPayloadId}
-                          variant="light"
-                          style={{ position: 'absolute', top: 12, right: 12 }}
-                          onPress={() => {
-                            if (activityPayload) {
-                              handleToggleSavePayload(activityPayload);
-                            }
+                {activityCardRows.map((row, rowIndex) => (
+                  <View
+                    key={`activity-row-${rowIndex}`}
+                    style={{ flexDirection: 'row', gap: 14 }}
+                  >
+                    {row.map(({ activity, visual, derivedCount, payload, saved, saving }) => (
+                      <Link
+                        key={activity.id}
+                        href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
+                        asChild
+                      >
+                        <Pressable
+                          style={{
+                            flex: 1,
+                            minHeight: 228,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 20,
+                            padding: 16,
+                            shadowColor: '#000',
+                            shadowOpacity: 0.08,
+                            shadowRadius: 12,
+                            shadowOffset: { width: 0, height: 4 },
+                            elevation: 4,
                           }}
-                        />
-                        {/* Activity Icon Container */}
-                        <View style={{
-                          width: 84,
-                          height: 84,
-                          borderRadius: 42,
-                          backgroundColor: theme.colors.brandYellow,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          marginBottom: 16,
-                          ...theme.shadow.card,
-                        }}>
-                          <ActivityIcon name={activity.name} size={32} color="#111827" />
-                        </View>
-                        
-                        {/* Activity Info */}
-                        <Text numberOfLines={2} style={{
-                          fontSize: 16,
-                          fontWeight: '700',
-                          color: '#1F2937',
-                          textAlign: 'center',
-                          lineHeight: 22,
-                          marginBottom: 8,
-                        }}>
-                          {activity.name}
-                        </Text>
-                        
-                        {/* Activity Count */}
-                        <View style={{
-                          backgroundColor: visual.color + '15',
-                          borderRadius: 12,
-                          paddingHorizontal: 12,
-                          paddingVertical: 6,
-                        }}>
-                          <Text style={{
-                            fontSize: 12,
-                            fontWeight: '600',
-                            color: visual.color,
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <View
+                              style={{
+                                backgroundColor: '#F8FAFC',
+                                borderRadius: 999,
+                                paddingHorizontal: 10,
+                                paddingVertical: 4,
+                              }}
+                            >
+                              <Text style={{ color: '#475569', fontSize: 11, fontWeight: '700' }}>Nearby</Text>
+                            </View>
+                            <SaveBadge
+                              saved={saved}
+                              saving={saving}
+                              disabled={!payload?.id}
+                              variant="light"
+                              onPress={() => {
+                                if (payload) {
+                                  handleToggleSavePayload(payload);
+                                }
+                              }}
+                            />
+                          </View>
+
+                          <View style={{ alignItems: 'center', marginTop: 12 }}>
+                            <View style={{
+                              width: 78,
+                              height: 78,
+                              borderRadius: 39,
+                              backgroundColor: theme.colors.brandYellow,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              ...theme.shadow.card,
+                            }}>
+                              <ActivityIcon name={activity.name} size={30} color="#111827" />
+                            </View>
+                          </View>
+
+                          <Text numberOfLines={2} style={{
+                            fontSize: 16,
+                            fontWeight: '700',
+                            color: '#1F2937',
+                            textAlign: 'center',
+                            lineHeight: 21,
+                            marginTop: 12,
+                            minHeight: 42,
                           }}>
-                            Activity: {derivedCount}
+                            {activity.name}
                           </Text>
-                        </View>
-                      </Pressable>
-                    </Link>
-                  );
-                })}
+
+                          <View style={{
+                            marginTop: 10,
+                            alignSelf: 'center',
+                            backgroundColor: visual.color + '15',
+                            borderRadius: 12,
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                          }}>
+                            <Text style={{
+                              fontSize: 12,
+                              fontWeight: '700',
+                              color: visual.color,
+                            }}>
+                              {derivedCount} session{derivedCount === 1 ? '' : 's'} nearby
+                            </Text>
+                          </View>
+                          <Text style={{ marginTop: 8, textAlign: 'center', color: '#64748B', fontSize: 12 }}>
+                            Tap to view places and sessions
+                          </Text>
+                        </Pressable>
+                      </Link>
+                    ))}
+                    {row.length === 1 ? <View style={{ flex: 1 }} /> : null}
+                  </View>
+                ))}
               </View>
             </View>
           )}

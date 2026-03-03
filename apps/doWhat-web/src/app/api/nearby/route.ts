@@ -47,8 +47,21 @@ export async function GET(request: Request) {
           timeWindow: normalizeTimeWindow(q.timeWindow),
         },
       },
-      { bypassCache: Boolean(q.refresh), includeDebug: Boolean(q.explain) },
+      {
+        bypassCache: Boolean(q.refresh),
+        includeDebug: Boolean(q.explain || q.debug),
+        debugMetrics: Boolean(q.debug),
+      },
     );
+
+    if (q.debug && process.env.NODE_ENV !== 'production') {
+      console.info('[nearby.debug.summary]', JSON.stringify({
+        providerCounts: result.providerCounts ?? null,
+        cacheHit: result.cache?.hit ?? false,
+        source: result.source ?? null,
+        dropped: result.debug?.dropped ?? null,
+      }));
+    }
 
     void recordDiscoveryExposure({
       requestId: request.headers?.get?.('x-request-id') ?? null,
@@ -78,12 +91,13 @@ export async function GET(request: Request) {
       filterSupport: result.filterSupport,
       facets: result.facets,
       sourceBreakdown: result.sourceBreakdown,
+      providerCounts: result.providerCounts,
       cache: result.cache,
       source: result.source,
       degraded: result.degraded,
       fallbackError: result.fallbackError,
       fallbackSource: result.fallbackSource,
-      debug: q.explain ? result.debug : undefined,
+      debug: q.explain || q.debug ? result.debug : undefined,
     });
   } catch (error: unknown) {
     const message = getErrorMessage(error);

@@ -44,6 +44,13 @@ const summarizeDebug = (debug?: DiscoveryDebug) => {
   };
 };
 
+const dedupeDropRate = (debug?: DiscoveryDebug): number | null => {
+  if (!debug) return null;
+  const input = debug.candidateCounts.afterConfidenceGate;
+  if (!input || input <= 0) return 0;
+  return Number((Math.max(0, debug.dropped.deduped) / input).toFixed(4));
+};
+
 let warnedExposureInsertFailure = false;
 let exposureQueue: Array<{
   requestId: string | null;
@@ -126,6 +133,9 @@ export const recordDiscoveryExposure = async (input: RecordDiscoveryExposureInpu
       source: input.result.source ?? null,
       degraded: Boolean(input.result.degraded),
       cache: input.result.cache ?? null,
+      providerCounts: input.result.providerCounts ?? null,
+      cacheHitRate: input.result.cache?.hit ? 1 : 0,
+      dedupeDropRate: dedupeDropRate(input.result.debug),
       topItems,
       debug: summarizeDebug(input.result.debug),
     },

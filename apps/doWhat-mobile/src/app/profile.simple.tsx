@@ -46,6 +46,7 @@ type ProfileRow = {
   personality_traits?: string[] | null;
   reliability_pledge_ack_at?: string | null;
   reliability_pledge_version?: string | null;
+  core_values?: string[] | null;
   primary_sport?: SportType | null;
   play_style?: PlayStyle | null;
 };
@@ -174,6 +175,7 @@ type ProfileCachePayload = {
   updated_at?: string | null;
   reliabilityAckAt?: string | null;
   reliabilityVersion?: string | null;
+  coreValues?: string[];
   primarySport?: SportType | null;
   playStyle?: PlayStyle | null;
   sportSkillLevel?: string | null;
@@ -191,11 +193,13 @@ const MAX_LOCATION_SUGGESTIONS = 5;
 const MAX_PROFILE_TRAITS = 5;
 const ONBOARDING_STEP_LABELS: Record<OnboardingStep, string> = {
   traits: 'Pick 5 base traits',
+  values: 'Add 3 core values',
   sport: 'Set your sport & skill',
   pledge: 'Confirm the reliability pledge',
 };
 const ONBOARDING_STEP_ROUTES: Record<OnboardingStep, string> = {
   traits: '/onboarding-traits',
+  values: '/onboarding/core-values',
   sport: '/onboarding/sports',
   pledge: '/onboarding/reliability-pledge',
 };
@@ -670,6 +674,8 @@ export default function ProfileSimple() {
   const userIdRef = useRef<string | null>(null);
   const [baseTraitCount, setBaseTraitCount] = useState<number | null>(null);
   const [traitCountLoading, setTraitCountLoading] = useState(false);
+  const [coreValues, setCoreValues] = useState<string[]>([]);
+  const [coreValuesHydrated, setCoreValuesHydrated] = useState(false);
   const [pledgeAckAt, setPledgeAckAt] = useState<string | null>(null);
   const [pledgeVersion, setPledgeVersion] = useState<string | null>(null);
   const [pledgeHydrated, setPledgeHydrated] = useState(false);
@@ -709,12 +715,13 @@ export default function ProfileSimple() {
     () =>
       derivePendingOnboardingSteps({
         traitCount: typeof baseTraitCount === 'number' ? baseTraitCount : undefined,
+        coreValues,
         primarySport,
         playStyle,
         skillLevel: sportSkillLevel,
         pledgeAckAt,
       }),
-    [baseTraitCount, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
+    [baseTraitCount, coreValues, playStyle, primarySport, sportSkillLevel, pledgeAckAt],
   );
   const pendingOnboardingSteps = useMemo<OnboardingStep[]>(
     () =>
@@ -725,15 +732,19 @@ export default function ProfileSimple() {
         if (step === 'sport') {
           return sportProfileHydrated;
         }
+        if (step === 'values') {
+          return coreValuesHydrated;
+        }
         if (step === 'pledge') {
           return pledgeHydrated;
         }
         return true;
       }),
-    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileHydrated, pledgeHydrated],
+    [rawPendingOnboardingSteps, traitCountLoading, baseTraitCount, sportProfileHydrated, coreValuesHydrated, pledgeHydrated],
   );
   const pendingOnboardingCount = pendingOnboardingSteps.length;
   const needsTraitOnboarding = pendingOnboardingSteps.includes('traits');
+  const needsCoreValuesOnboarding = pendingOnboardingSteps.includes('values');
   const needsSportOnboarding = pendingOnboardingSteps.includes('sport');
   const needsReliabilityPledge = pendingOnboardingSteps.includes('pledge');
   const traitShortfall = needsTraitOnboarding
@@ -796,6 +807,13 @@ export default function ProfileSimple() {
         setPledgeAckAt(parsed.reliabilityAckAt ?? null);
         setPledgeVersion(parsed.reliabilityVersion ?? null);
         setPledgeHydrated(true);
+      }
+      if ('coreValues' in parsed) {
+        const nextValues = Array.isArray(parsed.coreValues)
+          ? parsed.coreValues.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+        setCoreValues(nextValues);
+        setCoreValuesHydrated(true);
       }
       if ('primarySport' in parsed || 'playStyle' in parsed || 'sportSkillLevel' in parsed) {
         setPrimarySport(isSportType(parsed.primarySport) ? parsed.primarySport : null);
@@ -1012,7 +1030,7 @@ export default function ProfileSimple() {
       includeLocation: boolean,
       includeTraits: boolean,
     ) => {
-      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version', 'primary_sport', 'play_style'];
+      const baseColumns = ['full_name', 'avatar_url', 'reliability_pledge_ack_at', 'reliability_pledge_version', 'core_values', 'primary_sport', 'play_style'];
       if (includeInstagram) baseColumns.push('instagram');
       if (includeWhatsapp) baseColumns.push('whatsapp');
       if (includeBio) baseColumns.push('bio');
@@ -1145,6 +1163,7 @@ export default function ProfileSimple() {
         personalityTraits: nextSupportsTraits ? sanitizeProfileTraitList(row?.personality_traits ?? null) : fallbackTraits,
         reliabilityAckAt: row?.reliability_pledge_ack_at ?? null,
         reliabilityVersion: row?.reliability_pledge_version ?? null,
+        coreValues: Array.isArray(row?.core_values) ? row.core_values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [],
         primarySport: normalizedSport,
         playStyle: normalizedPlayStyle,
         sportSkillLevel: computedSkillLevel,
@@ -1162,6 +1181,8 @@ export default function ProfileSimple() {
       setPledgeAckAt(resolved.reliabilityAckAt ?? null);
       setPledgeVersion(resolved.reliabilityVersion ?? null);
       setPledgeHydrated(true);
+      setCoreValues(resolved.coreValues ?? []);
+      setCoreValuesHydrated(true);
       setPrimarySport(resolved.primarySport ?? null);
       setPlayStyle(resolved.playStyle ?? null);
       setSportSkillLevel(resolved.sportSkillLevel ?? null);
@@ -1183,11 +1204,13 @@ export default function ProfileSimple() {
         if (/profiles\.whatsapp/i.test(message)) setSupportsWhatsapp(false);
         if (/profiles\.location/i.test(message)) setSupportsLocation(false);
         setErr(null);
+        setCoreValuesHydrated(true);
         setSportProfileHydrated(true);
         return null;
       }
       console.warn('[ProfileSimple] fetchProfile failed', error);
       setErr(message);
+      setCoreValuesHydrated(true);
       setSportProfileHydrated(true);
       return null;
     }
@@ -1237,6 +1260,8 @@ export default function ProfileSimple() {
         userIdRef.current = null;
         setSignedIn(false);
         setBaseTraitCount(null);
+        setCoreValues([]);
+        setCoreValuesHydrated(false);
       }
 
       // Listen for future sign-ins (e.g., after a logout/login cycle) and refetch
@@ -2442,6 +2467,60 @@ export default function ProfileSimple() {
               <Text style={{ color:'#065f46', fontSize:13 }}>
                 You accepted version {pledgeVersion ?? 'v1'} on {formattedPledgeAck ?? 'a previous date'}.
               </Text>
+            )}
+          </View>
+        </View>
+      )}
+
+      {coreValuesHydrated && (
+        <View style={{ marginTop:12, marginHorizontal:16, backgroundColor:'#fff', borderRadius:14, borderWidth:1, borderColor:'#e5e7eb' }}>
+          <View style={{ paddingHorizontal:14, paddingTop:12, paddingBottom:8, borderBottomWidth:1, borderBottomColor:'#f3f4f6', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <Text style={{ fontSize:14, fontWeight:'700', color: theme.colors.brandInk }}>Core values</Text>
+          </View>
+          <View style={{ padding:14, gap:8 }}>
+            {needsCoreValuesOnboarding ? (
+              <>
+                <Text style={{ fontSize:14, fontWeight:'700', color:'#0f172a' }}>Add your 3 core values</Text>
+                <Text style={{ color:'#475569', fontSize:13 }}>
+                  Values help people understand your vibe and improve compatibility matching.
+                </Text>
+                <Link
+                  href="/onboarding/core-values"
+                  asChild
+                  onPress={() =>
+                    trackOnboardingEntry({
+                      source: 'profile-progress-banner',
+                      platform: 'mobile',
+                      step: 'values',
+                      steps: pendingOnboardingSteps,
+                      pendingSteps: pendingOnboardingCount,
+                      nextStep: '/onboarding/core-values',
+                    })
+                  }
+                >
+                  <Pressable style={{ alignSelf:'flex-start', borderRadius:999, backgroundColor:'#0891b2', paddingHorizontal:16, paddingVertical:8 }}>
+                    <Text style={{ color:'#fff', fontWeight:'700' }}>Add values</Text>
+                  </Pressable>
+                </Link>
+              </>
+            ) : (
+              <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                {(coreValues.length ? coreValues : ['Values ready']).map((value, index) => (
+                  <View
+                    key={`${value}-${index}`}
+                    style={{
+                      borderRadius:999,
+                      borderWidth:1,
+                      borderColor:'rgba(8,145,178,0.35)',
+                      backgroundColor:'#ecfeff',
+                      paddingHorizontal:12,
+                      paddingVertical:6,
+                    }}
+                  >
+                    <Text style={{ color:'#0f172a', fontWeight:'600', fontSize:12 }}>{value}</Text>
+                  </View>
+                ))}
+              </View>
             )}
           </View>
         </View>

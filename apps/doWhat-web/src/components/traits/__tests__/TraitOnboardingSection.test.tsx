@@ -32,7 +32,7 @@ describe('TraitOnboardingSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /finish onboarding/i }));
 
-    expect(pushMock).toHaveBeenCalledWith('/profile?onboarding=traits');
+    expect(pushMock).toHaveBeenCalledWith('/onboarding/core-values');
   });
 
   it('redirects to a custom path when provided', () => {

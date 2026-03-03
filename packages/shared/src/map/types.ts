@@ -52,9 +52,14 @@ export interface MapActivity {
   time_window?: TimeWindowKey | null;
   upcoming_session_count?: number | null;
   source?: string | null;
+  popularity_score?: number | null;
+  source_confidence?: number | null;
+  refreshed_at?: string | null;
   dedupe_key?: string | null;
   quality_confidence?: number | null;
   place_match_confidence?: number | null;
+  trust_score?: number | null;
+  verification_state?: 'suggested' | 'verified' | 'needs_votes';
   rank_score?: number | null;
   rank_breakdown?: {
     relevance: number;
@@ -90,6 +95,7 @@ export interface MapActivitiesResponse {
     timeWindow: { value: string; count: number }[];
   };
   sourceBreakdown?: Record<string, number>;
+  providerCounts?: Record<string, number>;
   cache?: { key: string; hit: boolean };
   degraded?: boolean;
   fallbackError?: string;

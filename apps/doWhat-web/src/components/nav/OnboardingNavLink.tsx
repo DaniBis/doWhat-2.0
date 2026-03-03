@@ -32,9 +32,9 @@ export function OnboardingNavLink({ className }: OnboardingNavLinkProps) {
         const [profileResult, traitsResult] = await Promise.all([
           supabase
             .from('profiles')
-            .select('primary_sport, play_style, reliability_pledge_ack_at')
+            .select('primary_sport, play_style, reliability_pledge_ack_at, core_values')
             .eq('id', user.id)
-            .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null }>(),
+            .maybeSingle<{ primary_sport: string | null; play_style: string | null; reliability_pledge_ack_at: string | null; core_values?: string[] | null }>(),
           supabase
             .from('user_base_traits')
             .select('id', { count: 'exact', head: true })
@@ -72,6 +72,7 @@ export function OnboardingNavLink({ className }: OnboardingNavLinkProps) {
 
         const pendingSteps = derivePendingOnboardingSteps({
           traitCount,
+          coreValues: profileResult.data?.core_values ?? [],
           primarySport: normalizedSport,
           playStyle: normalizedPlayStyle,
           skillLevel,

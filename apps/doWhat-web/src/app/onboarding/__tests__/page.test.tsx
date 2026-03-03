@@ -62,17 +62,18 @@ type MockSupabaseClient = {
 type BuildClientOptions = {
   user: { id: string } | null;
   traitCount?: number;
+  coreValues?: string[];
   primarySport?: string | null;
   playStyle?: string | null;
   skillLevel?: string | null;
   pledgeAck?: string | null;
 };
 
-const buildMockClient = ({ user, traitCount = 0, primarySport = null, playStyle = null, skillLevel = null, pledgeAck = null }: BuildClientOptions): MockSupabaseClient => {
+const buildMockClient = ({ user, traitCount = 0, coreValues = [], primarySport = null, playStyle = null, skillLevel = null, pledgeAck = null }: BuildClientOptions): MockSupabaseClient => {
   const profileQuery = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
-    maybeSingle: jest.fn().mockResolvedValue({ data: { primary_sport: primarySport, play_style: playStyle, reliability_pledge_ack_at: pledgeAck }, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: { primary_sport: primarySport, play_style: playStyle, reliability_pledge_ack_at: pledgeAck, core_values: coreValues }, error: null }),
   };
   const traitQuery = {
     select: jest.fn().mockReturnValue({
@@ -123,6 +124,7 @@ describe("OnboardingHomePage", () => {
     const mockClient = buildMockClient({
       user: { id: "user-123" },
       traitCount: 5,
+      coreValues: ["reliable", "kind", "honest"],
       primarySport: "padel",
       playStyle: "competitive",
       skillLevel: "3.0 - Consistent drives",
@@ -139,7 +141,7 @@ describe("OnboardingHomePage", () => {
     expect(screen.getByText(/Primary sport: padel/i)).toBeInTheDocument();
     expect(screen.getByText(/Acknowledged /i)).toBeInTheDocument();
 
-    expect(screen.getAllByRole("link", { name: /Review step/i })).toHaveLength(3);
+    expect(screen.getAllByRole("link", { name: /Review step/i })).toHaveLength(4);
   });
 
   it("tracks analytics when a step CTA is clicked", async () => {
@@ -162,8 +164,8 @@ describe("OnboardingHomePage", () => {
       source: "onboarding-card",
       platform: "web",
       step: "traits",
-      steps: ["traits", "sport", "pledge"],
-      pendingSteps: 3,
+      steps: ["traits", "values", "sport", "pledge"],
+      pendingSteps: 4,
       nextStep: "/onboarding/traits",
     });
   });

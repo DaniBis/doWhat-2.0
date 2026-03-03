@@ -3,6 +3,7 @@ import { useLocalSearchParams, Link, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, FlatList, SafeAreaView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LinearGradient } = require('expo-linear-gradient');
 // Map activity names/ids to icons and colors (should match home.tsx)
@@ -106,6 +107,7 @@ const describePrice = (value: number | null): string => {
 };
 
 export default function ActivityPage() {
+	const insets = useSafeAreaInsets();
 	const params = useLocalSearchParams<{ id?: string; name?: string; venue?: string; lat?: string; lng?: string }>();
 	const id = typeof params.id === 'string' ? params.id : '';
 	const initialActivityName = typeof params.name === 'string' && params.name.trim() ? params.name.trim() : null;
@@ -322,14 +324,46 @@ export default function ActivityPage() {
 		}
 	}, [isSaved, savePayload, toggle]);
 
+	const handleGoBack = useCallback(() => {
+		if (typeof router.canGoBack === 'function' && router.canGoBack()) {
+			router.back();
+			return;
+		}
+		router.replace('/(tabs)/home');
+	}, []);
+
 	const headerComponent = (
 		<View style={{ marginBottom: 20 }}>
 			<LinearGradient
 				colors={['#0f172a', '#2563EB']}
 				start={{ x: 0, y: 0 }}
 				end={{ x: 1, y: 1 }}
-				style={{ paddingHorizontal: 20, paddingTop: 28, paddingBottom: 28, borderBottomLeftRadius: 32, borderBottomRightRadius: 32 }}
+				style={{
+					paddingHorizontal: 20,
+					paddingTop: Math.max(insets.top + 8, 28),
+					paddingBottom: 28,
+					borderBottomLeftRadius: 32,
+					borderBottomRightRadius: 32,
+				}}
 			>
+				<View style={{ marginBottom: 16, alignSelf: 'flex-start' }}>
+					<Pressable
+						onPress={handleGoBack}
+						accessibilityRole="button"
+						accessibilityLabel="Go back"
+						style={{
+							flexDirection: 'row',
+							alignItems: 'center',
+							paddingHorizontal: 12,
+							paddingVertical: 8,
+							borderRadius: 999,
+							backgroundColor: 'rgba(255,255,255,0.16)',
+						}}
+					>
+						<Ionicons name="chevron-back" size={18} color="#FFFFFF" />
+						<Text style={{ marginLeft: 4, color: '#FFFFFF', fontSize: 14, fontWeight: '700' }}>Back</Text>
+					</Pressable>
+				</View>
 				<View style={{ alignItems: 'center' }}>
 					<View style={{ alignItems: 'center' }}>
 						<Text style={{ color: '#BFDBFE', fontSize: 13, fontWeight: '600', letterSpacing: 0.4 }}>Activity details</Text>

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { ensureProfileColumns } from '@/lib/db/ensureProfileColumns';
 import type { ProfileUser } from '@/types/profile';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
+import { normalizeCoreValues } from '@dowhat/shared';
 
 type ProfileRow = {
   id?: string | null;
@@ -13,6 +14,7 @@ type ProfileRow = {
   last_lng?: number | null;
   avatar_url?: string | null;
   bio?: string | null;
+  core_values?: string[] | null;
   instagram?: string | null;
   whatsapp?: string | null;
 };
@@ -34,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   });
 
   const baseColumns = ['id', 'full_name', 'avatar_url'] as const;
-  const optionalColumns: string[] = ['bio', 'location', 'last_lat', 'last_lng', 'instagram', 'whatsapp'];
+  const optionalColumns: string[] = ['bio', 'location', 'last_lat', 'last_lng', 'core_values', 'instagram', 'whatsapp'];
 
   async function fetchProfile(columns: readonly string[]): Promise<{ data: ProfileRow | null; error: PostgrestError | null }> {
     const { data, error } = await supabase
@@ -92,6 +94,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     locationLng: typeof profileRow?.last_lng === 'number' ? profileRow.last_lng : undefined,
     avatarUrl: profileRow?.avatar_url || auth.user.user_metadata?.avatar_url || undefined,
     bio: typeof profileRow?.bio === 'string' ? profileRow.bio : undefined,
+    coreValues: normalizeCoreValues(profileRow?.core_values ?? []),
     socials: profileRow ? {
       instagram: typeof profileRow.instagram === 'string' ? profileRow.instagram : undefined,
       whatsapp: typeof profileRow.whatsapp === 'string' ? profileRow.whatsapp : undefined,

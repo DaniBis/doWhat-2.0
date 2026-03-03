@@ -72,7 +72,7 @@ describe('/api/discovery/activities', () => {
         radiusMeters: 1500,
         limit: 1,
       }),
-      { bypassCache: false },
+      { bypassCache: false, includeDebug: false, debugMetrics: false },
     );
 
     expect(payload.items).toHaveLength(1);
@@ -133,7 +133,7 @@ describe('/api/discovery/activities', () => {
         radiusMeters: 2000,
         limit: 5,
       }),
-      { bypassCache: false },
+      { bypassCache: false, includeDebug: false, debugMetrics: false },
     );
 
     expect(payload.items).toHaveLength(1);
@@ -141,6 +141,68 @@ describe('/api/discovery/activities', () => {
     expect(payload.filterSupport).toMatchObject(filterSupport);
     expect(payload.facets.activityTypes).toEqual(facets.activityTypes);
     expect(payload.sourceBreakdown).toEqual({ supabase: 1 });
+  });
+
+  it('filters invalid place-backed rows and aligns facets to returned items', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 1, lng: 2 },
+      radiusMeters: 1500,
+      items: [
+        {
+          id: 'valid-1',
+          name: 'Climbing',
+          venue: 'Wall Hub',
+          place_id: 'place-1',
+          place_label: '',
+          lat: 1,
+          lng: 2,
+          activity_types: ['climbing'],
+          tags: ['indoor'],
+          traits: ['focused'],
+          taxonomy_categories: ['fitness_climbing'],
+          price_levels: [2],
+          capacity_key: 'small',
+          time_window: 'evening',
+        },
+        {
+          id: 'invalid-empty-name',
+          name: '   ',
+          venue: 'Should drop',
+          place_id: 'place-2',
+          place_label: 'Should drop',
+          lat: 1,
+          lng: 2,
+          activity_types: ['yoga'],
+          tags: ['calm'],
+          traits: ['patient'],
+          taxonomy_categories: ['wellness_yoga'],
+          price_levels: [1],
+          capacity_key: 'couple',
+          time_window: 'morning',
+        },
+      ],
+      facets: {
+        activityTypes: [{ value: 'climbing', count: 1 }, { value: 'yoga', count: 1 }],
+        tags: [{ value: 'indoor', count: 1 }, { value: 'calm', count: 1 }],
+        traits: [{ value: 'focused', count: 1 }, { value: 'patient', count: 1 }],
+        taxonomyCategories: [{ value: 'fitness_climbing', count: 1 }, { value: 'wellness_yoga', count: 1 }],
+        priceLevels: [{ value: '2', count: 1 }, { value: '1', count: 1 }],
+        capacityKey: [{ value: 'small', count: 1 }, { value: 'couple', count: 1 }],
+        timeWindow: [{ value: 'evening', count: 1 }, { value: 'morning', count: 1 }],
+      },
+    });
+
+    const response = await GET(buildRequest('lat=1&lng=2&radius=1500&limit=5'));
+    const payload = await response.json();
+
+    expect(payload.items).toHaveLength(1);
+    expect(payload.items[0]?.id).toBe('valid-1');
+    expect(payload.items[0]?.place_label).toBe('Wall Hub');
+    expect(payload.count).toBe(1);
+    expect(payload.facets.activityTypes).toEqual([{ value: 'climbing', count: 1 }]);
+    expect(payload.facets.tags).toEqual([{ value: 'indoor', count: 1 }]);
+    expect(payload.facets.traits).toEqual([{ value: 'focused', count: 1 }]);
+    expect(payload.facets.taxonomyCategories).toEqual([{ value: 'fitness_climbing', count: 1 }]);
   });
 
   it('derives bounds and enables cache bypass when refresh is requested', async () => {
@@ -163,7 +225,38 @@ describe('/api/discovery/activities', () => {
           ne: { lat: 13.8, lng: 100.6 },
         },
       }),
-      { bypassCache: true },
+      { bypassCache: true, includeDebug: false, debugMetrics: false },
+    );
+  });
+
+  it('enables debug instrumentation when debug=1 is requested', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 13.75, lng: 100.55 },
+      radiusMeters: 2500,
+      items: [],
+      debug: {
+        cacheHit: false,
+        candidateCounts: {
+          afterRpc: 0,
+          afterFallbackMerge: 0,
+          afterMetadataFilter: 0,
+          afterPlaceGate: 0,
+          afterConfidenceGate: 0,
+          afterDedupe: 0,
+          final: 0,
+        },
+        dropped: { notPlaceBacked: 0, lowConfidence: 0, genericLabels: 0, deduped: 0 },
+        ranking: { enabled: true, placeMinConfidence: 0.8 },
+      },
+    });
+
+    await GET(buildRequest('lat=13.75&lng=100.55&debug=1'));
+
+    expect(discoverNearbyActivities).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: { lat: 13.75, lng: 100.55 },
+      }),
+      { bypassCache: false, includeDebug: true, debugMetrics: true },
     );
   });
 });
