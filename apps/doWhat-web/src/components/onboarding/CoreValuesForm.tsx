@@ -3,9 +3,10 @@
 import type { Route } from 'next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CORE_VALUES_REQUIRED_COUNT, normalizeCoreValues } from '@dowhat/shared';
+import { CORE_VALUES_REQUIRED_COUNT, loadUserPreference, normalizeCoreValues, saveUserPreference } from '@dowhat/shared';
 
 import { supabase } from '@/lib/supabase/browser';
+import { isMissingColumnError } from '@/lib/supabase/errors';
 
 type CoreValuesFormProps = {
   redirectTo: string;
@@ -13,10 +14,42 @@ type CoreValuesFormProps = {
 };
 
 const DEFAULT_VALUES = ['', '', ''];
+const CORE_VALUES_PREFERENCE_KEY = 'onboarding_core_values' as const;
 
 const normalizeInputValues = (values: string[]): string[] => {
   const normalized = normalizeCoreValues(values);
   return Array.from({ length: CORE_VALUES_REQUIRED_COUNT }, (_, index) => normalized[index] ?? '');
+};
+
+type ErrorLike = {
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+const errorMessage = (error: unknown): string => {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (error && typeof error === 'object') {
+    const payload = error as ErrorLike;
+    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
+    if (typeof payload.details === 'string' && payload.details.trim()) return payload.details.trim();
+    if (typeof payload.hint === 'string' && payload.hint.trim()) return payload.hint.trim();
+  }
+  return '';
+};
+
+const describeSaveError = (error: unknown): string => {
+  const message = errorMessage(error);
+  const normalized = message.toLowerCase();
+  if (!normalized) return 'Unable to save core values.';
+  if (normalized.includes('permission denied') || normalized.includes('row-level security')) {
+    return 'Permission denied while saving core values. Ensure RLS allows users to update their own profile row.';
+  }
+  if (normalized.includes('column') && normalized.includes('core_values')) {
+    return 'Profiles table is missing `core_values`. Run migration 037_profile_core_values.sql and try again.';
+  }
+  return message;
 };
 
 export function CoreValuesForm({ redirectTo, className }: CoreValuesFormProps) {
@@ -44,7 +77,17 @@ export function CoreValuesForm({ redirectTo, className }: CoreValuesFormProps) {
           .eq('id', user.id)
           .maybeSingle<{ core_values?: string[] | null }>();
         if (profileError && profileError.code !== 'PGRST116') {
-          throw profileError;
+          if (!isMissingColumnError(profileError, 'core_values')) {
+            throw profileError;
+          }
+          const fallback = await loadUserPreference<string[]>(
+            supabase,
+            user.id,
+            CORE_VALUES_PREFERENCE_KEY,
+          );
+          if (!active) return;
+          setValues(normalizeInputValues(fallback ?? []));
+          return;
         }
         if (!active) return;
         setValues(normalizeInputValues(profile?.core_values ?? []));
@@ -88,15 +131,38 @@ export function CoreValuesForm({ redirectTo, className }: CoreValuesFormProps) {
         return;
       }
 
-      const payload = {
+      const basePayload = {
         id: user.id,
         user_id: user.id,
         core_values: nextValues,
         updated_at: new Date().toISOString(),
       };
-      const { error: updateError } = await supabase
+      const { error: initialError } = await supabase
         .from('profiles')
-        .upsert(payload, { onConflict: 'id' });
+        .upsert(basePayload, { onConflict: 'id' });
+
+      let updateError = initialError;
+      if (updateError && isMissingColumnError(updateError, 'user_id')) {
+        const fallbackPayload = {
+          id: user.id,
+          core_values: nextValues,
+          updated_at: basePayload.updated_at,
+        };
+        const retry = await supabase.from('profiles').upsert(fallbackPayload, { onConflict: 'id' });
+        updateError = retry.error ?? null;
+      }
+      if (updateError && isMissingColumnError(updateError, 'core_values')) {
+        await saveUserPreference(
+          supabase,
+          user.id,
+          CORE_VALUES_PREFERENCE_KEY,
+          nextValues,
+        );
+        setSuccess('Core values saved. Continuing…');
+        router.push(redirectTo as Route);
+        return;
+      }
+
       if (updateError) {
         throw updateError;
       }
@@ -104,7 +170,7 @@ export function CoreValuesForm({ redirectTo, className }: CoreValuesFormProps) {
       setSuccess('Core values saved. Continuing…');
       router.push(redirectTo as Route);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unable to save core values.');
+      setError(describeSaveError(submitError));
     } finally {
       setSaving(false);
     }

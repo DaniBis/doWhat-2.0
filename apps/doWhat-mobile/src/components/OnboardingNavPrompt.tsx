@@ -53,6 +53,10 @@ export default function OnboardingNavPrompt() {
   const prioritizedLabel = STEP_LABELS[prioritizedStep];
   const nextHref = STEP_ROUTES[prioritizedStep];
 
+  if (!nextHref) {
+    return null;
+  }
+
   return (
     <View style={styles.card} testID="onboarding-nav-card">
       <View style={styles.tag}>

@@ -1,4 +1,5 @@
 export const ACTIVITY_NAMES = [
+  'padel',
   'chess',
   'board games',
   'bouldering',

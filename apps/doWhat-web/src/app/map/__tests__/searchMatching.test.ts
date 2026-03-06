@@ -69,6 +69,18 @@ describe('matchesActivitySearch', () => {
     expect(match).toBe(true);
   });
 
+  test('matches taxonomy category token when activity types are sparse', () => {
+    const activity = makeActivity({
+      name: 'Boulder Spot',
+      activity_types: [],
+      tags: [],
+      taxonomy_categories: ['climbing'],
+    });
+
+    const match = matchesActivitySearch(activity, buildInput('climb'));
+    expect(match).toBe(true);
+  });
+
   test('keeps non-structured phrase expansion behavior for recall', () => {
     const activity = makeActivity({
       name: 'Bangkok Snooker House',

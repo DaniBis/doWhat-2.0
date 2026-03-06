@@ -1,4 +1,4 @@
-import { fetchOverpassPlaces } from '../places/providers/osm';
+import { __osmProviderTestUtils, fetchOverpassPlaces } from '../places/providers/osm';
 import { fetchFoursquarePlaces } from '../places/providers/foursquare';
 import { fetchGooglePlaces } from '../places/providers/google';
 import type { PlacesQuery } from '../places/types';
@@ -196,7 +196,79 @@ describe('places provider adapters', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[0]).toContain('pagetoken=token123');
+    const secondUrl = new URL(String(fetchMock.mock.calls[1]?.[0] ?? 'https://example.com'));
+    const params = secondUrl.searchParams;
+    expect(params.get('pagetoken')).toBe('token123');
+    expect(params.has('location')).toBe(false);
+    expect(params.has('radius')).toBe(false);
+    expect(params.has('type')).toBe(false);
+    expect(params.has('keyword')).toBe(false);
     expect(places.map((place) => place.providerId)).toEqual(['page-1', 'page-2']);
+  });
+
+  test('osm parser reports dropped rows for unnamed and missing coordinates', () => {
+    const parsed = __osmProviderTestUtils.parseOverpassElements(
+      [
+        {
+          type: 'node',
+          id: 1,
+          lat: 13.75,
+          lon: 100.55,
+          tags: { name: 'Named Park', leisure: 'park' },
+        },
+        {
+          type: 'node',
+          id: 2,
+          lat: 13.76,
+          lon: 100.56,
+          tags: { name: 'Unnamed place', leisure: 'sports_centre' },
+        },
+        {
+          type: 'way',
+          id: 3,
+          tags: { name: 'Court', leisure: 'pitch', sport: 'padel' },
+        },
+      ],
+      {
+        categories: ['activity'],
+        pilotCategories: ['padel'],
+      },
+    );
+
+    expect(parsed.places).toHaveLength(1);
+    expect(parsed.summary.itemsFetched).toBe(3);
+    expect(parsed.summary.itemsReturned).toBe(1);
+    expect(parsed.summary.droppedUnnamed).toBe(1);
+    expect(parsed.summary.droppedMissingCoordinate).toBe(1);
+  });
+
+  test('fetchGooglePlaces deduplicates repeated place ids across strategies', async () => {
+    process.env.GOOGLE_PLACES_API_KEY = 'test-key';
+    const sharedResult = {
+      results: [
+        {
+          place_id: 'shared-place',
+          name: 'Shared Climbing Spot',
+          geometry: { location: { lat: 13.752, lng: 100.541 } },
+          types: ['gym'],
+        },
+      ],
+    };
+
+    const fetchMock = jest
+      .fn<Promise<Response>, Parameters<typeof fetch>>()
+      .mockResolvedValue(buildMockResponse(sharedResult));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const places = await fetchGooglePlaces({
+      ...query,
+      categories: ['fitness'],
+      limit: 25,
+    });
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(places).toHaveLength(1);
+    expect(places[0]?.providerId).toBe('shared-place');
   });
 
   test('fetchGooglePlaces runs text search fallback for climbing queries', async () => {

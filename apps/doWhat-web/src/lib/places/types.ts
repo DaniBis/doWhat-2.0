@@ -11,6 +11,8 @@ export interface PlacesQuery {
   limit?: number;
   forceRefresh?: boolean;
   city?: string;
+  persistGoogle?: boolean;
+  explain?: boolean;
 }
 
 export interface ProviderAttribution {
@@ -41,7 +43,7 @@ export interface ProviderPlace {
   confidence?: number;
   attribution: ProviderAttribution;
   raw: Record<string, unknown>;
-  canPersist?: boolean; // Google results remain transient when false
+  canPersist?: boolean; // Google results remain transient when false unless seed pipeline overrides persistence
 }
 
 export interface ExistingPlaceRow {
@@ -185,4 +187,30 @@ export interface PlacesFetchResult {
   places: CanonicalPlace[];
   cacheHit: boolean;
   providerCounts: Record<PlaceProvider, number>;
+  explain?: PlacesFetchExplain;
+}
+
+export interface ProviderFetchExplain {
+  provider: PlaceProvider;
+  pagesFetched: number;
+  nextPageTokensUsed: number;
+  itemsFetched: number;
+  itemsReturned: number;
+  dropped: Record<string, number>;
+}
+
+export interface PlacesFetchExplain {
+  cacheHit: boolean;
+  cacheKey: string;
+  tileKey: string;
+  tilesTouched: string[];
+  providerCounts: Record<PlaceProvider, number>;
+  pagesFetched: number;
+  nextPageTokensUsed: number;
+  itemsBeforeDedupe: number;
+  itemsAfterDedupe: number;
+  itemsAfterGates: number;
+  itemsAfterFilters: number;
+  dropReasons: Record<string, number>;
+  providerStats: ProviderFetchExplain[];
 }

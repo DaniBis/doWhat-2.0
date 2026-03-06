@@ -1,12 +1,12 @@
 import { expandCategoryAliases, googleTypeMap, normalizeCategories } from '../categories';
-import type { PlacesQuery, ProviderPlace } from '../types';
+import type { PlacesQuery, ProviderFetchExplain, ProviderPlace } from '../types';
 import { mergeCategories } from '../utils';
 
 const GOOGLE_NEARBY_ENDPOINT = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json';
 const GOOGLE_TEXT_ENDPOINT = 'https://maps.googleapis.com/maps/api/place/textsearch/json';
 const GOOGLE_MAX_RESULTS = 60;
 const GOOGLE_MAX_PAGES = 3;
-const GOOGLE_PAGINATION_DELAY_MS = 1200;
+const GOOGLE_PAGINATION_DELAY_MS = 1700;
 const GOOGLE_DEBUG_ENABLED = process.env.DEBUG_GOOGLE_PLACES === '1';
 
 const CLIMBING_TEXT_QUERIES = [
@@ -142,9 +142,21 @@ const describeStrategy = (strategy: GoogleStrategy) => {
   return `nearby:${type}${strategy.keyword ? `+${strategy.keyword}` : ''}`;
 };
 
-export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPlace[]> => {
+export const fetchGooglePlaces = async (
+  query: PlacesQuery,
+  options?: { explain?: ProviderFetchExplain },
+): Promise<ProviderPlace[]> => {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    if (options?.explain) {
+      options.explain.pagesFetched = 0;
+      options.explain.nextPageTokensUsed = 0;
+      options.explain.itemsFetched = 0;
+      options.explain.itemsReturned = 0;
+      options.explain.dropped = {};
+    }
+    return [];
+  }
 
   const rawCategoryHints = (query.categories ?? [])
     .map((value) => value.trim().toLowerCase())
@@ -172,10 +184,21 @@ export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPla
   const seen = new Set<string>();
   const aggregated: GoogleResult[] = [];
   const strategySummaries: Array<{ label: string; endpoint: string; fetched: number }> = [];
+  const dropped = {
+    closedOrTemporarilyClosed: 0,
+    duplicateProviderId: 0,
+    invalidCoordinates: 0,
+  };
+  let pagesFetched = 0;
+  let nextPageTokensUsed = 0;
+  let itemsFetched = 0;
 
   const appendResults = (items: GoogleResult[]) => {
     items.forEach((item) => {
-      if (!item.place_id || seen.has(item.place_id)) return;
+      if (!item.place_id || seen.has(item.place_id)) {
+        dropped.duplicateProviderId += 1;
+        return;
+      }
       seen.add(item.place_id);
       aggregated.push(item);
     });
@@ -191,6 +214,7 @@ export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPla
       if (aggregated.length >= maxResults) break;
       let params: URLSearchParams;
       if (nextToken) {
+        nextPageTokensUsed += 1;
         params = buildNextPageParams(apiKey, nextToken);
       } else if (strategy.mode === 'text') {
         params = buildTextSearchParams(apiKey, strategy.query, centerLat, centerLng, approxRadiusMeters);
@@ -201,9 +225,14 @@ export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPla
       }
 
       const payload = await fetchPlacesPayload(endpoint, params);
-      const results = (payload.results ?? []).filter(
-        (result) => !result.permanently_closed && result.business_status !== 'CLOSED_TEMPORARILY',
-      );
+      pagesFetched += 1;
+      const rawResults = payload.results ?? [];
+      itemsFetched += rawResults.length;
+      const results = rawResults.filter((result) => {
+        const isClosed = result.permanently_closed || result.business_status === 'CLOSED_TEMPORARILY';
+        if (isClosed) dropped.closedOrTemporarilyClosed += 1;
+        return !isClosed;
+      });
       fetchedForStrategy += results.length;
       appendResults(results);
 
@@ -232,7 +261,7 @@ export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPla
     });
   }
 
-  return limited
+  const mapped = limited
     .map<ProviderPlace>((result) => {
       const normalizedCategories = mergeCategories(
         categories,
@@ -260,5 +289,22 @@ export const fetchGooglePlaces = async (query: PlacesQuery): Promise<ProviderPla
         canPersist: false,
       };
     })
-    .filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng));
+    .filter((place) => {
+      const valid = Number.isFinite(place.lat) && Number.isFinite(place.lng);
+      if (!valid) dropped.invalidCoordinates += 1;
+      return valid;
+    });
+
+  if (options?.explain) {
+    options.explain.pagesFetched = pagesFetched;
+    options.explain.nextPageTokensUsed = nextPageTokensUsed;
+    options.explain.itemsFetched = itemsFetched;
+    options.explain.itemsReturned = mapped.length;
+    options.explain.dropped = {
+      ...(options.explain.dropped ?? {}),
+      ...dropped,
+    };
+  }
+
+  return mapped;
 };

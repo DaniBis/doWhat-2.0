@@ -1,5 +1,88 @@
 # Changes Log
 
+## 2026-03-04
+
+1. **Mobile Map stability fix (iOS): removed recenter tug-of-war causing visible map shaking**
+   - User-reported issue: map UI glitched and visibly shook when tapping/selecting activities/places.
+   - Deep diagnosis in `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`:
+      - map is controlled via `region` state while also running programmatic camera changes (`animateToRegion`),
+      - profile-location auto-centering effect could still reapply center after initialization,
+      - this created a tug-of-war between user interaction (marker tap/cluster zoom/pan) and profile recentering, which manifested as jitter/shake.
+   - Fixes applied:
+      - added interaction/state guards:
+         - `hasUserInteractedRef`
+         - `profileRegionAppliedRef`
+      - city reset now clears both guards before fresh region bootstrap,
+      - initial location bootstrap marks profile region as already applied when profile center is used,
+      - profile recenter effect now exits once user has interacted and the profile region has already been applied,
+      - profile recentering now no-ops when the target region is already effectively equal,
+      - marker and cluster press handlers explicitly mark user interaction to prevent forced recenter override,
+      - region-change handler marks user interaction before syncing query updates.
+   - Result:
+      - map camera no longer fights user-driven selection/zoom movements,
+      - marker selection flow is visually stable on iOS.
+   - Validation:
+      - file diagnostics clean,
+      - workspace `typecheck` passed,
+      - workspace `lint` passed,
+      - iOS Expo Go smoke run successful on simulator (`exp://127.0.0.1:8083`).
+
+2. **Core-values save reliability + web map activity-focus stabilization**
+   - User-reported issues:
+      - onboarding core values showed `Unable to save core values.` on iOS,
+      - web map camera shook/jittered while focusing a selected activity.
+   - Root causes identified:
+      - core-values save path threw non-`Error` Supabase payloads and always included `user_id` in `profiles` upsert; older schema variants without `profiles.user_id` failed and surfaced only the generic fallback error,
+      - web map activity selection had a URL/state race (`selectedActivityId` vs delayed `activity` query-param sync) that could briefly clear and re-apply focus, and programmatic `easeTo` move-end callbacks fed back into parent move sync.
+   - Fixes applied:
+      - `apps/doWhat-mobile/src/app/onboarding/core-values.tsx`
+         - added robust Supabase error-message extraction for non-`Error` payloads,
+         - save now retries `profiles` upsert without `user_id` when the column is missing,
+         - added targeted, actionable save error messages (RLS/core_values migration cases).
+      - `apps/doWhat-web/src/components/onboarding/CoreValuesForm.tsx`
+         - mirrored the same fallback retry and actionable error handling for web onboarding parity.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - added pending activity-param sync guard to defer URL→state reconciliation until router params catch up, preventing transient selection clear/reapply loops.
+      - `apps/doWhat-web/src/components/WebMap.tsx`
+         - added programmatic-move target tracking and ignored matching programmatic `onMoveEnd` callbacks to prevent recenter feedback loops.
+      - Added tests:
+         - `apps/doWhat-mobile/src/app/__tests__/onboarding-core-values.test.tsx`
+         - `apps/doWhat-web/src/components/onboarding/__tests__/CoreValuesForm.test.tsx`
+         - `apps/doWhat-web/src/app/map/__tests__/focusedActivitySync.test.ts`
+   - Validation:
+      - `pnpm --filter doWhat-mobile test -- onboarding-core-values` passed.
+      - `pnpm --filter doWhat-mobile typecheck` passed.
+      - `pnpm --filter dowhat-web test -- CoreValuesForm focusedActivitySync page.smoke` passed.
+      - `pnpm --filter dowhat-web test -- map` passed.
+      - `pnpm --filter dowhat-web typecheck` passed.
+
+3. **Follow-up fix: core-values compatibility mode + right-column activity focus jitter removal**
+   - User follow-up:
+      - core-values save still blocked on iOS (`profiles.core_values` missing),
+      - web map still jittered when activity was selected from the right-side list (not marker tap).
+   - Root causes:
+      - some environments lack `profiles.core_values`; onboarding save/progress paths were still tightly coupled to that column,
+      - right-column activity click path executed an immediate `setCenter(...)` and then a second focus recenter effect, causing double camera movement.
+   - Fixes applied:
+      - `packages/shared/src/preferences/userPreferences.ts`
+         - added preference key support for `onboarding_core_values`.
+      - `apps/doWhat-mobile/src/app/onboarding/core-values.tsx`
+         - when `profiles.core_values` is missing, load/save core values via `user_preferences` (`onboarding_core_values`) and continue onboarding.
+      - `apps/doWhat-mobile/src/hooks/useOnboardingProgress.ts`
+         - when `profiles.core_values` is missing, fallback to `user_preferences` for core-values state and avoid hard-failing onboarding progress.
+      - `apps/doWhat-web/src/components/onboarding/CoreValuesForm.tsx`
+         - mirrored the same missing-column fallback to `user_preferences` for parity.
+      - `apps/doWhat-web/src/app/map/page.tsx`
+         - removed the extra immediate center update in right-column activity focus flow to avoid double recenter jitter.
+      - Added/expanded tests:
+         - `apps/doWhat-mobile/src/app/__tests__/onboarding-core-values.test.tsx` (save/load fallback coverage),
+         - `apps/doWhat-web/src/components/onboarding/__tests__/CoreValuesForm.test.tsx` (fallback save coverage).
+   - Validation:
+      - `pnpm --filter doWhat-mobile test -- onboarding-core-values OnboardingNavPill OnboardingNavPrompt` passed.
+      - `pnpm --filter doWhat-mobile typecheck` passed.
+      - `pnpm --filter dowhat-web test -- CoreValuesForm map` passed.
+      - `pnpm --filter dowhat-web typecheck` passed.
+
 ## 2026-03-03
 
 1. **iOS Home search false-negative fix: climbing places in Hanoi were present but filtered out**
@@ -2465,3 +2548,467 @@
    - Remaining risks:
       - Final strict matrix currently blocked by local environment/network reachability to Supabase host in health migrations check.
       - Until DB host resolution is restored (or health target env is updated), `verify:dowhat` cannot complete green locally despite code/test guardrails passing.
+
+12. **City seeding foundation: Google persistence toggle in places aggregation**
+   - Timestamp: 2026-03-04 16:07:26 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/places/types.ts`
+      - `apps/doWhat-web/src/lib/places/aggregator.ts`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Why:
+      - City seeding requires provider-backed inventory written to `places`/`place_sources`; Google Places was previously transient-only.
+   - What changed:
+      - Added `persistGoogle?: boolean` on `PlacesQuery`.
+      - Updated `fetchPlacesForViewport` to persist Google results when `persistGoogle` is true by reusing existing upsert paths.
+      - Ensured provider metrics/counting now includes Google results consistently.
+   - How verified:
+      - Static review of aggregation flow confirms Google provider rows now enter `upsertPlaces` + `upsertPlaceSources` when seeding mode enables persistence.
+      - Runtime test execution pending in later verification batch.
+
+13. **Generic city seeding pipeline + CLI/cron wiring (Bangkok/Hanoi/Bucharest + custom city overrides)**
+   - Timestamp: 2026-03-04 16:10:08 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+      - `apps/doWhat-web/src/app/api/cron/places/seed-city/route.ts`
+      - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+      - `scripts/seed-city.mjs`
+      - `scripts/seed-places-bangkok.mjs`
+      - `scripts/seed-places-hanoi.mjs`
+      - `scripts/seed-places-bucharest.mjs`
+      - `package.json`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Why:
+      - Implement city-scale venue seeding with geohash6 tiling and provider-backed persistence, plus a single execution contract `pnpm seed:city --city=...`.
+   - What changed:
+      - Added `seedCityInventory` module under `src/lib/seed` with:
+         - preset city configs for Bangkok/Hanoi/Bucharest,
+         - generic custom-city support via explicit `center` + `bounds`,
+         - geohash tile generation at configurable precision,
+         - per-tile refresh calls through `fetchPlacesForViewport` (`persistGoogle: true`),
+         - metrics writes via `place_request_metrics`,
+         - post-seed inference pass into `venue_activities` using `matchActivitiesForPlaces`.
+      - Added authenticated cron endpoint `/api/cron/places/seed-city`.
+      - Added CLI `scripts/seed-city.mjs` and npm script `seed:city`.
+      - Redirected existing city scripts to the new generic endpoint.
+      - Extended `matchActivitiesForPlaces` input handling for `placeIds` and city wildcard matching to support exact seeded-place inference batches.
+   - How verified:
+      - Static path validation confirms the new CLI -> cron route -> seed module chain is connected and parameterized (`city`, `mode`, `tiles`, `precision`, optional custom bounds).
+      - Runtime/unit verification is pending and performed in the subsequent test phase.
+
+14. **Discovery activity filter contract hardening + deterministic tests + seeding docs**
+   - Timestamp: 2026-03-04 16:13:42 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+      - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+      - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+      - `apps/doWhat-web/src/lib/__tests__/placesProviders.test.ts`
+      - `docs/seeding.md`
+      - `package.json`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Why:
+      - Enforce activity-filter query contract (all in-bounds matches from `venue_activities`) and add deterministic coverage for dedupe/pagination/inference diversity.
+   - What changed:
+      - Added `placeActivityFilter` contract helper for bounds + inference-based activity matching.
+      - Updated discovery place fallback to:
+         - chunk venue-activity inference queries,
+         - page through places when activity filter is active,
+         - enforce inference-backed activity filtering via contract helper.
+      - Exposed activity matching internals for deterministic unit tests and added inference diversity test.
+      - Added provider test that verifies Google dedupes repeated place IDs across strategies.
+      - Added `docs/seeding.md` with exact run steps, expected output, SQL verification queries, and test commands.
+      - Wired `verify:no-hardcoded-discovery` into the root `ci` script.
+   - How verified:
+      - Static verification completed for control flow and filtering guarantees.
+      - Command-based test verification follows in the next execution step.
+
+15. **Verification run for seeding/filter/inference changes**
+   - Timestamp: 2026-03-04 16:14:54 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Why:
+      - Validate the newly added deterministic tests and ensure compile-safety of seeding + discovery contract changes.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/places/__tests__/activityMatching.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm -w run verify:no-hardcoded-discovery`
+   - How verified:
+      - Jest: passed (`3 suites`, `12 tests`).
+      - Typecheck: passed (`tsc --noEmit`).
+      - Hardcoded-discovery guard: passed.
+
+16. **Trust ordering contract test coverage**
+   - Timestamp: 2026-03-04 16:16:36 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Why:
+      - Explicitly validate that discovery ordering prioritizes higher trust scores when candidates are otherwise comparable.
+   - What changed:
+      - Added deterministic ranking test asserting `rankDiscoveryItems` places higher-trust venue ahead of lower-trust venue.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/places/__tests__/activityMatching.test.ts src/lib/__tests__/placesProviders.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+   - How verified:
+      - Jest: passed (`4 suites`, `13 tests`).
+      - Typecheck: passed.
+
+17. **Explain-mode instrumentation baseline across providers and discovery pipeline**
+   - Timestamp: 2026-03-04 21:40:48 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/places/types.ts`
+      - `apps/doWhat-web/src/lib/places/providers/google.ts`
+      - `apps/doWhat-web/src/lib/places/providers/osm.ts`
+      - `apps/doWhat-web/src/lib/places/aggregator.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/app/api/places/route.ts`
+      - `packages/shared/src/map/types.ts`
+      - `packages/shared/src/places/types.ts`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Add auditable explain telemetry for provider ingestion and discovery responses (cache key/hit, tile touches, pagination/token usage, dedupe/filter gates, and drop reasons).
+   - Before:
+      - Debug output only exposed partial candidate/dropped counters and did not include required explain contract fields.
+      - Provider adapters did not emit pagination or drop-reason counters.
+      - `/api/places` had no explain payload surface.
+   - After:
+      - Added typed explain payloads for provider fetches and viewport aggregation.
+      - Google provider now reports `pagesFetched`, `nextPageTokensUsed`, and drop counters; pagination delay aligned to 1.7s.
+      - OSM provider now includes mandatory broad sports selectors and parse/drop counters.
+      - Aggregator returns explain metadata (`providerCounts`, `itemsBefore/After*`, `dropReasons`, cache/tile metadata).
+      - Discovery debug contract now includes required explain fields and propagates seeded-provider explain rollups.
+      - `/api/places` returns explain payload when `explain=1`.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts`
+   - Results:
+      - Passed (`1 suite`, `8 tests`).
+
+18. **Deterministic city+tile+pack seeding for Hanoi/Bangkok/Da Nang**
+   - Timestamp: 2026-03-04 21:45:15 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+      - `apps/doWhat-web/src/app/api/cron/places/seed-city/route.ts`
+      - `scripts/seed-city.mjs`
+      - `scripts/seed-places-hanoi.mjs`
+      - `scripts/seed-places-bangkok.mjs`
+      - `scripts/seed-places-danang.mjs`
+      - `apps/doWhat-web/supabase/migrations/066_place_tiles_discovery_cache.sql`
+      - `package.json`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Implement deterministic, repeatable seeding keyed by `(city, tile, packVersion)` with hotspot-prioritized geohash6 tiling and configurable pack-based provider strategies.
+   - Before:
+      - City seeding used a single category pass per tile, no explicit pack versioning, no Da Nang preset, and no seed cache keys tied to pack signatures.
+   - After:
+      - Rebuilt seeding orchestrator with:
+         - city presets: Hanoi, Bangkok, Da Nang (plus Bucharest compatibility), each with wide bbox + hotspot bboxes,
+         - deterministic tile ordering: hotspot tiles first, then outward by distance,
+         - pack registry (`parks_sports`, `climbing_bouldering`, `padel`, `running`, `yoga`, `chess`),
+         - deterministic `seed:<packVersion>:<city>:<tile>:<pack>:<signatureHash>` cache keys,
+         - per-tile/per-pack explain telemetry and drop-reason rollups,
+         - `place_tiles.discovery_cache` writes for auditability.
+      - Extended cron route/CLI args for `packs`, `maxTiles`, `refresh`, and `packVersion`.
+      - Added Da Nang convenience script and npm script.
+      - Added migration `066_place_tiles_discovery_cache.sql`.
+   - Commands run:
+      - `pnpm --filter dowhat-web typecheck`
+   - Results:
+      - Passed (`tsc --noEmit`).
+
+19. **Inference keyword expansion, contract tests, seed-health guardrails, and discovery playbook**
+   - Timestamp: 2026-03-04 21:55:20 +0700
+   - Files touched:
+      - `packages/shared/src/activities/catalog.ts`
+      - `apps/doWhat-web/supabase/migrations/067_activity_catalog_city_keyword_pack.sql`
+      - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+      - `apps/doWhat-web/src/lib/discovery/trust.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/telemetry.ts`
+      - `apps/doWhat-web/src/lib/venues/constants.ts`
+      - `apps/doWhat-web/src/lib/places/providers/osm.ts`
+      - `packages/shared/src/config/cities/index.ts`
+      - `packages/shared/src/config/cities/hanoi.ts`
+      - `packages/shared/src/config/cities/danang.ts`
+      - `scripts/verify-seed-health.mjs`
+      - `scripts/verify-no-hardcoded-discovery.mjs`
+      - `scripts/verify-discovery-contract.mjs`
+      - `docs/seeding.md`
+      - `docs/discovery_playbook.md`
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/lib/__tests__/placesProviders.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+      - `package.json`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Complete high-coverage discovery guardrails: multilingual activity inference, filter compatibility, trust scoring inputs, explain-contract tests, and CI safety scripts/docs.
+   - Before:
+      - Activity keyword coverage was narrower for VN/TH terms and lacked `padel`/`bouldering` catalog rows.
+      - No seed health verifier existed.
+      - Discovery contract checks did not assert explain-mode drop reasons/pages/token metrics.
+   - After:
+      - Expanded activity catalog (keywords and new slugs `padel`, `bouldering`) and added migration `067`.
+      - Added climbing<->bouldering filter alias compatibility.
+      - Trust score now uses `rating` plus `rating_count`.
+      - Added city configs for Hanoi and Da Nang in shared city registry.
+      - Added `verify:seed-health` script and wired guardrail checks.
+      - Added docs: updated `docs/seeding.md` and new `docs/discovery_playbook.md`.
+      - Added/updated unit + contract tests for pagination token behavior, OSM parser drops, dedupe merge behavior, multilingual inference, stable trust ordering, explain-mode payload, and multi-city diversity regression.
+      - Added auto-radius expansion for sparse filtered nearby queries with explicit `radiusExpansion` note in payload.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/discovery/__tests__/dedupeMerge.test.ts src/lib/places/__tests__/activityMatching.test.ts src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/trust.test.ts src/app/api/nearby/__tests__/payload.test.ts src/app/api/discovery/activities/__tests__/route.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm -w run verify:no-hardcoded-discovery`
+      - `pnpm -w run verify:discovery-contract`
+   - Results:
+      - Jest passed (`8 suites`, `34 tests`).
+      - Typecheck passed.
+      - `verify:no-hardcoded-discovery` passed.
+      - `verify:discovery-contract` passed.
+
+20. **Map discovery regression fix: climbing contract fallback + inventory-first auto-radius expansion**
+   - Timestamp: 2026-03-05 20:14:27 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `docs/discovery_playbook.md`
+      - `docs/seeding.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Fix user-facing discovery regressions where map loads looked capped around ~200 results and `climb`/`climbing` produced zero results.
+      - Align runtime behavior with inventory-first competitor patterns (dense city inventory even without user events).
+   - Before:
+      - `/api/nearby` only auto-expanded radius for sparse filtered queries and did not densify unfiltered initial loads.
+      - Map UI did not surface backend radius expansion decisions.
+      - Users in Hanoi commonly saw ~200 results at 2km initial radius despite much denser inventory at wider radii.
+      - Climbing filters could collapse to zero when inference rows were sparse (validated in debug counters: `afterFallbackMerge` dropping to 0 in strict contract mode).
+   - After:
+      - `/api/nearby` now applies two expansion policies:
+         - filtered queries: single-step sparse expansion (low-latency safety),
+         - unfiltered inventory loads: iterative bucket expansion up to 12.5km targeting >=500 results.
+      - Response includes explicit `radiusExpansion` metadata for the applied expansion.
+      - Map page now renders a visible "Search radius auto-expanded" note from `radiusExpansion.note`.
+      - Updated docs with full regression triage, log audit, competitor parity references, and reproducible runtime checks.
+   - Commands run:
+      - `for f in web-dev.log mobile-web.log mobile-dev.log mobile-ios.log error_log.md packages/shared/web-dev.tmp.log; do ...; done` (log audit)
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/searchTokens.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm -w run verify:no-hardcoded-discovery && pnpm -w run verify:discovery-contract`
+      - `pnpm -w run verify:seed-health --city=hanoi` (followed by bangkok/danang; halted on first failure)
+      - `node -e "fetch('http://localhost:3002/api/nearby?...')..."` (runtime API validation with debug)
+   - Results:
+      - Unit/contract tests passed (`payload`, `placeActivityFilter`, `searchTokens`, `searchMatching`, `searchPipeline`).
+      - `typecheck` passed.
+      - `verify:no-hardcoded-discovery` passed.
+      - `verify:discovery-contract` passed.
+      - `verify:seed-health` failed due DNS/network to Supabase host (`ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`), not logic/test regressions.
+      - Runtime validation:
+         - Hanoi unfiltered `radius=2000` now auto-expands to `5000` and returns `count=590` with expansion note.
+         - Hanoi `types=climbing` now returns non-zero results (`count=3` in current dataset).
+
+21. **Operational execution: 3-city seed run + live discovery validation (chunked due client timeout)**
+   - Timestamp: 2026-03-05 21:01:44 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Execute requested seeding/validation now that env keys are present and produce auditable runtime evidence for Hanoi, Bangkok, Da Nang.
+   - Before:
+      - `seed:city` initially failed from shell because `CRON_SECRET` was not exported.
+      - Full synchronous seed call with `maxTiles=120` exceeded client header wait and failed with `UND_ERR_HEADERS_TIMEOUT`.
+   - After:
+      - Loaded env from `.env.local` and `apps/doWhat-web/.env.local` during execution.
+      - Completed chunked city seeding runs (`maxTiles=12`, packs `parks_sports,climbing_bouldering`, `packVersion=2026-03-05.regression-fix.v1`) for all three cities.
+      - Completed live `/api/nearby` validations for unfiltered and `types=climbing` across all three cities, including radius expansion and explain counters.
+   - Commands run:
+      - `set -a; source ./.env.local; source ./apps/doWhat-web/.env.local; set +a; pnpm seed:city --city=hanoi --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=120 --refresh=1 --packVersion=2026-03-05.regression-fix.v1` (timeout)
+      - `set -a; source ./.env.local; source ./apps/doWhat-web/.env.local; set +a; pnpm seed:city --city=hanoi --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+      - `set -a; source ./.env.local; source ./apps/doWhat-web/.env.local; set +a; pnpm seed:city --city=bangkok --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+      - `set -a; source ./.env.local; source ./apps/doWhat-web/.env.local; set +a; pnpm seed:city --city=danang --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+      - `node - <<'NODE' ... fetch('/api/nearby?...debug=1') for 6 city/filter checks ... NODE`
+      - `pnpm -w run verify:seed-health --city=hanoi --packVersion=2026-03-05.regression-fix.v1` (and chained city checks; halted on failure)
+   - Results:
+      - Hanoi seed: `tilesAttempted=24`, `uniquePlaces=169`, provider totals `{openstreetmap:21,foursquare:0,google_places:0}`, `elapsedMs=230845`.
+      - Bangkok seed: `tilesAttempted=24`, `uniquePlaces=40`, provider totals `{openstreetmap:4,foursquare:0,google_places:0}`, `elapsedMs=236505`.
+      - Da Nang seed: `tilesAttempted=24`, `uniquePlaces=3`, provider totals `{openstreetmap:5,foursquare:0,google_places:0}`, `elapsedMs=192795`.
+      - Live discovery validation:
+         - Hanoi unfiltered: `count=635`, auto-expanded `2000->5000`; Hanoi climbing: `count=3`.
+         - Bangkok unfiltered: `count=614`, auto-expanded `2000->3200`; Bangkok climbing: `count=5`.
+         - Da Nang unfiltered: `count=247`, auto-expanded `2000->10000`; Da Nang climbing: `count=1`.
+      - `verify:seed-health` still failed due DB host DNS resolution (`ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`).
+
+22. **Provider diagnostic run: seed explain `providerError` root-signal capture**
+   - Timestamp: 2026-03-05 21:03:48 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Investigate why chunked seed runs were mostly OSM-backed and confirm if provider failures are occurring inside pack fetches.
+   - Before:
+      - City run summaries showed non-zero `dropReasons.providerError` with low/zero Google and Foursquare provider totals but without per-provider message context.
+   - After:
+      - Ran 1-tile diagnostic seed call (`hanoi`, two packs) and extracted per-tile explain counters.
+      - Confirmed both packs show `providerError: 2` and zero provider counts for Google/Foursquare in that diagnostic tile, while route itself succeeds (`error: null`).
+   - Commands run:
+      - `curl -X POST /api/cron/places/seed-city?city=hanoi&mode=full&packs=parks_sports,climbing_bouldering&maxTiles=1&refresh=1&packVersion=2026-03-05.regression-fix.v1-diag | node -e ...`
+   - Results:
+      - Diagnostic payload:
+         - `tilesAttempted=2`
+         - `providerTotals={openstreetmap:0,foursquare:0,google_places:0}`
+         - each pack in tile `w7er8u` had `dropReasons.providerError=2`.
+      - Indicates external provider fetch failures are still present for this run and need provider credential/quota/network follow-up.
+
+23. **Provider stats drill-down via `/api/places?explain=1`**
+   - Timestamp: 2026-03-05 21:04:50 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Determine which providers are contributing to `providerError` and whether Google is failing or just returning zero matches.
+   - Before:
+      - Seed explain totals only indicated aggregate provider errors.
+   - After:
+      - Queried `/api/places` with `force=1&explain=1` and inspected `explain.providerStats`.
+      - Observed in sampled Hanoi viewport:
+         - `openstreetmap`: `providerError=1`, `itemsFetched=0`.
+         - `foursquare`: `providerError=1`, `itemsFetched=0`.
+         - `google_places`: `pagesFetched=4`, `itemsFetched=0`, no providerError in provider-specific dropped counters.
+   - Commands run:
+      - `curl -sS "http://localhost:3002/api/places?...&force=1&explain=1" | node -e ...` (summary)
+      - `curl -sS "http://localhost:3002/api/places?...&force=1&explain=1" | node -e ...` (`providerStats` extraction)
+   - Results:
+      - Provider failure signal is currently strongest on OSM/Foursquare in sampled viewport, while Google executed page fetches but returned zero items.
+
+24. **Seed CLI timeout hardening + extended 3-city long-run sweeps**
+   - Timestamp: 2026-03-06 10:24:29 +0700
+   - Files touched:
+      - `scripts/seed-city.mjs`
+      - `docs/seeding.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - User requested longer sweep execution; existing seed CLI failed on long synchronous responses with undici headers timeout.
+   - Before:
+      - `seed:city` had implicit client timeout behavior and no way to extend request window.
+      - Full/larger tile runs could fail before response headers were returned.
+   - After:
+      - Added timeout control to `seed:city`:
+         - default `90` minutes,
+         - configurable via `--timeoutMinutes` or `SEED_CITY_TIMEOUT_MINUTES`,
+         - undici dispatcher configured with matching `headersTimeout` and `bodyTimeout`.
+      - Updated `docs/seeding.md` commands to include timeout usage.
+      - Executed extended long-run sweeps (`maxTiles=36`, `packs=parks_sports,climbing_bouldering`, `refresh=1`, `packVersion=2026-03-06.longrun.v1`) for Hanoi/Bangkok/Da Nang.
+   - Commands run:
+      - `node --check scripts/seed-city.mjs`
+      - `pnpm seed:city --city=hanoi --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=36 --refresh=1 --packVersion=2026-03-06.longrun.v1 --timeoutMinutes=120`
+      - `pnpm seed:city --city=bangkok --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=36 --refresh=1 --packVersion=2026-03-06.longrun.v1 --timeoutMinutes=120`
+      - `pnpm seed:city --city=danang --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=36 --refresh=1 --packVersion=2026-03-06.longrun.v1 --timeoutMinutes=120`
+      - `node - <<'NODE' ... /api/nearby checks (unfiltered + climbing for each city) ... NODE` (with per-call 120s timeout)
+   - Results:
+      - CLI timeout fix validated by successful extended runs (no headers-timeout crash).
+      - Long-run summaries:
+         - Hanoi: `tilesAttempted=72`, `uniquePlaces=304`, provider totals `{openstreetmap:99,foursquare:0,google_places:0}`, elapsed `687225ms`.
+         - Bangkok: `tilesAttempted=72`, `uniquePlaces=166`, provider totals `{openstreetmap:78,foursquare:0,google_places:0}`, elapsed `707375ms`.
+         - Da Nang: `tilesAttempted=72`, `uniquePlaces=207`, provider totals `{openstreetmap:51,foursquare:0,google_places:0}`, elapsed `658189ms`.
+      - Post-run discovery checks:
+         - Hanoi unfiltered `count=635` (`expandedTo=5000`), climbing `count=3`.
+         - Bangkok unfiltered `count=617` (`expandedTo=3200`), climbing `count=5`.
+         - Da Nang unfiltered `count=324` (`expandedTo=10000`), climbing `count=1`.
+
+25. **Discovery regression hardening: climb intent recovery + filtered radius expansion + safer map dedupe**
+   - Timestamp: 2026-03-06 10:59:46 +0700
+   - Files touched:
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/app/map/resultQuality.ts`
+      - `apps/doWhat-web/src/app/map/searchMatching.ts`
+      - `apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts`
+      - `apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts`
+      - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/placeFallbackInference.test.ts` (new)
+      - `docs/discovery_playbook.md`
+      - `docs/seeding.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - User-reported map/discovery regressions: low visible density and no `climb/climbing` results in map filtering path.
+      - Runtime checks showed filtered climbing requests at small radius could remain zero because filtered expansion stopped too early and fallback activity inference missed stemmed venue names.
+   - Before:
+      - `/api/nearby` filtered expansion used a single step only (`2000 -> 3200`), which could stay at zero for sparse sports intent.
+      - Fallback place activity inference relied mostly on exact keywords; names like `VietClimb` were not reliably inferred as climbing.
+      - Map intent matching for low-quality/generic rows only checked `activity_types`; intent carried in `tags`/`taxonomy_categories` could be dropped.
+      - Near-duplicate map dedupe could collapse distinct nearby venues sharing the same label even when canonical `place_id` differed.
+   - After:
+      - `/api/nearby` now iterates filtered auto-expansion across radius buckets up to `25km` (inventory-first parity with map search augmentation).
+      - Discovery fallback inference now supports stem/alias matching by activity slug (including climbing/bouldering-oriented stems), not only exact tokens.
+      - Map search intent matching now checks `activity_types + tags + taxonomy_categories`.
+      - Near-duplicate map dedupe now preserves nearby rows with different canonical `place_id` values.
+      - Added unit coverage for fallback place inference (`placeFallbackInference.test.ts`) and updated/extended nearby payload + map quality tests.
+   - Commands run:
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/placeFallbackInference.test.ts src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/lib/discovery/__tests__/placeFallbackInference.test.ts src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts && pnpm --filter dowhat-web typecheck`
+      - `node - <<'NODE' ... multi-city /api/nearby debug probes (unfiltered + climb) ... NODE`
+      - `node - <<'NODE' ... Hanoi radius=12500 types=climbing debug probe ... NODE`
+      - `node - <<'NODE' ... Hanoi/Bangkok/Da Nang radius=2000 types=climbing debug probes ... NODE`
+   - Results:
+      - Targeted web tests and typecheck passed.
+      - Runtime validation (March 6, 2026):
+         - Hanoi `radius=2000, types=climbing`: `count=3`, expanded to `10000m`.
+         - Bangkok `radius=2000, types=climbing`: `count=7`, expanded to `20000m`.
+         - Da Nang `radius=2000, types=climbing`: `count=1`, expanded to `5000m`.
+      - Unfiltered inventory remained dense in live checks (Hanoi/Bangkok >600, Da Nang >300 in prior validation snapshots).
+
+26. **Post-fix guardrail validation rerun**
+   - Timestamp: 2026-03-06 11:04:37 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Re-validate discovery safety/contract scripts after the regression-hardening patch set.
+   - Before:
+      - Guardrail status after latest code/docs updates needed confirmation.
+   - After:
+      - Guardrail checks re-run and passing.
+   - Commands run:
+      - `pnpm -w run verify:no-hardcoded-discovery && pnpm -w run verify:discovery-contract`
+   - Results:
+      - `[verify-no-hardcoded-discovery] Passed. No hardcoded discovery placeholders detected.`
+      - `[verify-discovery-contract] Passed. Discovery contract guardrails present.`
+
+27. **Seed health validation check (blocked by DB DNS)**
+   - Timestamp: 2026-03-06 11:05:07 +0700
+   - Files touched:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Reason:
+      - Confirm post-fix seed health against the latest long-run packVersion.
+   - Before:
+      - Guardrails passed, but seed-health DB reachability remained previously unstable.
+   - After:
+      - `verify:seed-health` re-run still blocked by environment DNS resolution.
+   - Commands run:
+      - `pnpm -w run verify:seed-health --city=hanoi --packVersion=2026-03-06.longrun.v1`
+   - Results:
+      - Failed with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.
+      - No code regression indicated by this check; failure is infra/network reachability to DB host.

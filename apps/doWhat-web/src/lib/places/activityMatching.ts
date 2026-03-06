@@ -10,6 +10,8 @@ export type MatchOptions = {
   limit?: number;
   city?: string;
   placeId?: string;
+  placeIds?: string[];
+  offset?: number;
   dryRun?: boolean;
 };
 
@@ -352,25 +354,66 @@ async function loadActivityCatalog(client: SupabaseClient): Promise<ActivityCata
 }
 
 async function loadPlacesBatch(client: SupabaseClient, options: MatchOptions): Promise<PlaceRow[]> {
-  const limit = clampLimit(options.placeId ? 1 : options.limit ?? 100);
-  let query = client
-    .from('places')
-    .select(
-      `id,name,description,categories,tags,metadata,city,locality,foursquare_id,updated_at,venue_activities!left(activity_id,source,confidence)`,
-    )
-    .order('updated_at', { ascending: false })
-    .limit(limit);
+  const selectClause =
+    `id,name,description,categories,tags,metadata,city,locality,foursquare_id,updated_at,venue_activities!left(activity_id,source,confidence)`;
+  const applyCityFilter = <T extends { or: (value: string) => T }>(query: T): T => {
+    if (!options.city) return query;
+    const normalizedCity = options.city.trim();
+    if (!normalizedCity.length) return query;
+    const escaped = normalizedCity.replace(/[%_,]/g, (match) => `\\${match}`);
+    return query.or(`city.ilike.%${escaped}%,locality.ilike.%${escaped}%`);
+  };
 
   if (options.placeId) {
-    query = query.eq('id', options.placeId).limit(1);
+    let query = client
+      .from('places')
+      .select(selectClause)
+      .eq('id', options.placeId)
+      .limit(1);
+    query = applyCityFilter(query);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []) as PlaceRow[];
   }
-  if (options.city) {
-    const normalizedCity = options.city.trim();
-    if (normalizedCity.length) {
-      const escaped = normalizedCity.replace(/[%_,]/g, (match) => `\\${match}`);
-      query = query.or(`city.ilike.${escaped},locality.ilike.${escaped}`);
+
+  if (options.placeIds?.length) {
+    const ids = Array.from(
+      new Set(
+        options.placeIds
+          .map((value) => value?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    if (!ids.length) return [];
+    const rows: PlaceRow[] = [];
+    const chunkSize = 180;
+    for (let index = 0; index < ids.length; index += chunkSize) {
+      const chunk = ids.slice(index, index + chunkSize);
+      let query = client
+        .from('places')
+        .select(selectClause)
+        .in('id', chunk);
+      query = applyCityFilter(query);
+      const { data, error } = await query;
+      if (error) throw error;
+      rows.push(...((data ?? []) as PlaceRow[]));
     }
+    rows.sort((a, b) => {
+      const aTs = a.updated_at ? Date.parse(a.updated_at) : 0;
+      const bTs = b.updated_at ? Date.parse(b.updated_at) : 0;
+      return bTs - aTs;
+    });
+    return rows;
   }
+
+  const limit = clampLimit(options.limit ?? 100);
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  let query = client
+    .from('places')
+    .select(selectClause)
+    .order('updated_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  query = applyCityFilter(query);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -454,5 +497,11 @@ function isMissingTableError(error: unknown): boolean {
 
 function clampLimit(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 50;
-  return Math.min(500, Math.max(1, Math.floor(value)));
+  return Math.min(2000, Math.max(1, Math.floor(value)));
 }
+
+export const __activityMatchingTestUtils = {
+  computeMatchesForPlace,
+  evaluateActivityMatch,
+  buildSearchIndex,
+};

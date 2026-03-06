@@ -201,6 +201,11 @@ type MapViewState = {
   zoom: number;
 };
 
+const PROGRAMMATIC_MOVE_EPSILON = 0.0002;
+
+const isNearCoordinate = (a: number, b: number, epsilon = PROGRAMMATIC_MOVE_EPSILON) =>
+  Math.abs(a - b) <= epsilon;
+
 type Props = {
   center: MapCoordinates;
   activities: MapActivity[];
@@ -242,6 +247,7 @@ function WebMap({
   const [selectedActivity, setSelectedActivity] = useState<MapActivity | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
   const mapRef = useRef<MapRef | null>(null);
+  const programmaticCenterTargetRef = useRef<MapCoordinates | null>(null);
   const selectedActivitySavePayload = useMemo(() => buildMapActivitySavePayload(selectedActivity), [selectedActivity]);
   const selectedActivityCategories = useMemo(
     () => describeActivityCategories(selectedActivity?.activity_types ?? []),
@@ -275,7 +281,9 @@ function WebMap({
     const deltaLat = Math.abs(current.lat - center.lat);
     const deltaLng = Math.abs(current.lng - center.lng);
     if (deltaLat < 0.0001 && deltaLng < 0.0001) return;
-    map.easeTo({ center: [center.lng, center.lat] });
+    const targetCenter = { lat: center.lat, lng: center.lng };
+    programmaticCenterTargetRef.current = targetCenter;
+    map.easeTo({ center: [targetCenter.lng, targetCenter.lat], duration: 700 });
   }, [center.lat, center.lng]);
 
   useEffect(() => {
@@ -344,6 +352,16 @@ function WebMap({
       const map = mapRef.current;
       if (!map) return;
       const centerLngLat = map.getCenter();
+      const programmaticTarget = programmaticCenterTargetRef.current;
+      if (
+        programmaticTarget
+        && isNearCoordinate(centerLngLat.lat, programmaticTarget.lat)
+        && isNearCoordinate(centerLngLat.lng, programmaticTarget.lng)
+      ) {
+        programmaticCenterTargetRef.current = null;
+        return;
+      }
+      programmaticCenterTargetRef.current = null;
       const bounds = map.getBounds();
       const northEast = bounds.getNorthEast();
       const southWest = bounds.getSouthWest();

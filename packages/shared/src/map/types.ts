@@ -100,6 +100,45 @@ export interface MapActivitiesResponse {
   degraded?: boolean;
   fallbackError?: string;
   fallbackSource?: string;
+  radiusExpansion?: {
+    fromRadiusMeters: number;
+    toRadiusMeters: number;
+    note: string;
+    previousCount: number;
+    expandedCount: number;
+  };
+  debug?: {
+    cacheHit: boolean;
+    cacheKey: string;
+    tilesTouched: string[];
+    providerCounts: Record<string, number>;
+    pagesFetched: number;
+    nextPageTokensUsed: number;
+    itemsBeforeDedupe: number;
+    itemsAfterDedupe: number;
+    itemsAfterGates: number;
+    itemsAfterFilters: number;
+    dropReasons: Record<string, number>;
+    candidateCounts: {
+      afterRpc: number;
+      afterFallbackMerge: number;
+      afterMetadataFilter: number;
+      afterPlaceGate: number;
+      afterConfidenceGate: number;
+      afterDedupe: number;
+      final: number;
+    };
+    dropped: {
+      notPlaceBacked: number;
+      lowConfidence: number;
+      genericLabels: number;
+      deduped: number;
+    };
+    ranking: {
+      enabled: boolean;
+      placeMinConfidence: number;
+    };
+  };
 }
 
 export type MapActivityFeatureProperties = {

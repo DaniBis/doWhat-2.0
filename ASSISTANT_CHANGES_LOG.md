@@ -708,3 +708,375 @@
   - App live refresh bridge is still mounted in `apps/doWhat-web/src/app/layout.tsx`.
 - Remaining risks:
   - Environment-level DNS/DB connectivity prevents a fully green strict matrix locally.
+
+- Timestamp: 2026-03-04 16:07:26 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/places/types.ts`
+  - `apps/doWhat-web/src/lib/places/aggregator.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Enable real provider-backed city seeding to persist Google Places inventory into canonical tables.
+- What changed:
+  - Added `persistGoogle?: boolean` to `PlacesQuery`.
+  - `fetchPlacesForViewport` now optionally treats Google results as persistable and writes them into `places` and `place_sources`.
+  - Provider counts now include Google responses.
+- How verified:
+  - Code-path review confirmed persistence path is executed under `persistGoogle` and no-op behavior remains unchanged when false.
+  - Command-level tests are scheduled in the final verification stage.
+
+- Timestamp: 2026-03-04 16:10:08 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+  - `apps/doWhat-web/src/app/api/cron/places/seed-city/route.ts`
+  - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `scripts/seed-city.mjs`
+  - `scripts/seed-places-bangkok.mjs`
+  - `scripts/seed-places-hanoi.mjs`
+  - `scripts/seed-places-bucharest.mjs`
+  - `package.json`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Deliver a reusable city seeding job with geohash tiles, provider ingestion, DB persistence, and activity inference, exposed via a single CLI and cron endpoint.
+- What changed:
+  - Added `seedCityInventory` orchestration module with city presets + custom city overrides.
+  - Added `/api/cron/places/seed-city` route and `scripts/seed-city.mjs` CLI.
+  - Routed existing per-city seed scripts through the generic endpoint.
+  - Extended activity matcher batch loading to accept explicit `placeIds` for deterministic post-seed inference.
+- How verified:
+  - Manual codepath checks validated request/response plumbing and inference invocation wiring.
+  - Execution tests are run in the dedicated verification stage later in this task.
+
+- Timestamp: 2026-03-04 16:13:42 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+  - `apps/doWhat-web/src/lib/__tests__/placesProviders.test.ts`
+  - `docs/seeding.md`
+  - `package.json`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Lock down activity filtering behavior and cover required deterministic cases (dedupe, inference diversity, pagination usage).
+- What changed:
+  - Added discovery filter contract helper and integrated it into place fallback pipeline.
+  - Added tests for contract and inference diversity; extended provider tests for cross-strategy dedupe.
+  - Added seeding documentation and CI guardrail wiring for no-hardcoded discovery checks.
+- How verified:
+  - Code-level validation complete; automated test run results are captured in the next log entry.
+
+- Timestamp: 2026-03-04 16:14:54 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Record concrete verification results for newly implemented seeding, discovery-filter, and activity-inference updates.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/places/__tests__/activityMatching.test.ts`
+  - `pnpm --filter dowhat-web typecheck`
+  - `pnpm -w run verify:no-hardcoded-discovery`
+- How verified:
+  - All listed commands completed successfully.
+
+- Timestamp: 2026-03-04 16:16:36 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Add explicit regression coverage for trust-score based ranking order.
+- What changed:
+  - New deterministic test validates higher-trust discovery rows rank above lower-trust rows.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/places/__tests__/activityMatching.test.ts src/lib/__tests__/placesProviders.test.ts`
+  - `pnpm --filter dowhat-web typecheck`
+- How verified:
+  - All listed commands passed.
+
+- Timestamp: 2026-03-04 21:40:48 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/places/types.ts`
+  - `apps/doWhat-web/src/lib/places/providers/google.ts`
+  - `apps/doWhat-web/src/lib/places/providers/osm.ts`
+  - `apps/doWhat-web/src/lib/places/aggregator.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/app/api/places/route.ts`
+  - `packages/shared/src/map/types.ts`
+  - `packages/shared/src/places/types.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Implement explain-mode telemetry contract for discovery/seeding with provider pagination stats and auditable drop reasons.
+- Before:
+  - Explain/debug lacked required fields (`cacheKey`, `tilesTouched`, `pagesFetched`, `nextPageTokensUsed`, `itemsBefore/After*`, `dropReasons`).
+  - Provider adapters did not export pagination/drop counters.
+- After:
+  - Added provider/aggregator explain types and payload propagation.
+  - Google adapter now captures token/page metrics and drop counters.
+  - OSM adapter now captures parser drop stats and includes required broad sports selectors.
+  - Discovery debug includes full explain contract fields and accumulates seeded-provider explain rollups.
+  - `/api/places` supports `explain=1`.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts`
+- Results:
+  - Passed (`1 suite`, `8 tests`).
+
+- Timestamp: 2026-03-04 21:45:15 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+  - `apps/doWhat-web/src/app/api/cron/places/seed-city/route.ts`
+  - `scripts/seed-city.mjs`
+  - `scripts/seed-places-hanoi.mjs`
+  - `scripts/seed-places-bangkok.mjs`
+  - `scripts/seed-places-danang.mjs`
+  - `apps/doWhat-web/supabase/migrations/066_place_tiles_discovery_cache.sql`
+  - `package.json`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Deliver deterministic pack-versioned seeding for Hanoi/Bangkok/Da Nang with hotspot-first tiles and auditable tile cache signatures.
+- Before:
+  - No Da Nang city seed preset and no `(city,tile,packVersion)` discovery cache keying.
+- After:
+  - Seeding now supports `packs`, `packVersion`, `maxTiles`, `refresh` with geohash6 hotspot prioritization and explain rollups.
+  - Added `seed:places:danang` convenience runner.
+  - Added migration for `place_tiles.discovery_cache`.
+- Commands run:
+  - `pnpm --filter dowhat-web typecheck`
+- Results:
+  - Passed (`tsc --noEmit`).
+
+- Timestamp: 2026-03-04 21:55:20 +0700
+- Files touched:
+  - `packages/shared/src/activities/catalog.ts`
+  - `apps/doWhat-web/supabase/migrations/067_activity_catalog_city_keyword_pack.sql`
+  - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+  - `apps/doWhat-web/src/lib/discovery/trust.ts`
+  - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/lib/discovery/telemetry.ts`
+  - `apps/doWhat-web/src/lib/venues/constants.ts`
+  - `apps/doWhat-web/src/lib/places/providers/osm.ts`
+  - `packages/shared/src/config/cities/index.ts`
+  - `packages/shared/src/config/cities/hanoi.ts`
+  - `packages/shared/src/config/cities/danang.ts`
+  - `scripts/verify-seed-health.mjs`
+  - `scripts/verify-no-hardcoded-discovery.mjs`
+  - `scripts/verify-discovery-contract.mjs`
+  - `docs/seeding.md`
+  - `docs/discovery_playbook.md`
+  - test files under discovery/providers/nearby/discovery-route
+  - `package.json`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Strengthen inference/ranking/filter robustness and add CI/runtime guardrails for explain-contract and seed health.
+- Before:
+  - Seed health validation script missing; multilingual keyword coverage incomplete; contract tests did not enforce explain drop reasons/pages/token metrics.
+- After:
+  - Added `verify:seed-health`, expanded discovery contract checks, and wrote discovery/seeding operational docs.
+  - Added padel+bouldering catalog support and multilingual keywords.
+  - Added dedupe/inference/pagination/explain/multi-city regression tests.
+  - Added sparse-filter auto-radius expansion note in nearby payload.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/lib/__tests__/placesProviders.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/discovery/__tests__/dedupeMerge.test.ts src/lib/places/__tests__/activityMatching.test.ts src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/trust.test.ts src/app/api/nearby/__tests__/payload.test.ts src/app/api/discovery/activities/__tests__/route.test.ts`
+  - `pnpm --filter dowhat-web typecheck`
+  - `pnpm -w run verify:no-hardcoded-discovery`
+  - `pnpm -w run verify:discovery-contract`
+- Results:
+  - All commands passed.
+
+- Timestamp: 2026-03-05 20:14:27 +0700
+- Files touched:
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `docs/discovery_playbook.md`
+  - `docs/seeding.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Resolve map discovery regressions reported by user: low initial density (~200) and no climbing results.
+- Before:
+  - Unfiltered initial `/api/nearby` requests stayed at small radius and often returned ~200 rows despite richer nearby inventory.
+  - UI did not explain backend radius widening.
+  - Climbing filtering was brittle when inference metadata was sparse.
+- After:
+  - Added iterative auto-radius expansion for unfiltered inventory-first loads (target >=500, up to 12.5km).
+  - Preserved single-step sparse expansion for filtered queries to control latency.
+  - Added explicit map banner for `radiusExpansion.note`.
+  - Added API test coverage for iterative unfiltered expansion behavior.
+  - Added docs sections with full log audit findings, runtime verification commands, and competitor parity references.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/searchTokens.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+  - `pnpm --filter dowhat-web typecheck`
+  - `pnpm -w run verify:no-hardcoded-discovery && pnpm -w run verify:discovery-contract`
+  - `pnpm -w run verify:seed-health --city=hanoi` (network failure; no DB DNS resolution)
+  - `node -e` API probes for Hanoi unfiltered/climbing debug payloads.
+- Results:
+  - All targeted tests and typecheck passed.
+  - Guardrail scripts passed (`verify:no-hardcoded-discovery`, `verify:discovery-contract`).
+  - `verify:seed-health` blocked by environment DNS issue (`ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`).
+  - Runtime API checks confirmed:
+    - unfiltered Hanoi request now expands from 2000m to 5000m and increases count to 590,
+    - climbing query returns non-zero venues (3).
+
+- Timestamp: 2026-03-05 21:01:44 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Execute requested live seeding and post-fix discovery validation across Hanoi/Bangkok/Da Nang.
+- Before:
+  - Shell env did not export `CRON_SECRET`/provider keys for CLI invocation.
+  - Full `maxTiles=120` sync run exceeded undici header timeout.
+- After:
+  - Sourced env files in-command and completed chunked runs (`maxTiles=12`) for all 3 cities.
+  - Captured seed explain/provider metrics and live `/api/nearby` response checks for unfiltered + climbing filters.
+- Commands run:
+  - `pnpm seed:city --city=hanoi --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=120 --refresh=1 --packVersion=2026-03-05.regression-fix.v1` (timed out at client)
+  - `pnpm seed:city --city=hanoi --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+  - `pnpm seed:city --city=bangkok --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+  - `pnpm seed:city --city=danang --packs=parks_sports,climbing_bouldering --mode=full --maxTiles=12 --refresh=1 --packVersion=2026-03-05.regression-fix.v1`
+  - `node - <<'NODE' ... /api/nearby debug checks for all 3 cities ... NODE`
+  - `pnpm -w run verify:seed-health --city=hanoi --packVersion=2026-03-05.regression-fix.v1`
+- Results:
+  - Seed chunks succeeded for all cities with explain payloads.
+  - Discovery checks returned non-zero climbing counts in all cities and high unfiltered counts with explicit `radiusExpansion` notes.
+  - `verify:seed-health` remains blocked by environment DNS issue on `DATABASE_URL` host (`ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`).
+
+- Timestamp: 2026-03-05 21:03:48 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Capture provider diagnostics after chunked seed runs reported repeated `providerError` drops.
+- Before:
+  - Seed run summaries indicated provider issues but lacked direct per-tile diagnostic confirmation.
+- After:
+  - 1-tile diagnostic run confirmed both packs in `w7er8u` had `providerError=2` and zero Google/Foursquare provider counts, while request itself succeeded.
+- Commands run:
+  - `curl -X POST /api/cron/places/seed-city?city=hanoi&...&maxTiles=1... | node -e ...`
+- Results:
+  - Provider fetch failures are still occurring for this run path and require external provider credential/quota/network verification.
+
+- Timestamp: 2026-03-05 21:04:50 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Drill into provider-level explain diagnostics for current seed/discovery regressions.
+- Before:
+  - Only aggregate `providerError` counters were visible from seed rollups.
+- After:
+  - `/api/places?force=1&explain=1` diagnostics showed sampled viewport provider behavior:
+    - OSM: providerError present, zero fetched items.
+    - Foursquare: providerError present, zero fetched items.
+    - Google Places: fetched pages with zero returned items, no providerError drop in provider-specific counters.
+- Commands run:
+  - `curl ... /api/places?...&explain=1 | node -e ...` (summary + providerStats)
+- Results:
+  - Confirms provider behavior is mixed and currently suppressing inventory growth in sampled tiles.
+
+- Timestamp: 2026-03-06 10:24:29 +0700
+- Files touched:
+  - `scripts/seed-city.mjs`
+  - `docs/seeding.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Harden `seed:city` for long synchronous cron requests and execute larger multi-city sweeps as requested.
+- Before:
+  - Long runs could fail with undici `UND_ERR_HEADERS_TIMEOUT`.
+- After:
+  - Added configurable timeout support (`--timeoutMinutes` / `SEED_CITY_TIMEOUT_MINUTES`) and undici dispatcher timeout configuration.
+  - Executed successful long-run sweeps for Hanoi/Bangkok/Da Nang (`maxTiles=36`, two packs).
+  - Re-ran live `/api/nearby` city checks (unfiltered + climbing).
+- Commands run:
+  - `node --check scripts/seed-city.mjs`
+  - `pnpm seed:city ... --city=hanoi ... --maxTiles=36 ... --timeoutMinutes=120`
+  - `pnpm seed:city ... --city=bangkok ... --maxTiles=36 ... --timeoutMinutes=120`
+  - `pnpm seed:city ... --city=danang ... --maxTiles=36 ... --timeoutMinutes=120`
+  - `node - <<'NODE' ... per-city /api/nearby checks ... NODE`
+- Results:
+  - Extended sweeps completed without timeout failure.
+  - Climbing remained non-zero in all three cities in live checks.
+  - Inventory counts remained dense for Hanoi/Bangkok and improved for Da Nang with radius expansion.
+
+- Timestamp: 2026-03-06 10:59:46 +0700
+- Files touched:
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/map/resultQuality.ts`
+  - `apps/doWhat-web/src/app/map/searchMatching.ts`
+  - `apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts`
+  - `apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts`
+  - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/lib/discovery/__tests__/placeFallbackInference.test.ts` (new)
+  - `docs/discovery_playbook.md`
+  - `docs/seeding.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Fix live discovery regressions where map supply looked sparse and `climb/climbing` intent could return zero results.
+- Before:
+  - Filtered `/api/nearby` expansion only stepped once.
+  - Fallback place inference under-matched stemmed names (e.g. `VietClimb`).
+  - Map intent matching ignored taxonomy/tag-only intent in low-quality pruning.
+  - Near-duplicate dedupe could collapse distinct canonical places with same nearby label.
+- After:
+  - Filtered auto-expansion now iterates to 25km (bucketed) until threshold.
+  - Fallback inference now applies stem/alias matching by activity slug for better climb recall.
+  - Map intent matching now evaluates `activity_types`, `tags`, and `taxonomy_categories`.
+  - Dedupe now preserves nearby rows with different canonical `place_id` values.
+  - Added `placeFallbackInference` unit coverage and updated nearby/map tests for new behavior.
+- Commands run:
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/placeFallbackInference.test.ts src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/lib/discovery/__tests__/placeFallbackInference.test.ts src/app/map/__tests__/resultQuality.test.ts src/app/map/__tests__/searchMatching.test.ts src/app/map/__tests__/searchPipeline.integration.test.ts && pnpm --filter dowhat-web typecheck`
+  - `node - <<'NODE' ... multi-city runtime probes for /api/nearby ... NODE`
+- Results:
+  - Tests + typecheck passed.
+  - Runtime probes (March 6, 2026) now show non-zero climbing results from a 2km request due filtered expansion:
+    - Hanoi: `count=3`, expanded to `10000m`.
+    - Bangkok: `count=7`, expanded to `20000m`.
+    - Da Nang: `count=1`, expanded to `5000m`.
+
+- Timestamp: 2026-03-06 11:04:37 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Confirm guardrail scripts still pass after nearby/map/discovery regression fixes.
+- Before:
+  - Needed a fresh post-change guardrail check.
+- After:
+  - Discovery guardrails passed.
+- Commands run:
+  - `pnpm -w run verify:no-hardcoded-discovery && pnpm -w run verify:discovery-contract`
+- Results:
+  - `verify-no-hardcoded-discovery`: passed.
+  - `verify-discovery-contract`: passed.
+
+- Timestamp: 2026-03-06 11:05:07 +0700
+- Files touched:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Reason:
+  - Re-check `verify:seed-health` after regression fixes and guardrail pass.
+- Before:
+  - Seed-health had prior DNS failures to Supabase DB host.
+- After:
+  - Same DNS blocker persists.
+- Commands run:
+  - `pnpm -w run verify:seed-health --city=hanoi --packVersion=2026-03-06.longrun.v1`
+- Results:
+  - Failed with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.

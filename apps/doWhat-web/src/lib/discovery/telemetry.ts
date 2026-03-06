@@ -38,6 +38,16 @@ const summarizeDebug = (debug?: DiscoveryDebug) => {
   if (!debug) return null;
   return {
     cacheHit: debug.cacheHit,
+    cacheKey: debug.cacheKey,
+    tilesTouched: debug.tilesTouched,
+    providerCounts: debug.providerCounts,
+    pagesFetched: debug.pagesFetched,
+    nextPageTokensUsed: debug.nextPageTokensUsed,
+    itemsBeforeDedupe: debug.itemsBeforeDedupe,
+    itemsAfterDedupe: debug.itemsAfterDedupe,
+    itemsAfterGates: debug.itemsAfterGates,
+    itemsAfterFilters: debug.itemsAfterFilters,
+    dropReasons: debug.dropReasons,
     candidateCounts: debug.candidateCounts,
     dropped: debug.dropped,
     ranking: debug.ranking,

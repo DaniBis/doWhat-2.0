@@ -30,6 +30,10 @@ export default function OnboardingNavPill() {
   const nextHref = STEP_ROUTES[prioritizedStep];
   const prioritizedLabel = STEP_LABELS[prioritizedStep];
 
+  if (!nextHref) {
+    return null;
+  }
+
   return (
     <View pointerEvents="box-none" style={styles.wrap}>
       <Link

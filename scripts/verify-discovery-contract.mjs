@@ -30,6 +30,24 @@ const contractChecks = [
     test: (source) => /returns at least as many rows on refresh/.test(source),
   },
   {
+    file: 'apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts',
+    description: 'Explain-mode contract exposes provider counts and drop reasons',
+    test: (source) =>
+      /explain mode returns provider counts and drop reasons/.test(source)
+      && /dropReasons/.test(source)
+      && /pagesFetched/.test(source),
+  },
+  {
+    file: 'apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts',
+    description: 'Multi-city diversity regression guard exists (prevents single-category collapse)',
+    test: (source) => /mocked provider outputs across Hanoi, Bangkok, and Da Nang/.test(source),
+  },
+  {
+    file: 'scripts/verify-seed-health.mjs',
+    description: 'Seed health verification script exists',
+    test: (source) => /verify-seed-health/.test(source) && /tilesTouched/.test(source) && /providerCounts/.test(source),
+  },
+  {
     file: 'apps/doWhat-web/src/app/map/__tests__/useStableNearbyData.test.tsx',
     description: 'Keep-previous-data behavior test exists',
     test: (source) => /preserves the previous dataset while a refetch is in flight/.test(source),

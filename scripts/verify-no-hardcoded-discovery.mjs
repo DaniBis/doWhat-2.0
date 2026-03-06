@@ -31,12 +31,17 @@ const RULES = [
   {
     id: 'fake_event_phrases',
     description: 'Fake event placeholder labels in production source',
-    regex: /\b(chess\s+today|demo\s+event|test\s+event|sample\s+event|placeholder\s+event)\b/gi,
+    regex: /\b(chess\s+today|demo\s+event|test\s+event|sample\s+event|placeholder\s+event|fake\s+event|dummy\s+event)\b/gi,
   },
   {
     id: 'hardcoded_discovery_array',
     description: 'Likely hardcoded discovery inventory array literal',
     regex: /const\s+[A-Za-z0-9_]*(discover|nearby|activity|event)[A-Za-z0-9_]*\s*=\s*\[\s*\{/gi,
+  },
+  {
+    id: 'hardcoded_seeded_inventory',
+    description: 'Likely hardcoded venue inventory payload',
+    regex: /\b(seed(ed)?\s+(venue|place|inventory)|mock\s+(venue|place)\s+list)\b/gi,
   },
 ];
 

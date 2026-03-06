@@ -3,7 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export type PreferenceKey =
   | 'activity_filters'
   | 'people_filters'
-  | 'map_filters';
+  | 'map_filters'
+  | 'onboarding_core_values';
 
 const TABLE = 'user_preferences';
 

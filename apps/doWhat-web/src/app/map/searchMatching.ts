@@ -18,7 +18,8 @@ const buildHaystack = (activity: MapActivity): string => {
   const place = activity.place_label?.toLowerCase() ?? '';
   const tags = (activity.tags ?? []).join(' ').toLowerCase();
   const types = (activity.activity_types ?? []).join(' ').toLowerCase();
-  return `${name} ${venue} ${place} ${tags} ${types}`;
+  const taxonomy = (activity.taxonomy_categories ?? []).join(' ').toLowerCase();
+  return `${name} ${venue} ${place} ${tags} ${types} ${taxonomy}`;
 };
 
 export const matchesActivitySearch = (
@@ -39,7 +40,10 @@ export const matchesActivitySearch = (
   if (hasStructuredMultiActivityInput) {
     const typeTokens = normalizeSet(activity.activity_types);
     const tagTokens = normalizeSet(activity.tags);
-    return input.structuredSearchTokens.some((token) => typeTokens.has(token) || tagTokens.has(token));
+    const taxonomyTokens = normalizeSet(activity.taxonomy_categories);
+    return input.structuredSearchTokens.some((token) =>
+      typeTokens.has(token) || tagTokens.has(token) || taxonomyTokens.has(token),
+    );
   }
 
   const haystack = buildHaystack(activity);
@@ -49,7 +53,10 @@ export const matchesActivitySearch = (
   if (input.searchTokens.length > 0) {
     const typeTokens = normalizeSet(activity.activity_types);
     const tagTokens = normalizeSet(activity.tags);
-    return input.searchTokens.some((token) => typeTokens.has(token) || tagTokens.has(token));
+    const taxonomyTokens = normalizeSet(activity.taxonomy_categories);
+    return input.searchTokens.some((token) =>
+      typeTokens.has(token) || tagTokens.has(token) || taxonomyTokens.has(token),
+    );
   }
 
   return false;

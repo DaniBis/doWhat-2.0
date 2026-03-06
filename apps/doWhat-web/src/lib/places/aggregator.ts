@@ -29,9 +29,11 @@ import type {
   CanonicalPlace,
   ExistingPlaceRow,
   PlaceProvider,
+  PlacesFetchExplain,
   PlaceSourceRow,
   PlacesFetchResult,
   PlacesQuery,
+  ProviderFetchExplain,
   ProviderAttribution,
   ProviderPlace,
 } from './types';
@@ -56,7 +58,47 @@ const DEFAULT_EXPIRY_VARIANCE = 9;
 const DEDUPE_DISTANCE_METERS = 100;
 const DEDUPE_NAME_SIMILARITY = 0.9;
 
+const createEmptyProviderCounts = (): Record<PlaceProvider, number> => ({
+  openstreetmap: 0,
+  foursquare: 0,
+  google_places: 0,
+});
+
+const createProviderExplain = (provider: PlaceProvider): ProviderFetchExplain => ({
+  provider,
+  pagesFetched: 0,
+  nextPageTokensUsed: 0,
+  itemsFetched: 0,
+  itemsReturned: 0,
+  dropped: {},
+});
+
 const computeTileKey = (lat: number, lng: number): string => ngeohash.encode(lat, lng, TILE_PRECISION);
+
+const buildPlacesCacheKey = (query: PlacesQuery, tileKey: string): string =>
+  JSON.stringify({
+    v: 2,
+    city: query.city ?? null,
+    tileKey,
+    categories: expandCategoryAliases(query.categories ?? []),
+    limit: query.limit ?? null,
+    forceRefresh: Boolean(query.forceRefresh),
+    persistGoogle: Boolean(query.persistGoogle),
+  });
+
+const mergeDropReasons = (
+  ...sources: Array<Record<string, number> | null | undefined>
+): Record<string, number> => {
+  const target: Record<string, number> = {};
+  sources.forEach((source) => {
+    if (!source) return;
+    Object.entries(source).forEach(([key, value]) => {
+      if (!Number.isFinite(value)) return;
+      target[key] = (target[key] ?? 0) + Math.max(0, Math.round(value));
+    });
+  });
+  return target;
+};
 
 const computeBoundsCenter = (bounds: PlacesQuery['bounds']) => ({
   lat: (bounds.sw.lat + bounds.ne.lat) / 2,
@@ -896,10 +938,15 @@ const shouldRefresh = (
 
 export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<PlacesFetchResult> => {
   let service = getOptionalServiceClient();
+  const persistGoogle = Boolean(query.persistGoogle);
   const normalizedCategories = expandCategoryAliases(query.categories ?? []);
   const { categoryMap } = ensureCityCategoryMap(query.city);
   const taxonomyTagsById = await ensureTaxonomyTagMap();
   const { key: tileKey, centerLat, centerLng } = computeQueryTile(query);
+  const cacheKey = buildPlacesCacheKey(query, tileKey);
+  const overpassExplain = createProviderExplain('openstreetmap');
+  const foursquareExplain = createProviderExplain('foursquare');
+  const googleExplain = createProviderExplain('google_places');
   let existing: ExistingPlaceRow[] = [];
   let sources: PlaceSourceRow[] = [];
   let serviceHealthy = Boolean(service);
@@ -937,6 +984,25 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
     const filtered = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
     const ranked = rankPlaces(filtered, centerLat, centerLng, now.getTime());
     const foursquareRanked = filterFoursquarePlaces(ranked);
+    const providerCounts = createEmptyProviderCounts();
+    const explain: PlacesFetchExplain = {
+      cacheHit: true,
+      cacheKey,
+      tileKey,
+      tilesTouched: [tileKey],
+      providerCounts,
+      pagesFetched: 0,
+      nextPageTokensUsed: 0,
+      itemsBeforeDedupe: places.length,
+      itemsAfterDedupe: places.length,
+      itemsAfterGates: places.length,
+      itemsAfterFilters: filtered.length,
+      dropReasons: {
+        categoryFilter: Math.max(0, places.length - filtered.length),
+        foursquarePreference: Math.max(0, ranked.length - foursquareRanked.length),
+      },
+      providerStats: [overpassExplain, foursquareExplain, googleExplain],
+    };
     console.info('[places] response', {
       tileKey,
       cacheHit: true,
@@ -945,7 +1011,8 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
     return {
       places: foursquareRanked,
       cacheHit: true,
-      providerCounts: { openstreetmap: 0, foursquare: 0, google_places: 0 },
+      providerCounts,
+      explain,
     };
   }
 
@@ -954,19 +1021,38 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   );
 
   const providerResults: ProviderPlace[] = [];
+  let mergedByProviderId = 0;
+  let mergedByFuzzy = 0;
+  let newAggregatesFromProviders = 0;
+  let mergedByFuzzyGoogle = 0;
+  let newAggregatesFromGoogle = 0;
 
   const overpassCall = await callProvider('openstreetmap', () =>
-    fetchOverpassPlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
+    fetchOverpassPlaces(
+      { ...query, categories: query.categories ?? [] },
+      { categoryMap, explain: overpassExplain },
+    ),
   );
   if (overpassCall.status === 'fulfilled') {
     providerResults.push(...overpassCall.value.filter((place) => place.canPersist !== false));
+  } else {
+    overpassExplain.dropped = mergeDropReasons(overpassExplain.dropped, { providerError: 1 });
   }
 
   const foursquareCall = await callProvider('foursquare', () =>
     fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
   );
   if (foursquareCall.status === 'fulfilled') {
-    providerResults.push(...foursquareCall.value.filter((place) => place.canPersist !== false));
+    const persistableFoursquare = foursquareCall.value.filter((place) => place.canPersist !== false);
+    providerResults.push(...persistableFoursquare);
+    foursquareExplain.pagesFetched = 1;
+    foursquareExplain.itemsFetched = foursquareCall.value.length;
+    foursquareExplain.itemsReturned = persistableFoursquare.length;
+    foursquareExplain.dropped = mergeDropReasons(foursquareExplain.dropped, {
+      nonPersistable: Math.max(0, foursquareCall.value.length - persistableFoursquare.length),
+    });
+  } else {
+    foursquareExplain.dropped = mergeDropReasons(foursquareExplain.dropped, { providerError: 1 });
   }
 
   const filteredProviderResults = filterPlacesByCategories(
@@ -989,11 +1075,19 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
 
   filteredProviderResults.forEach((providerPlace) => {
     const key = `${providerPlace.provider}:${providerPlace.providerId}`;
-    let aggregate = sourceByProviderId.get(key);
-    if (!aggregate) {
-      aggregate = findBestMatch(aggregates, providerPlace);
+    const exactMatch = sourceByProviderId.get(key);
+    let aggregate = exactMatch;
+    if (exactMatch) {
+      mergedByProviderId += 1;
     }
     if (!aggregate) {
+      aggregate = findBestMatch(aggregates, providerPlace);
+      if (aggregate) {
+        mergedByFuzzy += 1;
+      }
+    }
+    if (!aggregate) {
+      newAggregatesFromProviders += 1;
       aggregate = {
         name: providerPlace.name,
         lat: providerPlace.lat,
@@ -1037,14 +1131,16 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   }
 
   const googleCall = await callProvider('google_places', () =>
-    fetchGooglePlaces({ ...query, categories: query.categories ?? [] }),
+    fetchGooglePlaces({ ...query, categories: query.categories ?? [] }, { explain: googleExplain }),
   );
   if (googleCall.status === 'fulfilled') {
     googleCall.value.forEach((googlePlace) => {
       const match = findBestMatch(workingAggregates, googlePlace);
       if (match) {
-        applyProviderPlace(match, googlePlace, { persistable: false });
+        mergedByFuzzyGoogle += 1;
+        applyProviderPlace(match, googlePlace, { persistable: persistGoogle });
       } else {
+        newAggregatesFromGoogle += 1;
         const aggregate: PlaceAggregate = {
           name: googlePlace.name,
           lat: googlePlace.lat,
@@ -1062,10 +1158,17 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
           persistableProviderPlaces: [],
           metadata: {},
         };
-        applyProviderPlace(aggregate, googlePlace, { persistable: false });
+        applyProviderPlace(aggregate, googlePlace, { persistable: persistGoogle });
         workingAggregates.push(aggregate);
       }
     });
+
+    if (persistGoogle) {
+      await upsertPlaces(service, workingAggregates, nowIso, expiryIso);
+      await upsertPlaceSources(service, workingAggregates, nowIso, expiryIso);
+    }
+  } else {
+    googleExplain.dropped = mergeDropReasons(googleExplain.dropped, { providerError: 1 });
   }
 
   const places = workingAggregates.map((aggregate) =>
@@ -1074,7 +1177,7 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
 
   const allProviderItems = [...filteredProviderResults];
   if (googleCall.status === 'fulfilled') {
-    allProviderItems.push(...googleCall.value.filter((place) => place.canPersist !== false));
+    allProviderItems.push(...googleCall.value);
   }
 
   const providerCounts = summariseProviderCounts(allProviderItems);
@@ -1085,6 +1188,36 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   const filteredPlaces = filterPlacesByCategories(places, query.categories, categoryMap, taxonomyTagsById);
   const rankedPlaces = rankPlaces(filteredPlaces, centerLat, centerLng, now.getTime());
   const foursquareRanked = filterFoursquarePlaces(rankedPlaces);
+  const dropReasons = mergeDropReasons(
+    overpassExplain.dropped,
+    foursquareExplain.dropped,
+    googleExplain.dropped,
+    {
+      categoryFilter: Math.max(0, places.length - filteredPlaces.length),
+      mergedByProviderId,
+      mergedByFuzzy: mergedByFuzzy + mergedByFuzzyGoogle,
+      newAggregates: newAggregatesFromProviders + newAggregatesFromGoogle,
+      foursquarePreference: Math.max(0, rankedPlaces.length - foursquareRanked.length),
+    },
+  );
+  const explain: PlacesFetchExplain = {
+    cacheHit: false,
+    cacheKey,
+    tileKey,
+    tilesTouched: [tileKey],
+    providerCounts,
+    pagesFetched: overpassExplain.pagesFetched + foursquareExplain.pagesFetched + googleExplain.pagesFetched,
+    nextPageTokensUsed:
+      overpassExplain.nextPageTokensUsed
+      + foursquareExplain.nextPageTokensUsed
+      + googleExplain.nextPageTokensUsed,
+    itemsBeforeDedupe: allProviderItems.length,
+    itemsAfterDedupe: workingAggregates.length,
+    itemsAfterGates: places.length,
+    itemsAfterFilters: filteredPlaces.length,
+    dropReasons,
+    providerStats: [overpassExplain, foursquareExplain, googleExplain],
+  };
 
   console.info('[places] response', {
     tileKey,
@@ -1097,5 +1230,6 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
     places: foursquareRanked,
     cacheHit: false,
     providerCounts,
+    explain,
   };
 };

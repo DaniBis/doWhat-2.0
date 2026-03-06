@@ -2,11 +2,44 @@ import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CORE_VALUES_REQUIRED_COUNT, normalizeCoreValues, theme } from '@dowhat/shared';
+import { CORE_VALUES_REQUIRED_COUNT, loadUserPreference, normalizeCoreValues, saveUserPreference, theme } from '@dowhat/shared';
 
 import { supabase } from '../../lib/supabase';
+import { isMissingColumnError } from '../../lib/supabaseErrors';
 
 const EMPTY_VALUES = ['', '', ''];
+const CORE_VALUES_PREFERENCE_KEY = 'onboarding_core_values' as const;
+
+type ErrorLike = {
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+const errorMessage = (error: unknown): string => {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (error && typeof error === 'object') {
+    const payload = error as ErrorLike;
+    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
+    if (typeof payload.details === 'string' && payload.details.trim()) return payload.details.trim();
+    if (typeof payload.hint === 'string' && payload.hint.trim()) return payload.hint.trim();
+  }
+  return '';
+};
+
+const describeSaveError = (error: unknown): string => {
+  const message = errorMessage(error);
+  const normalized = message.toLowerCase();
+  if (!normalized) return 'Unable to save core values.';
+  if (normalized.includes('permission denied') || normalized.includes('row-level security')) {
+    return 'Permission denied while saving core values. Ensure RLS allows users to update their own profile row.';
+  }
+  if (normalized.includes('column') && normalized.includes('core_values')) {
+    return 'Profiles table is missing `core_values`. Run migration 037_profile_core_values.sql and try again.';
+  }
+  return message;
+};
 
 export default function OnboardingCoreValuesScreen() {
   const insets = useSafeAreaInsets();
@@ -32,11 +65,23 @@ export default function OnboardingCoreValuesScreen() {
           .select('core_values')
           .eq('id', user.id)
           .maybeSingle<{ core_values?: string[] | null }>();
+        let normalized = normalizeCoreValues(data?.core_values ?? []);
         if (profileError && profileError.code !== 'PGRST116') {
-          throw profileError;
+          if (!isMissingColumnError(profileError, 'core_values')) {
+            throw profileError;
+          }
+          try {
+            const fallback = await loadUserPreference<string[]>(
+              supabase,
+              user.id,
+              CORE_VALUES_PREFERENCE_KEY,
+            );
+            normalized = normalizeCoreValues(fallback ?? []);
+          } catch (fallbackError) {
+            throw fallbackError;
+          }
         }
         if (!active) return;
-        const normalized = normalizeCoreValues(data?.core_values ?? []);
         setValues(Array.from({ length: CORE_VALUES_REQUIRED_COUNT }, (_, index) => normalized[index] ?? ''));
       } catch (loadError) {
         if (!active) return;
@@ -71,21 +116,43 @@ export default function OnboardingCoreValuesScreen() {
         setError('Please sign in again.');
         return;
       }
-      const payload = {
+      const basePayload = {
         id: user.id,
         user_id: user.id,
         core_values: nextValues,
         updated_at: new Date().toISOString(),
       };
-      const { error: updateError } = await supabase
+      const { error: initialError } = await supabase
         .from('profiles')
-        .upsert(payload, { onConflict: 'id' });
+        .upsert(basePayload, { onConflict: 'id' });
+
+      let updateError = initialError;
+      if (updateError && isMissingColumnError(updateError, 'user_id')) {
+        const fallbackPayload = {
+          id: user.id,
+          core_values: nextValues,
+          updated_at: basePayload.updated_at,
+        };
+        const retry = await supabase.from('profiles').upsert(fallbackPayload, { onConflict: 'id' });
+        updateError = retry.error ?? null;
+      }
+      if (updateError && isMissingColumnError(updateError, 'core_values')) {
+        await saveUserPreference(
+          supabase,
+          user.id,
+          CORE_VALUES_PREFERENCE_KEY,
+          nextValues,
+        );
+        router.push('/onboarding/reliability-pledge');
+        return;
+      }
+
       if (updateError) {
         throw updateError;
       }
       router.push('/onboarding/reliability-pledge');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unable to save core values.');
+      setError(describeSaveError(submitError));
     } finally {
       setSaving(false);
     }

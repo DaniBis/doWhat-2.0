@@ -8,9 +8,15 @@ if (!secret) {
   process.exit(1);
 }
 
-const url = new URL('/api/cron/places/bangkok', BASE_URL);
+const url = new URL('/api/cron/places/seed-city', BASE_URL);
+url.searchParams.set('city', 'bangkok');
+url.searchParams.set('mode', 'full');
+url.searchParams.set('packs', 'parks_sports,climbing_bouldering');
+url.searchParams.set('packVersion', process.env.SEED_PACK_VERSION || '2026-03-04.v1');
+url.searchParams.set('refresh', '1');
+url.searchParams.set('precision', '6');
 if (count && Number.isFinite(count)) {
-  url.searchParams.set('count', String(count));
+  url.searchParams.set('maxTiles', String(count));
 }
 
 (async () => {

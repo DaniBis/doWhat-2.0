@@ -1537,6 +1537,8 @@ export default function MapScreen() {
   const profileLabelRef = useRef<string | null>(null);
   const supabaseProfileCoordsRef = useRef<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const profileUserIdRef = useRef<string | null>(null);
+  const hasUserInteractedRef = useRef(false);
+  const profileRegionAppliedRef = useRef(false);
 
   const categoryLabelByKey = useMemo(() => {
     const map = buildCategoryLabelMap(city);
@@ -1748,6 +1750,8 @@ export default function MapScreen() {
     setRegion(cityRegion);
     lastRegionRef.current = cityRegion;
     lastQueryRegionRef.current = cityRegion;
+    hasUserInteractedRef.current = false;
+    profileRegionAppliedRef.current = false;
     const initialQuery = buildViewportQuery(cityRegion);
     setTargetQuery(initialQuery);
     setQuery(initialQuery);
@@ -1868,6 +1872,7 @@ export default function MapScreen() {
           };
           setRegion(nextRegion);
           lastRegionRef.current = nextRegion;
+          profileRegionAppliedRef.current = Boolean(profileLocation);
           syncViewportQuery(nextRegion, { force: true });
           setLocationInitialized(true);
         }
@@ -1886,6 +1891,7 @@ export default function MapScreen() {
           };
           setRegion(nextRegion);
           lastRegionRef.current = nextRegion;
+          profileRegionAppliedRef.current = Boolean(profileLocation);
           syncViewportQuery(nextRegion, { force: true });
           setLocationInitialized(true);
         }
@@ -1906,15 +1912,24 @@ export default function MapScreen() {
   // Update map to profile location if it becomes available after initialization
   useEffect(() => {
     if (locationInitialized && profileLocation) {
-      const profileRegion: MapRegion = {
+      if (hasUserInteractedRef.current && profileRegionAppliedRef.current) {
+        return;
+      }
+      const profileRegion = normaliseRegion({
         latitude: profileLocation.lat,
         longitude: profileLocation.lng,
         latitudeDelta: Math.max(cityRegion.latitudeDelta * 0.4, MIN_MAP_DELTA),
         longitudeDelta: Math.max(cityRegion.longitudeDelta * 0.4, MIN_MAP_DELTA),
-      };
+      });
+      const current = lastRegionRef.current;
+      if (current && regionsApproximatelyEqual(current, profileRegion)) {
+        profileRegionAppliedRef.current = true;
+        return;
+      }
       setRegion(profileRegion);
       lastRegionRef.current = profileRegion;
       syncViewportQuery(profileRegion, { force: true });
+      profileRegionAppliedRef.current = true;
       // Removed animateToRegion since region prop handles animation
     }
   }, [profileLocation, locationInitialized, cityRegion, buildViewportQuery, syncViewportQuery]);
@@ -2236,6 +2251,7 @@ export default function MapScreen() {
     if (lastRegion && regionsApproximatelyEqual(lastRegion, normalised)) {
       return;
     }
+    hasUserInteractedRef.current = true;
     lastRegionRef.current = normalised;
     setRegion(normalised);
     syncViewportQuery(normalised);
@@ -2517,6 +2533,7 @@ export default function MapScreen() {
 
   const handleMarkerPress = useCallback(
     (place: PlaceSummary, coordinateOverride?: { latitude: number; longitude: number }) => {
+      hasUserInteractedRef.current = true;
       const targetLatitude = coordinateOverride?.latitude ?? place.lat;
       const targetLongitude = coordinateOverride?.longitude ?? place.lng;
       mapRef.current?.animateToRegion?.(
@@ -2561,6 +2578,7 @@ export default function MapScreen() {
   const handleClusterPress = useCallback(
     (cluster: PlaceCluster) => {
       if (!mapRef.current || !cluster.places.length) return;
+      hasUserInteractedRef.current = true;
       if (cluster.places.length === 1) {
         handleMarkerPress(cluster.places[0], cluster.coordinate);
         return;

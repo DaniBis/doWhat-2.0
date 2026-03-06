@@ -34,8 +34,10 @@ export const hasTypeIntentMatch = (
 ): boolean => {
   if (!tokens.size) return false;
   const typeTokens = normalizeSet(activity.activity_types);
+  const tagTokens = normalizeSet(activity.tags);
+  const taxonomyTokens = normalizeSet(activity.taxonomy_categories);
   for (const token of tokens) {
-    if (typeTokens.has(token)) return true;
+    if (typeTokens.has(token) || tagTokens.has(token) || taxonomyTokens.has(token)) return true;
   }
   return false;
 };
@@ -95,6 +97,12 @@ export const dedupeNearDuplicateActivities = (
     }
 
     const index = result.findIndex((existing) => {
+      const existingPlaceId = normalize(existing.place_id);
+      const candidatePlaceId = normalize(candidate.place_id);
+      if (existingPlaceId && candidatePlaceId) {
+        return existingPlaceId === candidatePlaceId;
+      }
+
       const existingLabel = canonicalLabel(existing);
       if (!existingLabel || existingLabel !== candidateLabel) return false;
       if (!Number.isFinite(existing.lat) || !Number.isFinite(existing.lng)) return false;

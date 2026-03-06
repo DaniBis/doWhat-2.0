@@ -59,6 +59,7 @@ import { extractActivitySearchTokens, extractSearchPhrases, extractStructuredAct
 import { matchesActivitySearch } from './searchMatching';
 import { resolveMapCenterFromSession } from './highlightSession';
 import { dedupeNearDuplicateActivities, hasTypeIntentMatch, isGenericActivityDisplay, pruneLowQualitySearchActivities } from './resultQuality';
+import { encodeActivityParam, resolveFocusedActivitySync } from './focusedActivitySync';
 
 const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // London default
 const EMPTY_ACTIVITIES: MapActivity[] = [];
@@ -422,6 +423,7 @@ export default function MapPage() {
   const boundsRef = useRef<Bounds | null>(bounds);
   const dataModeRef = useRef(dataMode);
   const lastSyncedActivityIdRef = useRef<string | null>(searchParams?.get('activity') ?? null);
+  const pendingActivityParamSyncRef = useRef<string | null>(null);
   const centeredForActivityIdRef = useRef<string | null>(null);
   const primeCenter = useCallback((next: MapCoordinates) => {
     centerRef.current = next;
@@ -455,6 +457,7 @@ export default function MapPage() {
       const nextUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
       const navigate = mode === 'push' ? router.push : router.replace;
       lastSyncedActivityIdRef.current = nextId;
+      pendingActivityParamSyncRef.current = encodeActivityParam(nextId);
       navigate(nextUrl as Route, { scroll: false });
     },
     [pathname, router, searchParamsString],
@@ -1355,9 +1358,22 @@ export default function MapPage() {
   }, [dataMode, effectiveHighlightSessionId, filteredEvents, pathname, router, searchParamsString]);
 
   useEffect(() => {
-    if (effectiveHighlightSessionId) return;
+    if (effectiveHighlightSessionId) {
+      pendingActivityParamSyncRef.current = null;
+      return;
+    }
     const params = new URLSearchParams(searchParamsString);
     const requestedId = params.get('activity');
+    const syncResolution = resolveFocusedActivitySync({
+      requestedId,
+      pendingEncodedId: pendingActivityParamSyncRef.current,
+    });
+    if (syncResolution.defer) {
+      return;
+    }
+    if (syncResolution.shouldClearPending) {
+      pendingActivityParamSyncRef.current = null;
+    }
     lastSyncedActivityIdRef.current = requestedId;
     if (!requestedId) {
       if (selectedActivityId) {
@@ -1667,7 +1683,6 @@ export default function MapPage() {
       setSelectedEventId(null);
       track('map_activity_focus', { activityId: activity.id, source: 'list' });
       changeViewMode('map');
-      setCenter({ lat: activity.lat, lng: activity.lng });
       syncFocusedActivityParam(activity.id, 'push');
     },
     [changeViewMode, syncFocusedActivityParam, track],
@@ -2128,6 +2143,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
   const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
+  const radiusExpansion = nearbyData?.radiusExpansion ?? null;
   const mapLoading = (loadActivities && stableNearby.isInitialLoading) || (loadEvents && eventsQuery.isLoading);
   const refreshDisabled = !query || isRefreshing || stableNearby.isRefreshing;
   const filtersButtonDisabled = !loadActivities && !loadEvents;
@@ -2267,6 +2283,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               </button>
             ))}
           </div>
+        </div>
+      )}
+      {radiusExpansion && (
+        <div className="border-b border-sky-200 bg-sky-50 px-md py-sm text-xs text-sky-900">
+          <p className="font-semibold text-sky-800">Search radius auto-expanded</p>
+          <p className="mt-hairline">{radiusExpansion.note}</p>
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">

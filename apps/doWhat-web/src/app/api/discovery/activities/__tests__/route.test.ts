@@ -236,6 +236,16 @@ describe('/api/discovery/activities', () => {
       items: [],
       debug: {
         cacheHit: false,
+        cacheKey: 'debug-key',
+        tilesTouched: ['w21z0g'],
+        providerCounts: { openstreetmap: 2, foursquare: 1, google_places: 3 },
+        pagesFetched: 3,
+        nextPageTokensUsed: 1,
+        itemsBeforeDedupe: 15,
+        itemsAfterDedupe: 11,
+        itemsAfterGates: 9,
+        itemsAfterFilters: 8,
+        dropReasons: { deduped: 4, lowConfidence: 2 },
         candidateCounts: {
           afterRpc: 0,
           afterFallbackMerge: 0,
@@ -258,5 +268,210 @@ describe('/api/discovery/activities', () => {
       }),
       { bypassCache: false, includeDebug: true, debugMetrics: true },
     );
+  });
+
+  it('returns explain telemetry fields when explain=1 is requested', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 13.75, lng: 100.55 },
+      radiusMeters: 2500,
+      items: [],
+      providerCounts: { openstreetmap: 4, foursquare: 1, google_places: 7 },
+      debug: {
+        cacheHit: false,
+        cacheKey: 'explain-cache',
+        tilesTouched: ['w21z0g', 'w21z0u'],
+        providerCounts: { openstreetmap: 4, foursquare: 1, google_places: 7 },
+        pagesFetched: 5,
+        nextPageTokensUsed: 2,
+        itemsBeforeDedupe: 27,
+        itemsAfterDedupe: 20,
+        itemsAfterGates: 15,
+        itemsAfterFilters: 11,
+        dropReasons: { deduped: 7, lowConfidence: 3 },
+        candidateCounts: {
+          afterRpc: 0,
+          afterFallbackMerge: 0,
+          afterMetadataFilter: 0,
+          afterPlaceGate: 0,
+          afterConfidenceGate: 0,
+          afterDedupe: 0,
+          final: 0,
+        },
+        dropped: { notPlaceBacked: 0, lowConfidence: 0, genericLabels: 0, deduped: 0 },
+        ranking: { enabled: true, placeMinConfidence: 0.8 },
+      },
+    });
+
+    const response = await GET(buildRequest('lat=13.75&lng=100.55&explain=1'));
+    const payload = await response.json();
+
+    expect(payload.providerCounts).toEqual({ openstreetmap: 4, foursquare: 1, google_places: 7 });
+    expect(payload.debug.dropReasons).toMatchObject({ deduped: 7, lowConfidence: 3 });
+    expect(payload.debug.pagesFetched).toBe(5);
+    expect(payload.debug.nextPageTokensUsed).toBe(2);
+  });
+
+  it('mocked provider outputs across Hanoi, Bangkok, and Da Nang preserve category diversity', async () => {
+    discoverNearbyActivities.mockImplementation(async (query) => {
+      const center = query.center;
+      if (center.lat > 20) {
+        return {
+          center,
+          radiusMeters: 3000,
+          items: [
+            {
+              id: 'hn-climb',
+              name: 'Hanoi Climb',
+              place_id: 'p-hn-1',
+              place_label: 'Hanoi Climb',
+              lat: 21.03,
+              lng: 105.85,
+              activity_types: ['climbing', 'bouldering'],
+              tags: ['climbing'],
+            },
+            {
+              id: 'hn-run',
+              name: 'West Lake Run',
+              place_id: 'p-hn-2',
+              place_label: 'West Lake Run',
+              lat: 21.05,
+              lng: 105.83,
+              activity_types: ['running'],
+              tags: ['running'],
+            },
+          ],
+          facets: {
+            activityTypes: [
+              { value: 'climbing', count: 1 },
+              { value: 'running', count: 1 },
+            ],
+            tags: [],
+            traits: [],
+            taxonomyCategories: [],
+            priceLevels: [],
+            capacityKey: [],
+            timeWindow: [],
+          },
+          filterSupport: {
+            activityTypes: true,
+            tags: true,
+            traits: true,
+            taxonomyCategories: true,
+            priceLevels: true,
+            capacityKey: true,
+            timeWindow: true,
+          },
+        };
+      }
+      if (center.lng > 108) {
+        return {
+          center,
+          radiusMeters: 3000,
+          items: [
+            {
+              id: 'dn-yoga',
+              name: 'Da Nang Yoga',
+              place_id: 'p-dn-1',
+              place_label: 'Da Nang Yoga',
+              lat: 16.06,
+              lng: 108.22,
+              activity_types: ['yoga'],
+              tags: ['yoga'],
+            },
+            {
+              id: 'dn-run',
+              name: 'My Khe Run',
+              place_id: 'p-dn-2',
+              place_label: 'My Khe Run',
+              lat: 16.05,
+              lng: 108.24,
+              activity_types: ['running'],
+              tags: ['running'],
+            },
+          ],
+          facets: {
+            activityTypes: [
+              { value: 'yoga', count: 1 },
+              { value: 'running', count: 1 },
+            ],
+            tags: [],
+            traits: [],
+            taxonomyCategories: [],
+            priceLevels: [],
+            capacityKey: [],
+            timeWindow: [],
+          },
+          filterSupport: {
+            activityTypes: true,
+            tags: true,
+            traits: true,
+            taxonomyCategories: true,
+            priceLevels: true,
+            capacityKey: true,
+            timeWindow: true,
+          },
+        };
+      }
+      return {
+        center,
+        radiusMeters: 3000,
+        items: [
+          {
+            id: 'bk-chess',
+            name: 'Bangkok Chess Cafe',
+            place_id: 'p-bk-1',
+            place_label: 'Bangkok Chess Cafe',
+            lat: 13.76,
+            lng: 100.5,
+            activity_types: ['chess'],
+            tags: ['chess'],
+          },
+          {
+            id: 'bk-padel',
+            name: 'Padel Club Bangkok',
+            place_id: 'p-bk-2',
+            place_label: 'Padel Club Bangkok',
+            lat: 13.75,
+            lng: 100.57,
+            activity_types: ['padel'],
+            tags: ['padel'],
+          },
+        ],
+        facets: {
+          activityTypes: [
+            { value: 'chess', count: 1 },
+            { value: 'padel', count: 1 },
+          ],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: true,
+          taxonomyCategories: true,
+          priceLevels: true,
+          capacityKey: true,
+          timeWindow: true,
+        },
+      };
+    });
+
+    const hanoiRes = await GET(buildRequest('lat=21.0285&lng=105.8542&radius=3000&limit=20'));
+    const hanoiPayload = await hanoiRes.json();
+
+    const bangkokRes = await GET(buildRequest('lat=13.7563&lng=100.5018&radius=3000&limit=20'));
+    const bangkokPayload = await bangkokRes.json();
+
+    const danangRes = await GET(buildRequest('lat=16.0544&lng=108.2022&radius=3000&limit=20'));
+    const danangPayload = await danangRes.json();
+
+    expect(hanoiPayload.facets.activityTypes.length).toBeGreaterThan(1);
+    expect(bangkokPayload.facets.activityTypes.length).toBeGreaterThan(1);
+    expect(danangPayload.facets.activityTypes.length).toBeGreaterThan(1);
   });
 });

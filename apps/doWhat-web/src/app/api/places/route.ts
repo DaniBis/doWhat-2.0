@@ -49,6 +49,7 @@ export async function GET(request: Request) {
   }
   const cityParam = url.searchParams.get('city');
   const city = cityParam ? cityParam.trim().toLowerCase() : undefined;
+  const explain = url.searchParams.get('explain') === '1' || url.searchParams.get('explain') === 'true';
 
   const query: PlacesQuery = {
     bounds: { sw, ne },
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
     limit,
     forceRefresh,
     city,
+    explain,
   };
 
   const start = Date.now();
@@ -73,6 +75,7 @@ export async function GET(request: Request) {
       providerCounts: result.providerCounts,
       attribution: dedupeAttributions(result.places),
       latencyMs: latency,
+      explain: explain ? result.explain ?? null : undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load places';

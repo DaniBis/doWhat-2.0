@@ -1,8 +1,12 @@
 import { bangkokCityConfig } from "./bangkok";
+import { danangCityConfig } from "./danang";
+import { hanoiCityConfig } from "./hanoi";
 import type { CityCategoryConfig, CityConfig } from "./types";
 
 const CITY_REGISTRY: Record<string, CityConfig> = {
   [bangkokCityConfig.slug]: bangkokCityConfig,
+  [hanoiCityConfig.slug]: hanoiCityConfig,
+  [danangCityConfig.slug]: danangCityConfig,
 };
 
 const normaliseEnvValue = (value?: string) => value?.trim().toLowerCase();

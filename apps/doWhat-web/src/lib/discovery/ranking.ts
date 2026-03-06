@@ -118,6 +118,7 @@ export const rankDiscoveryItems = (
       needsVerification: item.verification_state === 'needs_votes',
       userYesVotes: 0,
       userNoVotes: 0,
+      rating: item.rating ?? null,
       ratingCount: item.rating_count ?? null,
       popularityScore: item.popularity_score ?? null,
       eventCount: item.upcoming_session_count ?? 0,

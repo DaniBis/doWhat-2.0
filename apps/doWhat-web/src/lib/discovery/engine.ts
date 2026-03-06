@@ -41,6 +41,7 @@ import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { resolveDiscoveryBounds } from '@/lib/discovery/bounds';
+import { filterPlacesByActivityContract } from '@/lib/discovery/placeActivityFilter';
 import { fetchPlacesForViewport } from '@/lib/places/aggregator';
 import { rankDiscoveryItems } from '@/lib/discovery/ranking';
 import { hydratePlaceLabel, normalizePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
@@ -69,6 +70,7 @@ type DiscoveryCacheEntry = {
   sourceBreakdown: DiscoverySourceBreakdown;
   source?: string;
   providerCounts?: Record<string, number>;
+  explain?: DiscoveryExplainSnapshot;
   venues?: RankedVenueActivity[];
 };
 
@@ -392,6 +394,11 @@ const isPlaceBackedActivity = (item: DiscoveryItem): boolean => {
 };
 
 const ACTIVITY_PLACE_MIN_CONFIDENCE = 0.8;
+const ACTIVITY_PLACE_MIN_CONFIDENCE_FILTERED = 0.55;
+const ACTIVITY_PLACE_MIN_CONFIDENCE_RELAXED_INVENTORY = 0.62;
+const ACTIVITY_PLACE_MIN_CONFIDENCE_FLOOR = 0.5;
+const MIN_RESULTS_AFTER_GATES_INVENTORY = 500;
+const MIN_RESULTS_AFTER_GATES_FILTERED = 24;
 const SPARSE_CITY_BOOTSTRAP_MIN_RESULTS = 180;
 const SPARSE_CITY_BOOTSTRAP_MAX_RADIUS_METERS = 5_000;
 const SPARSE_INVENTORY_SEED_MIN_RESULTS = 24;
@@ -403,6 +410,7 @@ type DiscoverySeedMeta = {
   providerCounts: Record<string, number>;
   matcherRan: boolean;
   matcherError?: string | null;
+  explain?: DiscoveryExplainSnapshot;
 };
 
 const createEmptyProviderCounts = (): Record<string, number> => ({
@@ -410,6 +418,44 @@ const createEmptyProviderCounts = (): Record<string, number> => ({
   foursquare: 0,
   google_places: 0,
 });
+
+type DiscoveryExplainSnapshot = {
+  cacheHit: boolean;
+  cacheKey: string;
+  tilesTouched: string[];
+  pagesFetched: number;
+  nextPageTokensUsed: number;
+  itemsBeforeDedupe: number;
+  itemsAfterDedupe: number;
+  itemsAfterGates: number;
+  itemsAfterFilters: number;
+  dropReasons: Record<string, number>;
+};
+
+const emptyExplainSnapshot = (cacheKey: string, tileKey: string): DiscoveryExplainSnapshot => ({
+  cacheHit: false,
+  cacheKey,
+  tilesTouched: [tileKey],
+  pagesFetched: 0,
+  nextPageTokensUsed: 0,
+  itemsBeforeDedupe: 0,
+  itemsAfterDedupe: 0,
+  itemsAfterGates: 0,
+  itemsAfterFilters: 0,
+  dropReasons: {},
+});
+
+const mergeNumericMap = (
+  target: Record<string, number>,
+  source: Record<string, number> | null | undefined,
+) => {
+  if (!source) return target;
+  Object.entries(source).forEach(([key, value]) => {
+    if (!Number.isFinite(value)) return;
+    target[key] = (target[key] ?? 0) + Math.max(0, Number(value));
+  });
+  return target;
+};
 
 const discoveryDebugRollup = {
   requests: 0,
@@ -522,6 +568,7 @@ const maybeBootstrapSparseCityPlaces = async (
       limit: forceLimit,
       forceRefresh: true,
       city: inferredCity,
+      explain: true,
     });
     let matcherRan = false;
     let matcherError: string | null = null;
@@ -545,6 +592,20 @@ const maybeBootstrapSparseCityPlaces = async (
       providerCounts: seeded.providerCounts,
       matcherRan,
       matcherError,
+      explain: seeded.explain
+        ? {
+            cacheHit: seeded.explain.cacheHit,
+            cacheKey: seeded.explain.cacheKey,
+            tilesTouched: seeded.explain.tilesTouched,
+            pagesFetched: seeded.explain.pagesFetched,
+            nextPageTokensUsed: seeded.explain.nextPageTokensUsed,
+            itemsBeforeDedupe: seeded.explain.itemsBeforeDedupe,
+            itemsAfterDedupe: seeded.explain.itemsAfterDedupe,
+            itemsAfterGates: seeded.explain.itemsAfterGates,
+            itemsAfterFilters: seeded.explain.itemsAfterFilters,
+            dropReasons: seeded.explain.dropReasons,
+          }
+        : undefined,
     };
   } catch (error) {
     console.warn('[nearby] sparse-city bootstrap failed', error);
@@ -582,6 +643,7 @@ const maybeSeedViewportInventory = async (
       limit: forceLimit,
       forceRefresh: true,
       city: inferredCity,
+      explain: true,
     });
     let matcherRan = false;
     let matcherError: string | null = null;
@@ -602,6 +664,20 @@ const maybeSeedViewportInventory = async (
       providerCounts: seeded.providerCounts,
       matcherRan,
       matcherError,
+      explain: seeded.explain
+        ? {
+            cacheHit: seeded.explain.cacheHit,
+            cacheKey: seeded.explain.cacheKey,
+            tilesTouched: seeded.explain.tilesTouched,
+            pagesFetched: seeded.explain.pagesFetched,
+            nextPageTokensUsed: seeded.explain.nextPageTokensUsed,
+            itemsBeforeDedupe: seeded.explain.itemsBeforeDedupe,
+            itemsAfterDedupe: seeded.explain.itemsAfterDedupe,
+            itemsAfterGates: seeded.explain.itemsAfterGates,
+            itemsAfterFilters: seeded.explain.itemsAfterFilters,
+            dropReasons: seeded.explain.dropReasons,
+          }
+        : undefined,
     };
   } catch (error) {
     console.warn('[nearby] viewport inventory seed failed', error);
@@ -672,6 +748,23 @@ const filterByQuery = (
   });
 };
 
+const toExplainSnapshot = (result: DiscoveryResult): DiscoveryExplainSnapshot | undefined => {
+  const debug = result.debug;
+  if (!debug) return undefined;
+  return {
+    cacheHit: debug.cacheHit,
+    cacheKey: debug.cacheKey,
+    tilesTouched: debug.tilesTouched,
+    pagesFetched: debug.pagesFetched,
+    nextPageTokensUsed: debug.nextPageTokensUsed,
+    itemsBeforeDedupe: debug.itemsBeforeDedupe,
+    itemsAfterDedupe: debug.itemsAfterDedupe,
+    itemsAfterGates: debug.itemsAfterGates,
+    itemsAfterFilters: debug.itemsAfterFilters,
+    dropReasons: debug.dropReasons,
+  };
+};
+
 const ensureCacheEntry = (result: DiscoveryResult, venues?: RankedVenueActivity[]): DiscoveryCacheEntry => {
   const cachedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + CACHE_TTL_MS).toISOString();
@@ -683,6 +776,7 @@ const ensureCacheEntry = (result: DiscoveryResult, venues?: RankedVenueActivity[
     sourceBreakdown: result.sourceBreakdown,
     source: result.source,
     providerCounts: result.providerCounts,
+    explain: toExplainSnapshot(result),
     venues: venues?.slice(0, MAX_CACHE_ITEMS),
   };
 };
@@ -764,6 +858,7 @@ type PlaceFallbackRow = {
   address: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  rating?: number | null;
   tags?: string[] | null;
   categories?: string[] | null;
   rating_count?: number | null;
@@ -884,14 +979,22 @@ const loadPlaceActivityInferences = async (
   if (!placeIds.length) return map;
 
   try {
-    const { data: matchRows, error: matchError } = await client
-      .from('venue_activities')
-      .select('venue_id,activity_id,confidence,source')
-      .in('venue_id', placeIds)
-      .returns<VenueActivityMatchRow[]>();
-    if (matchError) throw matchError;
-
-    const rows = matchRows ?? [];
+    const uniquePlaceIds = Array.from(new Set(placeIds.filter(Boolean)));
+    const chunkSize = 180;
+    const rows: VenueActivityMatchRow[] = [];
+    for (let index = 0; index < uniquePlaceIds.length; index += chunkSize) {
+      const chunk = uniquePlaceIds.slice(index, index + chunkSize);
+      if (!chunk.length) continue;
+      const { data: matchRows, error: matchError } = await client
+        .from('venue_activities')
+        .select('venue_id,activity_id,confidence,source')
+        .in('venue_id', chunk)
+        .returns<VenueActivityMatchRow[]>();
+      if (matchError) throw matchError;
+      if (matchRows?.length) {
+        rows.push(...matchRows);
+      }
+    }
     if (!rows.length) return map;
 
     const catalog = await loadActivityCatalogLookup(client);
@@ -1128,6 +1231,7 @@ const toMapActivityFromPlace = (
     taxonomy_categories: taxonomyCategories,
     place_match_confidence: inference?.maxConfidence ?? row.source_confidence ?? null,
     verification_state: inference?.verificationState ?? 'suggested',
+    rating: row.rating ?? null,
     rating_count: row.rating_count ?? null,
     popularity_score: row.popularity_score ?? null,
     source_confidence: row.source_confidence ?? null,
@@ -1159,13 +1263,36 @@ const buildPlaceActivityTypes = (row: PlaceFallbackRow): string[] | null => {
     .filter((value) => value.length > 0);
 
   const haystack = ` ${textParts.join(' ')} `;
+  const haystackTokens = haystack.trim().split(/\s+/g).filter(Boolean);
+
+  const stemHintsBySlug: Record<string, string[]> = {
+    climbing: ['climb', 'boulder', 'escalad', 'leo nui', 'ปีนผา', 'โบลเดอร์'],
+    bouldering: ['boulder', 'climb', 'โบลเดอร์'],
+    padel: ['padel', 'pádel', 'พาเดล'],
+    running: ['run', 'jog', 'chạy', 'วิ่ง'],
+    yoga: ['yoga', 'โยคะ', 'thiền'],
+    chess: ['chess', 'cờ vua', 'หมากรุก'],
+  };
+  const hasStemMatch = (candidate: string): boolean => {
+    const normalized = normalizeActivityToken(candidate);
+    if (!normalized || normalized.length < 3) return false;
+    if (normalized.includes(' ')) {
+      return haystack.includes(` ${normalized} `);
+    }
+    if (haystack.includes(` ${normalized} `)) return true;
+    if (normalized.length < 4) return false;
+    return haystackTokens.some((token) => token.includes(normalized));
+  };
 
   ACTIVITY_CATALOG_PRESETS.forEach((entry) => {
-    const matchesKeyword = (entry.keywords ?? []).some((keyword) => {
+    const keywordMatch = (entry.keywords ?? []).some((keyword) => {
       const token = normalizeActivityToken(keyword);
       return token.length > 0 && haystack.includes(` ${token} `);
     });
-    if (matchesKeyword) {
+    const slugMatch = hasStemMatch(entry.slug);
+    const stemMatch = (stemHintsBySlug[entry.slug] ?? []).some((stem) => hasStemMatch(stem));
+
+    if (keywordMatch || slugMatch || stemMatch) {
       derived.add(entry.slug);
     }
   });
@@ -1178,8 +1305,10 @@ const fetchPlacesFallbackActivities = async (
   query: DiscoveryQuery,
   limit: number,
 ) => {
+  const selectedActivityTypes = normalizeList(query.filters?.activityTypes);
+  const activityFilterActive = selectedActivityTypes.length > 0;
   const hasNarrowFilters =
-    normalizeList(query.filters?.activityTypes).length > 0
+    activityFilterActive
     || normalizeList(query.filters?.tags).length > 0
     || normalizeList(query.filters?.traits).length > 0
     || normalizeList(query.filters?.taxonomyCategories).length > 0;
@@ -1192,20 +1321,27 @@ const fetchPlacesFallbackActivities = async (
   let includeTags = true;
   let includeCategories = true;
   let includeUpdatedAt = true;
+  let includeRating = true;
   let includeRatingCount = true;
   let includePopularity = true;
   let includeSourceConfidence = true;
   let includeCachedAt = true;
 
-  const buildPlacesQuery = () => {
+  const buildColumnList = () => {
     const columns = [...baseColumns];
     if (includeTags) columns.push('tags');
     if (includeCategories) columns.push('categories');
     if (includeUpdatedAt) columns.push('updated_at');
+    if (includeRating) columns.push('rating');
     if (includeRatingCount) columns.push('rating_count');
     if (includePopularity) columns.push('popularity_score');
     if (includeSourceConfidence) columns.push('source_confidence');
     if (includeCachedAt) columns.push('cached_at');
+    return columns;
+  };
+
+  const runLimitedQuery = async (): Promise<PlaceFallbackRow[]> => {
+    const columns = buildColumnList();
     let queryBuilder = client
       .from('places')
       .select(columns.join(','))
@@ -1218,16 +1354,51 @@ const fetchPlacesFallbackActivities = async (
     if (includeUpdatedAt && !hasNarrowFilters) {
       queryBuilder = queryBuilder.order('updated_at', { ascending: false });
     }
-    return queryBuilder;
+    const { data, error } = await queryBuilder;
+    if (error) throw error;
+    return data ?? [];
   };
 
-  let data: PlaceFallbackRow[] | null = null;
+  const runPagedActivityQuery = async (): Promise<PlaceFallbackRow[]> => {
+    const columns = buildColumnList();
+    const pageSize = 850;
+    const pageMax = 80;
+    const rows: PlaceFallbackRow[] = [];
+
+    for (let page = 0; page < pageMax; page += 1) {
+      const from = page * pageSize;
+      const to = from + pageSize - 1;
+      const { data, error } = await client
+        .from('places')
+        .select(columns.join(','))
+        .gte('lat', swLat)
+        .lte('lat', neLat)
+        .gte('lng', swLng)
+        .lte('lng', neLng)
+        .order('id', { ascending: true })
+        .range(from, to)
+        .returns<PlaceFallbackRow[]>();
+      if (error) throw error;
+      const pageRows = data ?? [];
+      if (!pageRows.length) break;
+      rows.push(...pageRows);
+      if (pageRows.length < pageSize) break;
+    }
+
+    return rows;
+  };
+
+  let data: PlaceFallbackRow[] = [];
   let error: { code?: string | null; message?: string | null; hint?: string | null } | null = null;
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const result = await buildPlacesQuery();
-    data = result.data;
-    error = result.error;
+    try {
+      data = activityFilterActive ? await runPagedActivityQuery() : await runLimitedQuery();
+      error = null;
+      break;
+    } catch (caught) {
+      error = caught as { code?: string | null; message?: string | null; hint?: string | null };
+    }
 
     if (!error) break;
 
@@ -1245,6 +1416,10 @@ const fetchPlacesFallbackActivities = async (
     }
     if (includeRatingCount && isMissingColumnError(error, 'rating_count')) {
       includeRatingCount = false;
+      continue;
+    }
+    if (includeRating && isMissingColumnError(error, 'rating')) {
+      includeRating = false;
       continue;
     }
     if (includePopularity && isMissingColumnError(error, 'popularity_score')) {
@@ -1266,12 +1441,26 @@ const fetchPlacesFallbackActivities = async (
     throw error;
   }
 
-  const placeIds = (data ?? [])
+  const placeIds = data
     .map((row) => row.id)
     .filter((value): value is string => typeof value === 'string' && value.length > 0);
   const inferenceByPlaceId = await loadPlaceActivityInferences(client, placeIds);
+  const fallbackActivityTypesByPlaceId = new Map<string, readonly string[]>();
+  data.forEach((row) => {
+    if (!row.id) return;
+    const inferredFallback = buildPlaceActivityTypes(row);
+    if (inferredFallback?.length) {
+      fallbackActivityTypesByPlaceId.set(row.id, inferredFallback);
+    }
+  });
+  const contractFilteredRows = filterPlacesByActivityContract(data, {
+    selectedActivityTypes,
+    inferenceByPlaceId,
+    fallbackActivityTypesByPlaceId,
+    bounds,
+  });
 
-  const items = (data ?? [])
+  const items = contractFilteredRows
     .map((row) => toMapActivityFromPlace(row, query.center, row.id ? inferenceByPlaceId.get(row.id) ?? null : null))
     .filter((activity): activity is DiscoveryItem => Boolean(activity))
     .sort((a, b) => (a.distance_m ?? Number.POSITIVE_INFINITY) - (b.distance_m ?? Number.POSITIVE_INFINITY));
@@ -1280,7 +1469,7 @@ const fetchPlacesFallbackActivities = async (
   const taxonomySupported = items.some((item) => (item.taxonomy_categories?.length ?? 0) > 0);
 
   const support: DiscoveryFilterSupport = {
-    activityTypes: includeCategories || activityTypesSupported,
+    activityTypes: includeCategories || activityTypesSupported || activityFilterActive,
     tags: includeTags,
     traits: false,
     taxonomyCategories: taxonomySupported,
@@ -1703,8 +1892,24 @@ export async function discoverNearbyActivities(
       reason: 'cache-hit',
     });
     if (includeDebug) {
+      const explain = entry.explain ?? emptyExplainSnapshot(cacheKey, tileKey);
       cached.debug = {
         cacheHit: true,
+        cacheKey,
+        tilesTouched: explain.tilesTouched.length ? explain.tilesTouched : [tileKey],
+        providerCounts: entry.providerCounts ?? createEmptyProviderCounts(),
+        pagesFetched: explain.pagesFetched,
+        nextPageTokensUsed: explain.nextPageTokensUsed,
+        itemsBeforeDedupe: explain.itemsBeforeDedupe || entry.items.length,
+        itemsAfterDedupe: explain.itemsAfterDedupe || cached.items.length,
+        itemsAfterGates: explain.itemsAfterGates || cached.items.length,
+        itemsAfterFilters: explain.itemsAfterFilters || cached.items.length,
+        dropReasons: mergeNumericMap(
+          {
+            deduped: Math.max(0, entry.items.length - cached.items.length),
+          },
+          explain.dropReasons,
+        ),
         candidateCounts: {
           afterRpc: entry.items.length,
           afterFallbackMerge: entry.items.length,
@@ -1744,6 +1949,16 @@ export async function discoverNearbyActivities(
   const rpcResult = await fetchActivitiesFromRpc(supabase, normalizedQuery);
   const debug = {
     cacheHit: false,
+    cacheKey,
+    tilesTouched: [tileKey],
+    providerCounts: createEmptyProviderCounts(),
+    pagesFetched: 0,
+    nextPageTokensUsed: 0,
+    itemsBeforeDedupe: 0,
+    itemsAfterDedupe: 0,
+    itemsAfterGates: 0,
+    itemsAfterFilters: 0,
+    dropReasons: {},
     candidateCounts: {
       afterRpc: 0,
       afterFallbackMerge: 0,
@@ -1778,6 +1993,23 @@ export async function discoverNearbyActivities(
 
   let fallbackMeta: { degraded?: boolean; fallbackError?: string; fallbackSource?: string } = {};
   let providerCounts: Record<string, number> | undefined;
+  const touchedTiles = new Set<string>([tileKey]);
+  const applySeedExplain = (meta: DiscoverySeedMeta | null) => {
+    if (!meta?.explain) return;
+    debug.pagesFetched += meta.explain.pagesFetched;
+    debug.nextPageTokensUsed += meta.explain.nextPageTokensUsed;
+    debug.itemsBeforeDedupe += meta.explain.itemsBeforeDedupe;
+    debug.itemsAfterDedupe = Math.max(debug.itemsAfterDedupe, meta.explain.itemsAfterDedupe);
+    debug.itemsAfterGates = Math.max(debug.itemsAfterGates, meta.explain.itemsAfterGates);
+    debug.itemsAfterFilters = Math.max(debug.itemsAfterFilters, meta.explain.itemsAfterFilters);
+    mergeNumericMap(debug.dropReasons, meta.explain.dropReasons);
+    meta.explain.tilesTouched.forEach((tile) => touchedTiles.add(tile));
+  };
+  const applyProviderCounts = (counts: Record<string, number> | undefined) => {
+    if (!counts) return;
+    providerCounts = providerCounts ?? createEmptyProviderCounts();
+    mergeNumericMap(providerCounts, counts);
+  };
 
   const seededViewportInventory = await maybeSeedViewportInventory(
     normalizedQuery,
@@ -1786,7 +2018,8 @@ export async function discoverNearbyActivities(
   );
 
   if (seededViewportInventory?.seeded) {
-    providerCounts = seededViewportInventory.providerCounts;
+    applyProviderCounts(seededViewportInventory.providerCounts);
+    applySeedExplain(seededViewportInventory);
     const refreshedPlacesFallback = await fetchPlacesFallbackActivities(
       supabase,
       normalizedQuery,
@@ -1811,7 +2044,8 @@ export async function discoverNearbyActivities(
   );
 
   if (bootstrappedSparseCity?.seeded) {
-    providerCounts = bootstrappedSparseCity.providerCounts;
+    applyProviderCounts(bootstrappedSparseCity.providerCounts);
+    applySeedExplain(bootstrappedSparseCity);
     const refreshedPlacesFallback = await fetchPlacesFallbackActivities(
       supabase,
       normalizedQuery,
@@ -1859,6 +2093,8 @@ export async function discoverNearbyActivities(
     }
   }
 
+  debug.tilesTouched = Array.from(touchedTiles);
+
   activities = enforceDistanceWindow(activities, normalizedQuery);
   debug.candidateCounts.afterFallbackMerge = activities.length;
 
@@ -1875,6 +2111,7 @@ export async function discoverNearbyActivities(
   });
   activities = filterByQuery(activities, normalizedFilters, filterSupport);
   debug.candidateCounts.afterMetadataFilter = activities.length;
+  debug.itemsAfterFilters = activities.length;
 
   const nonGenericActivities = filterGenericActivities(activities);
   const shouldPreserveGenericFallback =
@@ -1886,29 +2123,87 @@ export async function discoverNearbyActivities(
     : Math.max(0, activities.length - nonGenericActivities.length);
   activities = shouldPreserveGenericFallback ? activities : nonGenericActivities;
 
+  const hasTypeIntentFilters = hasTypeOrTagDiscoveryFilters(normalizedFilters);
+  const minResultsAfterGates = Math.min(
+    normalizedQuery.limit,
+    hasTypeIntentFilters ? MIN_RESULTS_AFTER_GATES_FILTERED : MIN_RESULTS_AFTER_GATES_INVENTORY,
+  );
   const placeBacked = activities.filter(isPlaceBackedActivity);
-  debug.dropped.notPlaceBacked = Math.max(0, activities.length - placeBacked.length);
-  debug.candidateCounts.afterPlaceGate = placeBacked.length;
+  const nonPlaceBacked = activities.filter((item) => !isPlaceBackedActivity(item));
 
-  activities = placeBacked;
-  activities = rankDiscoveryItems(activities, {
+  const rankedPlaceBacked = rankDiscoveryItems(placeBacked, {
     center: normalizedQuery.center,
     filters: normalizedFilters,
   });
-  activities = activities.filter((item) => {
+
+  let minConfidence = hasTypeIntentFilters
+    ? ACTIVITY_PLACE_MIN_CONFIDENCE_FILTERED
+    : ACTIVITY_PLACE_MIN_CONFIDENCE;
+
+  let confidencePassed = rankedPlaceBacked.filter((item) => {
     const confidence = item.place_match_confidence ?? item.quality_confidence ?? 0;
-    return confidence >= ACTIVITY_PLACE_MIN_CONFIDENCE;
+    return confidence >= minConfidence;
   });
-  debug.dropped.lowConfidence = Math.max(0, debug.candidateCounts.afterPlaceGate - activities.length);
+
+  if (!hasTypeIntentFilters && confidencePassed.length < minResultsAfterGates) {
+    minConfidence = ACTIVITY_PLACE_MIN_CONFIDENCE_RELAXED_INVENTORY;
+    const relaxed = rankedPlaceBacked.filter((item) => {
+      const confidence = item.place_match_confidence ?? item.quality_confidence ?? 0;
+      return confidence >= minConfidence;
+    });
+    if (relaxed.length > confidencePassed.length) {
+      confidencePassed = relaxed;
+    }
+  }
+
+  if (confidencePassed.length < minResultsAfterGates && minConfidence > ACTIVITY_PLACE_MIN_CONFIDENCE_FLOOR) {
+    const floorMatched = rankedPlaceBacked.filter((item) => {
+      const confidence = item.place_match_confidence ?? item.quality_confidence ?? 0;
+      return confidence >= ACTIVITY_PLACE_MIN_CONFIDENCE_FLOOR;
+    });
+    if (floorMatched.length > confidencePassed.length) {
+      minConfidence = ACTIVITY_PLACE_MIN_CONFIDENCE_FLOOR;
+      confidencePassed = floorMatched;
+    }
+  }
+
+  let spilloverNonPlaceBacked: DiscoveryItem[] = [];
+  if (confidencePassed.length < minResultsAfterGates && nonPlaceBacked.length > 0) {
+    const rankedNonPlaceBacked = rankDiscoveryItems(nonPlaceBacked, {
+      center: normalizedQuery.center,
+      filters: normalizedFilters,
+    });
+    spilloverNonPlaceBacked = rankedNonPlaceBacked.slice(
+      0,
+      Math.max(0, minResultsAfterGates - confidencePassed.length),
+    );
+  }
+
+  activities = [...confidencePassed, ...spilloverNonPlaceBacked];
+  debug.dropped.notPlaceBacked = Math.max(0, nonPlaceBacked.length - spilloverNonPlaceBacked.length);
+  debug.candidateCounts.afterPlaceGate = placeBacked.length + spilloverNonPlaceBacked.length;
+  debug.dropped.lowConfidence = Math.max(0, placeBacked.length - confidencePassed.length);
   debug.candidateCounts.afterConfidenceGate = activities.length;
+  debug.itemsAfterGates = activities.length;
+  debug.ranking.placeMinConfidence = minConfidence;
 
   const ordered = prioritizeMeaningfulActivities(orderDiscoveryItems(activities)).slice(0, normalizedQuery.limit);
   const hydrated = await hydrateActivitiesWithPlaces(supabase, ordered);
+  debug.itemsBeforeDedupe = hydrated.length;
   const deduped = mergeActivitiesWithFallback(hydrated, []);
   debug.dropped.deduped = Math.max(0, hydrated.length - deduped.length);
   debug.candidateCounts.afterDedupe = deduped.length;
+  debug.itemsAfterDedupe = deduped.length;
   const limited = deduped.slice(0, normalizedQuery.limit);
   debug.candidateCounts.final = limited.length;
+  const resolvedProviderCounts = providerCounts ?? createEmptyProviderCounts();
+  debug.providerCounts = resolvedProviderCounts;
+  mergeNumericMap(debug.dropReasons, {
+    notPlaceBacked: debug.dropped.notPlaceBacked,
+    lowConfidence: debug.dropped.lowConfidence,
+    genericLabels: debug.dropped.genericLabels,
+    deduped: debug.dropped.deduped,
+  });
 
   const result: DiscoveryResult = {
     center: normalizedQuery.center,
@@ -1920,7 +2215,7 @@ export async function discoverNearbyActivities(
     sourceBreakdown: buildSourceBreakdown(limited),
     cache: { key: cacheKey, hit: false },
     source: source ?? fallbackMeta.fallbackSource ?? 'client-filter',
-    providerCounts,
+    providerCounts: resolvedProviderCounts,
     debug: includeDebug ? debug : undefined,
     ...fallbackMeta,
   };
@@ -1930,13 +2225,13 @@ export async function discoverNearbyActivities(
     cacheHit: false,
     dedupeInput: debug.candidateCounts.afterConfidenceGate,
     dedupeDropped: debug.dropped.deduped,
-    providerCounts: providerCounts ?? null,
+    providerCounts: resolvedProviderCounts,
     source: result.source ?? null,
     reason: 'fresh-fetch',
     filterDrops: debug.dropped,
   });
 
-  const cacheEntry = ensureCacheEntry(result);
+  const cacheEntry = ensureCacheEntry({ ...result, debug });
   void writeDiscoveryCache(cacheClient, tileKey, cacheKey, cacheEntry, record);
 
   return result;
@@ -2279,3 +2574,9 @@ function deriveTimeWindow(
   }
   return { window: resolveTimeWindowBucket(hour), startMs, openNow: false };
 }
+
+export const __discoveryEngineTestUtils = {
+  mergeActivitiesWithFallback,
+  dedupeByPlaceKey,
+  buildPlaceActivityTypes,
+};

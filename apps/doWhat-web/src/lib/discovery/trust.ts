@@ -4,6 +4,7 @@ export type TrustScoreInput = {
   aiConfidence?: number | null;
   qualityConfidence?: number | null;
   sourceConfidence?: number | null;
+  rating?: number | null;
   verified?: boolean;
   needsVerification?: boolean;
   userYesVotes?: number | null;
@@ -30,6 +31,11 @@ const voteScore = (yes: number, no: number): number => {
 const ratingScore = (ratingCount: number): number => {
   if (!Number.isFinite(ratingCount) || ratingCount <= 0) return 0;
   return clamp01(Math.log1p(ratingCount) / Math.log1p(250));
+};
+
+const ratingValueScore = (rating: number): number => {
+  if (!Number.isFinite(rating) || rating <= 0) return 0;
+  return clamp01((rating - 2.5) / 2.5);
 };
 
 const demandScore = (eventCount: number, popularityScore: number): number => {
@@ -62,6 +68,7 @@ export const computeTrustScore = (input: TrustScoreInput): { trustScore: number;
   const yesVotes = Math.max(0, Math.round(input.userYesVotes ?? 0));
   const noVotes = Math.max(0, Math.round(input.userNoVotes ?? 0));
   const ratingCount = Math.max(0, Math.round(input.ratingCount ?? 0));
+  const ratingValue = Number.isFinite(input.rating ?? Number.NaN) ? Number(input.rating) : Number.NaN;
   const eventCount = Math.max(0, Math.round(input.eventCount ?? 0));
   const popularityScoreRaw = Number.isFinite(input.popularityScore ?? Number.NaN)
     ? Number(input.popularityScore)
@@ -72,7 +79,7 @@ export const computeTrustScore = (input: TrustScoreInput): { trustScore: number;
 
   const confidence = confidenceScore(input);
   const votes = voteScore(yesVotes, noVotes);
-  const rating = ratingScore(ratingCount);
+  const rating = clamp01(ratingScore(ratingCount) * 0.35 + ratingValueScore(ratingValue) * 0.65);
   const demand = demandScore(eventCount, popularityScoreRaw);
   const freshness = freshnessScore(freshnessHoursRaw);
 
@@ -95,4 +102,3 @@ export const computeTrustScore = (input: TrustScoreInput): { trustScore: number;
     verificationState: state,
   };
 };
-

@@ -8,9 +8,12 @@ if (!secret) {
   process.exit(1);
 }
 
-const url = new URL('/api/cron/places/bucharest', BASE_URL);
+const url = new URL('/api/cron/places/seed-city', BASE_URL);
+url.searchParams.set('city', 'bucharest');
+url.searchParams.set('mode', 'full');
+url.searchParams.set('precision', '6');
 if (count && Number.isFinite(count)) {
-  url.searchParams.set('count', String(count));
+  url.searchParams.set('tiles', String(count));
 }
 
 (async () => {

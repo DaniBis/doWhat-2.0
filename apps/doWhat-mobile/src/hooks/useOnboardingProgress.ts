@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { derivePendingOnboardingSteps, isPlayStyle, isSportType, type OnboardingStep, type PlayStyle, type SportType } from '@dowhat/shared';
+import { derivePendingOnboardingSteps, isPlayStyle, isSportType, loadUserPreference, normalizeCoreValues, type OnboardingStep, type PlayStyle, type SportType } from '@dowhat/shared';
 import { supabase } from '../lib/supabase';
 import { maybeResetInvalidSession } from '../lib/auth';
+import { isMissingColumnError } from '../lib/supabaseErrors';
 
 const normalizeMessage = (error: unknown, fallback: string) => {
   if (!error) return fallback;
@@ -45,6 +46,14 @@ type ProfileProgressRow = {
   reliability_pledge_ack_at: string | null;
   core_values?: string[] | null;
 };
+
+type ProfileProgressRowWithoutCoreValues = {
+  primary_sport: string | null;
+  play_style: string | null;
+  reliability_pledge_ack_at: string | null;
+};
+
+const CORE_VALUES_PREFERENCE_KEY = 'onboarding_core_values' as const;
 
 type SportProfileRow = {
   skill_level: string | null;
@@ -112,17 +121,48 @@ export const useOnboardingProgress = (): UseOnboardingProgressResult => {
         logSupabaseError('user_base_traits query', traitsResult.error);
         throw traitsResult.error;
       }
+      let profileData: ProfileProgressRow | null = profileResult.data ?? null;
+      let coreValues = normalizeCoreValues(profileData?.core_values ?? []);
+
       if (profileResult.error && profileResult.error.code !== 'PGRST116') {
-        logSupabaseError('profiles query', profileResult.error);
-        throw profileResult.error;
+        if (!isMissingColumnError(profileResult.error, 'core_values')) {
+          logSupabaseError('profiles query', profileResult.error);
+          throw profileResult.error;
+        }
+        const profileWithoutCoreResult = await supabase
+          .from('profiles')
+          .select('primary_sport, play_style, reliability_pledge_ack_at')
+          .eq('id', user.id)
+          .maybeSingle<ProfileProgressRowWithoutCoreValues>();
+        if (profileWithoutCoreResult.error && profileWithoutCoreResult.error.code !== 'PGRST116') {
+          logSupabaseError('profiles query without core_values', profileWithoutCoreResult.error);
+          throw profileWithoutCoreResult.error;
+        }
+        profileData = profileWithoutCoreResult.data
+          ? {
+              ...profileWithoutCoreResult.data,
+              core_values: null,
+            }
+          : null;
+        try {
+          const fallbackCoreValues = await loadUserPreference<string[]>(
+            supabase,
+            user.id,
+            CORE_VALUES_PREFERENCE_KEY,
+          );
+          coreValues = normalizeCoreValues(fallbackCoreValues ?? []);
+        } catch (preferenceError) {
+          logSupabaseError('user_preferences onboarding_core_values query', preferenceError);
+          coreValues = [];
+        }
       }
 
       const traitCount = typeof traitsResult.count === 'number' ? traitsResult.count : 0;
-      const normalizedSport = profileResult.data?.primary_sport && isSportType(profileResult.data.primary_sport)
-        ? (profileResult.data.primary_sport as SportType)
+      const normalizedSport = profileData?.primary_sport && isSportType(profileData.primary_sport)
+        ? (profileData.primary_sport as SportType)
         : null;
-      const normalizedPlayStyle = profileResult.data?.play_style && isPlayStyle(profileResult.data.play_style)
-        ? (profileResult.data.play_style as PlayStyle)
+      const normalizedPlayStyle = profileData?.play_style && isPlayStyle(profileData.play_style)
+        ? (profileData.play_style as PlayStyle)
         : null;
       let skillLevel: string | null = null;
       try {
@@ -133,11 +173,11 @@ export const useOnboardingProgress = (): UseOnboardingProgressResult => {
       }
       const steps = derivePendingOnboardingSteps({
         traitCount,
-        coreValues: profileResult.data?.core_values ?? [],
+        coreValues,
         primarySport: normalizedSport,
         playStyle: normalizedPlayStyle,
         skillLevel,
-        pledgeAckAt: profileResult.data?.reliability_pledge_ack_at ?? null,
+        pledgeAckAt: profileData?.reliability_pledge_ack_at ?? null,
       });
 
       if (!mountedRef.current) return;

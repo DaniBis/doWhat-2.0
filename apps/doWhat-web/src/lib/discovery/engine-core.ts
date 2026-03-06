@@ -45,6 +45,7 @@ export type DiscoveryItem = {
   time_window?: TimeWindowKey | null;
   upcoming_session_count?: number | null;
   source?: string | null;
+  rating?: number | null;
   rating_count?: number | null;
   popularity_score?: number | null;
   source_confidence?: number | null;
@@ -90,6 +91,16 @@ export type DiscoverySourceBreakdown = Record<string, number>;
 
 export type DiscoveryDebug = {
   cacheHit: boolean;
+  cacheKey: string;
+  tilesTouched: string[];
+  providerCounts: Record<string, number>;
+  pagesFetched: number;
+  nextPageTokensUsed: number;
+  itemsBeforeDedupe: number;
+  itemsAfterDedupe: number;
+  itemsAfterGates: number;
+  itemsAfterFilters: number;
+  dropReasons: Record<string, number>;
   candidateCounts: {
     afterRpc: number;
     afterFallbackMerge: number;
@@ -144,7 +155,7 @@ const DEFAULT_RADIUS_METERS = 2_000;
 export const CACHE_TTL_MS = 5 * 60 * 1000;
 export const MAX_CACHE_ENTRIES = 30;
 export const MAX_CACHE_ITEMS = 2000;
-const DISCOVERY_CACHE_KEY_VERSION = 3;
+const DISCOVERY_CACHE_KEY_VERSION = 4;
 
 const CAPACITY_KEYS = new Set<CapacityFilterKey>(['any', 'couple', 'small', 'medium', 'large']);
 const TIME_WINDOW_KEYS = new Set<TimeWindowKey>(['any', 'open_now', 'morning', 'afternoon', 'evening', 'late']);

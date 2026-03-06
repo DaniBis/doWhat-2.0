@@ -56,6 +56,28 @@ export interface PlacesResponse {
   providerCounts: Record<string, number>;
   attribution: PlaceAttribution[];
   latencyMs: number;
+  explain?: {
+    cacheHit: boolean;
+    cacheKey: string;
+    tileKey: string;
+    tilesTouched: string[];
+    providerCounts: Record<string, number>;
+    pagesFetched: number;
+    nextPageTokensUsed: number;
+    itemsBeforeDedupe: number;
+    itemsAfterDedupe: number;
+    itemsAfterGates: number;
+    itemsAfterFilters: number;
+    dropReasons: Record<string, number>;
+    providerStats: Array<{
+      provider: string;
+      pagesFetched: number;
+      nextPageTokensUsed: number;
+      itemsFetched: number;
+      itemsReturned: number;
+      dropped: Record<string, number>;
+    }>;
+  };
 }
 
 export interface PlaceSourceSnapshot {
