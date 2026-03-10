@@ -1,5 +1,14 @@
 # Changes Log
 
+	migrations 060/065/066/067/068 were verified and registered
+	•	health-migrations --dowhat --remote-rest --strict passed
+	•	verify-discovery-rollout-pack.mjs passed
+	•	verify-discovery-sql-contract.mjs passed
+	•	verify-discovery-contract.mjs passed
+	•	focused web/mobile discovery tests passed
+	•	rollout baseline is complete
+	•	next phase is event/session/place truth hardening
+   
 ## 2026-03-07
 
 ### 2026-03-07 04:02 UTC — Final verification checkpoint / duplicate-logo-count-discovery work validated, lint cleanup applied
