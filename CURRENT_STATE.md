@@ -77,7 +77,7 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 ## Data / Discovery Truth Gaps
 
 - There is still no final operational answer to whether stale remote `venue_activities` rows need cleanup, rematch, or both.
-- Event/session/place truth is much clearer on the touched create/detail/API surfaces, but attendance/hosting truth and mixed `events` + `sessions` discovery still need follow-through.
+- Event/session/place truth is much clearer on the touched create/detail/API surfaces, and attendance/hosting truth is now explicit on the main session/event detail paths, but mixed `events` + `sessions` discovery still needs follow-through.
 - The product now knows what it should discover, but real-user readiness in target cities still depends on actual remote inventory quality.
 
 ## Test / Verification State
@@ -93,15 +93,15 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Immediate Priorities
 
-1. Continue attendance / hosting truth follow-through where event/session detail semantics are still incomplete.
-2. Audit stale remote activity mappings and clean them up if they still leak pre-boundary hospitality matches.
-3. Decide whether `/api/events` should widen beyond its current explicit subset only after the mixed event/session truth is stable.
+1. Audit stale remote activity mappings and clean them up if they still leak pre-boundary hospitality matches.
+2. Decide whether `/api/events` should widen beyond its current explicit subset only after the mixed event/session truth is stable.
+3. Close the remaining standalone-event and secondary-surface participation gaps without weakening the new explicit attendance contract.
 4. Build a real-user readiness gate only after discovery, filters, event truth, and reliability truth are all verified.
 
 ## What Blocks Real-Life Readiness
 
-- incomplete attendance/hosting truth on top of the now-hardened event/session/place layer
 - remaining legacy-model overlap (`places` vs `venues`, `events` vs `sessions`)
+- no separate first-party standalone event attendance model
 
 ## Operating Notes
 

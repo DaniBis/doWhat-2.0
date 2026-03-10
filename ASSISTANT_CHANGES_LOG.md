@@ -2745,3 +2745,88 @@
 - Remaining risks:
   - The DB still stores an internal session place-label fallback for compatibility.
   - Mixed `events` + `sessions` discovery and the broader attendance/hosting system still need follow-through.
+
+- Timestamp: 2026-03-10 19:41 +07
+- Focus: attendance / hosting truth hardening kickoff and audit.
+- Files changed:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - Attendance truth is implemented, but not declared. Web session APIs know about host-only roster updates and verified attendance, while mobile still receives a thin summary/mutation payload from `mobile-session-attendance`, and event detail honesty depends on page-local branching instead of explicit payload fields.
+- Decision:
+  - Add a shared participation truth contract first, then thread it through session attendance routes, mobile attendance helpers, event/session presentation, and the touched web/mobile detail surfaces.
+- Why:
+  - This is the smallest safe path that makes host/RSVP/attendance support explicit without reopening rollout, filters, or the broader event model.
+- Testing status:
+  - Static audit only in this step.
+- Result:
+  - Confirmed the implementation scope:
+    1. Harden session attendance summary and mutation payloads.
+    2. Harden host roster payload semantics.
+    3. Align the mobile edge function and mobile helper contract with web.
+    4. Add explicit attendance truth fields to event presentation payloads.
+    5. Replace UI inference with contract-driven rendering on the touched session/event surfaces.
+- Remaining risks:
+  - External events still need explicit “source-owned / unavailable” attendance truth once the payload contract is extended.
+  - Some mobile surfaces currently depend on summary-only counts and may need small UI simplification if a concept cannot be supported honestly.
+
+- Timestamp: 2026-03-10 19:56 +07
+- Focus: attendance / hosting truth hardening implementation, parity alignment, tests, and control-doc refresh.
+- Files changed:
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+  - `apps/doWhat-web/src/lib/sessions/server.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/join/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/leave/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/interested/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+  - `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`
+  - `apps/doWhat-web/src/components/__tests__/SessionAttendancePanel.test.tsx`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+  - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+  - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-mobile/src/lib/sessionApi.ts`
+  - `apps/doWhat-mobile/src/lib/sessionAttendance.ts`
+  - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+  - `apps/doWhat-mobile/src/lib/__tests__/sessionAttendance.test.ts`
+  - `apps/doWhat-mobile/src/components/SessionAttendanceQuickActions.tsx`
+  - `apps/doWhat-mobile/src/components/SessionAttendanceBadges.tsx`
+  - `apps/doWhat-mobile/src/components/__tests__/SessionAttendanceQuickActions.test.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx`
+  - `supabase/functions/mobile-session-attendance/index.ts`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+- Root cause / finding:
+  - Attendance ownership/support truth was implicit. Session APIs only returned counts/status, mobile used an even thinner edge-function contract, event detail honesty depended on local copy, and the host roster mislabeled checked-in confirmation as GPS verification.
+- Decision:
+  - Add a shared `participation` truth object and use it everywhere the touched session/event surfaces talk about attendance, RSVP ownership, host truth, or verification support.
+- Why:
+  - This removes UI inference and keeps web/mobile/API aligned without reopening SQL, rollout, or the broader standalone event model.
+- Testing:
+  - Targeted ESLint passed on all touched files.
+  - Shared truth tests passed (`7/7`).
+  - Focused web attendance/event tests passed (`26/26`).
+  - Focused mobile attendance/session tests passed (`15/15`).
+  - Shared, web, and mobile typecheck passed.
+  - `node scripts/verify-discovery-contract.mjs` passed.
+- Result:
+  - Sessions now declare first-party attendance truth explicitly.
+  - Session-backed event mirrors now declare linked first-party attendance truth explicitly.
+  - Imported/open events now declare source-owned or unavailable attendance truth explicitly.
+  - Web/mobile session attendance consumers now use the same contract.
+  - The host roster now says `Host confirmed attendance` instead of `Verified via GPS`.
+  - Control docs now reflect the narrower remaining risk: no standalone first-party event attendance model yet.
+- Remaining risks:
+  - There is still no standalone first-party event attendance model.
+  - Mixed `events` + `sessions` discovery still needs a future truth sweep beyond the touched attendance surfaces.
+  - Untouched secondary surfaces may still need the same contract-driven copy cleanup when they are next modified.

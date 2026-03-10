@@ -5378,3 +5378,92 @@
       - Event discovery still merges ingested `events` with first-party `sessions`.
       - Standalone user-created events are still not a separate product capability.
       - Attendance / hosting truth still needs a dedicated follow-through pass.
+
+84. Timestamp: 2026-03-10 19:41 +07
+   - Issue being worked on: Attendance / hosting truth hardening kickoff and surface audit.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Treat this as the dedicated attendance / hosting truth pass, keep rollout and filter redesign out of scope, and audit every touched attendance surface before changing payloads or UI.
+   - Why the decision was made:
+      - Attendance truth is the next remaining real-life readiness blocker. The existing code already has first-party session attendance logic, but the semantics are implicit and split across web session APIs, mobile edge-function helpers, and event/session presentation.
+   - How it was tested:
+      - Static repo audit only in this step.
+   - Result:
+      - Confirmed the main contradictions to fix:
+        1. `/api/sessions/[sessionId]/attendance` only exposes counts/status/maxAttendees and does not declare whether attendance is supported, first-party, or host-owned.
+        2. `/api/sessions/[sessionId]/attendance/host` exposes host roster mutations but the contract does not declare host/organizer/verification truth explicitly.
+        3. `supabase/functions/mobile-session-attendance` and `apps/doWhat-mobile/src/lib/sessionAttendance.ts` still use a thinner summary/mutation contract than web, so mobile cannot express attendance ownership/support truth.
+        4. `apps/doWhat-web/src/app/events/[id]/page.tsx` is honest in copy, but that honesty is UI-local; event payloads still need explicit attendance source/support fields instead of relying on inference from `origin_kind` and URLs.
+        5. `apps/doWhat-web/src/app/sessions/[id]/page.tsx`, `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`, and `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx` infer host/attendance capability from raw fields instead of a shared participation truth contract.
+   - Remaining risks or follow-up notes:
+      - Mobile parity will require touching both the edge function and the shared/mobile TypeScript contract.
+      - External events should likely surface attendance as unavailable/source-owned, but that still needs to be made explicit in payloads and tests.
+
+85. Timestamp: 2026-03-10 19:56 +07
+   - Issue being worked on: Attendance / hosting truth hardening implementation, parity alignment, and regression coverage.
+   - Files changed:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/truth.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/join/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/leave/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/interested/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+      - `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`
+      - `apps/doWhat-web/src/components/__tests__/SessionAttendancePanel.test.tsx`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+      - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-mobile/src/lib/sessionApi.ts`
+      - `apps/doWhat-mobile/src/lib/sessionAttendance.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionAttendance.test.ts`
+      - `apps/doWhat-mobile/src/components/SessionAttendanceQuickActions.tsx`
+      - `apps/doWhat-mobile/src/components/SessionAttendanceBadges.tsx`
+      - `apps/doWhat-mobile/src/components/__tests__/SessionAttendanceQuickActions.test.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx`
+      - `supabase/functions/mobile-session-attendance/index.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Introduce one explicit shared `participation` truth object instead of leaving attendance ownership/support/host semantics implicit.
+      - Keep first-party session attendance explicit in session payloads and session attendance APIs.
+      - Keep session-backed event mirrors explicit as `linked_first_party` instead of pretending the event detail page itself owns RSVP controls.
+      - Keep imported/open events explicit as `external_source` or `unavailable`.
+      - Rename the host roster verification copy from `Verified via GPS` to `Host confirmed attendance` because the backend only knows a checked-in/confirmed flag, not actual GPS proof.
+   - Why the decision was made:
+      - The repo already had attendance behavior, but web, mobile, and event/session presentation were inferring different truths from sparse fields. The smallest safe fix was to add one shared truth contract, then thread it through API payloads, mobile parity helpers, and touched presentation surfaces.
+   - How it was tested:
+      - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/truth.ts packages/shared/src/__tests__/eventTruth.test.ts apps/doWhat-web/src/lib/sessions/server.ts 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/join/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/leave/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/interested/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts' apps/doWhat-web/src/components/SessionAttendancePanel.tsx apps/doWhat-web/src/components/__tests__/SessionAttendancePanel.test.tsx apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts 'apps/doWhat-web/src/app/events/[id]/page.tsx' apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-mobile/src/lib/sessionApi.ts apps/doWhat-mobile/src/lib/sessionAttendance.ts apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts apps/doWhat-mobile/src/lib/__tests__/sessionAttendance.test.ts apps/doWhat-mobile/src/components/SessionAttendanceQuickActions.tsx apps/doWhat-mobile/src/components/SessionAttendanceBadges.tsx apps/doWhat-mobile/src/components/__tests__/SessionAttendanceQuickActions.test.tsx apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx 'apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx' supabase/functions/mobile-session-attendance/index.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath 'src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts' src/components/__tests__/SessionAttendancePanel.test.tsx src/lib/events/__tests__/presentation.test.ts src/app/api/events/__tests__/payload.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/sessionAttendance.test.ts src/lib/__tests__/sessionApi.test.ts src/components/__tests__/SessionAttendanceQuickActions.test.tsx src/app/__tests__/sessions.contest-analytics.test.tsx`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Session payloads and session attendance APIs now declare first-party attendance truth explicitly via `participation`.
+      - Session-backed event mirrors now expose linked first-party attendance truth, while imported/open events explicitly expose source-owned or unavailable participation.
+      - Web event detail, web session detail, web host roster UI, mobile session detail, mobile quick actions, and the mobile attendance edge function now all use the same participation semantics.
+      - No touched UI still implies that imported/open events have doWhat-owned RSVP controls.
+      - The host roster no longer claims checked-in attendance is GPS-verified.
+      - Control docs now reflect that attendance truth is explicit on the touched surfaces and that the remaining gap is the absence of a standalone first-party event attendance model.
+   - Remaining risks or follow-up notes:
+      - There is still no standalone first-party event attendance model; open/imported events remain source-owned or unavailable by design.
+      - Discovery still merges ingested `events` with first-party `sessions`, so mixed-model truth remains a follow-up area.
+      - Untouched secondary surfaces may still need the same copy/contract sweep when they are modified later.

@@ -6,30 +6,31 @@ Only list issues that are still open, operationally unresolved, or not yet prove
 
 ## Critical
 
-### 1. Attendance and hosting truth is still incomplete on some session/event surfaces
+- No critical open bugs are currently proven after the attendance/hosting truth hardening pass. Reclassify immediately if live verification contradicts this.
+
+## High
+
+### 1. There is still no standalone first-party event attendance model
 
 - Surface/page/system
-  - session detail, attendance flows, event detail truth messaging, any surface that summarizes host or RSVP state
+  - Imported/open event detail, any future user-created non-session event flow
 - Symptom
-  - Location truth is now much stronger, but the product still has uneven rules for when attendance is first-party, source-owned, or not available at all.
+  - Session-backed participation truth is now explicit, but doWhat still does not own attendance for standalone/open events as a first-party product capability.
 - Likely root cause
-  - Event/session/place truth was hardened before the broader attendance/hosting model was fully normalized.
+  - The product model still treats first-party hosted participation as `sessions`, while `events` remain a mixed surface of imported listings and session-backed mirrors.
 - Current status
-  - Open / partially mitigated
+  - Open / explicit limitation
 - Owner
   - Codex
 - Blocking or non-blocking
-  - Blocking for full real-user readiness
+  - Blocking for a broader standalone-events product, but not for current session truth
 - Recommended next action
-  - Complete the attendance/hosting truth pass on top of the hardened place/session/event contract.
+  - Keep attendance explicit as unavailable/source-owned on event surfaces until a real standalone event participation model exists.
 - Related files/tests if known
   - `apps/doWhat-web/src/app/events/[id]/page.tsx`
-  - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
-  - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
-  - `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`
-  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/*`
-
-## High
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+  - `packages/shared/src/events/truth.ts`
 
 ### 2. Event discovery still uses a narrower explicit subset than the full shared discovery contract
 
