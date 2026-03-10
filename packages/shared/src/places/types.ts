@@ -1,3 +1,4 @@
+import type { DiscoveryFilterContract } from '../discovery';
 import type { MapCoordinates } from '../map/types';
 
 export interface PlacesBounds {
@@ -7,7 +8,9 @@ export interface PlacesBounds {
 
 export interface PlacesViewportQuery {
   bounds: PlacesBounds;
+  /** @deprecated use discoveryFilters.taxonomyCategories instead. */
   categories?: string[];
+  discoveryFilters?: DiscoveryFilterContract;
   limit?: number;
   forceRefresh?: boolean;
   city?: string;

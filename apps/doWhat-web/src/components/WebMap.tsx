@@ -29,6 +29,7 @@ import {
 } from "@dowhat/shared";
 
 import SaveToggleButton from "./SaveToggleButton";
+import PlaceBrandMark from "./PlaceBrandMark";
 import { buildMapActivitySavePayload } from "@/lib/savePayloads";
 import { describeActivityCategories } from "@/lib/activityCategoryLabels";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from "@/lib/places/labels";
@@ -496,7 +497,7 @@ function WebMap({
           </Source>
         )}
         {selectedActivity && (
-              <Popup
+          <Popup
             closeButton
             closeOnClick={false}
             focusAfterOpen={false}
@@ -507,17 +508,27 @@ function WebMap({
             onClose={() => setSelectedActivity(null)}
           >
             <div className="space-y-xs text-sm text-ink-strong">
-              <div className="font-semibold text-ink">{selectedActivity.name}</div>
-              <div className="flex flex-wrap items-center gap-xxs text-[11px] font-semibold">
-                <span className={`rounded-full border px-xs py-hairline ${activityVerificationClass(selectedActivity)}`}>
-                  {activityVerificationLabel(selectedActivity)}
-                </span>
-                <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
-                  Trust {formatTrustPercent(selectedActivity.trust_score)}
-                </span>
-              </div>
-              <div>
-                <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
+              <div className="flex items-start gap-sm">
+                <PlaceBrandMark
+                  name={selectedActivityPlaceLabel ?? selectedActivity.name}
+                  website={selectedActivity.website ?? null}
+                  size="sm"
+                  className="shrink-0"
+                />
+                <div className="flex-1 space-y-xs">
+                  <div className="font-semibold text-ink">{selectedActivity.name}</div>
+                  <div className="flex flex-wrap items-center gap-xxs text-[11px] font-semibold">
+                    <span className={`rounded-full border px-xs py-hairline ${activityVerificationClass(selectedActivity)}`}>
+                      {activityVerificationLabel(selectedActivity)}
+                    </span>
+                    <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                      Trust {formatTrustPercent(selectedActivity.trust_score)}
+                    </span>
+                  </div>
+                  <div>
+                    <span aria-hidden>📍</span> {selectedActivityPlaceLabel}
+                  </div>
+                </div>
               </div>
               {selectedActivityCategories.length ? (
                 <div className="flex flex-wrap gap-xs text-xs text-emerald-700">
@@ -565,7 +576,7 @@ function WebMap({
                   }}
                   className="rounded-full bg-brand-teal/90 px-sm py-xxs font-semibold text-surface transition hover:bg-brand-teal"
                 >
-                  Create event
+                  Create session
                 </button>
               </div>
             </div>

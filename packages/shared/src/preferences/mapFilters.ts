@@ -1,3 +1,5 @@
+import type { DiscoveryFilterContract, DiscoveryTrustMode } from '../discovery';
+
 export type CapacityFilterKey = 'any' | 'couple' | 'small' | 'medium' | 'large';
 export type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
 
@@ -8,6 +10,7 @@ export type MapFilterPreferences = {
   priceLevels: number[];
   capacityKey: CapacityFilterKey;
   timeWindow: TimeWindowKey;
+  trustMode: DiscoveryTrustMode;
 };
 
 export const DEFAULT_MAP_FILTER_PREFERENCES: MapFilterPreferences = {
@@ -17,6 +20,7 @@ export const DEFAULT_MAP_FILTER_PREFERENCES: MapFilterPreferences = {
   priceLevels: [],
   capacityKey: 'any',
   timeWindow: 'any',
+  trustMode: 'all',
 };
 
 const normaliseList = (values: string[] | null | undefined): string[] => {
@@ -35,12 +39,16 @@ const normaliseNumberList = (values: number[] | null | undefined): number[] => {
 
 const CAPACITY_KEYS = new Set<CapacityFilterKey>(['any', 'couple', 'small', 'medium', 'large']);
 const TIME_WINDOW_KEYS = new Set<TimeWindowKey>(['any', 'open_now', 'morning', 'afternoon', 'evening', 'late']);
+const TRUST_MODES = new Set<DiscoveryTrustMode>(['all', 'verified_only', 'ai_only']);
 
 const normaliseCapacityKey = (value: string | null | undefined): CapacityFilterKey =>
   CAPACITY_KEYS.has(value as CapacityFilterKey) ? (value as CapacityFilterKey) : 'any';
 
 const normaliseTimeWindow = (value: string | null | undefined): TimeWindowKey =>
   TIME_WINDOW_KEYS.has(value as TimeWindowKey) ? (value as TimeWindowKey) : 'any';
+
+const normaliseTrustMode = (value: string | null | undefined): DiscoveryTrustMode =>
+  TRUST_MODES.has(value as DiscoveryTrustMode) ? (value as DiscoveryTrustMode) : 'all';
 
 export const normaliseMapFilterPreferences = (
   prefs: MapFilterPreferences | null | undefined,
@@ -53,20 +61,13 @@ export const normaliseMapFilterPreferences = (
     priceLevels: normaliseNumberList(source.priceLevels),
     capacityKey: normaliseCapacityKey(source.capacityKey),
     timeWindow: normaliseTimeWindow(source.timeWindow),
+    trustMode: normaliseTrustMode(source.trustMode),
   };
 };
 
 export const mapPreferencesToQueryFilters = (
   prefs: MapFilterPreferences,
-): {
-  activityTypes?: string[];
-  tags?: string[];
-  traits?: string[];
-  taxonomyCategories?: string[];
-  priceLevels?: number[];
-  capacityKey?: CapacityFilterKey;
-  timeWindow?: TimeWindowKey;
-} | undefined => {
+): DiscoveryFilterContract | undefined => {
   const {
     activityTypes,
     traits,
@@ -74,21 +75,15 @@ export const mapPreferencesToQueryFilters = (
     priceLevels,
     capacityKey,
     timeWindow,
+    trustMode,
   } = normaliseMapFilterPreferences(prefs);
-  const filters: {
-    activityTypes?: string[];
-    tags?: string[];
-    traits?: string[];
-    taxonomyCategories?: string[];
-    priceLevels?: number[];
-    capacityKey?: CapacityFilterKey;
-    timeWindow?: TimeWindowKey;
-  } = {};
+  const filters: DiscoveryFilterContract = {};
   if (activityTypes.length) filters.activityTypes = activityTypes;
-  if (traits.length) filters.traits = traits;
+  if (traits.length) filters.peopleTraits = traits;
   if (taxonomyCategories.length) filters.taxonomyCategories = taxonomyCategories;
   if (priceLevels.length) filters.priceLevels = priceLevels;
   if (capacityKey !== 'any') filters.capacityKey = capacityKey;
   if (timeWindow !== 'any') filters.timeWindow = timeWindow;
+  if (trustMode !== 'all') filters.trustMode = trustMode;
   return Object.keys(filters).length ? filters : undefined;
 };

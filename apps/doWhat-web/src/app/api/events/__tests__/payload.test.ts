@@ -182,6 +182,221 @@ describe('/api/events payload', () => {
     expect(payload.events[0]?.id).toBe('event-high');
   });
 
+  it('applies OR within structured groups and AND between search and structured filters', async () => {
+    const rows: EventSummary[] = [
+      {
+        id: 'event-climb-community',
+        title: 'Community Climb Night',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Wall House',
+        place_label: 'Wall House',
+        lat: 1,
+        lng: 2,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'verified',
+        event_state: null,
+        tags: ['climbing', 'community'],
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: { confirmed: true, accuracyScore: 99 },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+      {
+        id: 'event-yoga-community',
+        title: 'Community Yoga Flow',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Lotus Studio',
+        place_label: 'Lotus Studio',
+        lat: 3,
+        lng: 4,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'verified',
+        event_state: null,
+        tags: ['yoga', 'community'],
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: { confirmed: true, accuracyScore: 98 },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+      {
+        id: 'event-climb-private',
+        title: 'Private Climb Session',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Wall House',
+        place_label: 'Wall House',
+        lat: 5,
+        lng: 6,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'verified',
+        event_state: null,
+        tags: ['climbing'],
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: { confirmed: true, accuracyScore: 97 },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+    ];
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return createQuery({ data: rows, error: null });
+      if (table === 'sessions') return createQuery({ data: [], error: null });
+      if (table === 'places') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({
+      url: 'http://localhost/api/events?limit=20&q=community&types=climbing,yoga&tags=community',
+    } as unknown as Request);
+
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    expect(payload.events.map((event) => event.id)).toEqual(['event-climb-community', 'event-yoga-community']);
+  });
+
+  it('supports trust=ai_only while keeping first-party session fallback out of ai-only mode', async () => {
+    const rows: EventSummary[] = [
+      {
+        id: 'event-unverified',
+        title: 'Loose listing',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Unknown',
+        place_label: 'Unknown',
+        lat: 1,
+        lng: 2,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'unverified',
+        event_state: null,
+        tags: ['community'],
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: { confirmed: false, accuracyScore: 82 },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+      {
+        id: 'event-verified',
+        title: 'Verified listing',
+        description: null,
+        start_at: new Date().toISOString(),
+        end_at: null,
+        timezone: null,
+        venue_name: 'Known',
+        place_label: 'Known',
+        lat: 3,
+        lng: 4,
+        address: null,
+        url: null,
+        image_url: null,
+        status: 'verified',
+        event_state: null,
+        tags: ['community'],
+        place_id: null,
+        source_id: null,
+        source_uid: null,
+        metadata: {
+          locationVerification: { confirmed: true, accuracyScore: 98 },
+        },
+        reliability_score: null,
+        verification_confirmations: null,
+        verification_required: null,
+        place: null,
+      },
+    ];
+
+    const now = Date.now();
+    const sessionRow = {
+      id: 'session-real',
+      activity_id: null,
+      venue_id: null,
+      place_id: null,
+      host_user_id: 'host-1',
+      starts_at: new Date(now + 60 * 60 * 1000).toISOString(),
+      ends_at: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
+      price_cents: 0,
+      visibility: 'public',
+      max_attendees: 20,
+      place_label: 'City Hub',
+      reliability_score: null,
+      description: null,
+      created_at: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    };
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return createQuery({ data: rows, error: null });
+      if (table === 'sessions') return createQuery({ data: [sessionRow], error: null });
+      if (table === 'activities') return createQuery({ data: [], error: null });
+      if (table === 'venues') return createQuery({ data: [], error: null });
+      if (table === 'places') return createQuery({ data: [], error: null });
+      if (table === 'profiles') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({ url: 'http://localhost/api/events?limit=20&trust=ai_only' } as unknown as Request);
+
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    expect(payload.events.map((event) => event.id)).toEqual(['event-unverified']);
+  });
+
+  it('rejects unsupported people filters instead of silently ignoring them', async () => {
+    await GET({ url: 'http://localhost/api/events?limit=20&traits=curious' } as unknown as Request);
+
+    expect(jsonMock).toHaveBeenCalledTimes(1);
+    expect(jsonMock.mock.calls[0]?.[1]).toMatchObject({ status: 400 });
+    expect(jsonMock.mock.calls[0]?.[0]).toMatchObject({
+      error: expect.stringContaining('Unsupported /api/events filters: traits'),
+    });
+  });
+
+  it('returns an empty payload when the shared result kind excludes events', async () => {
+    await GET({ url: 'http://localhost/api/events?kind=activities&limit=20' } as unknown as Request);
+
+    expect(jsonMock).toHaveBeenCalledTimes(1);
+    expect(jsonMock.mock.calls[0]?.[0]).toEqual({ events: [] });
+  });
+
   it('queries session fallback with default recent lookback when no from filter is provided', async () => {
     const now = Date.now();
     const sessionRow = {
@@ -220,5 +435,52 @@ describe('/api/events payload', () => {
     expect(sessionsQuery.or).toHaveBeenCalledWith(expect.stringMatching(/starts_at\.gte\..*ends_at\.gte\..*created_at\.gte\./));
     const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
     expect(payload.events.some((event) => event.id === 'session-new')).toBe(true);
+  });
+
+  it('keeps canonical place ids separate from legacy venue ids in session-backed event summaries', async () => {
+    const now = Date.now();
+    const sessionRow = {
+      id: 'session-legacy-venue',
+      activity_id: 'activity-1',
+      venue_id: 'legacy-venue-1',
+      place_id: null,
+      host_user_id: 'host-1',
+      starts_at: new Date(now + 60 * 60 * 1000).toISOString(),
+      ends_at: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
+      price_cents: 0,
+      visibility: 'public',
+      max_attendees: 20,
+      place_label: 'Old Hall',
+      reliability_score: null,
+      description: null,
+      created_at: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    };
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return createQuery({ data: [], error: null });
+      if (table === 'sessions') return createQuery({ data: [sessionRow], error: null });
+      if (table === 'activities') return createQuery({ data: [{ id: 'activity-1', name: 'Chess Club', description: null, venue: null, lat: null, lng: null }], error: null });
+      if (table === 'venues') return createQuery({ data: [{ id: 'legacy-venue-1', name: 'Old Hall', address: '123 Legacy St', lat: 44.43, lng: 26.1 }], error: null });
+      if (table === 'places') return createQuery({ data: [], error: null });
+      if (table === 'profiles') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({ url: 'http://localhost/api/events?limit=20' } as unknown as Request);
+
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    const sessionEvent = payload.events.find((event) => event.id === 'session-legacy-venue');
+    expect(sessionEvent).toMatchObject({
+      origin_kind: 'session',
+      location_kind: 'legacy_venue',
+      is_place_backed: false,
+      place_id: null,
+      venue_name: 'Old Hall',
+    });
+    expect(sessionEvent?.metadata).toMatchObject({
+      venueId: 'legacy-venue-1',
+      sessionId: 'session-legacy-venue',
+    });
   });
 });

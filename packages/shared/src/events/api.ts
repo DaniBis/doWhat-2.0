@@ -1,4 +1,6 @@
+import { serializeDiscoveryFilterContractToSearchParams } from '../discovery';
 import type { EventsQuery, EventsResponse } from './types';
+import { normalizeEventsQuery } from './utils';
 
 export interface CreateEventsFetcherOptions {
   buildUrl: (query: EventsQuery) => string;
@@ -24,17 +26,24 @@ export const createEventsFetcher = (options: CreateEventsFetcherOptions): FetchE
 
   return async ({ signal, ...query }: FetchEventsArgs) => {
     const url = new URL(buildUrl(query));
+    const normalized = normalizeEventsQuery(query);
+    const filterParams = serializeDiscoveryFilterContractToSearchParams({
+      resultKinds: normalized.filters.resultKinds,
+      searchText: normalized.filters.searchText,
+      activityTypes: normalized.filters.activityTypes,
+      tags: normalized.filters.tags,
+      taxonomyCategories: normalized.filters.taxonomyCategories,
+      trustMode: normalized.filters.trustMode,
+    });
+
+    for (const [key, value] of filterParams.entries()) {
+      url.searchParams.set(key, value);
+    }
     setCoordinateParam(url, 'sw', query.sw);
     setCoordinateParam(url, 'ne', query.ne);
     if (query.from) url.searchParams.set('from', query.from);
     if (query.to) url.searchParams.set('to', query.to);
     if (query.limit) url.searchParams.set('limit', String(query.limit));
-    if (query.categories?.length) {
-      url.searchParams.set('categories', query.categories.join(','));
-    }
-    if (query.verifiedOnly) {
-      url.searchParams.set('verifiedOnly', '1');
-    }
     if (typeof query.minAccuracy === 'number' && Number.isFinite(query.minAccuracy)) {
       url.searchParams.set('minAccuracy', String(Math.max(0, Math.min(100, Math.round(query.minAccuracy)))));
     }

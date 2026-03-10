@@ -1,3 +1,5 @@
+import { getDiscoveryTier3Ids } from '../taxonomy';
+
 export type ActivityFilterPreferences = {
   radius: number;
   priceRange: [number, number];
@@ -17,6 +19,8 @@ const sortUnique = (values: string[]): string[] => {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 };
 
+const DISCOVERY_TIER3_ID_SET = new Set(getDiscoveryTier3Ids());
+
 export const normaliseActivityFilterPreferences = (
   prefs: ActivityFilterPreferences | null | undefined,
 ): ActivityFilterPreferences => {
@@ -27,7 +31,7 @@ export const normaliseActivityFilterPreferences = (
   return {
     radius,
     priceRange: [lower, upper],
-    categories: sortUnique(source.categories ?? []),
+    categories: sortUnique(source.categories ?? []).filter((value) => DISCOVERY_TIER3_ID_SET.has(value)),
     timeOfDay: sortUnique(source.timeOfDay ?? []),
   };
 };

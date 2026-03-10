@@ -60,7 +60,7 @@ describe('pruneLowQualitySearchActivities', () => {
     const items = [
       makeActivity({
         id: 'venue:db0bd877-08a5-42f9-9dfc-cc3f9a6d864a',
-        place_id: null,
+        place_id: 'db0bd877-08a5-42f9-9dfc-cc3f9a6d864a',
         name: 'VietClimb',
         place_label: 'VietClimb',
         lat: 21.0548300,

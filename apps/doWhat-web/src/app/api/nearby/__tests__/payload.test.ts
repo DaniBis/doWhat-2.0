@@ -168,6 +168,53 @@ describe('/api/nearby payload', () => {
     );
   });
 
+  it('passes shared contract filters through and narrows radius by max distance', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 1, lng: 2 },
+      radiusMeters: 1000,
+      count: 0,
+      items: [],
+      filterSupport: {
+        activityTypes: true,
+        tags: true,
+        traits: true,
+        taxonomyCategories: true,
+        priceLevels: true,
+        capacityKey: true,
+        timeWindow: true,
+      },
+      facets: {
+        activityTypes: [],
+        tags: [],
+        traits: [],
+        taxonomyCategories: [],
+        priceLevels: [],
+        capacityKey: [],
+        timeWindow: [],
+      },
+      sourceBreakdown: {},
+      cache: { key: 'k', hit: false },
+      source: 'postgis',
+    });
+
+    await GET({
+      url: 'http://localhost/api/nearby?lat=1&lng=2&radius=5000&limit=5&q=Lotus%20Yoga&traits=curious&trust=verified_only&distanceKm=1',
+    } as unknown as Request);
+
+    expect(discoverNearbyActivities).toHaveBeenCalledWith(
+      expect.objectContaining({
+        radiusMeters: 1000,
+        filters: expect.objectContaining({
+          searchText: 'lotus yoga',
+          peopleTraits: ['curious'],
+          trustMode: 'verified_only',
+          maxDistanceKm: 1,
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it('explain mode returns provider counts and drop reasons', async () => {
     discoverNearbyActivities.mockResolvedValue({
       center: { lat: 13.7563, lng: 100.5018 },
@@ -407,6 +454,50 @@ describe('/api/nearby payload', () => {
       expandedCount: 22,
     });
     expect(payload.count).toBe(22);
+  });
+
+  it('does not over-expand unfiltered inventory when the request limit is already satisfied', async () => {
+    discoverNearbyActivities.mockImplementation(
+      async (query: { radiusMeters: number }) => ({
+        center: { lat: 21.0285, lng: 105.8542 },
+        radiusMeters: query.radiusMeters,
+        count: 120,
+        items: [],
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: true,
+          taxonomyCategories: true,
+          priceLevels: true,
+          capacityKey: true,
+          timeWindow: true,
+        },
+        facets: {
+          activityTypes: [],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        sourceBreakdown: {},
+        cache: { key: 'k', hit: false },
+        source: 'supabase-places',
+      }),
+    );
+
+    await GET({
+      url: 'http://localhost/api/nearby?lat=21.0285&lng=105.8542&radius=2000&limit=120',
+    } as unknown as Request);
+
+    expect(discoverNearbyActivities).toHaveBeenCalledTimes(1);
+    const payload = responseJsonMock.mock.calls[0]?.[0] as {
+      radiusExpansion?: { fromRadiusMeters: number; toRadiusMeters: number; expandedCount: number };
+      count: number;
+    };
+    expect(payload.radiusExpansion).toBeUndefined();
+    expect(payload.count).toBe(120);
   });
 
   it('keeps expanding filtered radius until threshold is reached', async () => {

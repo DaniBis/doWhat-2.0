@@ -129,10 +129,10 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
     ...(radiusKm !== DEFAULT_HOME_RADIUS_KM ? [`Radius: ${radiusKm} km`] : []),
   ];
 
-  const emptyHeading = hasActiveFilters ? 'No activities match your filters yet' : 'No events nearby yet';
+  const emptyHeading = hasActiveFilters ? 'No activities match your filters yet' : 'No sessions nearby yet';
   const emptyBody = hasActiveFilters
     ? 'Try broadening radius, reducing reliability threshold, or clearing category filters.'
-    : 'Be the first to create an event in your area.';
+    : 'Be the first to start a session in your area.';
 
   return (
     <main className="min-h-screen">
@@ -151,7 +151,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
               </div>
               <div className="flex flex-wrap gap-3">
                 <Link href="/create" className="btn-primary">
-                  Create an event
+                  Create a session
                 </Link>
                 <Link href="/map" className="btn-outline">
                   Open map
@@ -188,7 +188,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="space-y-4">
                 <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">Activities &amp; events filters</h2>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">Activities &amp; session filters</h2>
                   <p className="text-xs text-ink-muted">Search by activity, place, category, distance, and price.</p>
                 </div>
                 <label className="block text-sm text-ink-medium">
@@ -197,7 +197,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
                     type="search"
                     name="q"
                     defaultValue={searchInput}
-                    placeholder="Try chess, running, coffee"
+                    placeholder="Try chess, running, climbing"
                     className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
                   />
                 </label>
@@ -207,7 +207,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
                     type="text"
                     name="types"
                     defaultValue={typesCsv}
-                    placeholder="fitness, community, coffee"
+                    placeholder="fitness, community, climbing"
                     className="mt-1 w-full rounded-xl border border-midnight-border/40 bg-white px-3 py-2 text-sm text-ink focus:border-brand-teal focus:outline-none"
                   />
                 </label>
@@ -276,7 +276,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
                     defaultChecked={hostSelfOnly}
                     className="h-4 w-4 rounded border-midnight-border/50 text-brand-teal focus:ring-brand-teal"
                   />
-                  Show only events hosted by me
+                  Show only sessions hosted by me
                 </label>
                 <p className="rounded-xl border border-midnight-border/30 bg-surface-alt px-3 py-2 text-xs text-ink-muted">
                   People filters are reusable contracts for mobile and web map feeds.
@@ -326,7 +326,7 @@ export default async function HomePage({ searchParams }: { searchParams?: Search
                   </Link>
                 ) : null}
                 <Link href="/create" className="btn-primary">
-                  Create event
+                  Create session
                 </Link>
                 <Link href="/map" className="btn-outline">
                   Check map area

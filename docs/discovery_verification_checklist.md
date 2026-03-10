@@ -2,6 +2,15 @@
 
 Use these targeted SQL snippets (or the Supabase SQL editor) whenever you need to confirm that map discovery data is healthy. For an automated run, execute `pnpm health:place-labels` (or `node scripts/health-place-labels.mjs`) before deploying.
 
+For the canonical remote rollout order, use [discovery_remote_rollout_pack.md](/Users/danielbisceanu/doWhat/docs/discovery_remote_rollout_pack.md) first. This checklist is supplemental. The current expected operator flow is:
+
+1. `node scripts/health-migrations.mjs --dowhat --remote-rest --strict`
+2. `pnpm db:migrate` from a DB-connected machine
+3. `node scripts/health-migrations.mjs --dowhat --strict`
+4. `node scripts/health-migrations.mjs --dowhat --remote-rest --strict`
+5. run [discovery-postdeploy-checks.sql](/Users/danielbisceanu/doWhat/scripts/sql/discovery-postdeploy-checks.sql)
+6. run the repo-side verification commands from the rollout pack
+
 ## 1. Sessions: enforce `place_label`
 ```sql
 with normalized as (

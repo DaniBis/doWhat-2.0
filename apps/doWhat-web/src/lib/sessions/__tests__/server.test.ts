@@ -95,6 +95,8 @@ describe("hydrateSessions", () => {
         id: "session-1",
         placeId: "place-1",
         placeLabel: "Downtown Court",
+        locationKind: "canonical_place",
+        isPlaceBacked: true,
         reliabilityScore: 76,
         place: {
           id: "place-1",
@@ -118,6 +120,61 @@ describe("hydrateSessions", () => {
     );
     expect(hydrated.host).toEqual(
       expect.objectContaining({ id: "user-1", username: "alex" }),
+    );
+  });
+
+  it("keeps the persisted place_label when no canonical place or venue row exists", async () => {
+    const sessionRows: SessionRow[] = [
+      {
+        id: "session-custom",
+        activity_id: "activity-2",
+        venue_id: null,
+        place_id: null,
+        host_user_id: "user-2",
+        starts_at: NOW_ISO,
+        ends_at: "2025-01-01T12:00:00.000Z",
+        price_cents: 0,
+        visibility: "public",
+        max_attendees: 12,
+        place_label: "  South Gate Meetup  ",
+        reliability_score: null,
+        description: null,
+        created_at: NOW_ISO,
+        updated_at: NOW_ISO,
+      },
+    ];
+
+    const service = buildService({
+      activities: [
+        {
+          id: "activity-2",
+          name: "Morning Run",
+          description: null,
+          venue: null,
+          lat: 44.45,
+          lng: 26.12,
+        },
+      ],
+      profiles: [
+        {
+          id: "user-2",
+          username: "sam",
+          full_name: "Sam",
+          avatar_url: null,
+        },
+      ],
+    });
+
+    const [hydrated] = await hydrateSessions(service as never, sessionRows);
+
+    expect(hydrated).toEqual(
+      expect.objectContaining({
+        id: "session-custom",
+        placeId: null,
+        placeLabel: "South Gate Meetup",
+        locationKind: "custom_location",
+        isPlaceBacked: false,
+      }),
     );
   });
 });

@@ -73,12 +73,36 @@ export const pruneLowQualitySearchActivities = (input: {
 const canonicalLabel = (activity: MapActivity): string =>
   normalize(activity.place_label) || normalize(activity.name) || normalize(activity.venue);
 
+const canonicalPlaceId = (activity: MapActivity): string => {
+  const placeId = normalize(activity.place_id);
+  if (!placeId) return '';
+  const source = normalize(activity.source);
+  const id = normalize(activity.id);
+  if (source === 'supabase-venues' && id.startsWith('venue:')) {
+    return '';
+  }
+  return placeId;
+};
+
 const qualityScore = (activity: MapActivity): number => {
   const typeCount = (activity.activity_types ?? []).filter(Boolean).length;
   const tagCount = (activity.tags ?? []).filter(Boolean).length;
-  const sourceBonus = activity.source === 'postgis' ? 4 : activity.source === 'supabase-places' ? 3 : activity.source === 'supabase-venues' ? 1 : 0;
-  const placeBonus = activity.place_id ? 2 : 0;
-  return typeCount * 3 + tagCount * 2 + sourceBonus + placeBonus;
+  const taxonomyCount = (activity.taxonomy_categories ?? []).filter(Boolean).length;
+  const sourceBonus =
+    activity.source === 'supabase-places'
+      ? 5
+      : activity.source === 'postgis'
+        ? 4
+        : activity.source === 'activities'
+          ? 3
+          : activity.source === 'venues'
+            ? 2
+            : activity.source === 'supabase-venues'
+              ? 1
+              : 0;
+  const placeBonus = canonicalPlaceId(activity) ? 6 : 0;
+  const websiteBonus = activity.website ? 2 : 0;
+  return typeCount * 3 + taxonomyCount * 2 + tagCount * 2 + sourceBonus + placeBonus + websiteBonus;
 };
 
 export const dedupeNearDuplicateActivities = (
@@ -97,8 +121,8 @@ export const dedupeNearDuplicateActivities = (
     }
 
     const index = result.findIndex((existing) => {
-      const existingPlaceId = normalize(existing.place_id);
-      const candidatePlaceId = normalize(candidate.place_id);
+      const existingPlaceId = canonicalPlaceId(existing);
+      const candidatePlaceId = canonicalPlaceId(candidate);
       if (existingPlaceId && candidatePlaceId) {
         return existingPlaceId === candidatePlaceId;
       }

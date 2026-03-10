@@ -1,18 +1,3 @@
-type CheerioLib = typeof import('cheerio');
-
-let cachedCheerio: CheerioLib | null = null;
-let cachedLoad: CheerioLib['load'] | null = null;
-
-const getCheerioLoad = (): CheerioLib['load'] => {
-  if (cachedLoad) return cachedLoad;
-  if (!cachedCheerio) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- Jest needs the CommonJS entry
-    cachedCheerio = require('cheerio') as CheerioLib;
-  }
-  cachedLoad = cachedCheerio.load;
-  return cachedLoad;
-};
-
 import type { EventSourceRow, NormalizedEvent } from '../types';
 import {
   cleanString,
@@ -26,9 +11,42 @@ interface JsonLdNode {
   [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+const SCRIPT_TAG_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+const ATTRIBUTE_RE = /([^\s"'=<>\/`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
 const asArray = <T>(value: T | T[] | null | undefined): T[] => {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+};
+
+const parseAttributes = (rawAttributes: string): Record<string, string> => {
+  const attributes: Record<string, string> = {};
+  let match: RegExpExecArray | null;
+  while ((match = ATTRIBUTE_RE.exec(rawAttributes))) {
+    const name = match[1]?.toLowerCase();
+    if (!name) continue;
+    attributes[name] = match[2] ?? match[3] ?? match[4] ?? '';
+  }
+  return attributes;
+};
+
+const isJsonLdScript = (typeValue: string | undefined): boolean => {
+  const normalized = cleanString(typeValue ?? '').toLowerCase();
+  return normalized === 'application/ld+json';
+};
+
+const extractJsonLdBlocksFromHtml = (html: string): string[] => {
+  const blocks: string[] = [];
+  let match: RegExpExecArray | null;
+  SCRIPT_TAG_RE.lastIndex = 0;
+  while ((match = SCRIPT_TAG_RE.exec(html))) {
+    const attributes = parseAttributes(match[1] ?? '');
+    if (!isJsonLdScript(attributes.type)) continue;
+    const content = match[2] ?? '';
+    if (cleanString(content).length === 0) continue;
+    blocks.push(content);
+  }
+  return blocks;
 };
 
 const flattenGraph = (node: unknown): JsonLdNode[] => {
@@ -73,6 +91,28 @@ const firstNonEmpty = (...values: Array<string | null | undefined>): string | nu
   }
   return null;
 };
+
+const toAbsoluteHttpUrl = (value: string | null | undefined, baseUrl?: string | null): string | null => {
+  const cleaned = cleanString(value ?? '');
+  if (!cleaned) return null;
+  try {
+    const url = baseUrl ? new URL(cleaned, baseUrl) : new URL(cleaned);
+    return /^https?:$/i.test(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+const toEventUrl = (
+  rawUrl: string | null | undefined,
+  rawId: string | null | undefined,
+  baseUrl: string | null | undefined,
+  sourceUrl: string,
+): string | null =>
+  toAbsoluteHttpUrl(rawUrl, baseUrl)
+  ?? toAbsoluteHttpUrl(rawId)
+  ?? toAbsoluteHttpUrl(baseUrl)
+  ?? toAbsoluteHttpUrl(sourceUrl);
 
 const toImageUrl = (value: unknown): string | null => {
   if (!value) return null;
@@ -127,7 +167,12 @@ const normaliseEventNode = (
   const { lat, lng } = extractGeo(location?.geo || objectNode.geo);
   const address = extractAddress(location?.address) || cleanString(location?.streetAddress);
   const description = cleanString(objectNode.description || objectNode.abstract || objectNode.articleBody);
-  const url = cleanString(objectNode.url || objectNode['@id'] || baseUrl || source.url);
+  const url = toEventUrl(
+    typeof objectNode.url === 'string' ? objectNode.url : null,
+    typeof objectNode['@id'] === 'string' ? objectNode['@id'] : null,
+    baseUrl,
+    source.url,
+  );
   const imageUrl = toImageUrl(objectNode.image || objectNode.photo || objectNode.thumbnailUrl);
   const tags = extractTags(objectNode);
   const status = toStatus(typeof objectNode.eventStatus === 'string' ? objectNode.eventStatus : undefined);
@@ -165,12 +210,8 @@ export const parseEventsFromHtml = (
   html: string,
   baseUrl: string,
 ): NormalizedEvent[] => {
-  const $ = getCheerioLoad()(html);
-  const scripts = $('script[type="application/ld+json"]');
   const events: NormalizedEvent[] = [];
-
-  scripts.each((_, element) => {
-    const jsonText = $(element).contents().text();
+  extractJsonLdBlocksFromHtml(html).forEach((jsonText) => {
     try {
       const parsed = JSON.parse(jsonText) as JsonLdNode;
       const nodes = flattenGraph(parsed);

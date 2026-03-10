@@ -1,13 +1,23 @@
+import { evaluateActivityFirstDiscoveryPolicy } from '@dowhat/shared';
+
 import type { ViewportBounds } from '@/lib/places/types';
 
 type PlaceLite = {
   id: string | null;
+  name?: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  categories?: readonly string[] | null;
+  tags?: readonly string[] | null;
 };
 
 type InferenceLite = {
   activityTypes: string[] | null;
+  taxonomyCategories?: string[] | null;
+  structuredActivityTypes?: string[] | null;
+  structuredTaxonomyCategories?: string[] | null;
+  hasVenueActivityMapping?: boolean;
+  hasManualOverride?: boolean;
 };
 
 const coerceCoordinate = (value: number | string | null): number | null => {
@@ -88,11 +98,33 @@ export const filterPlacesByActivityContract = <T extends PlaceLite>(
   },
 ): T[] => {
   const wanted = expandActivityTokens(options.selectedActivityTypes);
+  const isEligiblePlace = (place: T): boolean => {
+    const inference = place.id ? options.inferenceByPlaceId.get(place.id) : null;
+    const structuredActivityTypes =
+      inference && 'structuredActivityTypes' in inference
+        ? (inference.structuredActivityTypes ?? null)
+        : (inference?.activityTypes ?? null);
+    const structuredTaxonomyCategories =
+      inference && 'structuredTaxonomyCategories' in inference
+        ? (inference.structuredTaxonomyCategories ?? null)
+        : (inference?.taxonomyCategories ?? null);
+    return evaluateActivityFirstDiscoveryPolicy({
+      name: place.name ?? null,
+      categories: place.categories ?? null,
+      tags: place.tags ?? null,
+      activityTypes: structuredActivityTypes,
+      taxonomyCategories: structuredTaxonomyCategories,
+      hasVenueActivityMapping: inference?.hasVenueActivityMapping ?? false,
+      hasManualOverride: inference?.hasManualOverride ?? false,
+    }).isEligible;
+  };
+
   if (!wanted.length) {
-    return places.filter((place) => isWithinBounds(place.lat, place.lng, options.bounds));
+    return places.filter((place) => isWithinBounds(place.lat, place.lng, options.bounds) && isEligiblePlace(place));
   }
   return places.filter((place) => {
     if (!isWithinBounds(place.lat, place.lng, options.bounds)) return false;
+    if (!isEligiblePlace(place)) return false;
     return placeMatchesActivityTypes(
       place.id,
       wanted,

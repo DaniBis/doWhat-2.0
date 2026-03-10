@@ -12,10 +12,13 @@ import type {
 } from './engine-core';
 import {
   CACHE_TTL_MS,
+  EMPTY_DISCOVERY_FILTER_SUPPORT,
+  FULL_DISCOVERY_FILTER_SUPPORT,
   MAX_CACHE_ENTRIES,
   MAX_CACHE_ITEMS,
   buildDiscoveryCacheKey,
   computeTileKey,
+  mergeDiscoveryFilterSupport,
   normalizeFilters,
   normalizeList,
   normalizeRadius,
@@ -36,8 +39,16 @@ export type {
   DiscoveryDebug,
   DiscoverySourceBreakdown,
 } from './engine-core';
-import { ACTIVITY_CATALOG_PRESETS, defaultTier3Index, filterOutSeedActivities, hasSeedMarker, isUuid } from '@dowhat/shared';
-import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
+import {
+  ACTIVITY_CATALOG_PRESETS,
+  countActiveDiscoveryFilters as countDiscoveryFilterFields,
+  defaultDiscoveryTier3Index,
+  evaluateActivityFirstDiscoveryPolicy,
+  filterOutSeedActivities,
+  hasSeedMarker,
+  isUuid,
+} from '@dowhat/shared';
+import type { CapacityFilterKey, DiscoverySortMode, TimeWindowKey } from '@dowhat/shared';
 
 import { db } from '@/lib/db';
 import { resolveDiscoveryBounds } from '@/lib/discovery/bounds';
@@ -82,11 +93,25 @@ const extractCacheRecord = (value: unknown): DiscoveryCacheRecord => {
   return value as DiscoveryCacheRecord;
 };
 
+let discoveryCacheUnavailable = false;
+let warnedDiscoveryCacheUnavailable = false;
+
+const disableDiscoveryCache = (reason: string) => {
+  discoveryCacheUnavailable = true;
+  if (!warnedDiscoveryCacheUnavailable) {
+    console.warn(`[discovery] disabling tile cache persistence: ${reason}`);
+    warnedDiscoveryCacheUnavailable = true;
+  }
+};
+
 const readDiscoveryCache = async (
   client: SupabaseClient,
   tileKey: string,
   cacheKey: string,
 ): Promise<{ entry: DiscoveryCacheEntry | null; record: DiscoveryCacheRecord }> => {
+  if (discoveryCacheUnavailable) {
+    return { entry: null, record: {} };
+  }
   try {
     const { data, error } = await client
       .from('place_tiles')
@@ -96,6 +121,7 @@ const readDiscoveryCache = async (
 
     if (error) {
       if (isMissingColumnError(error, 'discovery_cache')) {
+        disableDiscoveryCache('missing place_tiles.discovery_cache column');
         return { entry: null, record: {} };
       }
       throw error;
@@ -134,6 +160,7 @@ const writeDiscoveryCache = async (
   entry: DiscoveryCacheEntry,
   record: DiscoveryCacheRecord,
 ) => {
+  if (discoveryCacheUnavailable) return;
   const nextRecord = pruneCacheRecord({ ...record, [cacheKey]: entry });
   try {
     const { error } = await client
@@ -141,6 +168,17 @@ const writeDiscoveryCache = async (
       .upsert({ geohash6: tileKey, discovery_cache: nextRecord }, { onConflict: 'geohash6' });
     if (error) throw error;
   } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      isMissingColumnError(
+        error as { code?: string | null; message?: string | null; hint?: string | null },
+        'discovery_cache',
+      )
+    ) {
+      disableDiscoveryCache('missing place_tiles.discovery_cache column');
+      return;
+    }
     console.warn('[discovery] cache write failed', error);
   }
 };
@@ -209,8 +247,32 @@ const buildSourceBreakdown = (items: DiscoveryItem[]): DiscoverySourceBreakdown 
   return breakdown;
 };
 
-const orderDiscoveryItems = (items: DiscoveryItem[]) =>
+const orderDiscoveryItems = (items: DiscoveryItem[], sortMode: DiscoverySortMode = 'rank') =>
   [...items].sort((a, b) => {
+    if (sortMode === 'distance') {
+      const distanceA = a.distance_m ?? Number.POSITIVE_INFINITY;
+      const distanceB = b.distance_m ?? Number.POSITIVE_INFINITY;
+      if (distanceA !== distanceB) return distanceA - distanceB;
+      const nameOrder = a.name.localeCompare(b.name);
+      if (nameOrder !== 0) return nameOrder;
+      return a.id.localeCompare(b.id);
+    }
+
+    if (sortMode === 'name') {
+      const nameOrder = a.name.localeCompare(b.name);
+      if (nameOrder !== 0) return nameOrder;
+      const distanceA = a.distance_m ?? Number.POSITIVE_INFINITY;
+      const distanceB = b.distance_m ?? Number.POSITIVE_INFINITY;
+      if (distanceA !== distanceB) return distanceA - distanceB;
+      return a.id.localeCompare(b.id);
+    }
+
+    if (sortMode === 'soonest') {
+      const timeA = a.starts_at ? new Date(a.starts_at).getTime() : Number.POSITIVE_INFINITY;
+      const timeB = b.starts_at ? new Date(b.starts_at).getTime() : Number.POSITIVE_INFINITY;
+      if (timeA !== timeB) return timeA - timeB;
+    }
+
     const scoreA = a.rank_score ?? null;
     const scoreB = b.rank_score ?? null;
     if (scoreA != null || scoreB != null) {
@@ -263,35 +325,161 @@ const placeKeyForItem = (item: DiscoveryItem): string => {
   return `place:${name || 'unknown'}:${lat},${lng}`;
 };
 
-const fallbackPlaceKey = (item: DiscoveryItem): string => {
-  const name = item.name ? item.name.trim().toLowerCase() : '';
-  const lat = roundCoordinate(item.lat, 4);
-  const lng = roundCoordinate(item.lng, 4);
-  return `place:${name || 'unknown'}:${lat},${lng}`;
+const normalizeDuplicateText = (value: string | null | undefined): string =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const canonicalPlaceIdForDiscoveryItem = (item: DiscoveryItem): string | null => {
+  const placeId = normalizeDuplicateText(item.place_id ?? null);
+  if (!placeId) return null;
+  const source = normalizeDuplicateText(item.source ?? null);
+  const id = normalizeDuplicateText(item.id);
+  if (source === 'supabase-venues' && id.startsWith('venue:')) {
+    return null;
+  }
+  return placeId;
+};
+
+const duplicateLabelForDiscoveryItem = (item: DiscoveryItem): string =>
+  normalizeDuplicateText(item.place_label) || normalizeDuplicateText(item.name) || normalizeDuplicateText(item.venue);
+
+const discoverySourcePriority = (item: DiscoveryItem): number => {
+  switch (item.source) {
+    case 'supabase-places':
+      return 5;
+    case 'postgis':
+      return 4;
+    case 'activities':
+      return 3;
+    case 'venues':
+      return 2;
+    case 'supabase-venues':
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+const discoveryDuplicateScore = (item: DiscoveryItem): number => {
+  let score = 0;
+  if (canonicalPlaceIdForDiscoveryItem(item)) score += 14;
+  if (item.website) score += 4;
+  score += discoverySourcePriority(item) * 3;
+  score += (item.activity_types ?? []).filter(Boolean).length * 2;
+  score += (item.taxonomy_categories ?? []).filter(Boolean).length * 2;
+  score += (item.tags ?? []).filter(Boolean).length;
+  if (typeof item.rating_count === 'number' && Number.isFinite(item.rating_count)) {
+    score += Math.min(6, Math.log1p(Math.max(0, item.rating_count)));
+  }
+  if (typeof item.popularity_score === 'number' && Number.isFinite(item.popularity_score)) {
+    score += Math.min(4, Math.log1p(Math.max(0, item.popularity_score)));
+  }
+  if (typeof item.source_confidence === 'number' && Number.isFinite(item.source_confidence)) {
+    score += Math.max(0, Math.min(1, item.source_confidence)) * 4;
+  }
+  return score;
+};
+
+const mergeStringLists = (left?: string[] | null, right?: string[] | null): string[] | null => {
+  const merged = new Set<string>();
+  [...(left ?? []), ...(right ?? [])].forEach((value) => {
+    if (typeof value !== 'string') return;
+    const trimmed = value.trim();
+    if (trimmed) merged.add(trimmed);
+  });
+  return merged.size ? Array.from(merged) : null;
+};
+
+const mergeVerificationState = (
+  left?: DiscoveryItem['verification_state'],
+  right?: DiscoveryItem['verification_state'],
+): DiscoveryItem['verification_state'] => {
+  const rank = { verified: 3, needs_votes: 2, suggested: 1 } as const;
+  const leftRank = left ? rank[left] : 0;
+  const rightRank = right ? rank[right] : 0;
+  return leftRank >= rightRank ? (left ?? right) : right;
+};
+
+const areNearDuplicateDiscoveryItems = (
+  existing: DiscoveryItem,
+  candidate: DiscoveryItem,
+  proximityMeters = 90,
+): boolean => {
+  const existingCanonical = canonicalPlaceIdForDiscoveryItem(existing);
+  const candidateCanonical = canonicalPlaceIdForDiscoveryItem(candidate);
+  if (existingCanonical && candidateCanonical) {
+    return existingCanonical === candidateCanonical;
+  }
+
+  const existingLabel = duplicateLabelForDiscoveryItem(existing);
+  const candidateLabel = duplicateLabelForDiscoveryItem(candidate);
+  if (!existingLabel || !candidateLabel || existingLabel !== candidateLabel) return false;
+  return haversineMeters(existing.lat, existing.lng, candidate.lat, candidate.lng) <= proximityMeters;
+};
+
+const mergeDiscoveryDuplicates = (
+  existing: DiscoveryItem,
+  candidate: DiscoveryItem,
+): DiscoveryItem => {
+  const preferred = discoveryDuplicateScore(candidate) > discoveryDuplicateScore(existing) ? candidate : existing;
+  const duplicate = preferred === candidate ? existing : candidate;
+  const canonicalOwner = canonicalPlaceIdForDiscoveryItem(preferred)
+    ? preferred
+    : canonicalPlaceIdForDiscoveryItem(duplicate)
+      ? duplicate
+      : preferred;
+
+  return {
+    ...duplicate,
+    ...preferred,
+    id: canonicalOwner.id,
+    place_id: canonicalOwner.place_id ?? preferred.place_id ?? duplicate.place_id ?? null,
+    name: preferred.name || duplicate.name,
+    venue: preferred.venue ?? duplicate.venue ?? null,
+    place_label: preferred.place_label ?? duplicate.place_label ?? null,
+    website: preferred.website ?? duplicate.website ?? null,
+    activity_types: mergeStringLists(preferred.activity_types, duplicate.activity_types),
+    tags: mergeStringLists(preferred.tags, duplicate.tags),
+    taxonomy_categories: mergeStringLists(preferred.taxonomy_categories, duplicate.taxonomy_categories),
+    verification_state: mergeVerificationState(preferred.verification_state, duplicate.verification_state),
+    rating: preferred.rating ?? duplicate.rating ?? null,
+    rating_count: preferred.rating_count ?? duplicate.rating_count ?? null,
+    popularity_score: preferred.popularity_score ?? duplicate.popularity_score ?? null,
+    source_confidence: preferred.source_confidence ?? duplicate.source_confidence ?? null,
+    distance_m:
+      typeof preferred.distance_m === 'number' && typeof duplicate.distance_m === 'number'
+        ? Math.min(preferred.distance_m, duplicate.distance_m)
+        : preferred.distance_m ?? duplicate.distance_m ?? null,
+    place_match_confidence: preferred.place_match_confidence ?? duplicate.place_match_confidence ?? null,
+    quality_confidence: preferred.quality_confidence ?? duplicate.quality_confidence ?? null,
+    trust_score: preferred.trust_score ?? duplicate.trust_score ?? null,
+    rank_score: preferred.rank_score ?? duplicate.rank_score ?? null,
+    refreshed_at: preferred.refreshed_at ?? duplicate.refreshed_at ?? null,
+  };
 };
 
 const mergeActivitiesWithFallback = (
   primary: DiscoveryItem[],
   fallback: DiscoveryItem[],
 ): DiscoveryItem[] => {
-  const activityIds = new Set<string>();
-  const occupiedPlaces = new Set<string>();
   const result: DiscoveryItem[] = [];
+  const seenIds = new Set<string>();
 
-  primary.forEach((item) => {
-    if (activityIds.has(item.id)) return;
-    activityIds.add(item.id);
-    result.push(item);
-    occupiedPlaces.add(placeKeyForItem(item));
-    occupiedPlaces.add(fallbackPlaceKey(item));
-  });
+  [...primary, ...fallback].forEach((item) => {
+    if (seenIds.has(item.id)) return;
+    seenIds.add(item.id);
 
-  const fallbackPlaces = new Set<string>();
-  fallback.forEach((item) => {
-    const key = placeKeyForItem(item);
-    if (occupiedPlaces.has(key) || fallbackPlaces.has(key)) return;
-    fallbackPlaces.add(key);
-    result.push(item);
+    const duplicateIndex = result.findIndex((existing) => {
+      if (existing.id === item.id) return true;
+      if (placeKeyForItem(existing) === placeKeyForItem(item)) return true;
+      return areNearDuplicateDiscoveryItems(existing, item);
+    });
+
+    if (duplicateIndex < 0) {
+      result.push(item);
+      return;
+    }
+
+    result[duplicateIndex] = mergeDiscoveryDuplicates(result[duplicateIndex], item);
   });
 
   return result;
@@ -530,17 +718,8 @@ const inferBootstrapCitySlug = (center: { lat: number; lng: number }): string | 
   return nearestSlug;
 };
 
-const hasActiveDiscoveryFilters = (filters: NormalizedDiscoveryFilters): boolean => {
-  return (
-    filters.activityTypes.length > 0
-    || filters.tags.length > 0
-    || filters.traits.length > 0
-    || filters.taxonomyCategories.length > 0
-    || filters.priceLevels.length > 0
-    || filters.capacityKey !== 'any'
-    || filters.timeWindow !== 'any'
-  );
-};
+const hasActiveDiscoveryFilters = (filters: NormalizedDiscoveryFilters): boolean =>
+  countDiscoveryFilterFields(filters) > 0;
 
 const hasTypeOrTagDiscoveryFilters = (filters: NormalizedDiscoveryFilters): boolean => {
   return filters.activityTypes.length > 0 || filters.tags.length > 0;
@@ -566,14 +745,14 @@ const maybeBootstrapSparseCityPlaces = async (
     const seeded = await fetchPlacesForViewport({
       bounds,
       limit: forceLimit,
-      forceRefresh: true,
+      forceRefresh: false,
       city: inferredCity,
       explain: true,
     });
     let matcherRan = false;
     let matcherError: string | null = null;
     try {
-      const shouldRunMatcher = currentCount < SPARSE_INVENTORY_SEED_MIN_RESULTS;
+      const shouldRunMatcher = !seeded.cacheHit && currentCount < SPARSE_INVENTORY_SEED_MIN_RESULTS;
       if (shouldRunMatcher) {
         matcherRan = true;
         await matchActivitiesForPlaces({
@@ -641,18 +820,20 @@ const maybeSeedViewportInventory = async (
     const seeded = await fetchPlacesForViewport({
       bounds,
       limit: forceLimit,
-      forceRefresh: true,
+      forceRefresh: false,
       city: inferredCity,
       explain: true,
     });
     let matcherRan = false;
     let matcherError: string | null = null;
     try {
-      matcherRan = true;
-      await matchActivitiesForPlaces({
-        limit: Math.min(500, Math.max(query.limit * 6, 200)),
-        city: inferredCity,
-      });
+      if (!seeded.cacheHit) {
+        matcherRan = true;
+        await matchActivitiesForPlaces({
+          limit: Math.min(500, Math.max(query.limit * 6, 200)),
+          city: inferredCity,
+        });
+      }
     } catch (error) {
       matcherError = error instanceof Error ? error.message : String(error);
       console.warn('[nearby] viewport activity matcher failed', error);
@@ -691,45 +872,56 @@ const maybeSeedViewportInventory = async (
   }
 };
 
-const applyFilterSupport = (
-  current: DiscoveryFilterSupport,
-  next: DiscoveryFilterSupport,
-): DiscoveryFilterSupport => ({
-  activityTypes: current.activityTypes && next.activityTypes,
-  tags: current.tags && next.tags,
-  traits: current.traits && next.traits,
-  taxonomyCategories: current.taxonomyCategories && next.taxonomyCategories,
-  priceLevels: current.priceLevels && next.priceLevels,
-  capacityKey: current.capacityKey && next.capacityKey,
-  timeWindow: current.timeWindow && next.timeWindow,
-});
-
 const filterByQuery = (
   items: DiscoveryItem[],
   filters: NormalizedDiscoveryFilters,
   support: DiscoveryFilterSupport,
 ) => {
+  const searchText = filters.searchText;
   const wantTypes = support.activityTypes ? normalizeList(filters.activityTypes) : [];
   const wantTags = support.tags ? normalizeList(filters.tags) : [];
-  const wantTraits = support.traits ? normalizeList(filters.traits) : [];
+  const wantTraits = support.traits ? normalizeList(filters.peopleTraits) : [];
   const wantCategories = support.taxonomyCategories ? normalizeList(filters.taxonomyCategories) : [];
   const wantPrices: number[] = support.priceLevels ? filters.priceLevels : [];
   const wantCapacity = support.capacityKey && filters.capacityKey !== 'any' ? filters.capacityKey : null;
   const wantTimeWindow = support.timeWindow && filters.timeWindow !== 'any' ? filters.timeWindow : null;
+  const trustMode = filters.trustMode;
 
   if (
+    !searchText &&
     !wantTypes.length &&
     !wantTags.length &&
     !wantTraits.length &&
     !wantCategories.length &&
     !wantPrices.length &&
     !wantCapacity &&
-    !wantTimeWindow
+    !wantTimeWindow &&
+    trustMode === 'all'
   ) {
     return items;
   }
 
   return items.filter((item) => {
+    if (searchText) {
+      const haystack = [
+        item.name,
+        item.venue ?? '',
+        item.place_label ?? '',
+        ...(item.activity_types ?? []),
+        ...(item.tags ?? []),
+        ...(item.taxonomy_categories ?? []),
+      ]
+        .join(' ')
+        .toLowerCase();
+      const searchTokens = searchText.split(/[^a-z0-9]+/g).filter(Boolean);
+      if (!haystack.includes(searchText) && !searchTokens.every((token) => haystack.includes(token))) {
+        return false;
+      }
+    }
+
+    if (trustMode === 'verified_only' && item.verification_state !== 'verified') return false;
+    if (trustMode === 'ai_only' && item.verification_state !== 'suggested') return false;
+
     const types = normalizeList(item.activity_types ?? null);
     const tags = normalizeList(item.tags ?? null);
     const traits = normalizeList(item.traits ?? null);
@@ -789,7 +981,7 @@ const buildCacheResult = (
   const normalizedFilters = normalizeFilters(query.filters);
   const filteredItems = filterByQuery(entry.items, normalizedFilters, entry.filterSupport);
   const radiusBound = enforceDistanceWindow(filteredItems, query);
-  const limited = orderDiscoveryItems(radiusBound).slice(0, query.limit);
+  const limited = orderDiscoveryItems(radiusBound, normalizedFilters.sortMode).slice(0, query.limit);
   return {
     center: query.center,
     radiusMeters: normalizeRadius(query.radiusMeters),
@@ -847,6 +1039,7 @@ type VenueFallbackRow = {
   address: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  website?: string | null;
   ai_activity_tags?: string[] | null;
   verified_activities?: string[] | null;
   updated_at?: string | null;
@@ -858,6 +1051,7 @@ type PlaceFallbackRow = {
   address: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  website?: string | null;
   rating?: number | null;
   tags?: string[] | null;
   categories?: string[] | null;
@@ -889,7 +1083,11 @@ type ActivityCatalogLookupRow = {
 type PlaceActivityInference = {
   activityTypes: string[] | null;
   taxonomyCategories: string[] | null;
+  structuredActivityTypes: string[] | null;
+  structuredTaxonomyCategories: string[] | null;
   maxConfidence: number | null;
+  hasVenueActivityMapping: boolean;
+  hasManualOverride: boolean;
   verificationState: 'suggested' | 'verified' | 'needs_votes';
 };
 
@@ -912,7 +1110,7 @@ const tokenizeForTaxonomyLookup = (value: string): string[] => {
 
 const TAXONOMY_TOKEN_MAP = (() => {
   const map = new Map<string, Set<string>>();
-  defaultTier3Index.forEach((entry) => {
+  defaultDiscoveryTier3Index.forEach((entry) => {
     [entry.id, entry.label, ...(entry.tags ?? [])].forEach((value) => {
       tokenizeForTaxonomyLookup(value).forEach((token) => {
         addToSetMap(map, token, entry.id);
@@ -1012,8 +1210,11 @@ const loadPlaceActivityInferences = async (
     grouped.forEach((activityRows, placeId) => {
       const activityTypes = new Set<string>();
       const taxonomy = new Set<string>();
+      const structuredActivityTypes = new Set<string>();
+      const structuredTaxonomy = new Set<string>();
       let maxConfidence: number | null = null;
       let hasManual = false;
+      let hasStructuredMapping = false;
 
       activityRows.forEach((row) => {
         const activity = catalogById.get(row.activity_id);
@@ -1025,6 +1226,11 @@ const loadPlaceActivityInferences = async (
           ...(activity.keywords ?? []),
         ]);
         inferredTaxonomy?.forEach((taxonomyId) => taxonomy.add(taxonomyId));
+        if (row.source === 'manual' || row.source === 'category') {
+          structuredActivityTypes.add(activity.slug);
+          inferredTaxonomy?.forEach((taxonomyId) => structuredTaxonomy.add(taxonomyId));
+          hasStructuredMapping = true;
+        }
         if (row.source === 'manual') hasManual = true;
         if (typeof row.confidence === 'number' && Number.isFinite(row.confidence)) {
           maxConfidence = maxConfidence == null ? row.confidence : Math.max(maxConfidence, row.confidence);
@@ -1040,7 +1246,15 @@ const loadPlaceActivityInferences = async (
       map.set(placeId, {
         activityTypes: activityTypes.size ? Array.from(activityTypes).sort((a, b) => a.localeCompare(b)) : null,
         taxonomyCategories: taxonomy.size ? Array.from(taxonomy).sort((a, b) => a.localeCompare(b)) : null,
+        structuredActivityTypes: structuredActivityTypes.size
+          ? Array.from(structuredActivityTypes).sort((a, b) => a.localeCompare(b))
+          : null,
+        structuredTaxonomyCategories: structuredTaxonomy.size
+          ? Array.from(structuredTaxonomy).sort((a, b) => a.localeCompare(b))
+          : null,
         maxConfidence,
+        hasVenueActivityMapping: hasStructuredMapping,
+        hasManualOverride: hasManual,
         verificationState,
       });
     });
@@ -1075,6 +1289,14 @@ const toMapActivityFromVenue = (
     ...(verifiedTypes ?? []),
     ...(aiTags ?? []),
   ]);
+  const eligibility = evaluateActivityFirstDiscoveryPolicy({
+    name: row.name,
+    description: row.address ?? null,
+    activityTypes: verifiedTypes,
+    taxonomyCategories,
+    verifiedActivities: verifiedTypes,
+  });
+  if (!eligibility.isEligible) return null;
   const verificationState: DiscoveryItem['verification_state'] = verifiedTypes?.length
     ? 'verified'
     : aiTags?.length
@@ -1093,6 +1315,7 @@ const toMapActivityFromVenue = (
     venue: row.address ?? null,
     place_id: row.id,
     place_label: resolved.placeLabel,
+    website: row.website ?? null,
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
@@ -1120,8 +1343,10 @@ const fetchVenueFallbackActivities = async (
   let includeTags = true;
   let includeVerified = true;
   let includeUpdatedAt = true;
+  let includeWebsite = true;
   const buildVenueQuery = () => {
     const columns = [...baseColumns];
+    if (includeWebsite) columns.push('website');
     if (includeTags) columns.push('ai_activity_tags');
     if (includeVerified) columns.push('verified_activities');
     if (includeUpdatedAt) columns.push('updated_at');
@@ -1152,6 +1377,10 @@ const fetchVenueFallbackActivities = async (
 
     if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
       includeUpdatedAt = false;
+      continue;
+    }
+    if (includeWebsite && isMissingColumnError(error, 'website')) {
+      includeWebsite = false;
       continue;
     }
     if (includeTags && isMissingColumnError(error, 'ai_activity_tags')) {
@@ -1209,6 +1438,17 @@ const toMapActivityFromPlace = (
     ...(row.tags ?? []),
   ]);
   const taxonomyCategories = inferredTaxonomy ?? fallbackTaxonomy;
+  const eligibility = evaluateActivityFirstDiscoveryPolicy({
+    name: row.name,
+    description: row.address ?? null,
+    categories: row.categories ?? null,
+    tags: row.tags ?? null,
+    activityTypes: inference?.structuredActivityTypes ?? null,
+    taxonomyCategories: inference?.structuredTaxonomyCategories ?? null,
+    hasVenueActivityMapping: inference?.hasVenueActivityMapping ?? false,
+    hasManualOverride: inference?.hasManualOverride ?? false,
+  });
+  if (!eligibility.isEligible) return null;
   const resolved = resolveDiscoveryDisplay({
     name: row.name,
     venue: row.address,
@@ -1222,6 +1462,7 @@ const toMapActivityFromPlace = (
     venue: row.address ?? null,
     place_id: row.id,
     place_label: resolved.placeLabel,
+    website: row.website ?? null,
     lat,
     lng,
     distance_m: haversineMeters(origin.lat, origin.lng, lat, lng),
@@ -1310,7 +1551,7 @@ const fetchPlacesFallbackActivities = async (
   const hasNarrowFilters =
     activityFilterActive
     || normalizeList(query.filters?.tags).length > 0
-    || normalizeList(query.filters?.traits).length > 0
+    || normalizeList(query.filters?.peopleTraits).length > 0
     || normalizeList(query.filters?.taxonomyCategories).length > 0;
   const bounds = resolveDiscoveryBounds(query);
   const swLat = bounds.sw.lat;
@@ -1326,9 +1567,11 @@ const fetchPlacesFallbackActivities = async (
   let includePopularity = true;
   let includeSourceConfidence = true;
   let includeCachedAt = true;
+  let includeWebsite = true;
 
   const buildColumnList = () => {
     const columns = [...baseColumns];
+    if (includeWebsite) columns.push('website');
     if (includeTags) columns.push('tags');
     if (includeCategories) columns.push('categories');
     if (includeUpdatedAt) columns.push('updated_at');
@@ -1402,13 +1645,17 @@ const fetchPlacesFallbackActivities = async (
 
     if (!error) break;
 
-    if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
-      includeUpdatedAt = false;
-      continue;
-    }
-    if (includeTags && isMissingColumnError(error, 'tags')) {
-      includeTags = false;
-      continue;
+      if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
+        includeUpdatedAt = false;
+        continue;
+      }
+      if (includeWebsite && isMissingColumnError(error, 'website')) {
+        includeWebsite = false;
+        continue;
+      }
+      if (includeTags && isMissingColumnError(error, 'tags')) {
+        includeTags = false;
+        continue;
     }
     if (includeCategories && isMissingColumnError(error, 'categories')) {
       includeCategories = false;
@@ -1501,15 +1748,7 @@ const fetchActivitiesFromRpc = async (
       console.warn('activities_nearby RPC failed, falling back:', error.message ?? error);
       return {
         items: [],
-        support: {
-          activityTypes: true,
-          tags: true,
-          traits: true,
-          taxonomyCategories: true,
-          priceLevels: true,
-          capacityKey: true,
-          timeWindow: true,
-        },
+        support: EMPTY_DISCOVERY_FILTER_SUPPORT,
         source: null,
       };
     }
@@ -1550,30 +1789,14 @@ const fetchActivitiesFromRpc = async (
 
     return {
       items: withinRadius,
-      support: {
-        activityTypes: true,
-        tags: true,
-        traits: true,
-        taxonomyCategories: true,
-        priceLevels: true,
-        capacityKey: true,
-        timeWindow: true,
-      },
+      support: FULL_DISCOVERY_FILTER_SUPPORT,
       source: withinRadius.length ? 'postgis' : null,
     };
   } catch (error) {
     console.warn('activities_nearby RPC exception, falling back:', error);
     return {
       items: [],
-      support: {
-        activityTypes: true,
-        tags: true,
-        traits: true,
-        taxonomyCategories: true,
-        priceLevels: true,
-        capacityKey: true,
-        timeWindow: true,
-      },
+      support: EMPTY_DISCOVERY_FILTER_SUPPORT,
       source: null,
     };
   }
@@ -1641,7 +1864,7 @@ const fetchActivitiesFallback = async (
       return queryBuilder.returns<NearbyActivityRow[]>();
     };
 
-  let includePreferences = Boolean(query.filters?.traits?.length);
+  let includePreferences = Boolean(query.filters?.peopleTraits?.length);
   let includeTraits = true;
   let includeActivityTypes = true;
   let includeTags = true;
@@ -1826,18 +2049,36 @@ const hydrateActivitiesWithPlaces = async (
       }),
     }));
   }
-  const { data, error } = await client
-    .from('places')
-    .select('id,name')
-    .in('id', placeIds);
-  if (error) {
-    console.warn('[nearby] failed to hydrate place labels', error.message ?? error);
+
+  let includeWebsite = true;
+  let data:
+    | Array<{ id: string; name: string | null; website?: string | null }>
+    | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await client
+      .from('places')
+      .select(includeWebsite ? 'id,name,website' : 'id,name')
+      .in('id', placeIds);
+
+    if (!result.error) {
+      data = (result.data as unknown as Array<{ id: string; name: string | null; website?: string | null }>) ?? null;
+      break;
+    }
+
+    if (includeWebsite && isMissingColumnError(result.error, 'website')) {
+      includeWebsite = false;
+      continue;
+    }
+
+    console.warn('[nearby] failed to hydrate place labels', result.error.message ?? result.error);
     return activities;
   }
-  const placeMap = new Map<string, { id: string; name: string | null }>();
+
+  const placeMap = new Map<string, { id: string; name: string | null; website: string | null }>();
   (data ?? []).forEach((row) => {
     if (row?.id) {
-      placeMap.set(row.id, { id: row.id, name: row.name ?? null });
+      placeMap.set(row.id, { id: row.id, name: row.name ?? null, website: row.website ?? null });
     }
   });
   return activities.map((activity) => {
@@ -1849,6 +2090,7 @@ const hydrateActivitiesWithPlaces = async (
         venue: activity.venue ?? null,
         fallbackLabel: activity.place_label,
       }),
+      website: activity.website ?? place?.website ?? null,
     };
   });
 };
@@ -1935,16 +2177,7 @@ export async function discoverNearbyActivities(
   }
 
   const supabase = db();
-  const filterSupportDefault: DiscoveryFilterSupport = {
-    activityTypes: true,
-    tags: true,
-    traits: true,
-    taxonomyCategories: true,
-    priceLevels: true,
-    capacityKey: true,
-    timeWindow: true,
-  };
-  let filterSupport = filterSupportDefault;
+  let filterSupport = EMPTY_DISCOVERY_FILTER_SUPPORT;
 
   const rpcResult = await fetchActivitiesFromRpc(supabase, normalizedQuery);
   const debug = {
@@ -1981,12 +2214,12 @@ export async function discoverNearbyActivities(
   } satisfies DiscoveryDebug;
   let activities = filterByQuery(rpcResult.items, normalizedFilters, rpcResult.support);
   debug.candidateCounts.afterRpc = activities.length;
-  filterSupport = applyFilterSupport(filterSupport, rpcResult.support);
+  filterSupport = mergeDiscoveryFilterSupport(filterSupport, rpcResult.support);
   const source = rpcResult.source ?? undefined;
 
   const fallbackResult = await fetchActivitiesFallback(supabase, normalizedQuery);
   const fallbackItems = filterByQuery(fallbackResult.items, normalizedFilters, fallbackResult.support);
-  filterSupport = applyFilterSupport(filterSupport, fallbackResult.support);
+  filterSupport = mergeDiscoveryFilterSupport(filterSupport, fallbackResult.support);
 
   activities = mergeActivitiesWithFallback(activities, fallbackItems);
   debug.candidateCounts.afterFallbackMerge = activities.length;
@@ -2031,7 +2264,7 @@ export async function discoverNearbyActivities(
       refreshedPlacesFallback.support,
     );
     if (filteredRefreshedPlaces.length) {
-      filterSupport = applyFilterSupport(filterSupport, refreshedPlacesFallback.support);
+      filterSupport = mergeDiscoveryFilterSupport(filterSupport, refreshedPlacesFallback.support);
       activities = mergeActivitiesWithFallback(activities, filteredRefreshedPlaces);
       fallbackMeta.fallbackSource = 'supabase-places';
     }
@@ -2057,7 +2290,7 @@ export async function discoverNearbyActivities(
       refreshedPlacesFallback.support,
     );
     if (filteredRefreshedPlaces.length) {
-      filterSupport = applyFilterSupport(filterSupport, refreshedPlacesFallback.support);
+      filterSupport = mergeDiscoveryFilterSupport(filterSupport, refreshedPlacesFallback.support);
       activities = mergeActivitiesWithFallback(activities, filteredRefreshedPlaces);
       fallbackMeta.fallbackSource = 'supabase-places';
     }
@@ -2068,7 +2301,7 @@ export async function discoverNearbyActivities(
       const venueFallback = await fetchVenueFallbackActivities(supabase, normalizedQuery, normalizedQuery.limit);
       const filteredVenueFallback = filterByQuery(venueFallback.items, normalizedFilters, venueFallback.support);
       if (filteredVenueFallback.length) {
-        filterSupport = applyFilterSupport(filterSupport, venueFallback.support);
+        filterSupport = mergeDiscoveryFilterSupport(filterSupport, venueFallback.support);
         activities = mergeActivitiesWithFallback(activities, filteredVenueFallback);
         fallbackMeta.fallbackSource = fallbackMeta.fallbackSource ?? 'supabase-venues';
       }
@@ -2077,7 +2310,7 @@ export async function discoverNearbyActivities(
         const placesFallback = await fetchPlacesFallbackActivities(supabase, normalizedQuery, normalizedQuery.limit);
         const filteredPlacesFallback = filterByQuery(placesFallback.items, normalizedFilters, placesFallback.support);
         if (filteredPlacesFallback.length) {
-          filterSupport = applyFilterSupport(filterSupport, placesFallback.support);
+          filterSupport = mergeDiscoveryFilterSupport(filterSupport, placesFallback.support);
           activities = mergeActivitiesWithFallback(activities, filteredPlacesFallback);
           fallbackMeta.fallbackSource = fallbackMeta.fallbackSource ?? 'supabase-places';
         }
@@ -2100,7 +2333,7 @@ export async function discoverNearbyActivities(
 
   const metadataResult = await hydrateActivitiesMetadata(supabase, activities);
   activities = metadataResult.items;
-  filterSupport = applyFilterSupport(filterSupport, {
+  filterSupport = mergeDiscoveryFilterSupport(filterSupport, {
     activityTypes: true,
     tags: true,
     traits: true,
@@ -2187,7 +2420,9 @@ export async function discoverNearbyActivities(
   debug.itemsAfterGates = activities.length;
   debug.ranking.placeMinConfidence = minConfidence;
 
-  const ordered = prioritizeMeaningfulActivities(orderDiscoveryItems(activities)).slice(0, normalizedQuery.limit);
+  const ordered = prioritizeMeaningfulActivities(
+    orderDiscoveryItems(activities, normalizedFilters.sortMode),
+  ).slice(0, normalizedQuery.limit);
   const hydrated = await hydrateActivitiesWithPlaces(supabase, ordered);
   debug.itemsBeforeDedupe = hydrated.length;
   const deduped = mergeActivitiesWithFallback(hydrated, []);
@@ -2254,6 +2489,7 @@ export async function discoverNearbyVenues(
     bounds: query.bounds ? resolveDiscoveryBounds(query) : undefined,
     limit: Math.max(1, Math.min(query.limit, MAX_CACHE_ITEMS)),
   };
+  const normalizedFilters = normalizeFilters(normalizedQuery.filters);
 
   const baseCacheKey = buildDiscoveryCacheKey('venues', {
     ...normalizedQuery,
@@ -2302,7 +2538,7 @@ export async function discoverNearbyVenues(
     }));
 
   const deduped = dedupeByPlaceKey(items);
-  const ordered = orderDiscoveryItems(deduped).slice(0, normalizedQuery.limit);
+  const ordered = orderDiscoveryItems(deduped, normalizedFilters.sortMode).slice(0, normalizedQuery.limit);
 
   const result: DiscoveryResult = {
     center: normalizedQuery.center,

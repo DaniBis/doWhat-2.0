@@ -68,16 +68,16 @@ export default function AuthCallback() {
         const handledFallback = await handleTokens(fallbackTokens, 'linking');
         if (!handledFallback && !cancelled) {
           setErrorMessage('Could not complete sign in. Please try again.');
+          return;
+        }
+        if (!cancelled) {
+          router.replace('/');
         }
       } catch (error) {
         if (!cancelled) {
           const message = error instanceof Error ? error.message : 'Unexpected error while finishing sign in.';
           setErrorMessage(message);
           if (__DEV__) console.warn('[auth-callback] error', message);
-        }
-      } finally {
-        if (!cancelled) {
-          router.replace('/');
         }
       }
     };

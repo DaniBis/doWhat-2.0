@@ -11,10 +11,10 @@ import {
   DEFAULT_ACTIVITY_FILTER_PREFERENCES,
   DEFAULT_ACTIVITY_PRICE_RANGE,
   DEFAULT_ACTIVITY_RADIUS,
-  activityTaxonomy,
+  activityDiscoveryTaxonomy,
   canonicaliseTimeOfDayValues,
   countActiveActivityFilters,
-  defaultTier3Index,
+  defaultDiscoveryTier3Index,
   loadUserPreference,
   normaliseActivityFilterPreferences,
   resolvePriceKeyFromRange,
@@ -148,7 +148,7 @@ export default function FilterPage() {
 
   const tier3Index = useMemo(() => {
     const index = new Map<string, ActivityTier3WithAncestors>();
-    defaultTier3Index.forEach((entry) => {
+    defaultDiscoveryTier3Index.forEach((entry) => {
       index.set(entry.id, entry);
     });
     return index;
@@ -209,13 +209,19 @@ export default function FilterPage() {
               <Link href="/" className="text-gray-600 hover:text-gray-900">
                 ← Back
               </Link>
-              <h1 className="text-2xl font-bold text-gray-900">Activity Filters</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Activity preferences</h1>
             </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="mb-6 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">Tune your activity feed</p>
+          <p className="mt-1">
+            These preferences shape nearby activity suggestions. Live map filters stay on the map page.
+          </p>
+        </div>
         {/* Current Filters Summary */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Current Filters</h2>
@@ -274,7 +280,7 @@ export default function FilterPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Distance Radius */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Distance Radius</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Travel distance</h3>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Current: {filters.radius} miles</span>
@@ -299,7 +305,7 @@ export default function FilterPage() {
 
           {/* Price Range */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Price Range</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Budget</h3>
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2">
                 {ACTIVITY_PRICE_FILTER_OPTIONS.map((option) => (
@@ -357,12 +363,12 @@ export default function FilterPage() {
 
           {/* Categories */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900">Categories</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Activity categories</h3>
             <p className="text-sm text-gray-500 mb-4">
-              Browse the shared taxonomy so discovery filters stay consistent across web and mobile.
+              Use the shared taxonomy so home recommendations stay aligned with the activity-first discovery system.
             </p>
             <TaxonomyCategoryPicker
-              taxonomy={activityTaxonomy}
+              taxonomy={activityDiscoveryTaxonomy}
               selectedIds={filters.categories}
               onToggle={toggleCategory}
             />
@@ -370,7 +376,7 @@ export default function FilterPage() {
 
           {/* Time of Day */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Time of Day</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Preferred time</h3>
             <div className="space-y-2">
               {ACTIVITY_TIME_FILTER_OPTIONS.map((slot) => {
                 const isActive = slot.value
@@ -425,7 +431,7 @@ export default function FilterPage() {
               }}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
             >
-              Apply Filters {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+              Save preferences {activeFiltersCount > 0 && `(${activeFiltersCount})`}
             </Link>
           </div>
         </div>

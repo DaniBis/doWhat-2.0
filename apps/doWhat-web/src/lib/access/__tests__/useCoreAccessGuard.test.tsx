@@ -39,8 +39,8 @@ jest.mock('../coreAccess', () => ({
 
 import { useCoreAccessGuard } from '../useCoreAccessGuard';
 
-const Harness = ({ redirectTo }: { redirectTo: string }) => {
-  const state = useCoreAccessGuard(redirectTo);
+const Harness = ({ redirectTo, bypass = false }: { redirectTo: string; bypass?: boolean }) => {
+  const state = useCoreAccessGuard(redirectTo, { bypass });
   return <span data-testid="guard-state">{state}</span>;
 };
 
@@ -95,6 +95,16 @@ describe('useCoreAccessGuard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('guard-state')).toHaveTextContent('allowed');
     });
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it('allows access immediately when bypass is enabled', async () => {
+    render(<Harness redirectTo="/map?e2e=1" bypass />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('guard-state')).toHaveTextContent('allowed');
+    });
+    expect(getUserMock).not.toHaveBeenCalled();
     expect(replaceMock).not.toHaveBeenCalled();
   });
 });

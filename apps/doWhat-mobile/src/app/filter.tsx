@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { View, Text, SafeAreaView, TouchableOpacity, StatusBar, ScrollView, Switch } from "react-native";
+import { View, Text, SafeAreaView, TouchableOpacity, StatusBar, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useState, useEffect, useMemo, useCallback } from "react";
 
@@ -19,8 +19,8 @@ import {
   type ActivityFilterPreferences,
   type ActivityPriceFilterKey,
   type ActivityTimeFilterKey,
-  defaultTier3Index,
-  getTier3Ids,
+  defaultDiscoveryTier3Index,
+  getDiscoveryTier3Ids,
   trackTaxonomyFiltersApplied,
   trackTaxonomyToggle,
   type ActivityTier3WithAncestors,
@@ -33,7 +33,6 @@ export default function FilterScreen() {
   const [priceFilter, setPriceFilter] = useState<ActivityPriceFilterKey>("all");
   const [distanceFilter, setDistanceFilter] = useState<number>(DEFAULT_ACTIVITY_RADIUS);
   const [timeFilter, setTimeFilter] = useState<ActivityTimeFilterKey>("any");
-  const [showFreeOnly, setShowFreeOnly] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [initialised, setInitialised] = useState(false);
@@ -43,10 +42,10 @@ export default function FilterScreen() {
   const timeOptions = ACTIVITY_TIME_FILTER_OPTIONS;
 
   const ACTIVITY_LOCAL_KEY = "activity_filters:v1";
-  const taxonomyIdSet = useMemo(() => new Set(getTier3Ids()), []);
+  const taxonomyIdSet = useMemo(() => new Set(getDiscoveryTier3Ids()), []);
   const taxonomyIndex = useMemo(() => {
     const index = new Map<string, ActivityTier3WithAncestors>();
-    defaultTier3Index.forEach((entry) => {
+    defaultDiscoveryTier3Index.forEach((entry) => {
       index.set(entry.id, entry);
     });
     return index;
@@ -62,10 +61,7 @@ export default function FilterScreen() {
     [selectedCategories, taxonomyIndex],
   );
 
-  const getPriceRange = (key: ActivityPriceFilterKey, freeOnly: boolean): [number, number] => {
-    if (freeOnly) return [0, 0];
-    return resolvePriceRangeForKey(key);
-  };
+  const getPriceRange = (key: ActivityPriceFilterKey): [number, number] => resolvePriceRangeForKey(key);
 
   const priceKeyFromRange = (range: [number, number]): ActivityPriceFilterKey =>
     resolvePriceKeyFromRange(range);
@@ -81,9 +77,7 @@ export default function FilterScreen() {
       const normalised = normaliseActivityFilterPreferences(prefs);
       setSelectedCategories(filterValidCategories(normalised.categories));
       setDistanceFilter(normalised.radius);
-      const isFree = normalised.priceRange[0] === 0 && normalised.priceRange[1] === 0;
-      setShowFreeOnly(isFree);
-      setPriceFilter(isFree ? "free" : priceKeyFromRange(normalised.priceRange));
+      setPriceFilter(priceKeyFromRange(normalised.priceRange));
       setTimeFilter(timeKeyFromValues(normalised.timeOfDay));
     },
     [filterValidCategories],
@@ -148,7 +142,7 @@ export default function FilterScreen() {
   const persistPreferences = useCallback(async () => {
     const prefs = normaliseActivityFilterPreferences({
       radius: distanceFilter,
-      priceRange: getPriceRange(priceFilter, showFreeOnly),
+      priceRange: getPriceRange(priceFilter),
       categories: selectedCategories,
       timeOfDay: timeValuesFromKey(timeFilter),
     });
@@ -166,7 +160,7 @@ export default function FilterScreen() {
         console.warn('[activity-filters] failed to persist remote preferences', error);
       }
     }
-  }, [distanceFilter, priceFilter, showFreeOnly, selectedCategories, timeFilter, userId]);
+  }, [distanceFilter, priceFilter, selectedCategories, timeFilter, userId]);
 
   useEffect(() => {
     if (!initialised) return;
@@ -194,7 +188,6 @@ export default function FilterScreen() {
 
   const resetFilters = () => {
     setPriceFilter("all");
-    setShowFreeOnly(false);
     setDistanceFilter(DEFAULT_ACTIVITY_RADIUS);
     setTimeFilter("any");
     setSelectedCategories([]);
@@ -206,12 +199,6 @@ export default function FilterScreen() {
   };
 
   const applyFilters = () => {
-    console.log("Applying filters:", {
-      distance: distanceFilter,
-      priceRange: getPriceRange(priceFilter, showFreeOnly),
-      categories: selectedCategories,
-      timeOfDay: timeValuesFromKey(timeFilter),
-    });
     trackTaxonomyFiltersApplied({
       tier3Ids: selectedCategories,
       platform: "mobile",
@@ -251,7 +238,7 @@ export default function FilterScreen() {
           textAlign: "center",
           marginRight: 40
         }}>
-          Activity Filters
+          Activity preferences
         </Text>
       </View>
 
@@ -262,6 +249,21 @@ export default function FilterScreen() {
               Loading your saved preferences…
             </Text>
           )}
+          <View
+            style={{
+              marginBottom: 20,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: "#DBEAFE",
+              backgroundColor: "#EFF6FF",
+              padding: 14,
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#0F172A" }}>Tune your activity feed</Text>
+            <Text style={{ marginTop: 4, fontSize: 13, color: "#475569" }}>
+              These preferences shape home recommendations and nearby sessions. Map filters stay on the map screen.
+            </Text>
+          </View>
           
           {/* Price Filter */}
           <View style={{ marginBottom: 24 }}>
@@ -271,7 +273,7 @@ export default function FilterScreen() {
               color: "#111827",
               marginBottom: 12
             }}>
-              Price Range
+              Budget
             </Text>
             {priceOptions.map((option) => (
               <TouchableOpacity
@@ -328,7 +330,7 @@ export default function FilterScreen() {
               color: "#111827",
               marginBottom: 12
             }}>
-              Distance (mi)
+              Travel distance
             </Text>
             <View style={{
               flexDirection: "row",
@@ -368,7 +370,7 @@ export default function FilterScreen() {
               color: "#111827",
               marginBottom: 12
             }}>
-              When
+              Preferred time
             </Text>
             <View style={{
               flexDirection: "row",
@@ -410,57 +412,16 @@ export default function FilterScreen() {
                 marginBottom: 12,
               }}
             >
-              Activity Types
+              Activity categories
             </Text>
             <View style={{ marginBottom: 12 }}>
               <Text style={{ fontSize: 13, color: "#6B7280" }}>
                 {selectedCategories.length === 0
-                  ? "No activity types selected"
+                  ? "No activity categories selected"
                   : selectedCategoryLabels.join(", ")}
               </Text>
             </View>
             <TaxonomyCategoryPicker selectedIds={selectedCategories} onToggle={toggleCategory} />
-          </View>
-
-          {/* Free Only Toggle */}
-          <View style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingVertical: 16,
-            paddingHorizontal: 16,
-            backgroundColor: "#F9FAFB",
-            borderRadius: 8,
-            marginBottom: 32
-          }}>
-            <View>
-              <Text style={{
-                fontSize: 16,
-                fontWeight: "500",
-                color: "#111827"
-              }}>
-                Free activities only
-              </Text>
-              <Text style={{
-                fontSize: 14,
-                color: "#6B7280"
-              }}>
-                Show only activities that cost $0
-              </Text>
-            </View>
-            <Switch
-              value={showFreeOnly}
-              onValueChange={(value) => {
-                setShowFreeOnly(value);
-                if (value) {
-                  setPriceFilter("free");
-                } else if (priceFilter === "free") {
-                  setPriceFilter("all");
-                }
-              }}
-              trackColor={{ false: "#E5E7EB", true: "#10B981" }}
-              thumbColor={showFreeOnly ? "#FFFFFF" : "#FFFFFF"}
-            />
           </View>
         </View>
       </ScrollView>
@@ -510,7 +471,7 @@ export default function FilterScreen() {
             fontWeight: "500",
             color: "#FFFFFF"
           }}>
-            Apply Filters
+            Save preferences
           </Text>
         </TouchableOpacity>
       </View>

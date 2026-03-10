@@ -12,6 +12,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -20,26 +21,31 @@ import {
   CITY_SWITCHER_ENABLED,
   DEFAULT_CITY_SLUG,
   OPENSTREETMAP_FALLBACK_ATTRIBUTION,
-  createNearbyActivitiesFetcher,
   buildPlaceSavePayload,
+  annotateEventTruth,
+  createNearbyActivitiesFetcher,
   createEventsFetcher,
-  defaultTier3Index,
+  defaultDiscoveryTier3Index,
+  dedupePlaceSummaries,
   estimateRadiusFromBounds,
+  extractPlaceWebsiteHost,
+  filterPlaceSummariesByDiscoveryFilters,
   fetchOverpassPlaceSummaries,
   formatEventTimeRange,
   getCityCategoryConfigMap,
   getCityConfig,
-  getTier3Ids,
+  getDiscoveryTier3Ids,
   isUuid,
   listCities,
+  normalizePlaceWebsiteUrl,
   sortEventsByStart,
   trackTaxonomyFiltersApplied,
   trackTaxonomyToggle,
   useEvents,
   usePlaces,
   buildEventVerificationProgress,
+  type DiscoveryTrustMode,
   type ActivityTier3WithAncestors,
-  type CityCategoryConfig,
   type CityConfig,
   type PlacesViewportQuery,
 } from '@dowhat/shared';
@@ -50,6 +56,11 @@ import ngeohash from 'ngeohash';
 import { useRouter } from 'expo-router';
 
 import { geocodeLabelToCoords } from '../../../lib/geocode';
+import {
+  buildMobileMapDiscoveryFilters,
+  discoveryFiltersEqual,
+  rankPlaceSummariesForDiscovery,
+} from '../../../lib/mobileDiscovery';
 import { emitMapPlacesUpdated, subscribeProfileLocationUpdated } from '../../../lib/events';
 import { buildWebUrl } from '../../../lib/web';
 import {
@@ -62,6 +73,7 @@ import {
 import { supabase } from '../../../lib/supabase';
 import { fetchSupabasePlacesWithinBounds } from '../../../lib/supabasePlaces';
 import TaxonomyCategoryPicker from '../../../components/TaxonomyCategoryPicker';
+import PlaceBrandMark from '../../../components/PlaceBrandMark';
 import { useSavedActivities } from '../../../contexts/SavedActivitiesContext';
 
 type MapRegion = {
@@ -88,7 +100,7 @@ const buildCategoryLabelMap = (city: CityConfig): Record<string, string> => {
 
 const buildTaxonomyTagMap = () => {
   const map = new Map<string, string[]>();
-  defaultTier3Index.forEach((entry) => {
+  defaultDiscoveryTier3Index.forEach((entry) => {
     const tags = entry.tags
       .map((tag) => normaliseCategoryKey(tag))
       .filter(Boolean);
@@ -271,7 +283,7 @@ const toEventSummaryFromEventRow = (row: SupabaseEventRow): EventSummary | null 
   const lat = parseCoordinate(row.lat);
   const lng = parseCoordinate(row.lng);
   const placeLabel = row.venue_name ?? row.address ?? null;
-  return {
+  return annotateEventTruth({
     id: row.id,
     title: row.title ?? 'Community event',
     description: row.description ?? null,
@@ -295,7 +307,7 @@ const toEventSummaryFromEventRow = (row: SupabaseEventRow): EventSummary | null 
     metadata: row.metadata ?? null,
     verification_confirmations: null,
     verification_required: null,
-  };
+  });
 };
 
 const toEventSummaryFromSessionRow = (row: SupabaseSessionRow): EventSummary | null => {
@@ -307,7 +319,7 @@ const toEventSummaryFromSessionRow = (row: SupabaseSessionRow): EventSummary | n
   const venueName = venue?.name ?? null;
   const address = venue?.address ?? null;
   const placeLabel = venueName ?? address ?? null;
-  return {
+  return annotateEventTruth({
     id: row.id,
     title: activity?.name ?? venueName ?? 'Community session',
     description: row.description ?? null,
@@ -325,7 +337,7 @@ const toEventSummaryFromSessionRow = (row: SupabaseSessionRow): EventSummary | n
     event_state: 'scheduled',
     reliability_score: null,
     tags: ['community'],
-    place_id: row.venue_id ?? null,
+    place_id: null,
     source_id: null,
     source_uid: row.id,
     metadata: {
@@ -336,7 +348,7 @@ const toEventSummaryFromSessionRow = (row: SupabaseSessionRow): EventSummary | n
     },
     verification_confirmations: null,
     verification_required: null,
-  };
+  });
 };
 
 const fetchSupabaseEventsFallback = async (query: {
@@ -486,16 +498,25 @@ const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string
   const labelCandidates: Array<unknown> = [placeLabel, venueLabel, name];
   const resolvedName = labelCandidates.find((candidate) => isHighQualityLabel(candidate));
   if (!resolvedName) return null;
+  const linkedVenueId =
+    activity.source === 'supabase-venues' && /^venue:/i.test(activity.id)
+      ? activity.id.replace(/^venue:/i, '').trim() || null
+      : null;
+  const canonicalPlaceId = linkedVenueId ? null : activity.place_id ?? null;
 
   return {
-    id: activity.id,
+    id: canonicalPlaceId?.trim() || activity.id,
     slug: null,
     name: resolvedName,
     lat: activity.lat,
     lng: activity.lng,
+    rating: activity.rating ?? null,
+    ratingCount: activity.rating_count ?? null,
+    popularityScore: activity.popularity_score ?? null,
     categories,
     tags,
     address: placeLabel ?? venueLabel,
+    website: activity.website ?? null,
     city: citySlug,
     locality: null,
     region: null,
@@ -506,7 +527,8 @@ const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string
     metadata: {
       fallbackSource: 'nearby-api',
       source: activity.source ?? null,
-      placeId: activity.place_id ?? null,
+      placeId: canonicalPlaceId,
+      linkedVenueId,
       rankScore: activity.rank_score ?? null,
       qualityConfidence: activity.quality_confidence ?? null,
       placeMatchConfidence: activity.place_match_confidence ?? null,
@@ -515,19 +537,18 @@ const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string
   };
 };
 
-type TimeWindowKey = 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late';
-
 type Filters = {
+  searchText: string;
   categories: string[];
-  priceLevels: number[];
   maxDistanceKm: number | null;
-  capacityKey: string;
-  timeWindow: TimeWindowKey;
+  trustMode: DiscoveryTrustMode;
 };
 
-type CapacityOption = { key: string; label: string; min?: number | null; max?: number | null };
-
-type TimeWindowOption = { key: TimeWindowKey; label: string; startHour?: number; endHour?: number };
+type TrustOption = {
+  key: DiscoveryTrustMode;
+  label: string;
+  helper: string;
+};
 
 type OpeningEntry = {
   start?: string | null;
@@ -670,11 +691,10 @@ const resolveVenueIdForSaving = (place: PlaceSummary | null): string | null => {
 
 
 const DEFAULT_FILTERS: Filters = {
+  searchText: '',
   categories: [],
-  priceLevels: [],
   maxDistanceKm: null,
-  capacityKey: 'any',
-  timeWindow: 'any',
+  trustMode: 'all',
 };
 
 const PRICE_LEVEL_OPTIONS: Array<{ key: string; label: string; level: number }> = [
@@ -693,32 +713,11 @@ const DISTANCE_OPTIONS: Array<{ key: string; label: string; value: number | null
   { key: 'distance-10', label: '≤ 10 km', value: 10 },
 ];
 
-const CAPACITY_OPTIONS: CapacityOption[] = [
-  { key: 'any', label: 'Any group size', min: null, max: null },
-  { key: 'couple', label: '2+ people', min: 2, max: null },
-  { key: 'small', label: '5+ people', min: 5, max: null },
-  { key: 'medium', label: '8+ people', min: 8, max: null },
-  { key: 'large', label: '10+ people', min: 10, max: null },
+const TRUST_OPTIONS: TrustOption[] = [
+  { key: 'all', label: 'All results', helper: 'Show everything that clears the activity-first boundary.' },
+  { key: 'verified_only', label: 'Confirmed only', helper: 'Only show strongly confirmed places and events.' },
+  { key: 'ai_only', label: 'Suggestions only', helper: 'Only show suggestion-first results that still look activity-relevant.' },
 ];
-
-const TIME_WINDOW_OPTIONS: TimeWindowOption[] = [
-  { key: 'any', label: 'Any time' },
-  { key: 'open_now', label: 'Open now' },
-  { key: 'morning', label: 'Morning', startHour: 6, endHour: 12 },
-  { key: 'afternoon', label: 'Afternoon', startHour: 12, endHour: 17 },
-  { key: 'evening', label: 'Evening', startHour: 17, endHour: 22 },
-  { key: 'late', label: 'Late night', startHour: 22, endHour: 2 },
-];
-
-const CAPACITY_OPTION_BY_KEY: Record<string, CapacityOption> = {};
-CAPACITY_OPTIONS.forEach((option) => {
-  CAPACITY_OPTION_BY_KEY[option.key] = option;
-});
-
-const TIME_WINDOW_OPTION_BY_KEY: Record<TimeWindowKey, TimeWindowOption> = {} as Record<TimeWindowKey, TimeWindowOption>;
-TIME_WINDOW_OPTIONS.forEach((option) => {
-  TIME_WINDOW_OPTION_BY_KEY[option.key] = option;
-});
 
 const formatCategoryName = (key: string, labelMap: Record<string, string>) => {
   if (labelMap[key]) {
@@ -735,20 +734,18 @@ const priceLevelLabel = (level: number) => {
 };
 
 const cloneFilters = (filters: Filters): Filters => ({
+  searchText: filters.searchText,
   categories: [...filters.categories],
-  priceLevels: [...filters.priceLevels],
   maxDistanceKm: filters.maxDistanceKm,
-  capacityKey: filters.capacityKey,
-  timeWindow: filters.timeWindow,
+  trustMode: filters.trustMode,
 });
 
 const countActiveFilters = (filters: Filters) => {
   let count = 0;
+  if (filters.searchText.trim().length) count += 1;
   if (filters.categories.length) count += 1;
-  if (filters.priceLevels.length) count += 1;
   if (filters.maxDistanceKm) count += 1;
-  if (filters.capacityKey !== 'any') count += 1;
-  if (filters.timeWindow !== 'any') count += 1;
+  if (filters.trustMode !== 'all') count += 1;
   return count;
 };
 
@@ -761,46 +758,26 @@ const joinWithLimit = (values: string[], limit = 3) => {
 
 const getFilterSummary = (filters: Filters, labelMap: Record<string, string>): string | null => {
   const parts: string[] = [];
+  const searchText = filters.searchText.trim();
+  if (searchText.length) {
+    const compact = searchText.length > 28 ? `${searchText.slice(0, 25)}…` : searchText;
+    parts.push(`Search "${compact}"`);
+  }
   if (filters.categories.length) {
     const labels = filters.categories.map((key) => formatCategoryName(key, labelMap));
     parts.push(joinWithLimit(labels));
-  }
-  if (filters.priceLevels.length) {
-    const prices = [...filters.priceLevels].sort().map((level) => priceLevelLabel(level));
-    parts.push(`Price ${prices.join(', ')}`);
   }
   if (filters.maxDistanceKm) {
     const value = filters.maxDistanceKm;
     parts.push(`Within ${value} km`);
   }
-  if (filters.capacityKey !== 'any') {
-    const option = CAPACITY_OPTION_BY_KEY[filters.capacityKey];
-    if (option) {
-      parts.push(option.label);
-    }
-  }
-  if (filters.timeWindow !== 'any') {
-    const option = TIME_WINDOW_OPTION_BY_KEY[filters.timeWindow];
-    if (option) {
-      parts.push(option.label);
-    }
+  if (filters.trustMode === 'verified_only') {
+    parts.push('Confirmed only');
+  } else if (filters.trustMode === 'ai_only') {
+    parts.push('Suggestions only');
   }
   if (!parts.length) return null;
   return parts.join(' · ');
-};
-
-const toRadians = (value: number) => (value * Math.PI) / 180;
-
-const haversineDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-  if ([lat1, lon1, lat2, lon2].some((value) => !Number.isFinite(value))) return Number.NaN;
-  const R = 6371;
-  const dLat = toRadians(lat2 - lat1);
-  const dLon = toRadians(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
 };
 
 const parseNumericString = (candidate: string): number | null => {
@@ -841,43 +818,6 @@ const resolvePriceLevel = (place: PlaceSummary): number | null => {
       if (numeric != null) {
         return Math.round(numeric);
       }
-    }
-  }
-  return null;
-};
-
-const parseCapacityValue = (candidate: unknown): number | null => {
-  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-    return Math.round(candidate);
-  }
-  if (typeof candidate === 'string') {
-    const numeric = parseNumericString(candidate);
-    if (numeric != null && numeric > 0) {
-      return Math.round(numeric);
-    }
-  }
-  return null;
-};
-
-const resolveCapacity = (place: PlaceSummary): number | null => {
-  const metadata = toPlaceMetadata(place.metadata);
-  if (!metadata) return null;
-  const candidates: Array<unknown> = [
-    metadata.capacity,
-    metadata.maxCapacity,
-    metadata.max_group_size,
-    metadata.maxGroupSize,
-    metadata.groupSize,
-    metadata.recommendedGroupSize,
-    metadata.foursquare?.venue?.attributes?.capacity,
-    metadata.foursquare?.capacity,
-    metadata.openstreetmap?.tags?.capacity,
-    metadata.openstreetmap?.capacity,
-  ];
-  for (const candidate of candidates) {
-    const value = parseCapacityValue(candidate);
-    if (value != null) {
-      return value;
     }
   }
   return null;
@@ -1013,130 +953,6 @@ const isPlaceOpenNow = (place: PlaceSummary, reference: Date): boolean | null =>
   return isOpenAtMinute(segments, minutes);
 };
 
-const isPlaceOpenDuringWindow = (segments: OpeningSegment[], startHour: number, endHour: number) => {
-  if (!segments.length) return null;
-  const minutesStep = 60;
-  const sampleMinutes: number[] = [];
-  const startMinutes = ((startHour % 24) + 24) % 24 * 60;
-  const endMinutes = ((endHour % 24) + 24) % 24 * 60;
-
-  if (startHour === endHour) {
-    sampleMinutes.push(startMinutes);
-  } else if (startHour < endHour || endHour === 0) {
-    for (let minute = startMinutes; minute <= endMinutes; minute += minutesStep) {
-      sampleMinutes.push(minute % 1440);
-    }
-  } else {
-    for (let minute = startMinutes; minute < 1440; minute += minutesStep) {
-      sampleMinutes.push(minute);
-    }
-    for (let minute = 0; minute <= endMinutes; minute += minutesStep) {
-      sampleMinutes.push(minute);
-    }
-  }
-
-  return sampleMinutes.some((minute) => isOpenAtMinute(segments, minute));
-};
-
-const placeMatchesTimeWindow = (place: PlaceSummary, timeWindow: TimeWindowKey, reference: Date) => {
-  if (timeWindow === 'any') return true;
-  if (timeWindow === 'open_now') {
-    const openNow = isPlaceOpenNow(place, reference);
-    return openNow ?? true;
-  }
-  const option = TIME_WINDOW_OPTION_BY_KEY[timeWindow];
-  if (!option?.startHour) return true;
-  const metadata = toPlaceMetadata(place.metadata);
-  const segments = extractOpeningSegments(metadata);
-  const matches = isPlaceOpenDuringWindow(segments, option.startHour, option.endHour ?? option.startHour);
-  return matches ?? true;
-};
-
-const placeMatchesFilters = (
-  place: PlaceSummary,
-  filters: Filters,
-  region: MapRegion,
-  reference: Date,
-  categoryConfigMap?: Map<string, CityCategoryConfig>,
-  taxonomyTagMap?: Map<string, string[]>,
-) => {
-  if (filters.categories.length) {
-    const normalizedCategories = new Set(
-      [...(place.categories ?? []), ...(place.tags ?? [])]
-        .map((value) => normaliseCategoryKey(value) ?? value.trim().toLowerCase())
-        .filter(Boolean),
-    );
-    const placeTags = new Set(
-      (place.tags ?? [])
-        .map((value) => normaliseCategoryKey(value) ?? value.trim().toLowerCase())
-        .filter(Boolean),
-    );
-    const matchesCategory = filters.categories.some((categoryKey) => {
-      const config = categoryConfigMap?.get(categoryKey);
-      if (config) {
-        const targetCategories = config.queryCategories.map((value) => normaliseCategoryKey(value) ?? value.toLowerCase());
-        const hasCategory = targetCategories.some((target) => normalizedCategories.has(target));
-        if (hasCategory) {
-          if (config.tagFilters?.length) {
-            const normalizedFilters = config.tagFilters
-              .map((value) => normaliseCategoryKey(value) ?? value.toLowerCase())
-              .filter(Boolean);
-            if (!normalizedFilters.some((tag) => placeTags.has(tag))) {
-              return false;
-            }
-          }
-          return true;
-        }
-      }
-
-      const taxonomyTags = taxonomyTagMap?.get(categoryKey);
-      if (taxonomyTags?.length) {
-        const hasTaxonomyTag = taxonomyTags.some((tag) => normalizedCategories.has(tag) || placeTags.has(tag));
-        if (hasTaxonomyTag) {
-          return true;
-        }
-      }
-
-      const normalizedKey = normaliseCategoryKey(categoryKey) ?? categoryKey.trim().toLowerCase();
-      return normalizedCategories.has(normalizedKey) || placeTags.has(normalizedKey);
-    });
-    if (!matchesCategory) return false;
-  }
-
-  if (filters.priceLevels.length) {
-    const priceLevel = resolvePriceLevel(place);
-    if (priceLevel != null) {
-      if (!filters.priceLevels.includes(priceLevel)) return false;
-    }
-  }
-
-  if (filters.maxDistanceKm != null) {
-    const distance = haversineDistanceKm(region.latitude, region.longitude, place.lat, place.lng);
-    if (Number.isFinite(distance) && distance > filters.maxDistanceKm) {
-      return false;
-    }
-  }
-
-  if (filters.capacityKey !== 'any') {
-    const option = CAPACITY_OPTION_BY_KEY[filters.capacityKey];
-    if (option) {
-      const capacity = resolveCapacity(place);
-      if (capacity != null) {
-        const min = option.min ?? null;
-        const max = option.max ?? null;
-        if (min != null && capacity < min) return false;
-        if (max != null && capacity > max) return false;
-      }
-    }
-  }
-
-  if (!placeMatchesTimeWindow(place, filters.timeWindow, reference)) {
-    return false;
-  }
-
-  return true;
-};
-
 const MIN_MAP_DELTA = 0.005;
 const MAX_MAP_DELTA = 0.6;
 const REGION_DECIMALS = 5;
@@ -1185,6 +1001,7 @@ const viewportQueriesEqual = (a: PlacesViewportQuery, b: PlacesViewportQuery) =>
     a.city === b.city &&
     a.limit === b.limit &&
     arraysEqual(a.categories, b.categories) &&
+    discoveryFiltersEqual(a.discoveryFilters, b.discoveryFilters) &&
     Math.abs(a.bounds.sw.lat - b.bounds.sw.lat) < epsilon &&
     Math.abs(a.bounds.sw.lng - b.bounds.sw.lng) < epsilon &&
     Math.abs(a.bounds.ne.lat - b.bounds.ne.lat) < epsilon &&
@@ -1471,25 +1288,8 @@ const resolvePlaceName = (place: PlaceSummary) => {
   return 'Activity spot';
 };
 
-const normaliseWebsiteUrl = (value: string | null | undefined) => {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-  return `https://${trimmed}`;
-};
-
 const formatWebsiteHost = (value: string | null | undefined) => {
-  const normalised = normaliseWebsiteUrl(value ?? null);
-  if (!normalised) return null;
-  try {
-    const url = new URL(normalised);
-    return url.host.replace(/^www\./i, '') || url.hostname;
-  } catch (_error) {
-    return normalised.replace(/^https?:\/\//i, '');
-  }
+  return extractPlaceWebsiteHost(value ?? null);
 };
 
 export default function MapScreen() {
@@ -1500,10 +1300,10 @@ export default function MapScreen() {
   const city = useMemo(() => getCityConfig(citySlug), [citySlug]);
   const cityCategoryMap = useMemo(() => getCityCategoryConfigMap(city), [city]);
   const cityRegion = useMemo(() => normaliseRegion(cityToRegion(city)), [city]);
-  const taxonomyIdSet = useMemo(() => new Set(getTier3Ids()), []);
+  const taxonomyIdSet = useMemo(() => new Set(getDiscoveryTier3Ids()), []);
   const taxonomyIndex = useMemo(() => {
     const map = new Map<string, ActivityTier3WithAncestors>();
-    defaultTier3Index.forEach((entry) => {
+    defaultDiscoveryTier3Index.forEach((entry) => {
       map.set(entry.id, entry);
     });
     return map;
@@ -1542,7 +1342,7 @@ export default function MapScreen() {
 
   const categoryLabelByKey = useMemo(() => {
     const map = buildCategoryLabelMap(city);
-    defaultTier3Index.forEach((entry) => {
+    defaultDiscoveryTier3Index.forEach((entry) => {
       map[entry.id] = entry.label;
       map[entry.tier2Id] = entry.tier2Label;
       map[entry.tier1Id] = entry.tier1Label;
@@ -1574,15 +1374,15 @@ export default function MapScreen() {
   }, [filters.categories, taxonomyTagMap]);
   const headerTitle = useMemo(() => {
     if (filters.categories.length === 1) {
-      return `Discover ${formatCategoryName(filters.categories[0], categoryLabelByKey)} Places`;
+      return `Discover ${formatCategoryName(filters.categories[0], categoryLabelByKey)} activity places`;
     }
-    return 'Discover Places';
+    return 'Discover activity places';
   }, [filters.categories, categoryLabelByKey]);
   const defaultSubtitle =
     'Move the map to discover venues powered by Foursquare Places, then plan an activity there.';
-  const filterSubtitle = filterSummary ? `Filters: ${filterSummary}` : null;
+  const filterSubtitle = filterSummary ? `Refined by ${filterSummary}` : null;
 
-  const now = useMemo(() => new Date(), [filters.timeWindow]);
+  const now = useMemo(() => new Date(), [filters.maxDistanceKm]);
 
   const persistProfileCoords = useCallback(
     async (label: string, coords: { lat: number; lng: number }) => {
@@ -1708,9 +1508,15 @@ export default function MapScreen() {
     [requestGeocodeForLabel],
   );
 
-  const categoriesForQuery = useMemo(
-    () => (filters.categories.length ? [...filters.categories] : undefined),
-    [filters.categories],
+  const discoveryFiltersForQuery = useMemo(
+    () =>
+      buildMobileMapDiscoveryFilters({
+        searchText: filters.searchText,
+        categories: filters.categories,
+        maxDistanceKm: filters.maxDistanceKm,
+        trustMode: filters.trustMode,
+      }),
+    [filters.searchText, filters.categories, filters.maxDistanceKm, filters.trustMode],
   );
 
   const buildViewportQuery = useCallback(
@@ -1718,10 +1524,10 @@ export default function MapScreen() {
       bounds: boundsFromRegion(regionOverride),
       limit: 400,
       city: city.slug,
-      ...(categoriesForQuery ? { categories: categoriesForQuery } : {}),
+      ...(discoveryFiltersForQuery ? { discoveryFilters: discoveryFiltersForQuery } : {}),
       ...overrides,
     }),
-    [categoriesForQuery, city.slug],
+    [city.slug, discoveryFiltersForQuery],
   );
 
   const [targetQuery, setTargetQuery] = useState<PlacesViewportQuery>(() => buildViewportQuery(cityRegion));
@@ -1746,7 +1552,13 @@ export default function MapScreen() {
     [buildViewportQuery],
   );
 
+  const initializedCitySlugRef = useRef<string | null>(null);
+
   useEffect(() => {
+    if (initializedCitySlugRef.current === city.slug) {
+      return;
+    }
+    initializedCitySlugRef.current = city.slug;
     setRegion(cityRegion);
     lastRegionRef.current = cityRegion;
     lastQueryRegionRef.current = cityRegion;
@@ -1755,7 +1567,7 @@ export default function MapScreen() {
     const initialQuery = buildViewportQuery(cityRegion);
     setTargetQuery(initialQuery);
     setQuery(initialQuery);
-  }, [cityRegion, buildViewportQuery]);
+  }, [city.slug, cityRegion, buildViewportQuery]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1938,9 +1750,10 @@ export default function MapScreen() {
     const nearbyFetcher = createNearbyActivitiesFetcher({
       buildUrl: () => buildWebUrl('/api/nearby'),
       includeCredentials: true,
+      timeoutMs: 20_000,
     });
 
-    return async ({ bounds, limit, city: queryCity, signal }) => {
+    return async ({ bounds, discoveryFilters, forceRefresh, limit, city: queryCity, signal }) => {
       const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
         ? performance.now()
         : Date.now();
@@ -1964,13 +1777,23 @@ export default function MapScreen() {
       const citySlugForQuery = queryCity ?? city.slug ?? DEFAULT_CITY_SLUG;
       const fetchFallbackPlaces = async () => {
         const fallbackRadius = estimateRadiusFromBounds(bounds);
-        const fallbackPlaces = await fetchOverpassPlaceSummaries({
-          lat: centerLat,
-          lng: centerLng,
-          radiusMeters: fallbackRadius,
-          limit: limit ?? 400,
-          signal,
-        });
+        const rawFallbackPlaces = await fetchOverpassPlaceSummaries({
+            lat: centerLat,
+            lng: centerLng,
+            radiusMeters: fallbackRadius,
+            limit: limit ?? 400,
+            signal,
+          });
+        const fallbackPlaces = rankPlaceSummariesForDiscovery(
+          filterPlaceSummariesByDiscoveryFilters(rawFallbackPlaces, discoveryFilters, {
+            center: { lat: centerLat, lng: centerLng },
+            now: new Date(),
+            citySlug: citySlugForQuery,
+            categoryConfigMap: cityCategoryMap,
+            taxonomyTagMap,
+          }),
+          { center: { lat: centerLat, lng: centerLng }, searchText: discoveryFilters?.searchText },
+        );
         const latencyMs = Math.round(
           (typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()
@@ -1991,18 +1814,21 @@ export default function MapScreen() {
           center: { lat: centerLat, lng: centerLng },
           radiusMeters,
           limit: limit ?? 400,
-          filters: categoriesForQuery?.length
-            ? { taxonomyCategories: categoriesForQuery }
-            : undefined,
+          filters: discoveryFilters,
           signal,
-          refresh: true,
+          refresh: Boolean(forceRefresh),
         });
 
-        const mappedNearbyPlaces = nearbyResponse.activities
-          .filter((activity) => isStrictNearbyActivity(activity))
-          .map((activity) => mapNearbyActivityToPlaceSummary(activity, citySlugForQuery))
-          .filter((place): place is PlaceSummary => Boolean(place))
-          .filter((place) => isHighQualityPlaceSummary(place));
+        const mappedNearbyPlaces = rankPlaceSummariesForDiscovery(
+          dedupePlaceSummaries(
+            nearbyResponse.activities
+            .filter((activity) => isStrictNearbyActivity(activity))
+            .map((activity) => mapNearbyActivityToPlaceSummary(activity, citySlugForQuery))
+            .filter((place): place is PlaceSummary => Boolean(place))
+            .filter((place) => isHighQualityPlaceSummary(place)),
+          ),
+          { center: { lat: centerLat, lng: centerLng } },
+        );
 
         if (mappedNearbyPlaces.length > 0) {
           const latencyMs = Math.round(
@@ -2012,10 +1838,10 @@ export default function MapScreen() {
           );
           return {
             cacheHit: nearbyResponse.cache?.hit ?? false,
-            places: mappedNearbyPlaces,
-            providerCounts: nearbyResponse.sourceBreakdown ?? { nearby: mappedNearbyPlaces.length },
-            attribution: [],
-            latencyMs,
+          places: mappedNearbyPlaces,
+          providerCounts: nearbyResponse.sourceBreakdown ?? { nearby: mappedNearbyPlaces.length },
+          attribution: [],
+          latencyMs,
           };
         }
       } catch (nearbyError) {
@@ -2032,6 +1858,7 @@ export default function MapScreen() {
           bounds,
           citySlug: citySlugForQuery,
           limit: limit ?? 400,
+          discoveryFilters,
         });
         let mergedPlaces = places.filter((place) => isHighQualityPlaceSummary(place));
         let mergedAttribution: Array<{ text: string; url?: string; license?: string }> = [];
@@ -2056,16 +1883,7 @@ export default function MapScreen() {
             const fallback = await fetchFallbackPlaces();
             const strictFallback = fallback.places.filter((place) => isHighQualityPlaceSummary(place));
             if (strictFallback.length > 0) {
-              const deduped = new Map<string, PlaceSummary>();
-              for (const place of mergedPlaces) {
-                deduped.set(place.id, place);
-              }
-              for (const place of strictFallback) {
-                if (!deduped.has(place.id)) {
-                  deduped.set(place.id, place);
-                }
-              }
-              mergedPlaces = Array.from(deduped.values()).slice(0, limit ?? 400);
+              mergedPlaces = dedupePlaceSummaries([...mergedPlaces, ...strictFallback]).slice(0, limit ?? 400);
               mergedAttribution = fallback.attribution;
             }
           } catch (fallbackError) {
@@ -2077,6 +1895,9 @@ export default function MapScreen() {
             }
           }
         }
+        mergedPlaces = rankPlaceSummariesForDiscovery(mergedPlaces, {
+          center: { lat: centerLat, lng: centerLng },
+        });
         const latencyMs = Math.round(
           (typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()
@@ -2117,7 +1938,7 @@ export default function MapScreen() {
         }
       }
     };
-  }, [categoriesForQuery, city.slug]);
+  }, [city.slug]);
 
   const placesQuery = usePlaces(query, {
     fetcher: supabasePlacesFetcher,
@@ -2178,8 +1999,11 @@ export default function MapScreen() {
       from: eventsWindow.from,
       to: eventsWindow.to,
       limit: 150,
+      searchText: filters.searchText.trim() || undefined,
+      taxonomyCategories: filters.categories.length ? filters.categories : undefined,
+      trustMode: filters.trustMode !== 'all' ? filters.trustMode : undefined,
     };
-  }, [eventsWindow, query]);
+  }, [eventsWindow, filters.categories, filters.searchText, filters.trustMode, query]);
 
   const eventsQuery = useEvents(eventsQueryArgs, {
     fetcher: eventsFetcher,
@@ -2261,10 +2085,42 @@ export default function MapScreen() {
 
   const filteredPlaces = useMemo(
     () =>
-      places.filter((place) =>
-        placeMatchesFilters(place, filters, deferredRegion, now, cityCategoryMap, taxonomyTagMap),
+      rankPlaceSummariesForDiscovery(
+        filterPlaceSummariesByDiscoveryFilters(places, discoveryFiltersForQuery, {
+          center: { lat: deferredRegion.latitude, lng: deferredRegion.longitude },
+          now,
+          citySlug: city.slug,
+          categoryConfigMap: cityCategoryMap,
+          taxonomyTagMap,
+        }),
+        {
+          center: { lat: deferredRegion.latitude, lng: deferredRegion.longitude },
+          searchText: filters.searchText,
+          now,
+        },
       ),
-    [places, filters, deferredRegion, now, cityCategoryMap, taxonomyTagMap],
+    [places, discoveryFiltersForQuery, filters.searchText, deferredRegion, now, city.slug, cityCategoryMap, taxonomyTagMap],
+  );
+
+  const draftPreviewCount = useMemo(
+    () =>
+      filterPlaceSummariesByDiscoveryFilters(
+        places,
+        buildMobileMapDiscoveryFilters({
+          searchText: draftFilters.searchText,
+          categories: draftFilters.categories,
+          maxDistanceKm: draftFilters.maxDistanceKm,
+          trustMode: draftFilters.trustMode,
+        }),
+        {
+          center: { lat: deferredRegion.latitude, lng: deferredRegion.longitude },
+          now,
+          citySlug: city.slug,
+          categoryConfigMap: cityCategoryMap,
+          taxonomyTagMap,
+        },
+      ).length,
+    [places, draftFilters, deferredRegion, now, cityCategoryMap, taxonomyTagMap],
   );
 
   const deferredPlaces = useDeferredValue(filteredPlaces);
@@ -2392,20 +2248,37 @@ export default function MapScreen() {
 
   const placesCountLabel = useMemo(() => {
     if (loading && !filteredPlaces.length) return null;
-    if (!filteredPlaces.length) return 'No places in view';
-    return `${filteredPlaces.length} place${filteredPlaces.length === 1 ? '' : 's'} in view`;
+    if (!filteredPlaces.length) return 'No activity places in view';
+    return `${filteredPlaces.length} activity place${filteredPlaces.length === 1 ? '' : 's'} in view`;
   }, [filteredPlaces.length, loading]);
 
   const hasActiveFilters = activeFilterCount > 0;
 
   const noResultsMessage = useMemo(() => {
     if (loading || filteredPlaces.length || !hasActiveFilters) return null;
+    if (filters.searchText.trim().length) {
+      return 'No activity places match this search in the current map area. Try a shorter keyword or widen the map.';
+    }
     if (filters.categories.length) {
       const labelText = joinWithLimit(selectedCategoryLabels, 2);
-      return `No ${labelText} places match these filters here yet. Try adjusting the filters or moving the map.`;
+      return `No ${labelText} activity places match these filters here yet. Try adjusting the filters or moving the map.`;
     }
-    return 'No places match the selected filters here yet. Try adjusting the filters or moving the map.';
-  }, [loading, filteredPlaces.length, hasActiveFilters, filters.categories.length, selectedCategoryLabels]);
+    if (filters.trustMode === 'verified_only') {
+      return 'No confirmed activity places match this map area yet. Try widening the map or switching back to all results.';
+    }
+    if (filters.trustMode === 'ai_only') {
+      return 'No suggestion-first activity places match this map area yet. Try widening the map or switching back to all results.';
+    }
+    return 'No activity places match the selected filters here yet. Try adjusting the filters or moving the map.';
+  }, [
+    loading,
+    filteredPlaces.length,
+    hasActiveFilters,
+    filters.searchText,
+    filters.categories.length,
+    filters.trustMode,
+    selectedCategoryLabels,
+  ]);
 
   const providerHint = useMemo(() => {
     if (!filteredPlaces.length) return null;
@@ -2417,12 +2290,24 @@ export default function MapScreen() {
 
   const dismissActivePlace = useCallback(() => setActivePlaceId(null), []);
 
-  const removeCategory = (categoryId: string) => {
+  const clearSearchFilter = useCallback(() => {
+    setFilters((prev) => (prev.searchText.trim().length ? { ...prev, searchText: '' } : prev));
+  }, []);
+
+  const removeCategory = useCallback((categoryId: string) => {
     setFilters((prev) => {
       if (!prev.categories.includes(categoryId)) return prev;
       return { ...prev, categories: prev.categories.filter((value) => value !== categoryId) };
     });
-  };
+  }, []);
+
+  const clearDistanceFilter = useCallback(() => {
+    setFilters((prev) => (prev.maxDistanceKm != null ? { ...prev, maxDistanceKm: null } : prev));
+  }, []);
+
+  const clearTrustFilter = useCallback(() => {
+    setFilters((prev) => (prev.trustMode !== 'all' ? { ...prev, trustMode: 'all' } : prev));
+  }, []);
 
   const openFilterModal = () => {
     setDraftFilters(cloneFilters(filters));
@@ -2435,6 +2320,7 @@ export default function MapScreen() {
 
   const applyDraftFilters = () => {
     const nextFilters = cloneFilters(draftFilters);
+    nextFilters.searchText = nextFilters.searchText.trim().replace(/\s+/g, ' ');
     nextFilters.categories = filterValidCategories(nextFilters.categories);
     setFilters(nextFilters);
     setFilterModalVisible(false);
@@ -2449,6 +2335,43 @@ export default function MapScreen() {
   const resetDraftFilters = () => {
     setDraftFilters(cloneFilters(DEFAULT_FILTERS));
   };
+
+  const appliedFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
+    const trimmedSearch = filters.searchText.trim();
+    if (trimmedSearch.length) {
+      chips.push({
+        key: 'search',
+        label: `Search: ${trimmedSearch.length > 22 ? `${trimmedSearch.slice(0, 19)}…` : trimmedSearch}`,
+        onRemove: clearSearchFilter,
+      });
+    }
+    filters.categories.forEach((categoryId) => {
+      const label = taxonomyIndex.get(categoryId)?.label ?? formatCategoryName(categoryId, categoryLabelByKey);
+      chips.push({
+        key: `category:${categoryId}`,
+        label,
+        onRemove: () => removeCategory(categoryId),
+      });
+    });
+    if (filters.maxDistanceKm != null) {
+      chips.push({ key: 'distance', label: `Within ${filters.maxDistanceKm} km`, onRemove: clearDistanceFilter });
+    }
+    if (filters.trustMode === 'verified_only') {
+      chips.push({ key: 'trust:verified', label: 'Confirmed only', onRemove: clearTrustFilter });
+    } else if (filters.trustMode === 'ai_only') {
+      chips.push({ key: 'trust:ai', label: 'Suggestions only', onRemove: clearTrustFilter });
+    }
+    return chips;
+  }, [
+    filters,
+    taxonomyIndex,
+    categoryLabelByKey,
+    clearSearchFilter,
+    clearDistanceFilter,
+    clearTrustFilter,
+    removeCategory,
+  ]);
 
   const toggleDraftCategory = (categoryId: string) => {
     if (!taxonomyIdSet.has(categoryId)) return;
@@ -2469,16 +2392,6 @@ export default function MapScreen() {
     });
   };
 
-  const toggleDraftPriceLevel = (level: number) => {
-    setDraftFilters((prev) => {
-      const exists = prev.priceLevels.includes(level);
-      const nextPriceLevels = exists
-        ? prev.priceLevels.filter((value) => value !== level)
-        : [...prev.priceLevels, level];
-      return { ...prev, priceLevels: nextPriceLevels };
-    });
-  };
-
   const selectDraftDistance = (value: number | null) => {
     setDraftFilters((prev) => {
       if (prev.maxDistanceKm === value) return prev;
@@ -2486,17 +2399,10 @@ export default function MapScreen() {
     });
   };
 
-  const selectDraftCapacity = (key: string) => {
+  const selectDraftTrustMode = (value: DiscoveryTrustMode) => {
     setDraftFilters((prev) => {
-      if (prev.capacityKey === key) return prev;
-      return { ...prev, capacityKey: key };
-    });
-  };
-
-  const selectDraftTimeWindow = (key: TimeWindowKey) => {
-    setDraftFilters((prev) => {
-      if (prev.timeWindow === key) return prev;
-      return { ...prev, timeWindow: key };
+      if (prev.trustMode === value) return prev;
+      return { ...prev, trustMode: value };
     });
   };
 
@@ -2557,6 +2463,9 @@ export default function MapScreen() {
         lng: String(place.lng),
         placeName: place.name,
       };
+      if (isUuid(place.id)) {
+        params.placeId = place.id;
+      }
       const address = formatPlaceAddress(place);
       if (address) params.placeAddress = address;
       if (activityLabel && activityLabel.trim() && activityLabel !== 'Activity') {
@@ -2568,7 +2477,7 @@ export default function MapScreen() {
   );
 
   const handleOpenWebsite = useCallback((url?: string | null) => {
-    const target = normaliseWebsiteUrl(url ?? null);
+    const target = normalizePlaceWebsiteUrl(url ?? null);
     if (!target) return;
     Linking.openURL(target).catch((error) => {
       console.info('[Map] Failed to open venue website', error);
@@ -2602,11 +2511,17 @@ export default function MapScreen() {
 
   const emptyState = !loading && filteredPlaces.length === 0;
 
-  const emptyStateTitle = hasActiveFilters && emptyState ? 'No places match your filters here.' : 'No places in view yet.';
+  const emptyStateTitle = hasActiveFilters && emptyState
+    ? filters.searchText.trim().length
+      ? 'No activity places match this search here.'
+      : 'No activity places match your filters here.'
+    : 'No activity places in view yet.';
 
   const emptyStateSubtitle = friendlyError
     ?? (hasActiveFilters && emptyState
-      ? 'Try widening the map area or tweaking your filters to discover more activities.'
+      ? filters.searchText.trim().length
+        ? 'Try a broader keyword, clear one filter, or widen the map area.'
+        : 'Try widening the map area or tweaking your filters to discover more activities.'
       : 'Move the map or adjust filters to discover activities nearby.');
 
   const citySwitcherEnabled = CITY_SWITCHER_ENABLED;
@@ -2626,42 +2541,61 @@ export default function MapScreen() {
           <Pressable style={styles.modalScrim} onPress={closeFilterModal} accessibilityRole="button" accessibilityLabel="Close filters" />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Refine search</Text>
-              <TouchableOpacity accessibilityRole="button" onPress={closeFilterModal}>
+              <View style={styles.modalHeaderCopy}>
+                <Text style={styles.modalTitle}>Refine search</Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  {draftPreviewCount === 1
+                    ? '1 activity place matches this setup in the current map area.'
+                    : `${draftPreviewCount} activity places match this setup in the current map area.`}
+                </Text>
+              </View>
+              <TouchableOpacity accessibilityRole="button" onPress={closeFilterModal} style={styles.modalCloseButton}>
                 <Text style={styles.modalClose}>Close</Text>
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalContent}>
+              <View style={styles.modalSearchCard}>
+                <Text style={styles.modalSectionTitle}>Search</Text>
+                <Text style={styles.modalSectionSubtitle}>
+                  Search by activity venue, neighborhood, category, or brand.
+                </Text>
+                <View style={styles.modalSearchInputRow}>
+                  <TextInput
+                    value={draftFilters.searchText}
+                    onChangeText={(value) => setDraftFilters((prev) => ({ ...prev, searchText: value }))}
+                    placeholder="Climbing gym, Tay Ho, community run, pottery…"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    style={styles.modalSearchInput}
+                  />
+                  {draftFilters.searchText.trim().length ? (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => setDraftFilters((prev) => ({ ...prev, searchText: '' }))}
+                      style={styles.modalSearchClear}
+                    >
+                      <Text style={styles.modalSearchClearText}>Clear</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
               <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Categories</Text>
+                <Text style={styles.modalSectionTitle}>Activity categories</Text>
                 <Text style={styles.modalSectionSubtitle}>
                   {draftFilters.categories.length
                     ? draftCategoryLabels.join(', ')
-                    : 'No categories selected'}
+                    : 'Choose the activities you want this map to focus on.'}
                 </Text>
                 <TaxonomyCategoryPicker selectedIds={draftFilters.categories} onToggle={toggleDraftCategory} />
               </View>
 
               <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Price</Text>
-                <View style={styles.modalChipGroup}>
-                  {PRICE_LEVEL_OPTIONS.map((option) => {
-                    const active = draftFilters.priceLevels.includes(option.level);
-                    return (
-                      <TouchableOpacity
-                        key={option.key}
-                        onPress={() => toggleDraftPriceLevel(option.level)}
-                        style={[styles.modalChip, active ? styles.modalChipActive : styles.modalChipInactive]}
-                      >
-                        <Text style={active ? styles.modalChipTextActive : styles.modalChipText}>{option.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              <View style={styles.modalSection}>
                 <Text style={styles.modalSectionTitle}>Distance</Text>
+                <Text style={styles.modalSectionSubtitle}>
+                  The map area sets the search area. Distance helps narrow it further when you want closer options.
+                </Text>
                 <View style={styles.modalChipGroup}>
                   {DISTANCE_OPTIONS.map((option) => {
                     const active = draftFilters.maxDistanceKm === option.value;
@@ -2679,35 +2613,23 @@ export default function MapScreen() {
               </View>
 
               <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Group size</Text>
+                <Text style={styles.modalSectionTitle}>Result strictness</Text>
+                <Text style={styles.modalSectionSubtitle}>
+                  Choose how much proof a place or event needs before it appears on this map.
+                </Text>
                 <View style={styles.modalChipGroup}>
-                  {CAPACITY_OPTIONS.map((option) => {
-                    const active = draftFilters.capacityKey === option.key;
+                  {TRUST_OPTIONS.map((option) => {
+                    const active = draftFilters.trustMode === option.key;
                     return (
                       <TouchableOpacity
                         key={option.key}
-                        onPress={() => selectDraftCapacity(option.key)}
+                        onPress={() => selectDraftTrustMode(option.key)}
                         style={[styles.modalChip, active ? styles.modalChipActive : styles.modalChipInactive]}
                       >
                         <Text style={active ? styles.modalChipTextActive : styles.modalChipText}>{option.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Working hours</Text>
-                <View style={styles.modalChipGroup}>
-                  {TIME_WINDOW_OPTIONS.map((option) => {
-                    const active = draftFilters.timeWindow === option.key;
-                    return (
-                      <TouchableOpacity
-                        key={option.key}
-                        onPress={() => selectDraftTimeWindow(option.key)}
-                        style={[styles.modalChip, active ? styles.modalChipActive : styles.modalChipInactive]}
-                      >
-                        <Text style={active ? styles.modalChipTextActive : styles.modalChipText}>{option.label}</Text>
+                        <Text style={active ? styles.modalChipHelperTextActive : styles.modalChipHelperText}>
+                          {option.helper}
+                        </Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -2719,7 +2641,9 @@ export default function MapScreen() {
                 <Text style={styles.modalResetText}>Reset</Text>
               </TouchableOpacity>
               <TouchableOpacity accessibilityRole="button" style={styles.modalApply} onPress={applyDraftFilters}>
-                <Text style={styles.modalApplyText}>Apply Filters</Text>
+                <Text style={styles.modalApplyText}>
+                  {draftPreviewCount === 1 ? 'Show 1 Activity Place' : `Show ${draftPreviewCount} Activity Places`}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2729,7 +2653,7 @@ export default function MapScreen() {
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{headerTitle}</Text>
-            <Text style={styles.subtitle}>{filterSubtitle ?? defaultSubtitle}</Text>
+            <Text style={styles.subtitle}>{defaultSubtitle}</Text>
             {hasLocationPermission ? null : <Text style={styles.cityLabel}>{city.label}</Text>}
             {filterSubtitle ? <Text style={styles.filterSummary}>{filterSubtitle}</Text> : null}
             {placesCountLabel ? <Text style={styles.resultCount}>{placesCountLabel}</Text> : null}
@@ -2756,9 +2680,10 @@ export default function MapScreen() {
               onPress={openFilterModal}
               style={[styles.filterButton, activeFilterCount ? styles.filterButtonActive : null]}
             >
-              <Text style={styles.filterButtonText}>
-                {activeFilterCount ? `${activeFilterCount} Filters` : 'Filters'}
+              <Text style={styles.filterButtonEyebrow}>
+                {activeFilterCount ? `${activeFilterCount} active` : 'Activity search'}
               </Text>
+              <Text style={styles.filterButtonText}>{activeFilterCount ? 'Refine activities' : 'Open filters'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2767,35 +2692,24 @@ export default function MapScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filtersRow}
         >
-          {filters.categories.length ? (
-            filters.categories.map((categoryId) => {
-              const label =
-                taxonomyIndex.get(categoryId)?.label ?? formatCategoryName(categoryId, categoryLabelByKey);
-              return (
-                <View key={categoryId} style={styles.selectedCategoryChip}>
-                  <Text style={styles.selectedCategoryChipText}>{label}</Text>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.selectedCategoryChipRemove}
-                    onPress={() => removeCategory(categoryId)}
-                  >
-                    <Text style={styles.selectedCategoryChipRemoveText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })
+          {appliedFilterChips.length ? (
+            appliedFilterChips.map((chip) => (
+              <View key={chip.key} style={styles.selectedCategoryChip}>
+                <Text style={styles.selectedCategoryChipText}>{chip.label}</Text>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.selectedCategoryChipRemove}
+                  onPress={chip.onRemove}
+                >
+                  <Text style={styles.selectedCategoryChipRemoveText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))
           ) : (
             <View style={styles.selectedCategoryChipMuted}>
-              <Text style={styles.selectedCategoryChipMutedText}>All activity types</Text>
+              <Text style={styles.selectedCategoryChipMutedText}>All activity places</Text>
             </View>
           )}
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={openFilterModal}
-            style={styles.addCategoryChip}
-          >
-            <Text style={styles.addCategoryChipText}>Browse categories</Text>
-          </TouchableOpacity>
         </ScrollView>
       </View>
       {shouldShowEventsRail ? (
@@ -2992,13 +2906,20 @@ export default function MapScreen() {
           <View style={styles.placeDetailWrapper}>
             <View style={styles.placeDetailCard}>
               <View style={styles.placeDetailHeader}>
-                <View
-                  style={[
-                    styles.placeDetailEmoji,
-                    { backgroundColor: activeAppearance ? `${activeAppearance.color}22` : '#E2E8F0' },
-                  ]}
-                >
-                  <Text style={styles.markerEmoji}>{activeAppearance?.emoji ?? '📍'}</Text>
+                <View style={styles.placeDetailBrandColumn}>
+                  <PlaceBrandMark
+                    name={activePlaceName ?? activePlace.name}
+                    website={activeWebsite}
+                    size={52}
+                  />
+                  <View
+                    style={[
+                      styles.placeDetailEmoji,
+                      { backgroundColor: activeAppearance ? `${activeAppearance.color}22` : '#E2E8F0' },
+                    ]}
+                  >
+                    <Text style={styles.markerEmoji}>{activeAppearance?.emoji ?? '📍'}</Text>
+                  </View>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.placeDetailTitle}>{activePlaceName ?? activePlace.name}</Text>
@@ -3091,7 +3012,7 @@ export default function MapScreen() {
                   style={styles.placeDetailPrimaryAction}
                   onPress={() => handlePlanEvent(activePlace, activeCategoryLabel)}
                 >
-                  <Text style={styles.placeDetailPrimaryActionText}>Create event here</Text>
+                  <Text style={styles.placeDetailPrimaryActionText}>Create session here</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   accessibilityRole="button"
@@ -3124,7 +3045,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 10,
+    paddingBottom: 8,
   },
   eventsSection: {
     marginHorizontal: 16,
@@ -3293,6 +3214,7 @@ const styles = StyleSheet.create({
   },
   headerActions: {
     alignItems: 'flex-end',
+    paddingLeft: 12,
   },
   citySwitcher: {
     borderRadius: 999,
@@ -3312,27 +3234,40 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   filterButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
+    minWidth: 118,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     backgroundColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   filterButtonActive: {
-    borderColor: '#0EA5E9',
-    backgroundColor: '#E0F2FE',
+    borderColor: '#38BDF8',
+    backgroundColor: '#F0F9FF',
+  },
+  filterButtonEyebrow: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 2,
   },
   filterButtonText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#0F172A',
   },
   filtersRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 12,
+    paddingTop: 10,
+    paddingBottom: 8,
   },
   selectedCategoryChip: {
     flexDirection: 'row',
@@ -3376,17 +3311,6 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '600',
   },
-  addCategoryChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#1D4ED8',
-  },
-  addCategoryChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.45)',
@@ -3400,10 +3324,10 @@ const styles = StyleSheet.create({
     left: 0,
   },
   modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 20,
     maxHeight: '80%',
@@ -3411,13 +3335,30 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 16,
   },
+  modalHeaderCopy: {
+    flex: 1,
+    paddingRight: 12,
+  },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  modalHeaderSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#475569',
+  },
+  modalCloseButton: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   modalClose: {
     fontSize: 13,
@@ -3428,10 +3369,23 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalContent: {
-    paddingBottom: 4,
+    paddingBottom: 8,
+  },
+  modalSearchCard: {
+    marginBottom: 18,
+    padding: 16,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   modalSection: {
     marginBottom: 18,
+    padding: 16,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   modalSectionTitle: {
     fontSize: 14,
@@ -3443,6 +3397,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     marginBottom: 12,
+  },
+  modalSearchInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalSearchInput: {
+    flex: 1,
+    minHeight: 46,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  modalSearchClear: {
+    marginLeft: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#E2E8F0',
+  },
+  modalSearchClearText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
   },
   modalChipGroup: {
     flexDirection: 'row',
@@ -3474,18 +3456,31 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
   },
+  modalChipHelperText: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#64748B',
+    maxWidth: 180,
+  },
+  modalChipHelperTextActive: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#0F172A',
+    maxWidth: 180,
+  },
   modalActions: {
     flexDirection: 'row',
-    marginTop: 4,
+    marginTop: 6,
   },
   modalReset: {
     flex: 1,
     marginRight: 12,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
   modalResetText: {
     fontSize: 14,
@@ -3494,9 +3489,9 @@ const styles = StyleSheet.create({
   },
   modalApply: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 16,
     backgroundColor: '#0EA5E9',
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   modalApplyText: {
@@ -3655,13 +3650,17 @@ const styles = StyleSheet.create({
   },
   placeDetailHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
   },
+  placeDetailBrandColumn: {
+    alignItems: 'center',
+    gap: 8,
+  },
   placeDetailEmoji: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },

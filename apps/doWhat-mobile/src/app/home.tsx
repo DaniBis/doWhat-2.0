@@ -13,6 +13,7 @@ import {
   buildPlaceSavePayload,
   buildActivitySavePayload,
   buildSessionSavePayload,
+  dedupePlaceSummaries,
   trackFindA4thCardTap,
   trackFindA4thImpression,
   fetchOverpassPlaceSummaries,
@@ -23,12 +24,18 @@ import {
   type PlaceSummary,
   type PlacesViewportQuery,
   type MapActivity,
-  type TimeWindowKey,
   type ActivityRow,
   type ActivityFilterPreferences,
   type SavePayload,
 } from "@dowhat/shared";
 import { buildWebUrl } from "../lib/web";
+import {
+  buildHomeActivityEventCounts,
+  groupDiscoveryActivitiesForHome,
+  resolveHomeActivityCardMeta,
+  type HomeNearbyActivity,
+} from "../lib/homeActivityCounts";
+import { buildHomeDiscoveryFilters, rankPlaceSummariesForDiscovery } from "../lib/mobileDiscovery";
 import * as Location from 'expo-location';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const ExpoRouter = require("expo-router");
@@ -144,12 +151,13 @@ const SaveBadge = ({ saved, saving = false, disabled = false, variant = 'light',
   );
 };
 
-type NearbyActivity = { id: string; name: string; count: number; searchText: string };
+type NearbyActivity = HomeNearbyActivity;
 
 type ActivityCardModel = {
   activity: NearbyActivity;
   visual: { icon: string; color: string; bgColor: string };
-  derivedCount: number;
+  badgeLabel: string | null;
+  supportingLabel: string;
   payload: SavePayload | null;
   saved: boolean;
   saving: boolean;
@@ -162,7 +170,23 @@ type ProfileLocationRow = {
 };
 
 const HOME_SESSION_RADIUS_METERS = 25_000;
+const HOME_TASK_TIMEOUT_MS = 8_000;
+const HOME_DISCOVERY_TIMEOUT_MS = 20_000;
 const ACTIVITY_LOCAL_KEY = 'activity_filters:v1';
+
+const withTimeout = async <T,>(task: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 const BLOCKED_LABELS = new Set([
   'activity',
@@ -229,16 +253,25 @@ const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string
   const tags = Array.isArray(activity.tags)
     ? activity.tags.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
     : [];
+  const linkedVenueId =
+    activity.source === 'supabase-venues' && /^venue:/i.test(activity.id)
+      ? activity.id.replace(/^venue:/i, '').trim() || null
+      : null;
+  const canonicalPlaceId = linkedVenueId ? null : activity.place_id ?? null;
 
   return {
-    id: activity.place_id?.trim() || activity.id,
+    id: canonicalPlaceId?.trim() || activity.id,
     slug: null,
     name: label,
     lat: activity.lat,
     lng: activity.lng,
+    rating: activity.rating ?? null,
+    ratingCount: activity.rating_count ?? null,
+    popularityScore: activity.popularity_score ?? null,
     categories,
     tags,
     address: activity.place_label ?? activity.venue ?? null,
+    website: activity.website ?? null,
     city: citySlug,
     locality: null,
     region: null,
@@ -251,7 +284,8 @@ const mapNearbyActivityToPlaceSummary = (activity: MapActivity, citySlug: string
       rankScore: activity.rank_score ?? null,
       qualityConfidence: activity.quality_confidence ?? null,
       placeMatchConfidence: activity.place_match_confidence ?? null,
-      placeId: activity.place_id ?? null,
+      placeId: canonicalPlaceId,
+      linkedVenueId,
     },
     transient: true,
   };
@@ -331,6 +365,22 @@ const buildSearchText = (parts: Array<string | null | undefined>): string => {
   return Array.from(new Set(tokens)).join(' ');
 };
 
+const sessionMatchesHomeTimeWindow = (
+  startsAt: string | null | undefined,
+  timeWindow: 'any' | 'open_now' | 'morning' | 'afternoon' | 'evening' | 'late' | undefined,
+) => {
+  if (!timeWindow || timeWindow === 'any' || timeWindow === 'open_now') return true;
+  if (!startsAt) return true;
+  const parsed = new Date(startsAt);
+  if (Number.isNaN(parsed.getTime())) return true;
+  const hour = parsed.getHours();
+  if (timeWindow === 'morning') return hour >= 6 && hour < 12;
+  if (timeWindow === 'afternoon') return hour >= 12 && hour < 18;
+  if (timeWindow === 'evening') return hour >= 18 && hour < 21;
+  if (timeWindow === 'late') return hour >= 21 || hour < 6;
+  return true;
+};
+
 
 const lookingForPlayersFeatureEnabled = !(
   process.env.EXPO_PUBLIC_FEATURE_LOOKING_FOR_PLAYERS === "false" ||
@@ -339,25 +389,6 @@ const lookingForPlayersFeatureEnabled = !(
 
 const FIND_A_FOURTH_SURFACE = 'home_find_fourth';
 const MAX_HOME_ACTIVITY_CARDS = 40;
-
-const mapActivityTimeToMapTimeWindow = (values: readonly string[]): TimeWindowKey | undefined => {
-  if (!values.length) return undefined;
-  const normalized = values.map((entry) => entry.trim().toLowerCase());
-  if (normalized.some((entry) => entry.includes('early') || entry.includes('morning'))) {
-    return 'morning';
-  }
-  if (normalized.some((entry) => entry.includes('afternoon'))) {
-    return 'afternoon';
-  }
-  if (normalized.some((entry) => entry.includes('evening'))) {
-    return 'evening';
-  }
-  if (normalized.some((entry) => entry.includes('night') || entry.includes('late'))) {
-    return 'late';
-  }
-  return undefined;
-};
-
 
 function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -390,6 +421,7 @@ function HomeScreen() {
       createNearbyActivitiesFetcher({
         buildUrl: () => buildWebUrl('/api/nearby'),
         includeCredentials: true,
+        timeoutMs: HOME_DISCOVERY_TIMEOUT_MS,
       }),
     [],
   );
@@ -409,10 +441,18 @@ function HomeScreen() {
 
     const fetchNearbyFromSupabase = useCallback(async (latNow: number, lngNow: number, prefs?: ActivityFilterPreferences) => {
       const radiusMeters = Math.max(1000, Math.min(50_000, (prefs?.radius ?? 2.5) * 1000));
+      const queryFilters = buildHomeDiscoveryFilters(prefs);
+      const selectedCategories = new Set((prefs?.categories ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean));
+      const minPriceCents = prefs ? Math.max(0, Math.round(prefs.priceRange[0] * 100)) : 0;
+      const maxPriceCents = prefs && prefs.priceRange[1] >= DEFAULT_ACTIVITY_FILTER_PREFERENCES.priceRange[1]
+        ? Number.POSITIVE_INFINITY
+        : prefs
+          ? Math.max(minPriceCents, Math.round(prefs.priceRange[1] * 100))
+          : Number.POSITIVE_INFINITY;
       const { data, error } = await supabase
         .from('sessions')
         .select(
-          `id, activity_id,
+          `id, activity_id, price_cents, starts_at,
              activities!inner(id, name, activity_types),
            venues!inner(id, name, venue_lat:lat, venue_lng:lng)`
         )
@@ -462,6 +502,34 @@ function HomeScreen() {
         const activityTypes = Array.isArray(activities?.activity_types)
           ? activities.activity_types.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
           : [];
+        if (selectedCategories.size > 0) {
+          const normalizedTypes = activityTypes.map((entry) => entry.trim().toLowerCase());
+          if (!normalizedTypes.some((entry) => selectedCategories.has(entry))) {
+            return acc;
+          }
+        }
+        const priceCents =
+          typeof row.price_cents === 'number'
+            ? row.price_cents
+            : row.price_cents != null && row.price_cents !== ''
+              ? Number(row.price_cents)
+              : null;
+        if (
+          prefs &&
+          (
+            prefs.priceRange[0] !== DEFAULT_ACTIVITY_FILTER_PREFERENCES.priceRange[0]
+            || prefs.priceRange[1] !== DEFAULT_ACTIVITY_FILTER_PREFERENCES.priceRange[1]
+          ) &&
+          typeof priceCents === 'number' &&
+          Number.isFinite(priceCents) &&
+          (priceCents < minPriceCents || priceCents > maxPriceCents)
+        ) {
+          return acc;
+        }
+        const startsAt = typeof row.starts_at === 'string' ? row.starts_at : null;
+        if (!sessionMatchesHomeTimeWindow(startsAt, queryFilters?.timeWindow)) {
+          return acc;
+        }
         const searchText = buildSearchText([name, ...activityTypes]);
         const groupKey = normaliseActivityName(name);
         const existing = acc[groupKey];
@@ -480,65 +548,35 @@ function HomeScreen() {
     latNow: number,
     lngNow: number,
     prefs?: ActivityFilterPreferences,
+    options?: { refresh?: boolean },
   ): Promise<NearbyActivity[]> => {
     const radiusMeters = Math.max(1000, Math.min(50_000, (prefs?.radius ?? 2.5) * 1000));
-    const timeWindow = mapActivityTimeToMapTimeWindow(prefs?.timeOfDay ?? []);
     const response = await nearbyFetcher({
       center: { lat: latNow, lng: lngNow },
       radiusMeters,
       limit: 300,
-      filters: {
-        ...(prefs?.categories?.length ? { taxonomyCategories: prefs.categories } : {}),
-        ...(timeWindow ? { timeWindow } : {}),
-      },
-      refresh: true,
+      filters: buildHomeDiscoveryFilters(prefs),
+      refresh: options?.refresh,
     });
 
-    const grouped = new Map<string, NearbyActivity>();
-    response.activities.forEach((activity) => {
-      if (!isStrictNearbyActivity(activity)) return;
-      const name = activity.name.trim();
-      const activityTypes = Array.isArray(activity.activity_types)
-        ? activity.activity_types.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
-        : [];
-      const taxonomyCategories = Array.isArray(activity.taxonomy_categories)
-        ? activity.taxonomy_categories.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
-        : [];
-      const tags = Array.isArray(activity.tags)
-        ? activity.tags.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
-        : [];
-      const searchText = buildSearchText([
-        name,
-        activity.place_label ?? undefined,
-        ...activityTypes,
-        ...taxonomyCategories,
-        ...tags,
-      ]);
-      const key = normaliseActivityName(name);
-      const count = Math.max(1, Number(activity.upcoming_session_count ?? 0));
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.count += count;
-        existing.searchText = buildSearchText([existing.searchText, searchText]);
-      } else {
-        grouped.set(key, { id: key, name, count, searchText });
-      }
-    });
-
-    return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
+    return groupDiscoveryActivitiesForHome(
+      response.activities.filter((activity) => isStrictNearbyActivity(activity)),
+      buildSearchText,
+    );
   }, [nearbyFetcher]);
 
   const fetchNearbyActivities = useCallback(async (
     latNow: number | null,
     lngNow: number | null,
     prefs?: ActivityFilterPreferences,
+    options?: { refresh?: boolean },
   ) => {
     if (latNow == null || lngNow == null) {
       setActivities([]);
       return;
     }
     try {
-      const grouped = await fetchNearbyFromApi(latNow, lngNow, prefs);
+      const grouped = await fetchNearbyFromApi(latNow, lngNow, prefs, options);
       if (grouped.length > 0) {
         setActivities(grouped);
       } else {
@@ -561,7 +599,7 @@ function HomeScreen() {
   }, [fetchNearbyFromApi, fetchNearbyFromSupabase]);
 
   const fetchPlacesViewport = useCallback(
-    async (latNow: number | null, lngNow: number | null) => {
+    async (latNow: number | null, lngNow: number | null, options?: { refresh?: boolean }) => {
       const city = defaultCity;
       const hasLocation = latNow != null && lngNow != null;
       const latitudeDelta = hasLocation
@@ -587,14 +625,19 @@ function HomeScreen() {
           center: { lat: fallbackCenterLat, lng: fallbackCenterLng },
           radiusMeters: fallbackRadiusMeters,
           limit: 120,
-          refresh: true,
+          refresh: options?.refresh,
         });
 
-        const strictNearbyPlaces = nearby.activities
-          .filter((activity) => isStrictNearbyActivity(activity))
-          .map((activity) => mapNearbyActivityToPlaceSummary(activity, city.slug))
-          .filter((entry): entry is PlaceSummary => Boolean(entry))
-          .filter((place) => isHighQualityPlaceSummary(place));
+        const strictNearbyPlaces = rankPlaceSummariesForDiscovery(
+          dedupePlaceSummaries(
+            nearby.activities
+            .filter((activity) => isStrictNearbyActivity(activity))
+            .map((activity) => mapNearbyActivityToPlaceSummary(activity, city.slug))
+            .filter((entry): entry is PlaceSummary => Boolean(entry))
+            .filter((place) => isHighQualityPlaceSummary(place)),
+          ),
+          { center: { lat: fallbackCenterLat, lng: fallbackCenterLng } },
+        );
 
         if (strictNearbyPlaces.length > 0) {
           setNearbyPlaces(strictNearbyPlaces.slice(0, 80));
@@ -614,7 +657,12 @@ function HomeScreen() {
           citySlug: city.slug,
           limit: 80,
         });
-        setNearbyPlaces((supabasePlaces ?? []).filter((place) => isHighQualityPlaceSummary(place)));
+        setNearbyPlaces(
+          rankPlaceSummariesForDiscovery(
+            dedupePlaceSummaries((supabasePlaces ?? []).filter((place) => isHighQualityPlaceSummary(place))),
+            { center: { lat: fallbackCenterLat, lng: fallbackCenterLng } },
+          ),
+        );
         setPlacesError(null);
         placesFetchFailureLogged.current = false;
         return;
@@ -635,7 +683,11 @@ function HomeScreen() {
         });
         const strictFallbackPlaces = fallbackPlaces.filter((place) => isHighQualityPlaceSummary(place));
         if (strictFallbackPlaces.length) {
-          setNearbyPlaces(strictFallbackPlaces);
+          setNearbyPlaces(
+            rankPlaceSummariesForDiscovery(dedupePlaceSummaries(strictFallbackPlaces), {
+              center: { lat: fallbackCenterLat, lng: fallbackCenterLng },
+            }),
+          );
           setPlacesError('Showing fallback nearby venues while Supabase recovers.');
           return;
         }
@@ -654,7 +706,59 @@ function HomeScreen() {
     [defaultCity, nearbyFetcher],
   );
 
-  const load = useCallback(async () => {
+  const fetchUpcomingSessions = useCallback(async (latNow: number, lngNow: number) => {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name,lat,lng)")
+      .gte("starts_at", now)
+      .order("starts_at", { ascending: true })
+      .limit(120);
+
+    if (error) {
+      setError(error.message);
+      setRows([]);
+      return;
+    }
+
+    const strictRows = ((data ?? []) as ActivityRow[]).filter((row) => {
+      const activityName = row.activities?.name;
+      if (!isHighQualityLabel(activityName)) return false;
+      const venueName = row.venues?.name;
+      if (typeof venueName === 'string' && venueName.trim() && !isHighQualityLabel(venueName)) {
+        return false;
+      }
+
+      const venueRecord = row.venues as unknown as { lat?: unknown; lng?: unknown } | null;
+      const venueLatRaw = venueRecord?.lat;
+      const venueLngRaw = venueRecord?.lng;
+      const venueLat =
+        typeof venueLatRaw === 'number'
+          ? venueLatRaw
+          : typeof venueLatRaw === 'string' && venueLatRaw.trim()
+            ? Number(venueLatRaw)
+            : NaN;
+      const venueLng =
+        typeof venueLngRaw === 'number'
+          ? venueLngRaw
+          : typeof venueLngRaw === 'string' && venueLngRaw.trim()
+            ? Number(venueLngRaw)
+            : NaN;
+
+      if (!Number.isFinite(venueLat) || !Number.isFinite(venueLng)) {
+        return false;
+      }
+      const distance = haversineMeters(latNow, lngNow, venueLat, venueLng);
+      if (!Number.isFinite(distance) || distance > HOME_SESSION_RADIUS_METERS) {
+        return false;
+      }
+      return true;
+    });
+
+    setRows(strictRows.slice(0, 20));
+  }, []);
+
+  const load = useCallback(async (options?: { refresh?: boolean }) => {
     setError(null);
     try {
       const { data: auth } = await supabase.auth.getSession();
@@ -782,62 +886,42 @@ function HomeScreen() {
         lngNow = cityFallback.lng;
       }
 
-      await fetchNearbyActivities(latNow, lngNow, resolvedPrefs);
-      await fetchPlacesViewport(latNow, lngNow);
-      await refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } });
-      
-      // Get current sessions with future start times, constrained to the chosen location radius.
-      const now = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("sessions")
-        .select("id, price_cents, starts_at, ends_at, activities(id,name), venues(name,lat,lng)")
-        .gte("starts_at", now)
-        .order("starts_at", { ascending: true })
-        .limit(120);
-      if (error) setError(error.message);
-      else {
-        const strictRows = ((data ?? []) as ActivityRow[]).filter((row) => {
-          const activityName = row.activities?.name;
-          if (!isHighQualityLabel(activityName)) return false;
-          const venueName = row.venues?.name;
-          if (typeof venueName === 'string' && venueName.trim() && !isHighQualityLabel(venueName)) {
-            return false;
+      const runLoadTask = async (
+        label: string,
+        task: () => Promise<void>,
+        onFailure?: () => void,
+        timeoutMs = HOME_TASK_TIMEOUT_MS,
+      ) => {
+        try {
+          await withTimeout(task(), timeoutMs, label);
+        } catch (taskError) {
+          if (__DEV__) {
+            console.warn(`[Home] ${label} failed`, taskError);
           }
+          onFailure?.();
+        }
+      };
 
-          const venueRecord = row.venues as unknown as { lat?: unknown; lng?: unknown } | null;
-          const venueLatRaw = venueRecord?.lat;
-          const venueLngRaw = venueRecord?.lng;
-          const venueLat =
-            typeof venueLatRaw === 'number'
-              ? venueLatRaw
-              : typeof venueLatRaw === 'string' && venueLatRaw.trim()
-                ? Number(venueLatRaw)
-                : NaN;
-          const venueLng =
-            typeof venueLngRaw === 'number'
-              ? venueLngRaw
-              : typeof venueLngRaw === 'string' && venueLngRaw.trim()
-                ? Number(venueLngRaw)
-                : NaN;
-
-          if (!Number.isFinite(venueLat) || !Number.isFinite(venueLng)) {
-            return false;
-          }
-          const distance = haversineMeters(latNow!, lngNow!, venueLat, venueLng);
-          if (!Number.isFinite(distance) || distance > HOME_SESSION_RADIUS_METERS) {
-            return false;
-          }
-          return true;
-        });
-        setRows(strictRows.slice(0, 20));
-      }
+      await Promise.allSettled([
+        runLoadTask('nearby activities', () => fetchNearbyActivities(latNow, lngNow, resolvedPrefs, options), () => {
+          setActivities([]);
+        }, HOME_DISCOVERY_TIMEOUT_MS),
+        runLoadTask('nearby places', () => fetchPlacesViewport(latNow, lngNow, options), () => {
+          setNearbyPlaces([]);
+          setPlacesError('Unable to load nearby places right now.');
+        }, HOME_DISCOVERY_TIMEOUT_MS),
+        runLoadTask('open sessions', () => refreshRankedOpenSessions({ coordinates: { lat: latNow, lng: lngNow } })),
+        runLoadTask('upcoming sessions', () => fetchUpcomingSessions(latNow, lngNow), () => {
+          setRows([]);
+        }),
+      ]);
     } catch (err) {
       console.error('Home screen load error:', err);
       setError('Failed to load activities. Please check your internet connection and try again.');
     } finally {
       setLoading(false);
     }
-  }, [fetchNearbyActivities, fetchPlacesViewport, refreshRankedOpenSessions]);
+  }, [defaultCity.center, fetchNearbyActivities, fetchPlacesViewport, fetchUpcomingSessions, refreshRankedOpenSessions]);
 
   useEffect(() => {
     ensureBackgroundLocation().catch(() => {});
@@ -946,41 +1030,11 @@ function HomeScreen() {
   }, [activities]);
 
 
-  const activityEventCounts = useMemo(() => {
-    const idMap = new Map<string, number>();
-    const nameMap = new Map<string, number>();
-    rows.forEach((session) => {
-      const activityId = session.activities?.id != null ? String(session.activities.id) : null;
-      if (activityId) {
-        idMap.set(activityId, (idMap.get(activityId) ?? 0) + 1);
-      }
-      const activityName = typeof session.activities?.name === 'string' ? session.activities.name.trim().toLowerCase() : '';
-      if (activityName) {
-        nameMap.set(activityName, (nameMap.get(activityName) ?? 0) + 1);
-      }
-    });
-    return { idMap, nameMap };
-  }, [rows]);
-
-  const getActivitySessionCount = useCallback(
-    (activity: NearbyActivity): number => {
-      const idKey = activity?.id ? String(activity.id) : null;
-      if (idKey && activityEventCounts.idMap.has(idKey)) {
-        return activityEventCounts.idMap.get(idKey) ?? 0;
-      }
-      const normalizedName = activity?.name?.trim().toLowerCase() ?? '';
-      if (normalizedName && activityEventCounts.nameMap.has(normalizedName)) {
-        return activityEventCounts.nameMap.get(normalizedName) ?? 0;
-      }
-      return 0;
-    },
-    [activityEventCounts]
-  );
+  const activityEventCounts = useMemo(() => buildHomeActivityEventCounts(rows), [rows]);
 
   const activityCardModels = useMemo<ActivityCardModel[]>(() => {
     return activitiesToDisplay.map((activity) => {
-      const sessionCount = getActivitySessionCount(activity);
-      const derivedCount = Math.max(sessionCount, activity.count ?? 0);
+      const { badgeLabel, supportingLabel } = resolveHomeActivityCardMeta(activity, activityEventCounts);
       const visual = activityVisuals[activity.name] || defaultVisual;
       const payload = buildActivitySavePayload(activity, rows, {
         source: 'mobile_home_activity_card',
@@ -991,13 +1045,14 @@ function HomeScreen() {
       return {
         activity,
         visual,
-        derivedCount,
+        badgeLabel,
+        supportingLabel,
         payload,
         saved,
         saving,
       };
     });
-  }, [activitiesToDisplay, getActivitySessionCount, isSaved, pendingIds, rows]);
+  }, [activitiesToDisplay, activityEventCounts, isSaved, pendingIds, rows]);
 
   const activityCardRows = useMemo(() => {
     const rowsGrouped: ActivityCardModel[][] = [];
@@ -1089,7 +1144,7 @@ function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await load();
+    await load({ refresh: true });
     setRefreshing(false);
   }, [load]);
 
@@ -1161,7 +1216,7 @@ function HomeScreen() {
             <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, letterSpacing: 0.2 }}>Find your next activity</Text>
             <Text style={{ color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginTop: 4 }}>Explore nearby experiences</Text>
             <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 20 }}>
-              Browse curated activities, see who is going, and create your own events.
+              Browse curated activities, see who is going, and create your own sessions.
             </Text>
           </View>
         </LinearGradient>
@@ -1217,7 +1272,7 @@ function HomeScreen() {
                 }}
               >
                 <Ionicons name="add" size={16} color="#FFFFFF" />
-                <Text style={{ marginLeft: 8, fontWeight: '700', color: '#FFFFFF' }}>Create event</Text>
+                <Text style={{ marginLeft: 8, fontWeight: '700', color: '#FFFFFF' }}>Create session</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1423,7 +1478,7 @@ function HomeScreen() {
                     key={`activity-row-${rowIndex}`}
                     style={{ flexDirection: 'row', gap: 14 }}
                   >
-                    {row.map(({ activity, visual, derivedCount, payload, saved, saving }) => (
+                    {row.map(({ activity, visual, badgeLabel, supportingLabel, payload, saved, saving }) => (
                       <Link
                         key={activity.id}
                         href={{ pathname: '/activities/[id]', params: { id: activity.id, name: activity.name } }}
@@ -1493,24 +1548,26 @@ function HomeScreen() {
                             {activity.name}
                           </Text>
 
-                          <View style={{
-                            marginTop: 10,
-                            alignSelf: 'center',
-                            backgroundColor: visual.color + '15',
-                            borderRadius: 12,
-                            paddingHorizontal: 12,
-                            paddingVertical: 6,
-                          }}>
-                            <Text style={{
-                              fontSize: 12,
-                              fontWeight: '700',
-                              color: visual.color,
+                          {badgeLabel ? (
+                            <View style={{
+                              marginTop: 10,
+                              alignSelf: 'center',
+                              backgroundColor: visual.color + '15',
+                              borderRadius: 12,
+                              paddingHorizontal: 12,
+                              paddingVertical: 6,
                             }}>
-                              {derivedCount} session{derivedCount === 1 ? '' : 's'} nearby
-                            </Text>
-                          </View>
-                          <Text style={{ marginTop: 8, textAlign: 'center', color: '#64748B', fontSize: 12 }}>
-                            Tap to view places and sessions
+                              <Text style={{
+                                fontSize: 12,
+                                fontWeight: '700',
+                                color: visual.color,
+                              }}>
+                                {badgeLabel}
+                              </Text>
+                            </View>
+                          ) : null}
+                          <Text style={{ marginTop: badgeLabel ? 8 : 14, textAlign: 'center', color: '#64748B', fontSize: 12 }}>
+                            {supportingLabel}
                           </Text>
                         </Pressable>
                       </Link>

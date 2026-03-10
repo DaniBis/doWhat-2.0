@@ -971,6 +971,9 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   if (tileWarm && existing.length && !query.forceRefresh) {
     refreshNeeded = false;
   }
+  if (!normalizedCategories.length && existing.length && !query.forceRefresh) {
+    refreshNeeded = false;
+  }
 
   const now = new Date();
   const nowIso = now.toISOString();
@@ -1027,21 +1030,23 @@ export const fetchPlacesForViewport = async (query: PlacesQuery): Promise<Places
   let mergedByFuzzyGoogle = 0;
   let newAggregatesFromGoogle = 0;
 
-  const overpassCall = await callProvider('openstreetmap', () =>
-    fetchOverpassPlaces(
-      { ...query, categories: query.categories ?? [] },
-      { categoryMap, explain: overpassExplain },
+  const [overpassCall, foursquareCall] = await Promise.all([
+    callProvider('openstreetmap', () =>
+      fetchOverpassPlaces(
+        { ...query, categories: query.categories ?? [] },
+        { categoryMap, explain: overpassExplain },
+      ),
     ),
-  );
+    callProvider('foursquare', () =>
+      fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
+    ),
+  ]);
   if (overpassCall.status === 'fulfilled') {
     providerResults.push(...overpassCall.value.filter((place) => place.canPersist !== false));
   } else {
     overpassExplain.dropped = mergeDropReasons(overpassExplain.dropped, { providerError: 1 });
   }
 
-  const foursquareCall = await callProvider('foursquare', () =>
-    fetchFoursquarePlaces({ ...query, categories: query.categories ?? [] }, { categoryMap }),
-  );
   if (foursquareCall.status === 'fulfilled') {
     const persistableFoursquare = foursquareCall.value.filter((place) => place.canPersist !== false);
     providerResults.push(...persistableFoursquare);

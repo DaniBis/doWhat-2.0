@@ -1,4 +1,4 @@
-import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
+import { countActiveDiscoveryFilters } from '@dowhat/shared';
 
 import { discoverNearbyActivities } from '@/lib/discovery/engine';
 import { recordDiscoveryExposure } from '@/lib/discovery/telemetry';
@@ -13,43 +13,12 @@ const AUTO_EXPAND_MAX_RADIUS_INVENTORY_METERS = 12_500;
 const AUTO_EXPAND_MAX_RADIUS_FILTERED_METERS = 25_000;
 const AUTO_EXPAND_RADIUS_BUCKETS = [1200, 2000, 3200, 5000, 7500, 10000, 15000, 20000, 25000];
 
-const normalizeCapacityKey = (value: string | null | undefined): CapacityFilterKey | undefined => {
-  if (value === 'couple' || value === 'small' || value === 'medium' || value === 'large') return value;
-  return undefined;
-};
-
-const normalizeTimeWindow = (value: string | null | undefined): TimeWindowKey | undefined => {
-  if (value === 'open_now' || value === 'morning' || value === 'afternoon' || value === 'evening' || value === 'late') {
-    return value;
-  }
-  return undefined;
-};
-
 const nextRadiusBucket = (radiusMeters: number): number | null => {
   for (const bucket of AUTO_EXPAND_RADIUS_BUCKETS) {
     if (bucket > radiusMeters) return bucket;
   }
   return null;
 };
-
-const hasDiscoveryFilters = (input: {
-  activityTypes?: string[] | null;
-  tags?: string[] | null;
-  traits?: string[] | null;
-  taxonomyCategories?: string[] | null;
-  priceLevels?: number[] | null;
-  capacityKey?: string | null;
-  timeWindow?: string | null;
-}) =>
-  Boolean(
-    (input.activityTypes?.length ?? 0)
-    || (input.tags?.length ?? 0)
-    || (input.traits?.length ?? 0)
-    || (input.taxonomyCategories?.length ?? 0)
-    || (input.priceLevels?.length ?? 0)
-    || input.capacityKey
-    || input.timeWindow,
-  );
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -59,26 +28,13 @@ export async function GET(request: Request) {
     return Response.json({ error: 'lat and lng are required' }, { status: 400 });
   }
 
-  const radiusMeters = Math.max(q.radiusMeters ?? 2000, 100);
+  const maxDistanceRadius = q.filters.maxDistanceKm != null ? Math.max(100, Math.round(q.filters.maxDistanceKm * 1000)) : null;
+  const radiusMeters = maxDistanceRadius != null
+    ? Math.max(100, Math.min(q.radiusMeters ?? 2000, maxDistanceRadius))
+    : Math.max(q.radiusMeters ?? 2000, 100);
   const limit = Math.max(q.limit ?? 50, 1);
-  const resolvedFilters = {
-    activityTypes: q.activityTypes?.length ? q.activityTypes : undefined,
-    tags: q.tags?.length ? q.tags : undefined,
-    traits: q.traits?.length ? q.traits : undefined,
-    taxonomyCategories: q.taxonomyCategories?.length ? q.taxonomyCategories : undefined,
-    priceLevels: q.priceLevels?.length ? Array.from(new Set(q.priceLevels)) : undefined,
-    capacityKey: normalizeCapacityKey(q.capacityKey),
-    timeWindow: normalizeTimeWindow(q.timeWindow),
-  };
-  const hasFilters = hasDiscoveryFilters({
-    activityTypes: resolvedFilters.activityTypes,
-    tags: resolvedFilters.tags,
-    traits: resolvedFilters.traits,
-    taxonomyCategories: resolvedFilters.taxonomyCategories,
-    priceLevels: resolvedFilters.priceLevels,
-    capacityKey: q.capacityKey,
-    timeWindow: q.timeWindow,
-  });
+  const resolvedFilters = q.filters;
+  const hasFilters = countActiveDiscoveryFilters(resolvedFilters) > 0;
 
   try {
     let result = await discoverNearbyActivities(
@@ -97,9 +53,12 @@ export async function GET(request: Request) {
     let radiusExpansion:
       | { fromRadiusMeters: number; toRadiusMeters: number; note: string; previousCount: number; expandedCount: number }
       | undefined;
-    const targetResultCount = hasFilters
-      ? AUTO_EXPAND_MIN_RESULTS_FILTERED
-      : AUTO_EXPAND_MIN_RESULTS_INVENTORY;
+    const targetResultCount = Math.min(
+      limit,
+      hasFilters
+        ? AUTO_EXPAND_MIN_RESULTS_FILTERED
+        : AUTO_EXPAND_MIN_RESULTS_INVENTORY,
+    );
     const maxExpansionRadius = hasFilters
       ? AUTO_EXPAND_MAX_RADIUS_FILTERED_METERS
       : AUTO_EXPAND_MAX_RADIUS_INVENTORY_METERS;
@@ -169,15 +128,7 @@ export async function GET(request: Request) {
         lng: q.lng,
         radiusMeters,
         limit,
-        filtersApplied: [
-          q.activityTypes?.length ?? 0,
-          q.tags?.length ?? 0,
-          q.traits?.length ?? 0,
-          q.taxonomyCategories?.length ?? 0,
-          q.priceLevels?.length ?? 0,
-          q.capacityKey ? 1 : 0,
-          q.timeWindow ? 1 : 0,
-        ].reduce((sum, value) => sum + value, 0),
+        filtersApplied: countActiveDiscoveryFilters(resolvedFilters),
       },
       result,
     });

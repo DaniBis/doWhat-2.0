@@ -3,7 +3,7 @@ import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import type { Metadata, Route } from 'next';
 
-import { formatEventTimeRange, type EventSummary } from '@dowhat/shared';
+import { formatEventTimeRange, inferEventLocationKind, inferEventOriginKind, type EventSummary } from '@dowhat/shared';
 import {
   clampReliabilityScore,
   describeEventOrigin,
@@ -17,8 +17,6 @@ import {
   buildEventVerificationProgress,
   formatReliabilityLabel,
 } from '@/lib/events/presentation';
-import { EventAttendanceCard } from '@/components/events/EventAttendanceCard';
-import { EventVerificationCard } from '@/components/events/EventVerificationCard';
 
 const formatDateTime = (date: Date) =>
   new Intl.DateTimeFormat(undefined, {
@@ -89,9 +87,11 @@ export default async function EventDetailPage({ params }: EventPageProps) {
 
   const eventTags = event.tags && event.tags.length > 0 ? event.tags.slice(0, 6) : [];
   const eventOrigin = describeEventOrigin(event);
+  const originKind = inferEventOriginKind(event);
+  const locationKind = inferEventLocationKind(event);
   const startLabel = formatDateTime(start);
   const endLabel = end ? formatDateTime(end) : null;
-  const venueLabel = eventPlaceLabel(event, { fallback: 'Venue TBC' });
+  const venueLabel = eventPlaceLabel(event, { fallback: 'Location to be confirmed' });
   const sourceLink = (event.metadata && typeof event.metadata.sourceUrl === 'string')
     ? event.metadata.sourceUrl
     : event.url ?? null;
@@ -105,10 +105,35 @@ export default async function EventDetailPage({ params }: EventPageProps) {
   const reliabilityConfidence = describeReliabilityConfidence(reliabilityScore);
   const reliabilityBarWidth = reliabilityScore == null ? 12 : reliabilityScore;
   const verificationProgress = buildEventVerificationProgress(event);
+  const legacyVenueId =
+    event.metadata && typeof event.metadata.venueId === 'string' && event.metadata.venueId.trim()
+      ? event.metadata.venueId.trim()
+      : null;
 
   const createActivityHref = event.place_id
     ? `/create?placeId=${encodeURIComponent(event.place_id)}`
-    : '/create';
+    : legacyVenueId
+      ? `/create?venueId=${encodeURIComponent(legacyVenueId)}`
+      : '/create';
+  const creationCtaLabel = event.place_id || legacyVenueId ? 'Start a session near this location' : 'Start a session';
+  const sessionDetailHref =
+    originKind === 'session' && event.url?.startsWith('/sessions/')
+      ? (event.url as Route)
+      : null;
+  const truthSummary =
+    originKind === 'session'
+      ? 'Attendance and host actions live on the original doWhat session page.'
+      : sourceLink
+        ? 'Imported events keep their source-page RSVP and attendance flows.'
+        : 'This listing does not expose an in-app attendance flow.';
+  const locationSummary =
+    locationKind === 'canonical_place'
+      ? 'This listing is pinned to a canonical doWhat place.'
+      : locationKind === 'legacy_venue'
+        ? 'This listing still relies on a legacy venue record.'
+        : locationKind === 'custom_location'
+          ? 'This listing uses organizer-supplied location details.'
+          : 'This listing does not have a pinned venue yet.';
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-10 md:py-16">
@@ -157,7 +182,7 @@ export default async function EventDetailPage({ params }: EventPageProps) {
             href={createActivityHref as Route}
             className="inline-flex w-full items-center justify-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-500"
           >
-            Create activity at this venue
+            {creationCtaLabel}
           </Link>
           {sourceLink && (
             <a
@@ -261,8 +286,24 @@ export default async function EventDetailPage({ params }: EventPageProps) {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <EventAttendanceCard eventId={event.id} />
-        <EventVerificationCard eventId={event.id} />
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">Attendance truth</h2>
+          <p className="mt-2 text-sm text-slate-600">{truthSummary}</p>
+          {sessionDetailHref ? (
+            <Link href={sessionDetailHref} className="mt-4 inline-flex text-sm font-semibold text-emerald-700 hover:text-emerald-800">
+              Open session details →
+            </Link>
+          ) : sourceLink ? (
+            <a href={sourceLink} target="_blank" rel="noreferrer" className="mt-4 inline-flex text-sm font-semibold text-emerald-700 hover:text-emerald-800">
+              Open source page →
+            </a>
+          ) : null}
+        </section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">Location truth</h2>
+          <p className="mt-2 text-sm text-slate-600">{locationSummary}</p>
+          <p className="mt-3 text-sm text-slate-500">{venueLabel}</p>
+        </section>
       </div>
     </div>
   );

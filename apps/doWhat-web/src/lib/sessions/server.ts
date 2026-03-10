@@ -1,5 +1,5 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
-import { isUuid } from '@dowhat/shared';
+import { isUuid, type EventLocationKind } from '@dowhat/shared';
 import { hydratePlaceLabel } from '@/lib/places/labels';
 import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 import { createClient } from '@/lib/supabase/server';
@@ -62,6 +62,8 @@ export type HydratedSession = {
   createdAt: string;
   updatedAt: string;
   placeLabel: string | null;
+  locationKind: EventLocationKind;
+  isPlaceBacked: boolean;
   place: PlaceSummary | null;
   reliabilityScore: number | null;
   activity: ActivitySummary | null;
@@ -89,6 +91,36 @@ export function resolveSessionTitle(session: HydratedSession): string {
 
   return 'Community session';
 }
+
+const resolveSessionLocationKind = (input: {
+  placeId: string | null;
+  place: PlaceSummary | null;
+  venueId: string | null;
+  venue: VenueSummary | null;
+  placeLabel: string | null;
+  activity: ActivitySummary | null;
+}): EventLocationKind => {
+  if (input.placeId || input.place?.id) {
+    return 'canonical_place';
+  }
+  if (input.venueId || input.venue?.id) {
+    return 'legacy_venue';
+  }
+
+  const label = trimLabel(input.placeLabel);
+  const activityLat = input.activity?.lat ?? null;
+  const activityLng = input.activity?.lng ?? null;
+  const hasActivityCoords = activityLat != null && activityLng != null;
+
+  if (label && label.toLowerCase() !== SESSION_PLACE_LABEL_FALLBACK.toLowerCase()) {
+    return 'custom_location';
+  }
+  if (hasActivityCoords) {
+    return 'custom_location';
+  }
+
+  return 'flexible';
+};
 
 export type AttendanceCounts = {
   going: number;
@@ -606,11 +638,20 @@ export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[
     const venue = row.venue_id ? venueMap.get(row.venue_id) ?? null : null;
     const placeId = typeof row.place_id === 'string' ? row.place_id : null;
     const place = placeId ? placeMap.get(placeId) ?? null : null;
+    const persistedPlaceLabel = trimLabel(row.place_label ?? null) || null;
     const placeLabel = hydratePlaceLabel({
       place,
-      venue: venue?.name ?? activity?.venueLabel ?? null,
+      venue: persistedPlaceLabel ?? venue?.name ?? activity?.venueLabel ?? null,
       address: venue?.address ?? null,
-      fallbackLabel: activity?.name ?? null,
+      fallbackLabel: persistedPlaceLabel ?? activity?.venueLabel ?? null,
+    });
+    const locationKind = resolveSessionLocationKind({
+      placeId,
+      place,
+      venueId: row.venue_id,
+      venue,
+      placeLabel,
+      activity,
     });
 
     return {
@@ -629,6 +670,8 @@ export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       placeLabel,
+      locationKind,
+      isPlaceBacked: locationKind === 'canonical_place',
       place,
       reliabilityScore: normalizeReliabilityScore(row.reliability_score),
       activity,

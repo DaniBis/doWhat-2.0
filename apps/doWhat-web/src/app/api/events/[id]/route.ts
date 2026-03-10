@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { annotateEventTruth } from '@dowhat/shared';
 import { normalizeEventState } from '@/lib/events/state';
 import { hydratePlaceLabel, normalizePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 import { isMissingColumnError } from '@/lib/supabase/errors';
@@ -28,6 +29,23 @@ type EventRow = {
   source_uid: string | null;
   metadata: Record<string, unknown> | null;
   event_state?: string | null;
+};
+
+const normalizeVerificationStatus = (value: string | null | undefined) => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  switch (normalized) {
+    case 'verified':
+    case 'rejected':
+    case 'pending':
+    case 'unverified':
+    case 'scheduled':
+    case 'canceled':
+      return normalized;
+    case 'cancelled':
+      return 'canceled';
+    default:
+      return 'unverified';
+  }
 };
 
 const fetchPlace = async (client: ReturnType<typeof createServiceClient>, placeId: string | null) => {
@@ -187,14 +205,16 @@ export async function GET(_request: Request, context: { params: { id: string } }
     data.venue_name ?? null,
     'Event',
   );
-  const event = {
+  const event = annotateEventTruth({
     ...data,
+    venue_name: data.venue_name ?? null,
+    status: normalizeVerificationStatus(data.status),
     title,
     place_id: placeId,
     event_state: normalizeEventState(omitEventState ? null : data.event_state),
-    place_label: placeLabel,
+    place_label: placeLabel === PLACE_FALLBACK_LABEL ? null : placeLabel,
     place,
-  };
+  });
 
   return NextResponse.json({ event });
 }

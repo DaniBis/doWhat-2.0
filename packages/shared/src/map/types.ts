@@ -1,3 +1,4 @@
+import type { DiscoveryFilterContract } from '../discovery';
 import type { CapacityFilterKey, TimeWindowKey } from '../preferences/mapFilters';
 
 export interface MapCoordinates {
@@ -5,22 +6,8 @@ export interface MapCoordinates {
   lng: number;
 }
 
-export interface MapFilters {
-  /** Activity categories or types (maps to `types` query param). */
-  activityTypes?: string[];
-  /** Free-form tags that further refine matching activities. */
-  tags?: string[];
-  /** People-related traits or personas to include. */
-  traits?: string[];
-  /** Tier-3 taxonomy category ids. */
-  taxonomyCategories?: string[];
-  /** Discrete price level buckets. */
-  priceLevels?: number[];
-  /** Group size capacity key. */
-  capacityKey?: CapacityFilterKey;
-  /** Time-of-day or open-now window. */
-  timeWindow?: TimeWindowKey;
-}
+/** @deprecated use DiscoveryFilterContract terminology for new code. */
+export type MapFilters = DiscoveryFilterContract;
 
 export interface MapActivitiesQuery {
   center: MapCoordinates;
@@ -36,6 +23,7 @@ export interface MapActivity {
   venue?: string | null;
   place_label?: string | null;
   place_id?: string | null;
+  website?: string | null;
   lat: number;
   lng: number;
   distance_m?: number | null;

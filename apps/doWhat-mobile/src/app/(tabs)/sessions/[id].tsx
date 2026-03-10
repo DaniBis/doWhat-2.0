@@ -18,6 +18,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { supabase } from "../../lib/supabase";
 import { startGoogleSignIn } from "../../lib/auth";
+import { fetchSessionDetailViaWebApi, type MobileSessionDetail } from "../../../lib/sessionApi";
 import { fetchAttendanceSummary, joinSessionAttendance, type AttendanceStatus } from "../../lib/sessionAttendance";
 import { useSavedActivities } from "../../../contexts/SavedActivitiesContext";
 import { submitAttendanceDispute, fetchAttendanceDisputes, type AttendanceDisputeHistoryItem } from "../../../lib/attendanceDispute";
@@ -26,19 +27,62 @@ type SessionDetailRow = {
 	id: string;
 	activity_id: string | null;
 	starts_at: string;
-	ends_at: string;
+	ends_at: string | null;
 	price_cents: number | null;
 	max_attendees: number | null;
 	visibility?: "public" | "friends" | "private" | null;
 	host_user_id?: string | null;
 	description?: string | null;
+	place_label?: string | null;
+	location_kind?: "canonical_place" | "legacy_venue" | "custom_location" | "flexible" | null;
+	is_place_backed?: boolean | null;
 	activities: { id?: string | null; name?: string | null } | null;
 	venues: { id?: string | null; name?: string | null; address?: string | null; lat?: number | null; lng?: number | null } | null;
+	place?: { id?: string | null; name?: string | null; address?: string | null; lat?: number | null; lng?: number | null } | null;
 };
 
 type AttendanceRow = { user_id: string | null; status: AttendanceStatus };
 type ProfilePreviewRow = { id: string; full_name: string | null; avatar_url: string | null };
 type AttendeePreview = { id: string; initial: string; avatarUrl: string | null };
+
+const mapApiSessionToDetailRow = (session: MobileSessionDetail): SessionDetailRow => ({
+	id: session.id,
+	activity_id: session.activityId ?? null,
+	starts_at: session.startsAt,
+	ends_at: session.endsAt ?? null,
+	price_cents: session.priceCents ?? null,
+	max_attendees: session.maxAttendees ?? null,
+	visibility: session.visibility ?? null,
+	host_user_id: session.hostUserId ?? null,
+	description: session.description ?? null,
+	place_label: session.placeLabel ?? null,
+	location_kind: session.locationKind ?? null,
+	is_place_backed: session.isPlaceBacked ?? null,
+	activities: session.activity
+		? {
+			id: session.activity.id ?? null,
+			name: session.activity.name ?? null,
+		}
+		: null,
+	venues: session.venue
+		? {
+			id: session.venue.id ?? null,
+			name: session.venue.name ?? null,
+			address: session.venue.address ?? null,
+			lat: session.venue.lat ?? null,
+			lng: session.venue.lng ?? null,
+		}
+		: null,
+	place: session.place
+		? {
+			id: session.place.id ?? null,
+			name: session.place.name ?? null,
+			address: session.place.address ?? null,
+			lat: session.place.lat ?? null,
+			lng: session.place.lng ?? null,
+		}
+		: null,
+});
 
 const MAX_DISPUTE_DETAILS = 1000;
 
@@ -115,7 +159,7 @@ export default function SessionDetails() {
 		return {
 			...payload,
 			venueId: row.venues?.id ?? payload.venueId,
-			address: row.venues?.address ?? payload.address,
+			address: row.place?.address ?? row.venues?.address ?? row.place_label ?? payload.address,
 			metadata: {
 				...(payload.metadata ?? {}),
 				sessionVisibility: row.visibility ?? null,
@@ -323,6 +367,26 @@ const refreshDisputeHistory = useCallback(
 useEffect(() => {
 	let cancelled = false;
 	(async () => {
+		const { data: authSession } = await supabase.auth.getSession();
+		const accessToken = authSession.session?.access_token ?? null;
+		const uid = authSession.session?.user?.id ?? null;
+		if (!cancelled) setUserId(uid);
+
+		try {
+			if (accessToken) {
+				const session = await fetchSessionDetailViaWebApi(String(id), accessToken);
+				if (cancelled) return;
+				const sessionRow = mapApiSessionToDetailRow(session);
+				setRow(sessionRow);
+				setSessionId(sessionRow.id);
+				setMaxAttendees(sessionRow.max_attendees ?? null);
+				setError(null);
+				return;
+			}
+		} catch (webError) {
+			if (__DEV__) console.info("[sessions][details] web session fetch failed, falling back to Supabase", webError);
+		}
+
 		const { data, error: sessionError } = await supabase
 			.from("sessions")
 			.select("id, activity_id, starts_at, ends_at, price_cents, max_attendees, visibility, host_user_id, description, activities(id,name), venues(id,name,address,lat:lat,lng:lng)")
@@ -338,11 +402,8 @@ useEffect(() => {
 			setRow(sessionRow);
 			setSessionId(sessionRow?.id ?? null);
 			setMaxAttendees(sessionRow?.max_attendees ?? null);
+			setError(null);
 		}
-
-		const { data: auth } = await supabase.auth.getUser();
-		const uid = auth?.user?.id ?? null;
-		if (!cancelled) setUserId(uid);
 	})();
 	return () => {
 		cancelled = true;
@@ -418,6 +479,9 @@ useEffect(() => {
 	const saveIcon = saved ? 'bookmark' : 'bookmark-outline';
 	const sessionEndDate = row?.ends_at ? new Date(row.ends_at) : null;
 	const sessionHasEnded = sessionEndDate ? sessionEndDate.getTime() <= Date.now() : false;
+	const locationLabel = row?.place_label?.trim() || row?.place?.name?.trim() || row?.venues?.name?.trim() || 'Location to be confirmed';
+	const locationLat = row?.place?.lat ?? row?.venues?.lat ?? null;
+	const locationLng = row?.place?.lng ?? row?.venues?.lng ?? null;
 	const canContestReliability = Boolean(row?.id && status === "going" && sessionHasEnded);
 	const activeSessionDispute = useMemo(() => {
 		if (!row?.id) return null;
@@ -566,7 +630,7 @@ useEffect(() => {
 			<ScrollView style={{ flex: 1 }}>
 				<View style={{ padding: 16 }}>
 					<Text style={{ fontSize: 22, fontWeight: "700" }}>{row.activities?.name ?? "Activity"}</Text>
-					<Text style={{ marginTop: 6 }}>{row.venues?.name ?? "Venue"}</Text>
+					<Text style={{ marginTop: 6 }}>{locationLabel}</Text>
 					<Text style={{ marginTop: 6 }}>{formatPrice(row.price_cents)}</Text>
 					<Text style={{ marginTop: 6 }}>{formatDateRange(row.starts_at, row.ends_at)}</Text>
 					{savePayload && (
@@ -604,10 +668,9 @@ useEffect(() => {
 							)}
 						</>
 					)}
-					{row?.venues?.lat != null && row.venues?.lng != null && (
+					{locationLat != null && locationLng != null && (
 						<Pressable style={{ marginTop: 8 }} onPress={() => {
-							const { lat, lng } = row.venues ?? {};
-							const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+							const url = `https://www.google.com/maps/search/?api=1&query=${locationLat},${locationLng}`;
 							WebBrowser.openBrowserAsync(url);
 						}}>
 							<Text style={{ color: '#0d9488' }}>Open in Maps</Text>
@@ -872,7 +935,7 @@ useEffect(() => {
 						{row && (
 							<View style={{ marginTop: 12 }}>
 								<Text style={{ fontWeight: '600', color: '#0f172a' }}>{row.activities?.name ?? 'Session'}</Text>
-								<Text style={{ color: '#64748b', fontSize: 13 }}>{row.venues?.name ?? 'Venue TBD'}</Text>
+								<Text style={{ color: '#64748b', fontSize: 13 }}>{locationLabel}</Text>
 								{sessionEndDate && (
 									<Text style={{ color: '#94a3b8', fontSize: 12 }}>Ended {formatDateRange(row.starts_at, row.ends_at)}</Text>
 								)}

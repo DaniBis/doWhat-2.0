@@ -1,3 +1,10 @@
+import {
+  filterPlaceSummariesByDiscoveryFilters,
+  mergeLegacyCategoriesIntoDiscoveryFilters,
+  parseDiscoveryFilterContractSearchParams,
+  type PlaceSummary,
+} from '@dowhat/shared';
+
 import { fetchPlacesForViewport } from '@/lib/places/aggregator';
 import { recordPlacesMetrics } from '@/lib/places/metrics';
 import type { PlacesQuery } from '@/lib/places/types';
@@ -14,7 +21,7 @@ const parseCoordinatePair = (value: string | null): { lat: number; lng: number }
   return { lat, lng };
 };
 
-const dedupeAttributions = (places: Awaited<ReturnType<typeof fetchPlacesForViewport>>['places']) => {
+const dedupeAttributions = (places: PlaceSummary[]) => {
   const map = new Map<string, { text: string; url?: string; license?: string }>();
   places.forEach((place) => {
     place.attributions.forEach((attribution) => {
@@ -25,6 +32,31 @@ const dedupeAttributions = (places: Awaited<ReturnType<typeof fetchPlacesForView
     });
   });
   return Array.from(map.values());
+};
+
+const sortFilteredPlaces = (
+  places: PlaceSummary[],
+  sortMode: 'rank' | 'distance' | 'name' | 'soonest',
+  center: { lat: number; lng: number },
+) => {
+  if (sortMode === 'name') {
+    return [...places].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+  }
+
+  if (sortMode === 'distance') {
+    const distanceFor = (place: { lat: number; lng: number }) => {
+      const latDelta = place.lat - center.lat;
+      const lngDelta = place.lng - center.lng;
+      return latDelta * latDelta + lngDelta * lngDelta;
+    };
+    return [...places].sort((left, right) => {
+      const delta = distanceFor(left) - distanceFor(right);
+      if (Math.abs(delta) > 1e-12) return delta;
+      return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+    });
+  }
+
+  return places;
 };
 
 export async function GET(request: Request) {
@@ -40,6 +72,10 @@ export async function GET(request: Request) {
     .map((value) => value.trim())
     .filter(Boolean);
   const categories = categoriesParam.length ? categoriesParam : undefined;
+  const discoveryFilters = mergeLegacyCategoriesIntoDiscoveryFilters(
+    parseDiscoveryFilterContractSearchParams(url.searchParams),
+    categories,
+  );
   const force = url.searchParams.get('force');
   const forceRefresh = force === '1' || force?.toLowerCase() === 'true';
   const limitParam = url.searchParams.get('limit');
@@ -53,7 +89,8 @@ export async function GET(request: Request) {
 
   const query: PlacesQuery = {
     bounds: { sw, ne },
-    categories,
+    categories: discoveryFilters.taxonomyCategories.length ? discoveryFilters.taxonomyCategories : categories,
+    discoveryFilters,
     limit,
     forceRefresh,
     city,
@@ -64,6 +101,20 @@ export async function GET(request: Request) {
 
   try {
     const result = await fetchPlacesForViewport(query);
+    const center = {
+      lat: (sw.lat + ne.lat) / 2,
+      lng: (sw.lng + ne.lng) / 2,
+    };
+    const filteredPlaces = discoveryFilters.resultKinds.length > 0 && !discoveryFilters.resultKinds.includes('places')
+      ? []
+      : sortFilteredPlaces(
+        filterPlaceSummariesByDiscoveryFilters(result.places, discoveryFilters, {
+          center,
+          citySlug: city,
+        }),
+        discoveryFilters.sortMode,
+        center,
+      );
     const latency = Date.now() - start;
     recordPlacesMetrics({ query, cacheHit: result.cacheHit, latencyMs: latency, providerCounts: result.providerCounts }).catch(() => {
       // ignore background metric errors (already logged)
@@ -71,9 +122,9 @@ export async function GET(request: Request) {
 
     return Response.json({
       cacheHit: result.cacheHit,
-      places: result.places,
+      places: filteredPlaces,
       providerCounts: result.providerCounts,
-      attribution: dedupeAttributions(result.places),
+      attribution: dedupeAttributions(filteredPlaces),
       latencyMs: latency,
       explain: explain ? result.explain ?? null : undefined,
     });

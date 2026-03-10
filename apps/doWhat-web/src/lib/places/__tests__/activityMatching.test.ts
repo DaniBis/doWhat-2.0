@@ -92,4 +92,38 @@ describe('activity matching inference', () => {
 
     expect(Array.from(result.matches.keys()).sort((a, b) => a - b)).toEqual([3001, 3002]);
   });
+
+  test('does not create keyword-only activity matches for hospitality-first places', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: 'place-3',
+        name: 'Chess Cafe',
+        description: 'Specialty coffee and pastries',
+        categories: ['coffee'],
+        tags: ['cafe'],
+        metadata: null,
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: null,
+        updated_at: new Date().toISOString(),
+        venue_activities: [],
+      },
+      catalog: [
+        {
+          id: 4001,
+          slug: 'chess',
+          name: 'Chess',
+          description: null,
+          keywords: ['chess', 'chess club'],
+          fsq_categories: [],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [],
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys())).toEqual([]);
+    expect(result.upserts).toEqual([]);
+  });
 });

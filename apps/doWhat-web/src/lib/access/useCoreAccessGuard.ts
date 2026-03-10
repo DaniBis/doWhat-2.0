@@ -16,11 +16,21 @@ import {
 
 type GuardState = 'checking' | 'allowed';
 
-export const useCoreAccessGuard = (redirectTo: string): GuardState => {
+type UseCoreAccessGuardOptions = {
+  bypass?: boolean;
+};
+
+export const useCoreAccessGuard = (redirectTo: string, options?: UseCoreAccessGuardOptions): GuardState => {
   const router = useRouter();
-  const [state, setState] = useState<GuardState>('checking');
+  const bypass = options?.bypass === true;
+  const [state, setState] = useState<GuardState>(bypass ? 'allowed' : 'checking');
 
   useEffect(() => {
+    if (bypass) {
+      setState('allowed');
+      return;
+    }
+
     let active = true;
 
     const run = async () => {
@@ -63,7 +73,7 @@ export const useCoreAccessGuard = (redirectTo: string): GuardState => {
     return () => {
       active = false;
     };
-  }, [redirectTo, router]);
+  }, [bypass, redirectTo, router]);
 
   return state;
 };

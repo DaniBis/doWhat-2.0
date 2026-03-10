@@ -1,3 +1,8 @@
+import {
+  parseDiscoveryFilterContractSearchParams,
+  type NormalizedDiscoveryFilterContract,
+} from '@dowhat/shared';
+
 export type NearbyQuery = {
   lat: number
   lng: number
@@ -5,14 +10,8 @@ export type NearbyQuery = {
   refresh?: boolean
   explain?: boolean
   debug?: boolean
-  activityTypes?: string[]
-  tags?: string[]
-  traits?: string[]
-  taxonomyCategories?: string[]
-  priceLevels?: number[]
-  capacityKey?: string | null
-  timeWindow?: string | null
   limit?: number
+  filters: NormalizedDiscoveryFilterContract
 };
 
 const MAX_NEARBY_LIMIT = 2000;
@@ -24,21 +23,10 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
   const refresh = searchParams.get('refresh') === '1' || searchParams.get('refresh') === 'true';
   const explain = searchParams.get('explain') === '1' || searchParams.get('explain') === 'true';
   const debug = searchParams.get('debug') === '1' || searchParams.get('debug') === 'true';
-  const activityTypes = (searchParams.get('types') || '').split(',').filter(Boolean);
-  const tags = (searchParams.get('tags') || '').split(',').filter(Boolean);
-  const traits = (searchParams.get('traits') || '').split(',').filter(Boolean);
-  const taxonomyCategories = (searchParams.get('taxonomy') || '').split(',').filter(Boolean);
-  const priceLevels = (searchParams.get('prices') || '')
-    .split(',')
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value))
-    .map((value) => Math.round(value))
-    .filter((value) => value >= 1 && value <= 4);
-  const capacityKey = searchParams.get('capacity') || null;
-  const timeWindow = searchParams.get('timeWindow') || null;
   const requestedLimit = parseInt(searchParams.get('limit') || '50');
   const safeLimit = Number.isFinite(requestedLimit) ? requestedLimit : 50;
   const limit = Math.min(Math.max(safeLimit, 1), MAX_NEARBY_LIMIT);
+  const filters = parseDiscoveryFilterContractSearchParams(searchParams);
   return {
     lat,
     lng,
@@ -46,13 +34,7 @@ export function parseNearbyQuery(searchParams: URLSearchParams): NearbyQuery {
     refresh,
     explain,
     debug,
-    activityTypes,
-    tags,
-    traits,
-    taxonomyCategories,
-    priceLevels,
-    capacityKey,
-    timeWindow,
     limit,
+    filters,
   };
 }

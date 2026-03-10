@@ -1,44 +1,13 @@
 import type { EventSummary } from '../events/types';
 import type { MapActivitiesQuery, MapActivity, MapFeatureCollection, MapFilters } from './types';
-import type { CapacityFilterKey, TimeWindowKey } from '../preferences/mapFilters';
+import {
+  normalizeDiscoveryFilterContract,
+  serializeDiscoveryFilterContractToSearchParams,
+} from '../discovery';
 
 export const DEFAULT_RADIUS_METERS = 2500;
 
-const sortStrings = (value?: string[] | null): string[] => {
-  if (!value?.length) return [];
-  return [...value].map((item) => item.trim()).filter(Boolean).sort();
-};
-
-const normalizeNumberValues = (values?: number[] | null): number[] => {
-  if (!values?.length) return [];
-  const cleaned = values
-    .map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null))
-    .filter((value): value is number => value != null)
-    .filter((value) => value >= 1 && value <= 4);
-  return Array.from(new Set(cleaned)).sort((a, b) => a - b);
-};
-
-const normalizeCapacityKey = (value: unknown): CapacityFilterKey => {
-  if (value === 'couple' || value === 'small' || value === 'medium' || value === 'large') return value;
-  return 'any';
-};
-
-const normalizeTimeWindow = (value: unknown): TimeWindowKey => {
-  if (value === 'open_now' || value === 'morning' || value === 'afternoon' || value === 'evening' || value === 'late') {
-    return value;
-  }
-  return 'any';
-};
-
-export const normalizeFilters = (filters?: MapFilters): Required<MapFilters> => ({
-  activityTypes: sortStrings(filters?.activityTypes) as string[],
-  tags: sortStrings(filters?.tags) as string[],
-  traits: sortStrings(filters?.traits) as string[],
-  taxonomyCategories: sortStrings(filters?.taxonomyCategories) as string[],
-  priceLevels: normalizeNumberValues(filters?.priceLevels ?? null),
-  capacityKey: normalizeCapacityKey(filters?.capacityKey),
-  timeWindow: normalizeTimeWindow(filters?.timeWindow),
-});
+export const normalizeFilters = (filters?: MapFilters) => normalizeDiscoveryFilterContract(filters);
 
 export const mapActivitiesQueryKey = (query: MapActivitiesQuery) => {
   const normalized = normalizeFilters(query.filters);
@@ -49,13 +18,18 @@ export const mapActivitiesQueryKey = (query: MapActivitiesQuery) => {
       lng: Number(query.center.lng.toFixed(6)),
       radiusMeters: Math.round(query.radiusMeters),
       limit: query.limit ?? null,
+      resultKinds: normalized.resultKinds,
+      searchText: normalized.searchText,
       activityTypes: normalized.activityTypes,
       tags: normalized.tags,
-      traits: normalized.traits,
+      peopleTraits: normalized.peopleTraits,
       taxonomyCategories: normalized.taxonomyCategories,
       priceLevels: normalized.priceLevels,
       capacityKey: normalized.capacityKey,
       timeWindow: normalized.timeWindow,
+      maxDistanceKm: normalized.maxDistanceKm,
+      trustMode: normalized.trustMode,
+      sortMode: normalized.sortMode,
     },
   ] as const;
 };
@@ -113,16 +87,7 @@ export const activitiesToEventsFeatureCollection = (events: EventSummary[]): Map
 });
 
 export const serializeFiltersToSearchParams = (filters?: MapFilters): URLSearchParams => {
-  const params = new URLSearchParams();
-  const normalized = normalizeFilters(filters);
-  if (normalized.activityTypes.length) params.set('types', normalized.activityTypes.join(','));
-  if (normalized.tags.length) params.set('tags', normalized.tags.join(','));
-  if (normalized.traits.length) params.set('traits', normalized.traits.join(','));
-  if (normalized.taxonomyCategories.length) params.set('taxonomy', normalized.taxonomyCategories.join(','));
-  if (normalized.priceLevels.length) params.set('prices', normalized.priceLevels.join(','));
-  if (normalized.capacityKey !== 'any') params.set('capacity', normalized.capacityKey);
-  if (normalized.timeWindow !== 'any') params.set('timeWindow', normalized.timeWindow);
-  return params;
+  return serializeDiscoveryFilterContractToSearchParams(filters);
 };
 
 export const mergeSearchParams = (base: URLSearchParams, extra: URLSearchParams) => {

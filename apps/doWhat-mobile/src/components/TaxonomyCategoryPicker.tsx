@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { activityTaxonomy } from "@dowhat/shared";
+import { activityDiscoveryTaxonomy } from "@dowhat/shared";
 
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -63,7 +63,7 @@ const TaxonomyCategoryPicker: React.FC<TaxonomyCategoryPickerProps> = ({
   const selectionSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
-    activityTaxonomy.forEach((tier1: ActivityTier1Category, index: number) => {
+    activityDiscoveryTaxonomy.forEach((tier1: ActivityTier1Category, index: number) => {
       initial[tier1.id] = index === 0;
     });
     return initial;
@@ -78,7 +78,7 @@ const TaxonomyCategoryPicker: React.FC<TaxonomyCategoryPickerProps> = ({
 
   return (
     <View style={styles.container}>
-      {activityTaxonomy.map((tier1: ActivityTier1Category) => {
+      {activityDiscoveryTaxonomy.map((tier1: ActivityTier1Category) => {
         const accent = getAccentColor(tier1);
         const iconName = getIconName(tier1);
         const tier1SelectionCount = tier1.children.reduce((sum: number, tier2: ActivityTier2Category) => {

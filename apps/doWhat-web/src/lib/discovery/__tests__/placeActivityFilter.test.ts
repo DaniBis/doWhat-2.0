@@ -95,4 +95,25 @@ describe('place activity filter contract', () => {
     expect(placeMatchesActivityTypes('p1', ['bouldering'], inferenceByPlaceId, fallbackByPlaceId)).toBe(true);
     expect(placeMatchesActivityTypes('p2', ['climbing'], inferenceByPlaceId, fallbackByPlaceId)).toBe(false);
   });
+
+  test('does not let hospitality-only places survive on fallback activity guesses alone', () => {
+    const places = [
+      { id: 'cafe-1', name: 'Chess Cafe', lat: 44.401, lng: 26.102, categories: ['coffee'], tags: ['cafe'] },
+      { id: 'gym-1', name: 'Peak Climb', lat: 44.402, lng: 26.103, categories: ['climbing'], tags: ['bouldering'] },
+    ];
+    const inferenceByPlaceId = new Map<string, { activityTypes: string[] | null }>();
+    const fallbackByPlaceId = new Map<string, readonly string[]>([
+      ['cafe-1', ['chess']],
+      ['gym-1', ['climbing']],
+    ]);
+
+    const result = filterPlacesByActivityContract(places, {
+      selectedActivityTypes: ['climbing', 'chess'],
+      inferenceByPlaceId,
+      fallbackActivityTypesByPlaceId: fallbackByPlaceId,
+      bounds,
+    });
+
+    expect(result.map((row) => row.id)).toEqual(['gym-1']);
+  });
 });

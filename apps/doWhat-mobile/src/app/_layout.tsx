@@ -2,7 +2,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Stack } = require("expo-router");
 import '../lib/devtools/disableInspector';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -21,10 +21,6 @@ export default function Layout() {
         },
       }),
   );
-
-  useEffect(() => {
-    console.log('Layout component mounted successfully!');
-  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

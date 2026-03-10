@@ -6,7 +6,7 @@ export const ACTIVITY_CATALOG_PRESETS: ActivityCatalogEntry[] = [
     slug: 'chess',
     name: 'Chess',
     description: 'Quiet venues that host chess meetups, clubs, or lessons.',
-    keywords: ['chess', 'chess club', 'chess cafe', 'board game', 'board games', 'cờ vua', 'หมากรุก'],
+    keywords: ['chess', 'chess club', 'board game', 'board games', 'cờ vua', 'หมากรุก'],
     fsq_categories: ['4bf58dd8d48988d18d941735'],
   },
   {

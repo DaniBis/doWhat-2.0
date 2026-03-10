@@ -6,6 +6,24 @@ import {
 
 export const activityTaxonomyVersion = "2025-11-18";
 
+const DISCOVERY_EXCLUDED_TIER2_IDS = new Set([
+  "food-drink-trails",
+]);
+
+const DISCOVERY_EXCLUDED_TIER3_IDS = new Set([
+  "natural-wine-tastings",
+  "specialty-coffee-crawls",
+  "street-food-hunts",
+  "supper-club-tables",
+]);
+
+const DISCOVERY_TIER1_OVERRIDES: Record<string, { label: string; description: string }> = {
+  "discover-taste": {
+    label: "Explore & Culture",
+    description: "City walks, cultural gatherings, and creative exploration.",
+  },
+};
+
 export const activityTaxonomy: ActivityTaxonomy = [
   {
     id: "move-active",
@@ -577,6 +595,28 @@ export const flattenTaxonomy = (
   return flattened;
 };
 
+export const filterTaxonomyForActivityDiscovery = (
+  taxonomy: ActivityTaxonomy = activityTaxonomy,
+): ActivityTaxonomy =>
+  taxonomy
+    .map((tier1) => {
+      const override = DISCOVERY_TIER1_OVERRIDES[tier1.id];
+      const children = tier1.children
+        .map((tier2) => ({
+          ...tier2,
+          children: tier2.children.filter((tier3) => !DISCOVERY_EXCLUDED_TIER3_IDS.has(tier3.id)),
+        }))
+        .filter((tier2) => !DISCOVERY_EXCLUDED_TIER2_IDS.has(tier2.id))
+        .filter((tier2) => tier2.children.length > 0);
+      if (!children.length) return null;
+      return {
+        ...tier1,
+        ...(override ?? {}),
+        children,
+      };
+    })
+    .filter((tier1): tier1 is NonNullable<typeof tier1> => Boolean(tier1));
+
 export const buildTagLookup = (
   taxonomy: ActivityTaxonomy = activityTaxonomy,
 ): ActivityTagLookup => {
@@ -600,6 +640,9 @@ export const buildTagLookup = (
 
 export const defaultTier3Index = flattenTaxonomy(activityTaxonomy);
 export const defaultTagLookup = buildTagLookup(activityTaxonomy);
+export const activityDiscoveryTaxonomy = filterTaxonomyForActivityDiscovery(activityTaxonomy);
+export const defaultDiscoveryTier3Index = flattenTaxonomy(activityDiscoveryTaxonomy);
+export const defaultDiscoveryTagLookup = buildTagLookup(activityDiscoveryTaxonomy);
 
 export const getTier3Category = (
   tier3Id: string,
@@ -614,4 +657,8 @@ export const resolveTagToTier3 = (
 
 export const getTier3Ids = (
   taxonomy: ActivityTaxonomy = activityTaxonomy,
+): string[] => flattenTaxonomy(taxonomy).map(category => category.id);
+
+export const getDiscoveryTier3Ids = (
+  taxonomy: ActivityTaxonomy = activityDiscoveryTaxonomy,
 ): string[] => flattenTaxonomy(taxonomy).map(category => category.id);

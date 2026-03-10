@@ -1,3 +1,5 @@
+import { evaluateActivityFirstDiscoveryPolicy } from '@dowhat/shared';
+
 import { haversineMeters } from '@/lib/places/utils';
 import { computeTrustScore } from './trust';
 
@@ -47,7 +49,7 @@ const scoreRelevance = (item: DiscoveryItem, filters: NormalizedDiscoveryFilters
   const wanted = [
     ...filters.activityTypes,
     ...filters.tags,
-    ...filters.traits,
+    ...filters.peopleTraits,
     ...filters.taxonomyCategories,
   ];
 
@@ -72,15 +74,52 @@ const scoreTemporal = (item: DiscoveryItem): number => {
 
 const scoreSocialProof = (item: DiscoveryItem): number => {
   const upcoming = item.upcoming_session_count ?? 0;
-  const score = 1 - 1 / (1 + upcoming / 2);
-  return clamp01(score);
+  const ratingCountScore = item.rating_count != null
+    ? clamp01(Math.log1p(Math.max(0, item.rating_count)) / Math.log1p(250))
+    : 0;
+  const popularityScore = item.popularity_score != null
+    ? clamp01(Math.log1p(Math.max(0, item.popularity_score)) / Math.log1p(20))
+    : 0;
+  const sessionScore = 1 - 1 / (1 + upcoming / 2);
+  return clamp01(sessionScore * 0.45 + ratingCountScore * 0.3 + popularityScore * 0.25);
 };
 
 const scoreQuality = (item: DiscoveryItem): number => {
+  const activityBoundary = evaluateActivityFirstDiscoveryPolicy({
+    categories: item.tags ?? null,
+    activityTypes: item.activity_types ?? null,
+    taxonomyCategories: item.taxonomy_categories ?? null,
+    hasVenueActivityMapping: item.source === 'activities' || item.verification_state === 'verified',
+    hasManualOverride: item.verification_state === 'verified',
+    hasEventOrSessionEvidence: (item.upcoming_session_count ?? 0) > 0,
+  });
   const hasCanonicalPlace = Boolean(item.place_id);
   const hasPlaceLabel = Boolean(item.place_label);
-  const sourceBonus = item.source === 'postgis' || item.source === 'activities' ? 0.08 : 0;
-  const score = (hasCanonicalPlace ? 0.8 : 0.35) + (hasPlaceLabel ? 0.12 : 0) + sourceBonus;
+  const hasWebsite = Boolean(item.website);
+  const sourceBonus =
+    item.source === 'postgis' || item.source === 'activities' || item.source === 'supabase-places'
+      ? 0.06
+      : 0;
+  const sourceConfidence = clamp01(item.source_confidence ?? 0);
+  const ratingValueScore =
+    typeof item.rating === 'number' && Number.isFinite(item.rating)
+      ? clamp01((item.rating - 2.5) / 2.5)
+      : 0;
+  const activityEvidenceScore =
+    (activityBoundary.hasActivityCategoryEvidence ? 0.18 : 0) +
+    (activityBoundary.hasStructuredActivityEvidence ? 0.24 : 0) +
+    (activityBoundary.hasVenueActivityMapping ? 0.14 : 0) +
+    (activityBoundary.hasEventOrSessionEvidence ? 0.12 : 0) +
+    (activityBoundary.hasManualOverride ? 0.08 : 0) -
+    (activityBoundary.isHospitalityPrimary ? 0.16 : 0);
+  const score =
+    (hasCanonicalPlace ? 0.56 : 0.24) +
+    (hasPlaceLabel ? 0.1 : 0) +
+    (hasWebsite ? 0.06 : 0) +
+    sourceBonus +
+    sourceConfidence * 0.16 +
+    ratingValueScore * 0.08 +
+    activityEvidenceScore;
   return clamp01(score);
 };
 

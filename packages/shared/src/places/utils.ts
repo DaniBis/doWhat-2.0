@@ -1,14 +1,31 @@
 import type { PlaceSummary, PlacesViewportQuery } from './types';
+import { mergeLegacyCategoriesIntoDiscoveryFilters } from '../discovery';
 
 export const placesQueryKey = (query: PlacesViewportQuery) => [
   'places',
-  {
-    sw: [query.bounds.sw.lat, query.bounds.sw.lng],
-    ne: [query.bounds.ne.lat, query.bounds.ne.lng],
-    categories: query.categories ?? [],
-    limit: query.limit ?? null,
-    city: query.city ?? null,
-  },
+  (() => {
+    const discoveryFilters = mergeLegacyCategoriesIntoDiscoveryFilters(query.discoveryFilters, query.categories);
+    return {
+      sw: [query.bounds.sw.lat, query.bounds.sw.lng],
+      ne: [query.bounds.ne.lat, query.bounds.ne.lng],
+      discoveryFilters: {
+        resultKinds: discoveryFilters.resultKinds,
+        searchText: discoveryFilters.searchText,
+        activityTypes: discoveryFilters.activityTypes,
+        tags: discoveryFilters.tags,
+        peopleTraits: discoveryFilters.peopleTraits,
+        taxonomyCategories: discoveryFilters.taxonomyCategories,
+        priceLevels: discoveryFilters.priceLevels,
+        capacityKey: discoveryFilters.capacityKey,
+        timeWindow: discoveryFilters.timeWindow,
+        maxDistanceKm: discoveryFilters.maxDistanceKm,
+        trustMode: discoveryFilters.trustMode,
+        sortMode: discoveryFilters.sortMode,
+      },
+      limit: query.limit ?? null,
+      city: query.city ?? null,
+    };
+  })(),
 ];
 
 export const debounce = <T extends (...args: Parameters<T>) => void>(fn: T, wait = 300) => {

@@ -1,4 +1,4 @@
-import type { EventSummary } from '@dowhat/shared';
+import { inferEventLocationKind, inferEventOriginKind, type EventSummary } from '@dowhat/shared';
 
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
 
@@ -32,18 +32,35 @@ export const eventStateClass = (state?: EventSummary['event_state'] | null): str
 export const describeEventOrigin = (
   event: EventSummary | null | undefined,
 ): { label: string; helper: string } => {
-  const metadata = eventMetadata(event);
-  const source = typeof metadata?.source === 'string' ? metadata.source : null;
-  const hasSessionId = metadata?.sessionId || metadata?.session_id;
-  if (source === 'session' || typeof hasSessionId === 'string') {
+  if (!event) {
     return {
-      label: 'Community activity',
-      helper: 'Hosted on doWhat',
+      label: 'Event',
+      helper: 'Schedule details may still change.',
     };
   }
+
+  const originKind = inferEventOriginKind(event);
+  const locationKind = inferEventLocationKind(event);
+
+  if (originKind === 'session') {
+    return {
+      label: 'Community session',
+      helper: locationKind === 'canonical_place' ? 'Created on doWhat at a confirmed place' : 'Created on doWhat',
+    };
+  }
+
+  const metadata = eventMetadata(event);
+  const sourceUrl = typeof metadata?.sourceUrl === 'string' ? metadata.sourceUrl : null;
+  if (sourceUrl) {
+    return {
+      label: 'Published event',
+      helper: locationKind === 'canonical_place' ? 'Imported listing pinned to a confirmed place' : 'Imported listing from a source page',
+    };
+  }
+
   return {
     label: 'Open event',
-    helper: 'Community-created listing',
+    helper: locationKind === 'flexible' ? 'Location still being finalized' : 'Organizer-supplied event listing',
   };
 };
 
@@ -75,7 +92,10 @@ export const eventPlaceLabel = (
   event: EventSummary | null | undefined,
   options?: { fallback?: string | null },
 ): string | null => {
-  const fallback = options?.fallback === undefined ? PLACE_FALLBACK_LABEL : options.fallback;
+  const fallback =
+    options?.fallback === undefined
+      ? (event && inferEventLocationKind(event) === 'flexible' ? 'Location to be confirmed' : PLACE_FALLBACK_LABEL)
+      : options.fallback;
   if (!event) return fallback ?? null;
   const label = normalizePlaceLabel(event.place_label, event.venue_name, event.address);
   if (label === PLACE_FALLBACK_LABEL && fallback && fallback !== PLACE_FALLBACK_LABEL) {

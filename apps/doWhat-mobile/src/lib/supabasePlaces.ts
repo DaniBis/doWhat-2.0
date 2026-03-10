@@ -1,6 +1,11 @@
 import { isMissingColumnError } from './supabaseErrors';
 import { supabase } from './supabase';
-import type { PlaceSummary, PlacesViewportQuery } from '@dowhat/shared';
+import {
+  dedupePlaceSummaries,
+  filterPlaceSummariesByDiscoveryFilters,
+  type PlaceSummary,
+  type PlacesViewportQuery,
+} from '@dowhat/shared';
 
 const SUPABASE_DEFAULT_LIMIT = 60;
 let loggedMissingUpdatedAtWarning = false;
@@ -51,6 +56,7 @@ export type SupabasePlacesRow = {
   address: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  website?: string | null;
   verified_activities: string[] | null;
   ai_activity_tags: string[] | null;
   updated_at?: string | null;
@@ -62,6 +68,7 @@ export type SupabaseCanonicalPlaceRow = {
   address: string | null;
   lat: number | string | null;
   lng: number | string | null;
+  website?: string | null;
   categories: string[] | null;
   locality?: string | null;
   region?: string | null;
@@ -104,6 +111,7 @@ const mapVenueRowToPlaceSummary = (
     categories: toStringArray(row.verified_activities),
     tags: toStringArray(row.ai_activity_tags),
     address: row.address ?? null,
+    website: row.website ?? null,
     city: fallbackCitySlug,
     locality: null,
     region: null,
@@ -140,6 +148,7 @@ const mapCanonicalPlaceRowToPlaceSummary = (
     categories,
     tags: categories,
     address: row.address ?? null,
+    website: row.website ?? null,
     city: fallbackCitySlug,
     locality: row.locality ?? null,
     region: row.region ?? null,
@@ -160,20 +169,22 @@ export interface FetchSupabasePlacesOptions {
   bounds: PlacesViewportQuery['bounds'];
   citySlug: string;
   limit?: number;
+  discoveryFilters?: PlacesViewportQuery['discoveryFilters'];
 }
 
 export const fetchSupabasePlacesWithinBounds = async (
   options: FetchSupabasePlacesOptions,
 ): Promise<PlaceSummary[]> => {
-  const { bounds, citySlug, limit } = options;
+  const { bounds, citySlug, limit, discoveryFilters } = options;
   const queryLimit = Math.max(1, Math.min(limit ?? SUPABASE_DEFAULT_LIMIT, 400));
+  let includeWebsite = true;
   const buildQuery = (includeUpdatedAt: boolean) => {
     let query = supabase
       .from('venues')
       .select(
         includeUpdatedAt
-          ? 'id,name,address,lat,lng,ai_activity_tags,verified_activities,updated_at'
-          : 'id,name,address,lat,lng,ai_activity_tags,verified_activities',
+          ? `id,name,address,lat,lng${includeWebsite ? ',website' : ''},ai_activity_tags,verified_activities,updated_at`
+          : `id,name,address,lat,lng${includeWebsite ? ',website' : ''},ai_activity_tags,verified_activities`,
       )
       .gte('lat', bounds.sw.lat)
       .lte('lat', bounds.ne.lat)
@@ -197,6 +208,10 @@ export const fetchSupabasePlacesWithinBounds = async (
       break;
     }
 
+    if (includeWebsite && isMissingColumnError(error, 'website')) {
+      includeWebsite = false;
+      continue;
+    }
     if (includeUpdatedAt && isMissingColumnError(error, 'updated_at')) {
       includeUpdatedAt = false;
       // eslint-disable-next-line no-console
@@ -215,39 +230,56 @@ export const fetchSupabasePlacesWithinBounds = async (
 
   let placeDataset: SupabaseCanonicalPlaceRow[] = [];
   try {
-    const { data: canonicalPlaces, error: placesError } = await supabase
-      .from('places')
-      .select('id,name,address,lat,lng,categories,locality,region,country,updated_at')
-      .gte('lat', bounds.sw.lat)
-      .lte('lat', bounds.ne.lat)
-      .gte('lng', bounds.sw.lng)
-      .lte('lng', bounds.ne.lng)
-      .order('updated_at', { ascending: false })
-      .limit(queryLimit);
+    let includePlacesWebsite = true;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { data: canonicalPlaces, error: placesError } = await supabase
+        .from('places')
+        .select(
+          `id,name,address,lat,lng${includePlacesWebsite ? ',website' : ''},categories,locality,region,country,updated_at`,
+        )
+        .gte('lat', bounds.sw.lat)
+        .lte('lat', bounds.ne.lat)
+        .gte('lng', bounds.sw.lng)
+        .lte('lng', bounds.ne.lng)
+        .order('updated_at', { ascending: false })
+        .limit(queryLimit);
 
-    if (!placesError && Array.isArray(canonicalPlaces)) {
-      placeDataset = canonicalPlaces as unknown as SupabaseCanonicalPlaceRow[];
+      if (!placesError) {
+        if (Array.isArray(canonicalPlaces)) {
+          placeDataset = canonicalPlaces as unknown as SupabaseCanonicalPlaceRow[];
+        }
+        break;
+      }
+
+      if (includePlacesWebsite && isMissingColumnError(placesError, 'website')) {
+        includePlacesWebsite = false;
+        continue;
+      }
+      break;
     }
   } catch {
     // Ignore places table access failures and keep venue-based results.
   }
 
-  const deduped = new Map<string, PlaceSummary>();
-  venueDataset.forEach((row) => {
-    const summary = mapVenueRowToPlaceSummary(row, citySlug);
-    if (!summary) return;
-    if (!deduped.has(summary.id)) {
-      deduped.set(summary.id, summary);
-    }
-  });
+  const summaries = [
+    ...venueDataset
+      .map((row) => mapVenueRowToPlaceSummary(row, citySlug))
+      .filter((summary): summary is PlaceSummary => Boolean(summary)),
+    ...placeDataset
+      .map((row) => mapCanonicalPlaceRowToPlaceSummary(row, citySlug))
+      .filter((summary): summary is PlaceSummary => Boolean(summary)),
+  ];
 
-  placeDataset.forEach((row) => {
-    const summary = mapCanonicalPlaceRowToPlaceSummary(row, citySlug);
-    if (!summary) return;
-    if (!deduped.has(summary.id)) {
-      deduped.set(summary.id, summary);
-    }
-  });
-
-  return Array.from(deduped.values()).slice(0, queryLimit);
+  return filterPlaceSummariesByDiscoveryFilters(
+    dedupePlaceSummaries(summaries).slice(0, queryLimit),
+    discoveryFilters,
+    {
+      center: {
+        lat: (bounds.sw.lat + bounds.ne.lat) / 2,
+        lng: (bounds.sw.lng + bounds.ne.lng) / 2,
+      },
+      now: new Date(),
+      citySlug,
+    },
+  );
 };

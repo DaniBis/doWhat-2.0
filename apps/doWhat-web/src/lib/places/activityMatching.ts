@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ACTIVITY_CATALOG_PRESETS, type ActivityCatalogEntry } from '@dowhat/shared';
+import { ACTIVITY_CATALOG_PRESETS, evaluateActivityFirstDiscoveryPolicy, type ActivityCatalogEntry } from '@dowhat/shared';
 
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
@@ -68,6 +68,10 @@ type SearchIndex = {
   text: string;
   tokens: Set<string>;
   empty: boolean;
+};
+
+type ActivityMatchingPolicy = {
+  allowKeywordMatch: boolean;
 };
 
 type ActivityMatch = {
@@ -206,10 +210,20 @@ function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
   });
 
   const searchIndex = buildSearchIndex(place);
+  const boundary = evaluateActivityFirstDiscoveryPolicy({
+    name: place.name,
+    description: place.description,
+    categories: place.categories,
+    tags: place.tags,
+    hasManualOverride: manualOverrides.length > 0,
+  });
+  const matchingPolicy: ActivityMatchingPolicy = {
+    allowKeywordMatch: !boundary.isHospitalityPrimary || boundary.hasActivityCategoryEvidence,
+  };
 
   catalog.forEach((activity) => {
     if (typeof activity.id !== 'number') return;
-    const match = evaluateActivityMatch(activity, searchIndex, fsqCategories);
+    const match = evaluateActivityMatch(activity, searchIndex, fsqCategories, matchingPolicy);
     if (!match) return;
     const existing = matches.get(activity.id);
     if (existing && SOURCE_PRIORITY[existing.source] >= SOURCE_PRIORITY[match.source]) {
@@ -248,11 +262,14 @@ function evaluateActivityMatch(
   activity: ActivityCatalogRow,
   searchIndex: SearchIndex,
   fsqCategories: Set<string>,
+  policy: ActivityMatchingPolicy = { allowKeywordMatch: true },
 ): ActivityMatch | null {
   const fsqMatch = findFsqCategoryMatch(activity, fsqCategories);
   if (fsqMatch) {
     return { activityId: activity.id, source: 'category', confidence: CATEGORY_CONFIDENCE, detail: fsqMatch };
   }
+
+  if (!policy.allowKeywordMatch) return null;
 
   const keywordMatch = findKeywordMatch(activity, searchIndex);
   if (keywordMatch) {

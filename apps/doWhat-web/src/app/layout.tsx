@@ -1,10 +1,13 @@
 import "./globals.css";
 
 import React from "react";
+import type { Metadata } from "next";
 import dynamic from "next/dynamic";
+import Script from 'next/script';
 import Providers from "./providers";
 import { OnboardingNavLink } from "@/components/nav/OnboardingNavLink";
 import AppLiveUpdates from "@/components/AppLiveUpdates";
+import { chunkLoadRecoveryScript } from '@/lib/chunkLoadRecovery';
 
 type AuthButtonsProps = {
   variant?: "panel" | "inline";
@@ -14,6 +17,21 @@ const AuthButtons = dynamic<AuthButtonsProps>(() => import("@/components/AuthBut
 const GeoRequirementBanner = dynamic(() => import("@/components/GeoRequirement"), { ssr: false }) as unknown as React.FC;
 import BrandLogo from "@/components/BrandLogo";
 
+export const metadata: Metadata = {
+  title: "doWhat",
+  description: "Discover places, plan activities, and join events with doWhat.",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: [{ url: "/logo.png", sizes: "180x180", type: "image/png" }],
+    shortcut: ["/favicon.ico"],
+  },
+};
+
 export default async function RootLayout({
   children,
 }: {
@@ -22,6 +40,9 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-dvh bg-surface-canvas font-sans text-ink antialiased">
+        <Script id="dowhat-chunk-load-recovery" strategy="beforeInteractive">
+          {chunkLoadRecoveryScript}
+        </Script>
         <header className="sticky top-0 z-50 border-b border-white/40 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
             <div className="flex items-center gap-6">

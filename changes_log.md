@@ -1,5 +1,123 @@
 # Changes Log
 
+## 2026-03-07
+
+### 2026-03-07 04:02 UTC — Final verification checkpoint / duplicate-logo-count-discovery work validated, lint cleanup applied
+- Issue: complete the requested end-of-pass verification after confirming Tasks 1-5 were already represented in the current source tree.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`, `apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx`.
+- Decision made: keep the existing Task 1-5 implementations, avoid redundant rewrites, and limit code changes to one lint-only cleanup so the final verification is green.
+- Why: current code already contains the semantic duplicate-place merge, official-site-first logo pipeline, mobile home event-count correction, mobile/web discovery filter-ranking helpers, and the related regression suites. Re-implementing those flows would add risk without improving correctness.
+- How tested:
+   - focused Jest run for `packages/shared/src/places/__tests__/dedupe.test.ts`, `packages/shared/src/places/__tests__/branding.test.ts`, `apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts`, `apps/doWhat-mobile/src/lib/__tests__/homeActivityCounts.test.ts`, and `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts` → `20 passed, 0 failed`,
+   - workspace `typecheck` task → passed,
+   - workspace `lint` task initially surfaced one warning in `apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx`,
+   - removed the unused `act` import from that test file,
+   - reran `lint` → passed cleanly,
+   - reran `apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx` → `5 passed, 0 failed`,
+   - reran `/api/health` on the live web dev server → `ok: true`.
+- Result: the requested areas are currently in a verified-good state. Duplicate-place handling, logo resolution, mobile event-count wording, discovery parity helpers, and the recent startup/chunk-load fixes all remain green under focused regression coverage, and workspace lint/typecheck now finish cleanly.
+- Remaining risks / follow-up: duplicate/logo verification in this pass is code+test+health based rather than a brand-new live DB/browser repro; if you still see a specific stale UI case, the next step is to capture the exact route/query/device state and trace that path directly.
+
+### 2026-03-07 03:40 UTC — Log synchronization / prior work backfill
+- Issue: backfill recent screenshot fixes into the shared engineering log before starting the new investigation batch.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: keep the earlier 2026-03-07 summary entry, but add timestamped structured logging from this point onward to satisfy the stricter execution/reporting requirement.
+- Why: the repo already had a summary of the chunk-load and mobile Home fixes, but not the explicit timestamp/decision/risk structure now requested.
+- How tested: manual review of both logs to confirm the screenshot fixes were present and no recent code changes were missing from the top of the log.
+- Result: logs are now the first-class source of truth for the current workstream; subsequent milestones will be appended with timestamps and verification notes.
+- Remaining risks / follow-up: older historical entries remain in mixed formats; only new and actively touched items will be normalized unless a broader documentation migration is requested.
+
+### 2026-03-07 03:46 UTC — Task 1 investigation checkpoint / duplicate-place fix appears to already exist in code
+- Issue: verify whether the current `VietClimb` duplication is still an active code defect or whether a previous semantic dedupe fix already landed and only needs runtime verification.
+- Files changed: `changes_log.md`.
+- Decision made: pause new duplicate-place code changes until current dedupe wiring is verified end-to-end.
+- Why: the log history already shows a 2026-03-07 mixed-source dedupe fix, and the current source tree still contains `packages/shared/src/places/dedupe.ts` plus usages in server discovery, mobile Home, and mobile map. Re-editing the pipeline without verification would risk duplicating or regressing a recent fix.
+- How tested: reviewed the prior Task 1 entries in `changes_log.md`, read `packages/shared/src/places/dedupe.ts`, confirmed active call sites in `apps/doWhat-web/src/lib/discovery/engine.ts`, `apps/doWhat-mobile/src/lib/supabasePlaces.ts`, `apps/doWhat-mobile/src/app/home.tsx`, and `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`, and checked the existing regression suites `packages/shared/src/places/__tests__/dedupe.test.ts` and `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`.
+- Result: current code still contains the semantic duplicate collapse for canonical `place` + legacy `venue` pairs, so the next step is runtime verification and gap analysis rather than immediately changing the dedupe algorithm.
+- Remaining risks / follow-up: if duplicates still appear in the live UI, the regression is more likely in a non-deduped rendering path, a stale build/runtime state, or a newly added source path that bypasses the helper.
+
+### 2026-03-07 03:49 UTC — Task 2 investigation checkpoint / logo pipeline fix also appears present in code
+- Issue: verify whether the missing doWhat logo and broken place-logo behavior still require implementation work or primarily need runtime verification.
+- Files changed: `changes_log.md`.
+- Decision made: defer new logo changes until the current brand/logo pipeline is verified in runtime and tests.
+- Why: the log history already records a 2026-03-07 Task 2 implementation, and the current tree still contains the official-site-first `/api/place-logo` route, real `logo.png` asset usage in web/mobile brand components, and the shared branding resolver. Reworking the pipeline without validation would risk replacing an existing fix rather than completing the requested verification.
+- How tested: reviewed the prior Task 2 entries in `changes_log.md`, read `packages/shared/src/places/branding.ts`, `apps/doWhat-web/src/components/BrandLogo.tsx`, `apps/doWhat-mobile/src/components/Brand.tsx`, and `apps/doWhat-web/src/app/api/place-logo/route.ts`, and verified that `apps/doWhat-web/public/logo.png` plus the mobile app assets still exist on disk.
+- Result: the current source tree still reflects the logged logo-pipeline repair; the next step is to validate behavior on actual web/mobile surfaces and only patch gaps that still reproduce.
+- Remaining risks / follow-up: place logos still depend on having a real official website URL in the dataset, so runtime verification may still expose inventory-quality gaps even if the code path itself is correct.
+
+### 2026-03-07 04:28 UTC — Nearby places regression fix / web + mobile were timing out against forced refresh discovery
+- Issue: no places were rendering on web or mobile because nearby discovery requests were timing out or taking so long that the UI fell back to empty states.
+- Files changed:
+   - `apps/doWhat-web/src/app/api/nearby/route.ts`
+   - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+   - `apps/doWhat-web/src/app/map/page.tsx`
+   - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - `apps/doWhat-web/src/lib/places/aggregator.ts`
+   - `apps/doWhat-mobile/src/app/home.tsx`
+   - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+- Root cause:
+   - the shared web/mobile nearby fetchers were still using an `8s` timeout budget while the live `/api/nearby` path around Hanoi was taking roughly `16–21s`,
+   - `/api/nearby` also auto-expanded toward a fixed inventory target even when a smaller request limit was already satisfied,
+   - the biggest server-side cost came from sparse-inventory seeding in `discoverNearbyActivities`, which forced `fetchPlacesForViewport(... forceRefresh: true)` on normal requests and therefore bypassed stored place data, provider caches, and the faster Supabase-backed path.
+- Fixes applied:
+   - capped `/api/nearby` auto-expansion targets by the actual request `limit` so small-limit requests do not chase impossible inventory counts,
+   - raised the web map and mobile nearby fetch budgets to `20s` and gave mobile Home discovery tasks their own longer timeout instead of reusing the `8s` startup-task cutoff,
+   - changed sparse viewport/city seeding in `apps/doWhat-web/src/lib/discovery/engine.ts` to stop forcing provider refresh on ordinary requests,
+   - skipped the expensive `matchActivitiesForPlaces` bootstrap pass when the seeding request is already satisfied from stored/cached place inventory,
+   - kept the aggregator improvement that parallelizes the independent Overpass/Foursquare provider calls when a real refresh is still needed.
+- Why this fix is correct:
+   - live probing showed `/api/nearby?lat=21.0285&lng=105.8542&radius=12000&limit=120` and the larger web-map query were consistently slower than the client timeout,
+   - the debug payload showed `pagesFetched > 0` and provider counts even for normal nearby loads, confirming that provider refresh work was happening inline instead of serving the stored catalog,
+   - after the engine change, the debug payload dropped to `pagesFetched: 0` / provider counts `0` for the normal request path while still returning hundreds of `supabase-places` results.
+- How tested:
+   - focused Jest suites passed:
+      - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - `packages/shared/src/__tests__/mapApi.test.ts`
+      - `apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx`
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+   - workspace validation passed:
+      - `pnpm -w run typecheck`
+      - `pnpm -w run lint`
+      - `curl -s http://localhost:3002/api/health`
+   - live latency re-checks:
+      - before fix: nearby requests were roughly `18–21s`,
+      - after fix: normal nearby requests dropped to roughly `5–9s` on repeat probes,
+      - nearby debug payload now reports `pagesFetched: 0` for the ordinary path instead of doing inline provider seeding.
+- Result:
+   - both web and mobile now have enough budget to receive the nearby response,
+   - the server no longer forces slow provider refresh work on standard nearby-place requests,
+   - the nearby endpoint again behaves like a stored-inventory read path first, with explicit refresh/provider work reserved for true refresh scenarios.
+- Remaining risks / follow-up:
+   - the first uncached dev hit is still not instant, and the remaining `5–9s` range suggests there is still worthwhile optimization room in the fallback/session merge path if we want truly snappy cold-start discovery,
+   - explicit refresh flows may still be slower because they are designed to allow the heavier provider work.
+
+1. **Web stale chunk auto-recovery + mobile Home startup deadlock fix**
+   - User-reported issues from screenshots:
+      - web root showed `ChunkLoadError: Loading chunk app/page failed`,
+      - iOS Home stayed on the initial skeleton cards instead of reaching the main surface.
+   - Root causes identified:
+      - web had no recovery path for stale/invalid Next.js runtime chunks after dev rebuilds or stale browser state,
+      - mobile Home awaited several discovery/network tasks sequentially during first paint, so one stalled request could keep `loading === true` and trap the UI on the skeleton screen.
+   - Fixes applied:
+      - `apps/doWhat-web/src/lib/chunkLoadRecovery.ts`
+         - added chunk-failure detection helpers and a rate-limited hard-reload recovery script,
+      - `apps/doWhat-web/src/app/layout.tsx`
+         - injects the chunk recovery script with `beforeInteractive` so stale chunk failures self-recover once instead of leaving the runtime error overlay stuck on screen,
+      - `packages/shared/src/map/api.ts`
+         - added an 8s timeout to the shared nearby-activities fetcher so stalled requests abort instead of hanging forever,
+      - `apps/doWhat-mobile/src/app/home.tsx`
+         - parallelized first-load discovery tasks,
+         - wrapped each task in an 8s timeout,
+         - made Home degrade to partial/empty sections instead of blocking the whole screen behind the initial skeleton.
+   - Added tests:
+      - `apps/doWhat-web/src/lib/__tests__/chunkLoadRecovery.test.ts`
+      - expanded `apps/doWhat-mobile/src/app/__tests__/home.findA4th.test.tsx` with a discovery-failure startup regression case,
+      - `packages/shared/src/__tests__/mapApi.test.ts` for the new nearby-fetch timeout.
+   - Validation:
+      - focused web Jest suite passed,
+      - focused mobile Jest suite passed,
+      - workspace typecheck/lint passed after the changes.
+
 ## 2026-03-04
 
 1. **Mobile Map stability fix (iOS): removed recenter tug-of-war causing visible map shaking**
@@ -3012,3 +3130,2130 @@
    - Results:
       - Failed with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.
       - No code regression indicated by this check; failure is infra/network reachability to DB host.
+
+## 2026-03-07
+
+28. **Log synchronization: documented prior mobile map filter, shared branding, and discovery-ranking work already present in the tree**
+   - Timestamp: 2026-03-07 08:09:20 +0700
+   - Issue being worked on:
+      - Synchronize `changes_log.md` before starting the duplicate-venue, logo, session-count, discovery, and performance work requested for this pass.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/components/PlaceBrandMark.tsx`
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/components/PlaceBrandMark.tsx`
+      - `apps/doWhat-web/src/components/WebMap.tsx`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `packages/shared/src/map/types.ts`
+      - `packages/shared/src/places/branding.ts`
+      - `packages/shared/src/places/index.ts`
+   - Decision made:
+      - Record the previously implemented but not yet logged map/discovery/logo changes before touching new logic.
+      - Keep the mobile filter flow search-first, remove the `Browse categories` button, and expose active filters as removable chips.
+      - Normalize logo resolution through shared website-based branding helpers and shared web/mobile rendering components.
+      - Propagate canonical place `website` data through discovery/mobile place fetches and boost ranking quality/prominence using website, confidence, ratings, and popularity signals.
+   - Why the decision was made:
+      - The user explicitly required log synchronization first and asked for a stronger, more useful filter experience plus better logo fidelity and stronger discovery ranking.
+      - The work was already in the repository; leaving it undocumented would violate the logging requirement and make follow-up debugging unreliable.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter @dowhat/shared build`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint packages/shared/src/places/branding.ts apps/doWhat-web/src/components/PlaceBrandMark.tsx apps/doWhat-mobile/src/components/PlaceBrandMark.tsx apps/doWhat-web/src/lib/discovery/ranking.ts apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/components/WebMap.tsx apps/doWhat-mobile/src/lib/supabasePlaces.ts 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx'`
+      - `pnpm --filter dowhat-web test -- rankingTrustOrder`
+   - Result:
+      - Mobile map filter UI now uses a search-first modal with preview counts and without the extra `Browse categories` CTA.
+      - Shared place branding resolution and brand-mark rendering are present on both web and mobile.
+      - Discovery/mobile place payloads now carry `website`, and ranking uses stronger prominence/quality inputs.
+      - The targeted validation commands passed.
+   - Remaining risks or follow-up notes:
+      - These entries document prior work only; duplicate-place handling, doWhat logo restoration, session-count correctness, discovery parity, and performance still need fresh investigation in this pass.
+      - Live web/mobile runtime smoke verification for the newly added brand marks and filter flow still needs to be repeated after the upcoming fixes.
+
+29. **Duplicate-place investigation checkpoint: `VietClimb` exists as both a canonical place and a legacy venue**
+   - Timestamp: 2026-03-07 08:13:44 +0700
+   - Issue being worked on:
+      - Task 1 root-cause analysis for duplicate map items (`VietClimb` shown twice).
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Confirm the live data shape first and treat this as a data-plus-dedupe pipeline issue, not a cosmetic-only renderer bug.
+   - Why the decision was made:
+      - The codebase already had a historical web-only near-duplicate dedupe fix, so the current duplicate could have been caused by new data, a mobile-specific fetch path, or both. The user explicitly asked for end-to-end tracing before changing logic.
+   - How it was tested:
+      - Queried live Supabase rows for `VietClimb` from `venues`, `places`, and `activities` using the service-role client loaded from `.env.local`.
+      - Started the local Next.js API (`pnpm --filter dowhat-web exec next dev -p 4302`) and observed `/api/nearby` compilation/runtime logs while probing the discovery path.
+   - Result:
+      - `public.venues` contains one legacy row for `VietClimb` (`id=db0bd877-08a5-42f9-9dfc-cc3f9a6d864a`, `lat=21.054838`, `lng=105.83981`).
+      - `public.places` contains one canonical OSM-backed `VietClimb` row (`id=3d9e27a6-c62f-4906-a2cf-5d7b406e82fd`, `lat=21.0548381`, `lng=105.8398098`, `aggregated_from=['openstreetmap']`).
+      - `public.activities` currently has no `VietClimb` rows, which means the duplicate is not coming from two activity records.
+      - The mobile fallback code in `apps/doWhat-mobile/src/lib/supabasePlaces.ts` and `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx` only dedupes by raw `id`, so a `venue` row and a `place` row for the same real location remain separate.
+      - During the local `/api/nearby` probe, unrelated schema drift also appeared (`place_tiles.discovery_cache` missing, taxonomy view empty, provider Overpass 429/504s). Those are noted but not yet treated as the duplicate root cause.
+   - Remaining risks or follow-up notes:
+      - Need one more verification step on the discovery output itself to confirm whether `/api/nearby` is also emitting both rows, or whether the duplicate only appears in the mobile direct-Supabase fallback path.
+      - Any fix must cover both backend dedupe and mobile rendering safeguards so the duplicate cannot reappear from mixed source IDs.
+
+30. **Task 1 fix: deterministic duplicate-place collapse for legacy venue + canonical place pairs**
+   - Timestamp: 2026-03-07 08:23:37 +0700
+   - Issue being worked on:
+      - Remove duplicate venues/items such as `VietClimb` from discovery/map surfaces and make the dedupe behavior deterministic.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `packages/shared/src/places/dedupe.ts` (new)
+      - `packages/shared/src/places/__tests__/dedupe.test.ts` (new)
+      - `packages/shared/src/places/index.ts`
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/home.tsx`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`
+      - `apps/doWhat-web/src/app/map/resultQuality.ts`
+      - `apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts`
+   - Decision made:
+      - Fix duplicates at the source-composition layer and keep a render-layer guard:
+         - server discovery merge now collapses near-identical `supabase-venues` + canonical-place rows even when they carry different source IDs,
+         - mobile place feeds now use a shared semantic place dedupe helper instead of raw-ID-only merging,
+         - web map render dedupe is now source-aware so legacy venue UUIDs are not mistaken for canonical `place_id`s.
+      - Preserve canonical `place` identity when a duplicate pair is collapsed and carry forward the linked legacy `venueId` in metadata.
+   - Why the decision was made:
+      - The live `VietClimb` duplicate is a mixed-source pair, not two true canonical places:
+         - `sessions` link the legacy `venue_id` row and the canonical `place_id` row at the same time,
+         - raw-ID dedupe cannot collapse that shape,
+         - fixing only the UI would leave the API/fallback feeds unstable and non-deterministic.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/places/__tests__/dedupe.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/dedupeMerge.test.ts src/app/map/__tests__/resultQuality.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint packages/shared/src/places/dedupe.ts packages/shared/src/places/__tests__/dedupe.test.ts apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts apps/doWhat-web/src/app/map/resultQuality.ts apps/doWhat-web/src/app/map/__tests__/resultQuality.test.ts apps/doWhat-mobile/src/lib/supabasePlaces.ts apps/doWhat-mobile/src/app/home.tsx 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx'`
+      - `node -r ts-node/register/transpile-only - <<'NODE' ... live Supabase VietClimb venue/place pair mapped through dedupePlaceSummaries ... NODE`
+   - Result:
+      - Shared place dedupe now collapses the live `VietClimb` pair from `before=2` rows to `after=1` row and keeps the canonical place id (`3d9e27a6-c62f-4906-a2cf-5d7b406e82fd`) while preserving the linked venue id in metadata.
+      - Mobile map/home direct-Supabase and nearby-place rendering paths now apply semantic dedupe instead of `id`-only dedupe.
+      - Server discovery merge and web map render dedupe now treat `supabase-venues` IDs as legacy venue identifiers rather than canonical place identifiers.
+      - New tests cover:
+         - duplicate provider payloads,
+         - same place with different source IDs,
+         - render-path dedupe against OSM fallback rows,
+         - preserving distinct nearby canonical places with different `place_id`s.
+   - Remaining risks or follow-up notes:
+      - I have not yet completed a full live simulator/browser smoke pass for the updated map/home flows; that will be part of final verification after the remaining tasks land.
+      - Local `/api/nearby` probes still surface separate schema drift/perf warnings (`place_tiles.discovery_cache`, `discovery_exposures`, empty taxonomy view, Overpass 429/504s). Those do not block the duplicate fix but are relevant for later discovery/performance tasks in this pass.
+
+31. **Logo pipeline investigation checkpoint: web brand assets are broken placeholders and place logos still rely on favicons**
+   - Timestamp: 2026-03-07 08:27:36 +0700
+   - Issue being worked on:
+      - Task 2 root-cause analysis for broken/missing place logos and the missing doWhat logo.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Separate the doWhat-brand fix from the place-brand fix:
+         - doWhat brand needs local asset repair and real asset usage,
+         - place brands need a better resolution pipeline because the current favicon-only path cannot guarantee exact logos.
+   - Why the decision was made:
+      - The audit showed two distinct failure classes:
+         - web/mobile doWhat branding is mostly a local asset/usage problem,
+         - place logos are mostly a data-resolution problem caused by sparse official website coverage and a favicon-only renderer.
+   - How it was tested:
+      - Searched all app/shared logo/icon references and local asset paths.
+      - Inspected `packages/shared/src/places/branding.ts`, both `PlaceBrandMark` components, `apps/doWhat-mobile/src/components/Brand.tsx`, `apps/doWhat-web/src/components/BrandLogo.tsx`, `apps/doWhat-mobile/app.config.js`, and `apps/doWhat-web/public/manifest.json`.
+      - Queried live Supabase samples from `places` and `place_sources` to check website/url availability.
+      - Verified asset files with `file`, `ls -l`, `md5`, and `sips`.
+   - Result:
+      - Current place-brand rendering uses `https://www.google.com/s2/favicons?...` derived from `website`, so it only guarantees favicons, not exact brand logos.
+      - `places.website` is effectively empty in the current environment, and sampled `place_sources` rows also lacked usable provider URLs, which explains frequent initials/favicon fallback.
+      - The web PWA icons referenced by `apps/doWhat-web/public/manifest.json` (`public/icons/icon-192.png`, `public/icons/icon-512.png`) are zero-byte files.
+      - `apps/doWhat-web/src/components/BrandLogo.tsx` renders a generic star/glyph instead of a real doWhat asset.
+      - `apps/doWhat-mobile/src/components/Brand.tsx` tries to load `${EXPO_PUBLIC_WEB_URL}/logo.png`, but the web app currently has no `public/logo.png`, so it falls back to a generic glyph as well.
+      - Mobile app shell icons do exist locally in `apps/doWhat-mobile/assets/` (`icon.png`, `adaptive-icon.png`, `splash-icon.png`, `favicon.png`).
+   - Remaining risks or follow-up notes:
+      - Need to replace the broken web icon assets with real doWhat brand files and point web/mobile brand components at those assets.
+      - Need a more official-logo-aware place-brand resolver, likely via official-site metadata/logo extraction with a documented fallback policy, because favicon-only rendering does not satisfy the exact-logo requirement.
+
+32. **Task 2 fix: repaired doWhat brand assets and upgraded place-logo resolution to official-site-first**
+   - Timestamp: 2026-03-07 08:32:20 +0700
+   - Issue being worked on:
+      - Restore the missing doWhat logo and normalize place/company logo handling across web and mobile.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `packages/shared/src/places/branding.ts`
+      - `packages/shared/src/places/__tests__/branding.test.ts` (new)
+      - `apps/doWhat-web/src/app/api/place-logo/route.ts` (new)
+      - `apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts` (new)
+      - `apps/doWhat-web/src/components/PlaceBrandMark.tsx`
+      - `apps/doWhat-mobile/src/components/PlaceBrandMark.tsx`
+      - `apps/doWhat-web/src/components/BrandLogo.tsx`
+      - `apps/doWhat-mobile/src/components/Brand.tsx`
+      - `apps/doWhat-web/src/app/layout.tsx`
+      - `apps/doWhat-web/public/logo.png` (new)
+      - `apps/doWhat-web/public/icons/icon-192.png`
+      - `apps/doWhat-web/public/icons/icon-512.png`
+   - Decision made:
+      - Replace the broken doWhat web/mobile logo usage with the existing app icon asset already present in `apps/doWhat-mobile/assets/icon.png`.
+      - Upgrade place-logo resolution from favicon-only to a documented fallback chain:
+         1. official website metadata/logo hints resolved via `/api/place-logo`,
+         2. favicon fallback when no better official asset is advertised,
+         3. initials fallback when no website exists or the image still fails.
+      - Keep the resolver shared between web and mobile by extending `resolvePlaceBranding(...)` with `logoProxyBaseUrl` and `fallbackLogoUrl`.
+   - Why the decision was made:
+      - The missing doWhat logo was a local asset problem:
+         - the web manifest icons were empty files,
+         - the web header used a generic glyph,
+         - mobile `Brand` looked for a nonexistent `/logo.png`.
+      - The place-logo inconsistency was a data/resolution problem:
+         - `places.website` coverage is sparse,
+         - provider snapshots rarely expose URLs here,
+         - Google S2 favicons alone cannot satisfy the exact-logo requirement.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/places/__tests__/branding.test.ts src/places/__tests__/dedupe.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/place-logo/__tests__/route.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint packages/shared/src/places/branding.ts packages/shared/src/places/__tests__/branding.test.ts apps/doWhat-web/src/app/api/place-logo/route.ts apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts apps/doWhat-web/src/components/PlaceBrandMark.tsx apps/doWhat-mobile/src/components/PlaceBrandMark.tsx apps/doWhat-web/src/components/BrandLogo.tsx apps/doWhat-mobile/src/components/Brand.tsx apps/doWhat-web/src/app/layout.tsx`
+      - Asset verification with `file`, `md5`, `sips`, and `ls -l` after generating the new web icons.
+   - Result:
+      - `apps/doWhat-web/public/icons/icon-192.png` and `icon-512.png` are now real PNGs generated from the existing doWhat app icon, and `apps/doWhat-web/public/logo.png` now exists for web/mobile brand usage.
+      - `BrandLogo.tsx` now renders the real doWhat asset instead of a placeholder glyph.
+      - Mobile `Brand.tsx` now uses the bundled local icon directly, removing the broken dependency on a nonexistent remote `/logo.png`.
+      - Both `PlaceBrandMark` components now attempt an official-site logo via `/api/place-logo` first and fall back to the favicon URL only if that route or site metadata fails, then to initials.
+      - `/api/place-logo` resolves JSON-LD/meta/icon hints from the official site and intentionally avoids guessed `/logo.png` paths that were causing false positives.
+   - Remaining risks or follow-up notes:
+      - Exact place logos still depend on having a real official website. When the dataset has no `website`, the system still falls back to initials.
+      - I have not yet run a full browser/simulator visual smoke pass for the new doWhat logo and place-logo rendering; that will be included in final verification once the remaining tasks are complete.
+
+33. **Task 3 investigation: mobile home session badge is inflated client-side and overstates precision**
+   - Timestamp: 2026-03-07 08:36:17 +0700
+   - Issue being worked on:
+      - Fix the incorrect mobile `"1 session nearby"` badge so it reflects real upcoming events rather than a forced minimum.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Treat this as a client-side count/rendering defect first, then patch the mobile counting utility and badge copy instead of changing the nearby API contract.
+   - Why the decision was made:
+      - The nearby API already returns `upcoming_session_count` from real `sessions` rows in `apps/doWhat-web/src/lib/discovery/engine.ts`, but `apps/doWhat-mobile/src/app/home.tsx` converts `0` into `1` with `Math.max(1, Number(activity.upcoming_session_count ?? 0))`.
+      - The home card label also says `"session nearby"` even though the card groups discovery items by normalized activity name across multiple places, so the current wording implies a more exact location-specific count than the data model can guarantee.
+   - How it was tested:
+      - Inspected the mobile home aggregation/render path in `apps/doWhat-mobile/src/app/home.tsx`.
+      - Traced `upcoming_session_count` back to the web nearby-discovery engine in `apps/doWhat-web/src/lib/discovery/engine.ts`.
+      - Searched the mobile codebase for other `"session nearby"` / `upcoming_session_count` surfaces to confirm the bug is isolated to the home activity cards.
+      - Reviewed the `sessions` schema migration in `apps/doWhat-web/supabase/migrations/028_sessions_schema_spec.sql` to confirm sessions are the authoritative event model.
+   - Result:
+      - Root cause confirmed:
+         - `upcoming_session_count = 0` from discovery is being inflated to `1` on mobile home cards.
+         - Home cards aggregate by activity name, not a single place, so the current `"session nearby"` wording overclaims precision.
+      - No additional mobile surfaces were found using the same broken copy path.
+   - Remaining risks or follow-up notes:
+      - The fix should preserve exact upcoming-event counts when discovery provides them and avoid misleading copy when the count is zero or not location-specific.
+
+34. **Task 3 fix: mobile home cards now show only real upcoming-event counts**
+   - Timestamp: 2026-03-07 08:38:59 +0700
+   - Issue being worked on:
+      - Correct the mobile home activity badge so it reflects actual upcoming sessions/events and never fabricates `"1 session nearby"`.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-mobile/src/lib/homeActivityCounts.ts` (new)
+      - `apps/doWhat-mobile/src/lib/__tests__/homeActivityCounts.test.ts` (new)
+      - `apps/doWhat-mobile/src/app/home.tsx`
+   - Decision made:
+      - Extract the home-card counting logic into a dedicated mobile helper and change the UI contract from `"N session(s) nearby"` to:
+         - a numeric `"N upcoming event(s)"` badge only when there are real upcoming sessions,
+         - neutral `"Tap to view nearby places"` copy when the count is zero.
+   - Why the decision was made:
+      - The old UI combined two problems:
+         - it fabricated a minimum count of 1,
+         - it described the grouped activity card as an exact nearby session count even when there were no actual sessions.
+      - Centralizing the math in `homeActivityCounts.ts` makes the behavior deterministic and directly testable.
+   - How it was tested:
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/homeActivityCounts.test.ts`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint apps/doWhat-mobile/src/lib/homeActivityCounts.ts apps/doWhat-mobile/src/lib/__tests__/homeActivityCounts.test.ts apps/doWhat-mobile/src/app/home.tsx`
+   - Result:
+      - Mobile home cards no longer convert `0` upcoming sessions into `1`.
+      - Cards now show `"1 upcoming event"` / `"N upcoming events"` only when discovery or session rows provide real upcoming-event counts.
+      - Zero-count activities no longer show a misleading session badge.
+      - Added focused regression tests covering:
+         - zero events,
+         - one actual event,
+         - multiple actual events,
+         - separate nearby activity groups with independent counts.
+   - Remaining risks or follow-up notes:
+      - The home cards are still activity-group cards rather than single-place cards, so the badge now accurately represents upcoming nearby events for that activity, not one exact venue.
+      - A live simulator smoke pass is still needed during final verification to confirm the updated copy/layout on device.
+
+35. **Task 4 investigation: mobile discovery was bypassing cache and underusing server-side ranking/filtering**
+   - Timestamp: 2026-03-07 08:51:04 +0700
+   - Issue being worked on:
+      - Compare mobile vs web discovery end-to-end and identify why mobile place/activity discovery quality and speed lag behind web.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Fix the parity gap in the shared/mobile fetch layer instead of only tuning UI filtering, because the main regressions were caused by how mobile was querying discovery rather than by presentation alone.
+   - Why the decision was made:
+      - Code inspection showed these exact differences:
+         - web map reuses nearby-query cache by default; mobile home and mobile map were forcing `refresh: true` on every `/api/nearby` request, bypassing cache on every fetch.
+         - web pushes filter constraints into discovery (`priceLevels`, `capacityKey`, `timeWindow`, taxonomy, traits/tags where applicable); mobile map only sent taxonomy categories server-side and then filtered the rest locally after fetching places.
+         - mobile `PlacesViewportQuery` cache keys only varied by bounds/categories, so non-category map filters did not trigger server-side inventory refreshes.
+         - mobile home discovery sent categories/time-of-day but ignored price-range-derived price levels.
+         - mobile fallback ordering relied on raw fetch order / `updated_at`, while web ranking uses stronger distance/prominence/quality signals.
+      - The earlier live warnings also showed a server-side cache persistence issue: environments missing `place_tiles.discovery_cache` kept paying repeated failing cache-write attempts.
+   - How it was tested:
+      - Inspected `apps/doWhat-mobile/src/app/home.tsx`, `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`, `packages/shared/src/places/utils.ts`, `packages/shared/src/map/api.ts`, `apps/doWhat-web/src/app/map/page.tsx`, and `apps/doWhat-web/src/app/api/nearby/route.ts`.
+      - Compared the request/filter/caching behavior of mobile map/home against the web map query flow and the nearby-discovery engine.
+      - Reviewed the discovery cache / telemetry persistence paths in `apps/doWhat-web/src/lib/discovery/engine.ts` and `apps/doWhat-web/src/lib/discovery/telemetry.ts`.
+   - Result:
+      - Root causes for the mobile-vs-web gap were identified and narrowed to request strategy, cache usage, filter propagation, and fallback ordering rather than a single ranking formula issue.
+   - Remaining risks or follow-up notes:
+      - Mobile map remains place-centric while web map is activity-centric, so parity should be judged on inventory/filter quality and ranking behavior, not exact entity shape.
+
+36. **Task 4/5 fix: aligned mobile discovery with web caching/filtering and removed repeated dead-end cache persistence work**
+   - Timestamp: 2026-03-07 08:51:04 +0700
+   - Issue being worked on:
+      - Upgrade mobile discovery quality/performance to behave closer to web and remove redundant slow paths/warnings.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts` (new)
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts` (new)
+      - `apps/doWhat-mobile/src/app/home.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `packages/shared/src/places/types.ts`
+      - `packages/shared/src/places/utils.ts`
+      - `packages/shared/src/places/__tests__/queryKey.test.ts` (new)
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/telemetry.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts`
+   - Decision made:
+      - Introduce explicit mobile discovery helpers to:
+         - translate mobile home/map filters into the same nearby-discovery filter primitives web uses,
+         - include those filters in the mobile places query key,
+         - rank mobile place summaries deterministically using server rank score + quality + popularity + distance + search match.
+      - Stop bypassing `/api/nearby` cache by default on mobile and reserve bypassing for explicit pull-to-refresh.
+      - Disable repeated discovery-cache/telemetry persistence attempts after first schema-missing failures instead of retrying doomed writes on every request.
+   - Why the decision was made:
+      - These changes directly target the identified mobile-only degradations:
+         - better server-side filtering improves inventory quality before local filtering,
+         - cache reuse reduces latency and redundant provider/database work,
+         - query-key awareness prevents stale inventory when users change non-category filters,
+         - deterministic ranking narrows the gap between mobile fallback ordering and web ranking,
+         - short-circuiting missing-schema cache/telemetry writes removes repeated warning noise and wasted round trips.
+   - How it was tested:
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/homeActivityCounts.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/telemetry.test.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/places/__tests__/queryKey.test.ts src/places/__tests__/branding.test.ts src/places/__tests__/dedupe.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm exec eslint apps/doWhat-mobile/src/lib/mobileDiscovery.ts apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts apps/doWhat-mobile/src/lib/homeActivityCounts.ts apps/doWhat-mobile/src/lib/__tests__/homeActivityCounts.test.ts apps/doWhat-mobile/src/app/home.tsx 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx' packages/shared/src/places/types.ts packages/shared/src/places/utils.ts packages/shared/src/places/__tests__/queryKey.test.ts apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/telemetry.ts apps/doWhat-web/src/lib/discovery/__tests__/telemetry.test.ts`
+   - Result:
+      - Mobile home and map no longer force `refresh: true` on every discovery request; only manual home pull-to-refresh bypasses cache now.
+      - Mobile map now sends taxonomy/price/capacity/time filters to `/api/nearby`, and those filters now participate in the places query key so inventory refetches when they change.
+      - Mobile home discovery now maps activity price ranges/time-of-day into nearby-discovery filters and applies approximate category/price/time filtering in the Supabase fallback path instead of silently dropping those constraints.
+      - Mobile map place ordering is now deterministic and quality-aware via `rankPlaceSummariesForDiscovery(...)`.
+      - Discovery engine cache persistence now disables itself after the first missing `place_tiles.discovery_cache` schema failure, and telemetry persistence does the same for missing `discovery_exposures`.
+      - Added regression tests covering:
+         - mobile filter translation,
+         - mobile ranking consistency,
+         - shared places query-key parity for discovery filters,
+         - telemetry disabling after missing-schema failures.
+   - Remaining risks or follow-up notes:
+      - I have not yet run a live simulator/browser side-by-side comparison for the same city/filter combination; final verification still needs a runtime smoke pass.
+      - If the Supabase environment is missing migrations `065`/`066`, cache/telemetry persistence now fail closed instead of repeatedly retrying, but the environment should still be migrated for full production performance/analytics.
+
+37. **Final verification: focused tests/typechecks passed and the required regressions are covered**
+   - Timestamp: 2026-03-07 08:52:30 +0700
+   - Issue being worked on:
+      - Complete the final verification checklist and confirm the logs fully reflect the implemented fixes.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Use focused regression suites plus asset/file verification for final confirmation, and note explicitly where live environment verification could not be repeated in this shell.
+   - Why the decision was made:
+      - The affected areas now have targeted deterministic tests for duplicates, logos, session counts, query-key/filter parity, ranking, and telemetry behavior, which gives stronger regression protection than a single manual smoke pass alone.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/places/__tests__/dedupe.test.ts src/places/__tests__/branding.test.ts src/places/__tests__/queryKey.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/dedupeMerge.test.ts src/app/map/__tests__/resultQuality.test.ts src/app/api/place-logo/__tests__/route.test.ts src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/telemetry.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/homeActivityCounts.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `file apps/doWhat-web/public/logo.png apps/doWhat-web/public/icons/icon-192.png apps/doWhat-web/public/icons/icon-512.png`
+      - `rg -n "session nearby" apps/doWhat-mobile/src` (no matches)
+      - `rg -n "refresh: true" apps/doWhat-mobile/src/app/home.tsx 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx'` (only manual home pull-to-refresh remains)
+      - Attempted live VietClimb dedupe recheck via Supabase service client, but this shell had no exported Supabase service environment variables (`{"skipped":"missing supabase env"}`); earlier in-turn live verification already confirmed the pair reduced from 2 to 1 canonical place.
+   - Result:
+      - Duplicate-place regression coverage passed, including near-duplicate venue/place collapse behavior.
+      - Logo/branding regression coverage passed, and the doWhat web assets are real non-empty PNGs at the expected paths.
+      - Mobile home session-count regression coverage passed, and the old misleading `"session nearby"` copy is gone from the mobile source.
+      - Mobile discovery parity/ranking/query-key regressions passed, and discovery/telemetry missing-schema behavior is now covered.
+      - Shared/mobile/web typechecks passed after all changes.
+      - `changes_log.md` and `ASSISTANT_CHANGES_LOG.md` now reflect the investigation, decisions, fixes, tests, and remaining risks for Tasks 0-6.
+   - Remaining risks or follow-up notes:
+      - I did not complete a fresh simulator/browser visual smoke pass in this shell, so final runtime confirmation of logos and discovery ordering on-device is still recommended.
+      - Live Supabase verification could not be rerun at the end because the required service env vars were not exported in this shell session.
+
+38. **Follow-up verification fix: `/api/place-logo` route tests now pass cleanly alongside `next build`**
+   - Timestamp: 2026-03-07 09:39:02 +0700
+   - Issue being worked on:
+      - Resolve the remaining verification failure around the web `/api/place-logo` route, where `next build` and Jest were diverging on `cheerio` resolution.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts`
+   - Decision made:
+      - Keep the production route logic unchanged and fix the incompatibility at the test harness level by mocking `cheerio` inside the route test with a deterministic selector stub.
+      - Expand the route test coverage from JSON-LD + favicon fallback only to JSON-LD, meta-logo, icon-link, and fallback paths.
+   - Why the decision was made:
+      - The current production route already builds successfully in Next.js; the remaining failure was Jest resolving `cheerio` to its browser ESM entry and failing before the route logic could run.
+      - A local test mock is lower-risk than changing working production code again, and it keeps the route behavior covered without introducing another runtime/build-specific import workaround.
+   - How it was tested:
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/place-logo/__tests__/route.test.ts`
+      - `pnpm exec eslint apps/doWhat-web/src/app/api/place-logo/route.ts apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts`
+      - `pnpm --filter dowhat-web build`
+      - `pnpm --filter dowhat-web typecheck`
+      - During verification I also hit an intermediate warning/failure by running `typecheck` in parallel with `build`; because `apps/doWhat-web/tsconfig.json` includes `.next/types/**/*.ts`, the first `typecheck` failed until `next build` finished regenerating `.next/types`. I reran `typecheck` after the build completed and it passed.
+   - Result:
+      - The `/api/place-logo` route suite now passes with 4/4 tests.
+      - Web build succeeds again, including `/api/place-logo`.
+      - Web `typecheck` passes again after rerunning it in the correct order.
+      - The only remaining build warnings observed were the pre-existing `Browserslist: browsers data is 6 months old` notice and Next's informational `Using edge runtime on a page currently disables static generation for that page`.
+   - Remaining risks or follow-up notes:
+      - `apps/doWhat-web/src/lib/events/parsers/jsonld.ts` still has its own `cheerio` import path; it is not failing in the current verification cycle, but if future Jest coverage imports it directly the same browser-entry resolution issue may need to be handled there too.
+      - The Browserslist data warning is environmental maintenance, not a regression from this change, but updating `caniuse-lite` would remove it from future builds.
+
+39. **Final hardening investigation: event JSON-LD parser still had an unnecessary `cheerio` dependency**
+   - Timestamp: 2026-03-07 09:44:49 +0700
+   - Issue being worked on:
+      - Eliminate the last known build/test fragility before closing the task set completely.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Replace the event ingestion JSON-LD HTML parser’s `cheerio` dependency with a lightweight direct script extractor and add dedicated parser regression tests.
+   - Why the decision was made:
+      - The parser only needs to read `<script type="application/ld+json">...</script>` blocks from HTML; it does not need a full DOM parser.
+      - Removing `cheerio` here eliminates the remaining inconsistent test/build import path and closes the last open technical risk from the previous verification pass.
+   - How it was tested:
+      - Investigation only at this step:
+         - `rg -n "parseEventsFromHtml|parseJsonLdDocument|jsonld" apps/doWhat-web/src/lib/events -g '!**/.next/**'`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/events/parsers/jsonld.ts`
+         - `find apps/doWhat-web/src/lib/events -path '*__tests__*' -maxdepth 4 -type f | sort`
+   - Result:
+      - Confirmed `apps/doWhat-web/src/lib/events/parsers/jsonld.ts` only uses `cheerio` to select JSON-LD `<script>` tags from HTML.
+      - Confirmed there was no direct parser regression coverage yet, so this path could regress silently.
+   - Remaining risks or follow-up notes:
+      - The actual code change and tests are the next step and will be logged separately.
+
+40. **Final hardening fix: event JSON-LD parsing no longer depends on `cheerio`, and schema `@id` no longer masquerades as event URL**
+   - Timestamp: 2026-03-07 09:46:48 +0700
+   - Issue being worked on:
+      - Complete the remaining parser hardening and finish the last verification gap in the web event ingestion path.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-web/src/lib/events/parsers/jsonld.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/jsonld.test.ts`
+   - Decision made:
+      - Replace `cheerio` usage in the event JSON-LD HTML parser with a direct `<script type="application/ld+json">` extractor.
+      - Tighten event URL normalization so:
+         - `sourceUid` still keeps raw schema identifiers like `evt-1`,
+         - canonical `url` only uses actual HTTP(S) URLs or the page/source fallback, not opaque schema IDs.
+   - Why the decision was made:
+      - The parser only needed JSON-LD script extraction, so a full DOM dependency was unnecessary and carried the same Jest/build fragility already seen in the place-logo route.
+      - New regression tests exposed a real data-quality bug: non-URL `@id` values were being stored as event URLs, which would create broken outgoing links and poorer event canonicalization.
+   - How it was tested:
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/events/__tests__/jsonld.test.ts src/app/api/place-logo/__tests__/route.test.ts`
+      - `pnpm exec eslint apps/doWhat-web/src/lib/events/parsers/jsonld.ts apps/doWhat-web/src/lib/events/__tests__/jsonld.test.ts apps/doWhat-web/src/app/api/place-logo/route.ts apps/doWhat-web/src/app/api/place-logo/__tests__/route.test.ts`
+      - `pnpm --filter dowhat-web build`
+      - `pnpm --filter dowhat-web typecheck`
+      - As in the earlier follow-up, an intermediate `typecheck` run failed when launched in parallel with `build` because `.next/types` had not been regenerated yet; rerunning `typecheck` after `build` completed passed cleanly.
+   - Result:
+      - Event JSON-LD HTML parsing is now dependency-light and deterministic.
+      - Added direct parser regression coverage for:
+         - HTML JSON-LD extraction,
+         - raw JSON/graph parsing,
+         - HTML fallback when the body is not raw JSON,
+         - invalid JSON-LD block warning/skip behavior.
+      - Confirmed the parser now keeps opaque `@id` values as `sourceUid` only and prefers real event URLs/page URLs for `url`.
+      - Targeted event parser tests, `place-logo` tests, targeted lint, web build, and web typecheck all passed.
+   - Remaining risks or follow-up notes:
+      - The recurring `.next/types` race is a repo-level verification-order concern caused by `apps/doWhat-web/tsconfig.json` including `.next/types/**/*.ts`; it is not a logic regression, but future scripted verification should run `next build` before `typecheck` or avoid running them in parallel.
+      - The stale Browserslist database warning remains an environment maintenance task, not an application bug.
+
+41. **SQL/discovery architecture audit kickoff**
+   - Timestamp: 2026-03-08 14:13:17 +0700
+   - Issue being worked on:
+      - Formal decision job on whether, where, and how the SQL/discovery/query layer should be refactored for activity/place/event discovery, filters, ranking, dedupe, web/mobile consistency, performance, and reliability.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Start with an evidence-first architecture audit before any SQL changes: read current logs, discovery docs, query helpers, tests, migrations, and database utilities; map the canonical query entry points; define golden scenarios; then make a documented refactor/no-refactor decision before implementation.
+   - Why the decision was made:
+      - The request explicitly requires a formal architecture judgment rather than a blind SQL cleanup, and recent discovery-related fixes already changed web/mobile behavior. Any SQL refactor now must be justified against the actual code paths, schema shape, and runtime risks.
+   - How it was tested:
+      - Reviewed `changes_log.md` and `ASSISTANT_CHANGES_LOG.md`.
+      - Enumerated discovery/database artifacts with:
+         - `rg -n "discovery|nearby|places|events|sessions|venue_activities|place_sources|taxonomy|ranking|dedupe|materialized|search vector|tsvector|gin|index" apps packages supabase database* scripts docs -g '!**/.next/**' -g '!**/node_modules/**'`
+         - `find . -maxdepth 3 \\( -name '*discovery*' -o -name '*migration*' -o -name 'database_updates.sql' -o -name '*schema*' -o -name '*sql' \\) | sort`
+   - Result:
+      - Audit scope is established.
+      - Initial evidence confirms the discovery layer spans:
+         - Next.js API routes (`/api/nearby`, `/api/events`, `/api/places`, `/api/discovery/activities`),
+         - shared places/discovery helpers,
+         - mobile direct Supabase fallbacks,
+         - Supabase migrations/docs/scripts,
+         - and prior architecture notes in discovery docs.
+   - Remaining risks or follow-up notes:
+      - No SQL refactor decision has been made yet.
+      - The next steps are the detailed Phase 1 audit and golden-scenario baseline definition required before any implementation.
+
+42. **Phase 1 audit: discovery/query architecture classified by canonicality, fragility, and product risk**
+   - Timestamp: 2026-03-08 14:16:49 +0700
+   - Issue being worked on:
+      - Build the required Phase 1 audit of discovery-related SQL/query paths, entity canonicality, taxonomy/filter usage, and web/mobile divergence before deciding whether SQL refactoring is justified.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Classify the current discovery/query layer as a staged TypeScript orchestration over a mixed SQL substrate, not as a SQL-first pipeline.
+      - Treat `places` as the schema-canonical place entity, but explicitly record that runtime discovery still reads legacy `venues` and session/activity compatibility paths.
+      - Treat user-facing event discovery as a merged `events + sessions` model rather than a pure `events` model.
+   - Why the decision was made:
+      - The audit evidence shows that ranking, dedupe, trust scoring, and most filter semantics already live in TypeScript, while SQL is mainly used for retrieval, cache persistence, and compatibility joins.
+      - A blanket SQL rewrite would therefore move the wrong layer unless the audit demonstrates that retrieval/index/search foundations are the real limiting factor.
+   - How it was tested:
+      - Reviewed and classified the main entry points and helpers:
+         - `sed -n '1,260p' apps/doWhat-web/src/app/api/nearby/route.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+         - `sed -n '1,240p' apps/doWhat-web/src/app/api/places/route.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/app/api/events/route.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/app/api/events/queryEventsWithFallback.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/discovery/ranking.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/places/aggregator.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/venues/search.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/sessions/server.ts`
+         - `sed -n '1,220p' apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`
+         - `sed -n '1,260p' apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`
+         - `sed -n '1,240p' apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - Cross-checked schema intent and indexes in the relevant migrations already identified during the kickoff audit.
+   - Result:
+      - Query entry points and classification:
+         - `apps/doWhat-web/src/app/api/nearby/route.ts`
+            - Canonical web discovery entry point.
+            - Product-risky if changed because auto-radius expansion, debug payloads, and exposure telemetry depend on it.
+         - `apps/doWhat-web/src/lib/discovery/engine.ts`
+            - Canonical activity discovery orchestrator.
+            - Inconsistent at the storage layer because it blends RPC output, direct table reads, places fallback, and venue fallback.
+            - Performance-sensitive because it can fan out across multiple data sources.
+         - `apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+            - Duplicated wrapper over the same engine.
+            - Low SQL value to refactor independently because it mostly sanitizes and shapes the payload.
+         - `apps/doWhat-web/src/app/api/places/route.ts` + `apps/doWhat-web/src/lib/places/aggregator.ts`
+            - Canonical place discovery path.
+            - SQL-light but cache/provider heavy; strongest candidate for index/search support rather than logic migration into SQL.
+         - `apps/doWhat-web/src/app/api/events/route.ts`
+            - Canonical events endpoint at the API level.
+            - Semantically inconsistent because it merges `events` rows with session-derived pseudo-events.
+         - `apps/doWhat-web/src/app/api/events/queryEventsWithFallback.ts`
+            - Fragile compatibility shim.
+            - Necessary today because environments may lag migrations and omit columns like `event_state` or `reliability_score`.
+         - `apps/doWhat-web/src/lib/venues/search.ts`
+            - Legacy/compatibility discovery path.
+            - Product-risky because it reads `venues` directly and ranks “activity availability” independently of the canonical place pipeline.
+         - `apps/doWhat-web/src/lib/sessions/server.ts`
+            - Canonical session hydration path.
+            - Fragile because it still contains migration-detection shims for `activities.place_id` and `activities.place_label`.
+         - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+            - Canonical mobile-side filter/query normalization helper.
+            - Good parity target; low SQL refactor value by itself.
+         - `apps/doWhat-mobile/src/lib/supabasePlaces.ts` and mobile direct Supabase reads in `apps/doWhat-mobile/src/app/home.tsx` / `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+            - Inconsistent/duplicated query paths relative to web.
+            - These are a bigger consistency risk than the core web SQL itself.
+      - Canonical entity conclusions:
+         - `places` is effectively canonical in schema design and should remain the long-term canonical place model.
+         - `venues` is still runtime-significant compatibility debt, not the preferred canonical model.
+         - User-facing event discovery is currently canonicalized in code as `events + sessions`; `events` alone is not yet the full product truth.
+      - Filter/taxonomy conclusions:
+         - Taxonomy and search semantics are not applied consistently in SQL.
+         - The `activities_nearby` SQL/RPC path supports only a narrow subset of filters, while taxonomy, trust, price, time-window, and dedupe logic are applied later in TypeScript.
+         - Existing test coverage already asserts OR-style multi-intent text search and TypeScript-side dedupe/ranking behavior, which makes a full SQL migration of these semantics high-risk.
+      - Performance/bottleneck conclusions:
+         - The main likely bottlenecks are multi-source fallback fan-out, compatibility queries, and missing/weak retrieval indexes for canonical filters, not ranking-in-SQL absence by itself.
+         - The cache/materialization pieces already present (`place_tiles`, `place_tiles.discovery_cache`) suggest targeted SQL/index work may have leverage, but not a wholesale rewrite.
+   - Remaining risks or follow-up notes:
+      - This audit is still pre-decision. The next required step is to define golden discovery scenarios and use them as the baseline for refactor-option evaluation.
+      - Any SQL refactor that tries to absorb ranking/dedupe wholesale would risk diverging from the current tested TypeScript contracts unless those contracts are first normalized.
+
+43. **Phase 2 baseline: golden discovery scenarios encoded as executable regression tests**
+   - Timestamp: 2026-03-08 17:00:00 +0700
+   - Issue being worked on:
+      - Define the golden discovery scenarios required before any SQL refactor decision so discovery behavior has a stable, testable baseline.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/goldenScenarios.test.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/goldenDiscoveryScenarios.test.ts`
+   - Decision made:
+      - Encode the baseline as focused unit/contract tests instead of prose only, while reusing the existing `/api/events` payload test as the executable reference for verified-only event filtering.
+      - Keep the scenarios aligned to user-visible behavior rather than internal SQL shape so they remain valid even if the query layer changes.
+   - Why the decision was made:
+      - The architecture job requires a golden baseline before refactoring; executable scenarios are a safer reference than comments or memory.
+      - Existing tests already covered parts of the event contract, so the highest-leverage addition was to codify the missing place/activity search scenarios explicitly rather than duplicate the entire suite.
+   - How it was tested:
+      - Added and ran:
+         - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/goldenScenarios.test.ts src/app/api/events/__tests__/payload.test.ts`
+         - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/goldenDiscoveryScenarios.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+   - Result:
+      - Golden scenarios now covered explicitly:
+         - Bouldering in a Bucharest viewport returns the full matching set and excludes out-of-bounds or off-activity noise.
+         - `Natural High` search resolves correctly on web discovery.
+         - `Natural High` search ranks correctly on mobile discovery.
+         - Dedupe collapses provider duplicates without deleting distinct canonical places.
+         - Verified-only + min-accuracy event filtering remains covered by the existing `/api/events` payload contract test.
+      - Focused web suites passed `6/6`.
+      - Focused mobile suites passed `6/6`.
+   - Remaining risks or follow-up notes:
+      - These are fixture-level baselines, not live production database assertions.
+      - If SQL changes later affect live retrieval order or filtering, additional integration validation against a real Supabase dataset may still be required.
+
+44. **Phase 3/4 decision: moderate SQL refactor recommended, limited to retrieval/index support rather than discovery-brain migration**
+   - Timestamp: 2026-03-08 17:03:47 +0700
+   - Issue being worked on:
+      - Evaluate the SQL refactor options formally and decide what should and should not change before implementation.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Chosen path: **2. Moderate SQL refactor recommended — specific indexes plus query-stage normalization support, without moving ranking/dedupe/search orchestration into SQL.**
+      - What should be refactored:
+         - SQL/index support for hot geo + array-overlap + time-window retrieval paths that already exist.
+         - Canonical retrieval support around `places`/`activities`/`events`/`sessions`.
+      - What should not be refactored now:
+         - Do not rewrite the discovery engine into SQL.
+         - Do not move ranking, trust weighting, or dedupe wholesale into SQL.
+         - Do not add materialized discovery views yet.
+         - Do not add speculative GIN/JSONB/full-text indexes where the current discovery path does not actually query those operators.
+   - Why the decision was made:
+      - **Option A — Canonical entity normalization:**
+         - `places` should remain the single canonical place model.
+         - `venues` should be reduced to compatibility/fallback and ingestion-side legacy use, not discovery truth.
+         - User-facing events should remain normalized in code as `events + sessions` for now because that is the current product contract; collapsing them into one SQL source would change semantics and freshness behavior.
+      - **Option B — Query stage normalization:**
+         - The system already behaves as staged discovery in TypeScript:
+           1. geo scope
+           2. retrieval / fallback merge
+           3. metadata hydration
+           4. filter application
+           5. trust/ranking
+           6. dedupe
+         - That structure should be preserved. SQL should support the early retrieval stages better, not absorb the whole pipeline.
+      - **Option C — Index strategy:**
+         - Worth implementing where operators already exist in production code:
+           - `activities_nearby` uses PostGIS distance predicates and array overlap on `activity_types` / `tags`.
+           - `/api/events` filters `events.tags` with array overlap.
+           - discovery/session count paths query `sessions` by `activity_id` + future `starts_at`.
+         - Not worth implementing blindly:
+           - GIN on JSONB `metadata` / provider raw payloads: no hot discovery query uses those operators today.
+           - full-text `tsvector` indexes for core discovery: main map discovery search is currently app-side after retrieval, so a tsvector index would not materially improve the current path.
+      - **Option D — Materialized views / precomputed layers:**
+         - Rejected for now.
+         - The app already has `place_tiles` and `place_tiles.discovery_cache`; another materialized layer would duplicate caching while increasing freshness and refresh complexity, especially for sessions/events.
+      - **Option E — Ranking and trust scoring:**
+         - Keep in code.
+         - Current weights and heuristics are product-tuned and already covered by TypeScript tests. Moving them into SQL now would reduce explainability and increase risk of web/mobile divergence.
+      - **Option F — Filter semantics:**
+         - Current contract should be preserved and made explicit:
+           - OR within each multi-select filter family (`activityTypes`, `tags`, `traits`, `taxonomyCategories`, `priceLevels`).
+           - AND across different filter families.
+           - text search remains an additional post-retrieval matching layer, not a substitute for taxonomy filters.
+           - “verified” for activities/places remains trust-state based; for events it means confirmed location verification in event metadata.
+   - How it was tested:
+      - Evidence review only at this step:
+         - `rg -n "create index|using gist|using gin|tsvector|to_tsvector|materialized view|activities_nearby|place_tiles|venue_activities|events\\(|sessions\\(|places\\(|activities\\(" apps/doWhat-web/supabase/migrations -g '*.sql'`
+         - `rg -n "\\.from\\('activities'\\)|\\.from\\('places'\\)|\\.from\\('venues'\\)|\\.from\\('sessions'\\)|\\.from\\('events'\\)|\\.rpc\\('activities_nearby'\\)|\\.rpc\\(" apps/doWhat-web/src apps/doWhat-mobile/src -g '!**/.next/**' -g '!**/node_modules/**'`
+         - `sed -n '1,220p' apps/doWhat-web/supabase/migrations/014_places.sql`
+         - `sed -n '1,220p' apps/doWhat-web/supabase/migrations/015_events.sql`
+         - `sed -n '1,220p' apps/doWhat-web/supabase/migrations/052_activities_place_label_cleanup.sql`
+         - `sed -n '1480,2315p' apps/doWhat-web/src/lib/discovery/engine.ts`
+         - `sed -n '1,260p' apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+      - Consulted official PostgreSQL documentation on:
+         - GIN indexes
+         - GiST indexes
+         - text search indexes
+         - materialized views
+   - Result:
+      - Formal decision recorded before implementation, as required.
+      - The highest-leverage safe implementation is now scoped to:
+         - missing discovery indexes that match existing predicates/operators,
+         - plus lightweight validation to keep those SQL supports from silently regressing.
+   - Remaining risks or follow-up notes:
+      - A live `EXPLAIN ANALYZE` comparison was not possible in this shell because no verified database session/profile has been established for the target Supabase environment.
+      - Because of that, implementation should stay reversible and conservative: additive indexes and validation, not behavioral SQL rewrites.
+
+45. **Phase 5 implementation: add only the justified discovery SQL support indexes and a migration-level contract verifier**
+   - Timestamp: 2026-03-08 17:05:36 +0700
+   - Issue being worked on:
+      - Implement the highest-leverage safe SQL-side changes justified by the audit and decision: additive index support for hot discovery/event/session retrieval paths.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `apps/doWhat-web/supabase/migrations/068_discovery_query_support_indexes.sql`
+      - `scripts/verify-discovery-sql-contract.mjs`
+   - Decision made:
+      - Add one new migration containing only additive indexes:
+         - `idx_activities_geom`
+         - `idx_activities_activity_types_gin`
+         - `idx_activities_tags_gin`
+         - `idx_events_tags_gin`
+         - `idx_sessions_activity_id_starts_at`
+      - Add a dedicated verification script that asserts the discovery-critical index support remains present across migrations.
+   - Why the decision was made:
+      - These indexes directly match operators and predicates already used by the current product:
+         - `activities_nearby` uses `ST_DWithin` on `activities.geom` and array overlap on `activity_types` / `tags`.
+         - `/api/events` filters `events.tags` with array overlap.
+         - discovery/session-count paths query `sessions` by `activity_id` plus future `starts_at`.
+      - This approach improves the SQL foundation without changing product semantics, ranking weights, dedupe behavior, or the web/mobile discovery contract.
+   - How it was tested:
+      - `node scripts/verify-discovery-sql-contract.mjs`
+      - `node scripts/verify-discovery-contract.mjs`
+      - `pnpm exec eslint scripts/verify-discovery-sql-contract.mjs`
+   - Result:
+      - The new migration is present and the verifier passes.
+      - Existing discovery contract guardrails also still pass.
+      - No runtime discovery behavior was changed at this step; the change is additive and reversible at the schema-support layer.
+   - Remaining risks or follow-up notes:
+      - These are migration-level guarantees, not proof of live planner usage. Applying migration `068` to the target Supabase environment and running `EXPLAIN ANALYZE` there is still the next operational step if deeper performance measurement is required.
+      - I intentionally did **not** add speculative indexes on JSONB metadata/raw payloads, full-text vectors, or new materialized views because the current discovery path would not benefit enough to justify the added maintenance cost.
+
+46. **Final verification: decision, baseline tests, typechecks, and SQL/discovery contract checks all pass**
+   - Timestamp: 2026-03-08 17:06:26 +0700
+   - Issue being worked on:
+      - Finish the architecture task with a final verification pass and log summary.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Close the task with the moderate-refactor decision plus the implemented additive index support; no further SQL changes are justified in this turn without live database explain plans.
+   - Why the decision was made:
+      - The baseline behavior is protected by focused discovery/event/mobile tests, and the SQL support layer is now protected by a migration-level verifier.
+      - Additional changes now would move beyond the evidence gathered in this environment.
+   - How it was tested:
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint apps/doWhat-web/src/lib/discovery/__tests__/goldenScenarios.test.ts apps/doWhat-mobile/src/lib/__tests__/goldenDiscoveryScenarios.test.ts scripts/verify-discovery-sql-contract.mjs`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/goldenScenarios.test.ts src/app/api/events/__tests__/payload.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/goldenDiscoveryScenarios.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+      - `node scripts/verify-discovery-sql-contract.mjs`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Web typecheck passed.
+      - Mobile typecheck passed.
+      - Targeted ESLint passed.
+      - Focused web discovery/event suites passed `6/6`.
+      - Focused mobile discovery suites passed `6/6`.
+      - Both discovery verification scripts passed.
+      - `changes_log.md` and `ASSISTANT_CHANGES_LOG.md` now contain the full audit, decision, implementation, and verification trail for this architecture job.
+   - Remaining risks or follow-up notes:
+      - The new indexes are not active until migration `068` is applied to the target Supabase environment.
+      - No live `EXPLAIN ANALYZE` before/after measurement was possible here, so real database performance gains remain an operational follow-up after migration rollout.
+      - The next worthwhile step, if needed, is a production-like measurement pass on:
+         - `activities_nearby`
+         - event queries with `categories`
+         - discovery/session-count queries by `activity_id + starts_at`
+
+47. **Follow-up phase kickoff: post-migration verification, live plan measurement, and next-step decision**
+   - Timestamp: 2026-03-08 17:15:49 +0700
+   - Issue being worked on:
+      - Execute the next precision phase after migration `068`: determine whether it is applied in the target environment, apply it safely if needed, measure hot discovery paths with live explain plans if possible, and decide whether canonical place-scope normalization around `geom` is now justified.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Start with environment/migration-runner inspection and connectivity checks before attempting any DB mutation or measurement.
+      - Keep this pass narrow and evidence-based: migration state, explain plans, semantic regression checks, and only then a next-step SQL decision.
+   - Why the decision was made:
+      - The prior phase explicitly identified live migration application and explain-plan measurement as the correct next step, but also noted that no verified DB session was available in the shell at that time.
+      - This follow-up therefore has to prove whether live DB work is possible before making new SQL changes.
+   - How it was tested:
+      - Re-read prior architecture and verification entries:
+         - `tail -n 120 changes_log.md`
+         - `tail -n 120 ASSISTANT_CHANGES_LOG.md`
+      - Located the repo migration entry points:
+         - `rg -n "supabase db push|supabase migration|migrate|db reset|supabase link|supabase start|db push" package.json pnpm-workspace.yaml apps/doWhat-web package.json -g '!**/.next/**'`
+   - Result:
+      - Confirmed the previous state and the presence of a repo migration path (`db:migrate`).
+      - Next step is to inspect the migration runner/config and determine whether the target Supabase environment is reachable from this shell.
+   - Remaining risks or follow-up notes:
+      - No conclusion has been made yet on whether migration `068` is already applied or whether live `EXPLAIN ANALYZE` is possible.
+
+48. **Live environment check: target project is behind migrations and direct PostgreSQL access remains blocked**
+   - Timestamp: 2026-03-08 17:18:21 +0700
+   - Issue being worked on:
+      - Determine whether migration `068` is already applied and whether live explain plans can be obtained from the target Supabase environment.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Use the live Supabase REST surface as the fallback verification path because:
+         - the shell has no exported DB credentials,
+         - the repo’s env files do contain a DB URL,
+         - but direct PostgreSQL connectivity to the configured host fails from this environment.
+   - Why the decision was made:
+      - This preserves the evidence bar: use a real target-environment signal where possible rather than guessing migration state from local files.
+   - How it was tested:
+      - Confirmed env key availability without printing values:
+         - `node scripts/health-env.mjs`
+      - Confirmed direct migration path is blocked:
+         - local shell has no exported `SUPABASE_DB_URL` / `DATABASE_URL`
+         - `supabase` CLI is not installed
+         - `psql` is not installed
+         - direct `pg` connection using the DB URL from `.env.local` failed with `ENOTFOUND` on the configured DB host
+      - Queried the target project via Supabase REST using the service-role key from local env files:
+         - checked `public.schema_migrations` for `068_discovery_query_support_indexes.sql`
+         - fetched the latest applied migrations
+         - probed PostgREST plan media types against `/rest/v1/events` and `/rest/v1/rpc/activities_nearby`
+   - Result:
+      - Migration `068_discovery_query_support_indexes.sql` is **not applied** in the target environment.
+      - The latest visible applied migration is `064_security_advisor_extension_schema_cleanup.sql`; therefore `065`, `066`, `067`, and `068` are all missing remotely.
+      - Direct PostgreSQL migration application is currently blocked by network/DNS to the configured DB host from this shell.
+      - REST-based explain plans are also blocked: the project returns `406 PGRST107` for every `application/vnd.pgrst.plan...` media type tested, so PostgREST plan output is not enabled/available.
+   - Remaining risks or follow-up notes:
+      - Because neither direct PostgreSQL access nor REST explain plans are available, this pass cannot produce a true live `EXPLAIN ANALYZE` from the target environment.
+      - The next best evidence is live request timing on the currently deployed pre-068 state plus static query/index analysis.
+
+49. **Fallback live measurement: pre-068 remote timings collected, but true explain-plan evidence remains blocked**
+   - Timestamp: 2026-03-08 17:21:42 +0700
+   - Issue being worked on:
+      - Gather the safest live performance evidence still available after direct PostgreSQL and REST explain plans proved unavailable.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Measure live timing against the target project’s current pre-068 state via Supabase REST/RPC, then combine that with static query-shape analysis.
+      - Do not over-interpret these timings as “after 068” data because migration `068` is not deployed remotely.
+   - Why the decision was made:
+      - This is the only real target-environment evidence available from the current shell.
+      - It still helps identify whether the remaining bottlenecks are likely SQL-side, application-side, or environment-drift related.
+   - How it was tested:
+      - Timed 5 live runs each against the remote project using the service-role key from local env files:
+         - `activities_nearby` RPC with `lat/lng/radius/types/tags_filter`
+         - `events` table query with `tags` overlap (same semantics as `/api/events?categories=...`)
+         - `sessions` query with `activity_id IN (...)` + future `starts_at`
+         - `places` scalar bounds query (`lat/lng` range + `order=updated_at.desc`) to represent the current place fallback shape
+      - Cross-checked hot query shapes in:
+         - `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+   - Result:
+      - Live timing summaries on the current remote state:
+         - `activities_nearby_rpc`
+            - median: `244.93ms`
+            - rows returned: `0`
+            - conclusion: latency is non-trivial even with an empty result; because `068` is not applied, this does **not** measure the intended post-index state.
+         - `events_tags_overlap`
+            - median: `246.22ms`
+            - rows returned: `0`
+            - sampled event inventory: only `9` rows total, top sampled tag `community`
+            - conclusion: current timing is dominated by remote request cost and sparse inventory; no post-068 conclusion is possible.
+         - `sessions_activity_future_window_probe`
+            - median: `254.38ms`
+            - rows returned: `0`
+            - future sessions sampled from the target environment: `0`
+            - conclusion: the exact query shape can be exercised, but the production-like workload is absent in this environment.
+         - `places_scalar_bounds_query`
+            - median: `260.00ms`
+            - rows returned: `200` (hit the limit)
+            - conclusion: this remains the clearest surviving hot-path risk because the code still scopes many place fallbacks with scalar `lat/lng` predicates and `updated_at` ordering rather than `geom` predicates, so the existing `idx_places_geom` GiST index cannot help this path directly.
+      - Index usage / plan summary:
+         - true live index-usage verification remains unavailable because:
+            - direct PostgreSQL `EXPLAIN ANALYZE` is blocked,
+            - PostgREST plan media types are unavailable on the target project.
+         - Static evidence still supports:
+            - `activities_nearby` would benefit from `idx_activities_geom`, `idx_activities_activity_types_gin`, and `idx_activities_tags_gin` once `068` is deployed.
+            - `events.tags` overlap would benefit from `idx_events_tags_gin` once `068` is deployed.
+            - the future session count path would benefit from `idx_sessions_activity_id_starts_at` once `068` is deployed.
+      - Bottleneck summary:
+         - The largest confirmed remaining issue is **environment drift**: the target project is missing `060`, `065`, `066`, `067`, and `068`.
+         - The largest code-level remaining risk is **place-scope fallback queries that still use scalar `lat/lng` ranges instead of canonical `geom` scoping**.
+   - Remaining risks or follow-up notes:
+      - Because the remote environment is missing `066_place_tiles_discovery_cache.sql`, part of the intended discovery cache path is also missing there; this means current latency cannot be treated as representative of the hardened design.
+      - The next decision must therefore weigh missing-migration rollout ahead of any new SQL rewrite.
+
+50. **Operational hardening + final decision: update migration health coverage; do not change SQL further yet**
+   - Timestamp: 2026-03-08 17:21:42 +0700
+   - Issue being worked on:
+      - Close the follow-up pass with the smallest justified fix and a decision on whether canonical place-scope normalization around `geom` should proceed now.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `scripts/health-migrations.mjs`
+   - Decision made:
+      - Update `scripts/health-migrations.mjs` so repo health checks now require the discovery-critical migrations that the remote project is actually missing:
+         - `045`–`052`
+         - `060`
+         - `065`–`068`
+      - **Do not change SQL further yet.**
+      - Specifically: do **not** implement canonical place-scope normalization around `geom` in this pass.
+   - Why the decision was made:
+      - Evidence does show that canonical place-scope normalization is the next plausible SQL improvement:
+         - current place fallback queries still use scalar `lat/lng` ranges and `updated_at` ordering,
+         - therefore they cannot fully leverage the canonical `places.geom` index.
+      - But it is **not** the next correct move yet because:
+         - the target environment is still missing `060`, `065`, `066`, `067`, and `068`,
+         - there is no live post-068 measurement,
+         - there is no live explain-plan access,
+         - changing SQL again now would stack an unmeasured rewrite on top of an unapplied baseline.
+      - The highest-leverage safe change available **in this environment** was to make migration drift visible in health checks.
+   - How it was tested:
+      - Validated the health-script update with:
+         - `MIGRATIONS_HEALTH_SKIP=1 node scripts/health-migrations.mjs --dowhat`
+         - a local source assertion confirming all newly required migration filenames are present
+         - `pnpm exec eslint scripts/health-migrations.mjs scripts/verify-discovery-sql-contract.mjs`
+      - Re-ran semantic discovery verification:
+         - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/goldenScenarios.test.ts src/app/api/events/__tests__/payload.test.ts`
+         - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/goldenDiscoveryScenarios.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+         - `node scripts/verify-discovery-sql-contract.mjs`
+         - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - `scripts/health-migrations.mjs` now protects against the exact discovery-migration drift found in the target environment.
+      - Focused web semantic suites passed `6/6`.
+      - Focused mobile semantic suites passed `6/6`.
+      - `verify-discovery-sql-contract.mjs` passed.
+      - `verify-discovery-contract.mjs` passed.
+      - Final next-step decision:
+         - **Do not change SQL further yet.**
+         - First apply the missing remote migrations (`060`, `065`, `066`, `067`, `068`) from an environment with working PostgreSQL connectivity.
+         - Then rerun live `EXPLAIN ANALYZE` or enabled PostgREST plan capture.
+         - Only after that should canonical place-scope normalization around `geom` be reconsidered.
+   - Remaining risks or follow-up notes:
+      - The biggest remaining bottleneck is now partly operational, not purely technical: the target DB is behind required discovery migrations.
+      - Once migration rollout is complete and measurable, the smallest safe next SQL improvement would likely be:
+         - normalize the place fallback scope to a canonical `geom`-based query shape,
+         - keep ranking/trust/dedupe in TypeScript,
+         - and leave materialization/full-text work deferred unless real plans justify them.
+
+51. **Current-pass decision lock: broad SQL refactor rejected; finalize only the moderate SQL/discovery path, then return to filters**
+   - Timestamp: 2026-03-08 17:31:45 +0700
+   - Issue being worked on:
+      - Lock the execution mode for the current pass before making further tooling or documentation changes.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Broad SQL refactor remains rejected for now.
+      - The team is proceeding only with the moderate SQL/discovery path:
+         - migration readiness,
+         - remote verification tooling/pack,
+         - and only very narrow safe hardening if justified.
+      - Once that baseline is finalized, the next priority is the filter-system pass.
+   - Why the decision was made:
+      - Remote Supabase is still behind the required discovery migrations.
+      - Migration `068` is not applied remotely.
+      - Live explain-plan verification is unavailable from this shell.
+      - A broader SQL rewrite under those constraints would be speculative and high-risk.
+   - How it was tested:
+      - Reviewed the immediately preceding remote-state findings and prior decision records already captured in the logs.
+   - Result:
+      - Execution scope for this pass is explicitly constrained and logged before more work proceeds.
+   - Remaining risks or follow-up notes:
+      - The next actions in this pass must stay operational, deterministic, and test-backed.
+
+52. **Moderate-path finalization: harden migration readiness, add the human remote verification pack, and prepare the filter-pass handoff**
+   - Timestamp: 2026-03-08 17:38:16 +0700
+   - Issue being worked on:
+      - Finalize the moderate SQL/discovery path without changing discovery semantics so the next pass can focus on filters on top of a clean operational baseline.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `scripts/health-migrations.mjs`
+      - `docs/discovery_remote_rollout_pack.md`
+      - `docs/discovery_verification_checklist.md`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+      - `docs/filter_pass_handoff.md`
+   - Decision made:
+      - Keep the current pass operational only:
+         - improve migration-readiness reporting,
+         - package the exact remote deploy/verification steps,
+         - and explicitly **do not** change runtime discovery code or SQL semantics further.
+      - The next product pass should be **API/query contract cleanup for filters**, not UI-only polish and not a full schema redesign.
+   - Why the decision was made:
+      - The target remote is still missing `060`, `065`, `066`, `067`, and `068`, so runtime discovery changes would stack on top of an unapplied baseline.
+      - `scripts/health-migrations.mjs` is now the best leverage point because it can fail loudly and deterministically before human rollout.
+      - A reusable SQL post-deploy pack and a filter handoff reduce operator error and keep the next discovery/filter work grounded in the same baseline.
+      - There is still no evidence that another code-side discovery hardening change is justified before the remote migrations are applied and measured.
+   - How it was tested:
+      - Validated migration readiness output and failure behavior:
+         - `pnpm exec eslint scripts/health-migrations.mjs scripts/verify-discovery-sql-contract.mjs`
+         - `node scripts/health-migrations.mjs --dowhat --remote-rest --json`
+         - `node scripts/health-migrations.mjs --dowhat --json`
+         - `node scripts/health-migrations.mjs --dowhat --remote-rest --strict`
+         - `node scripts/health-migrations.mjs --dowhat --strict`
+      - Re-ran the semantic verification set after the tooling/doc updates:
+         - `node scripts/verify-discovery-sql-contract.mjs`
+         - `node scripts/verify-discovery-contract.mjs`
+         - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/goldenScenarios.test.ts src/app/api/events/__tests__/payload.test.ts`
+         - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/goldenDiscoveryScenarios.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+   - Result:
+      - `scripts/health-migrations.mjs` now:
+         - reports mode (`pg` or `rest`),
+         - supports `--json`,
+         - supports forced REST checks,
+         - falls back from unreachable direct PG to REST when safe,
+         - lists missing migrations in deterministic order with why-notes,
+         - and exits non-zero when required migrations or tables are missing.
+      - The remote-readiness message is now explicit:
+         - current known missing migrations remain `060`, `065`, `066`, `067`, and `068`.
+      - A human-run rollout pack now exists in `docs/discovery_remote_rollout_pack.md`.
+      - A copy-paste SQL verification pack now exists in `scripts/sql/discovery-postdeploy-checks.sql`.
+      - A structured next-pass handoff now exists in `docs/filter_pass_handoff.md`.
+      - Discovery verification still passed:
+         - web focused suites `6/6`,
+         - mobile focused suites `6/6`,
+         - `verify-discovery-sql-contract.mjs` passed,
+         - `verify-discovery-contract.mjs` passed.
+      - No runtime discovery semantics changed in this pass.
+   - Remaining risks or follow-up notes:
+      - The human next step is still to apply the missing remote migrations from a machine with working DB access, then run the rollout pack and post-deploy SQL checks.
+      - Until that happens, the filter pass should not assume the target environment has the `068` index baseline.
+      - After rollout, the next task should define one shared filter contract across web/mobile/backend before any major filter UI redesign.
+
+53. **Filter foundation pass kickoff: audit current filters, define a shared contract, align backend behavior, and defer UI redesign**
+   - Timestamp: 2026-03-08 17:44:56 +0700
+   - Issue being worked on:
+      - Start the filter foundation pass for discovery without redesigning the whole system.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Broad SQL refactor remains out of scope.
+      - This pass will focus on:
+         - filter audit,
+         - one shared typed filter contract,
+         - web/mobile/backend alignment,
+         - deterministic query behavior,
+         - and stronger regression coverage.
+      - Full filter UI redesign is explicitly deferred until the contract is stable.
+   - Why the decision was made:
+      - The previous pass established that the next highest-leverage work is API/query contract cleanup for filters, not more SQL rewriting or visual redesign.
+      - Current discovery/filter behavior is still split across surfaces and needs a stable typed foundation first.
+   - How it was tested:
+      - Reviewed:
+         - `changes_log.md`
+         - `ASSISTANT_CHANGES_LOG.md`
+         - `docs/filter_pass_handoff.md`
+         - current discovery/filter doc and test inventory
+   - Result:
+      - The current pass is now explicitly scoped before implementation starts.
+   - Remaining risks or follow-up notes:
+      - The audit still needs to classify every filter surface and identify duplicated or frontend-only semantics before code changes begin.
+
+54. **Filter audit: classify live filter surfaces, identify duplicated semantics, and isolate frontend-only behavior**
+   - Timestamp: 2026-03-08 17:45:00 +0700
+   - Issue being worked on:
+      - Complete Phase 1 of the filter foundation pass before any contract refactor.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Treat consumer discovery filters and host-verification filters as separate product surfaces.
+      - The shared filter contract for this pass will target discovery surfaces first:
+         - web map,
+         - mobile map,
+         - mobile home activity discovery,
+         - nearby/events API routes,
+         - and the discovery engine.
+      - `venues` page filters will be audited and cleaned only where they create misleading overlap, but they are not the canonical consumer discovery contract.
+   - Why the decision was made:
+      - The audit shows the main determinism problems live in discovery surfaces, not the host verification workflow.
+      - The `venues` page filters operate on returned verification rows, while map/home discovery filters affect what inventory is requested, ranked, and shown.
+   - How it was tested:
+      - Read and traced:
+         - `packages/shared/src/map/types.ts`
+         - `packages/shared/src/map/utils.ts`
+         - `packages/shared/src/map/api.ts`
+         - `packages/shared/src/preferences/mapFilters.ts`
+         - `packages/shared/src/preferences/activityFilters.ts`
+         - `packages/shared/src/preferences/activityFilterOptions.ts`
+         - `packages/shared/src/events/api.ts`
+         - `packages/shared/src/events/types.ts`
+         - `packages/shared/src/places/types.ts`
+         - `packages/shared/src/places/utils.ts`
+         - `apps/doWhat-web/src/lib/filters.ts`
+         - `apps/doWhat-web/src/app/api/nearby/route.ts`
+         - `apps/doWhat-web/src/app/api/events/route.ts`
+         - `apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+         - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+         - `apps/doWhat-web/src/lib/discovery/engine.ts`
+         - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+         - `apps/doWhat-web/src/app/map/page.tsx`
+         - `apps/doWhat-web/src/app/venues/page.tsx`
+         - `apps/doWhat-mobile/src/app/filter.tsx`
+         - `apps/doWhat-mobile/src/app/home.tsx`
+         - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+         - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+         - current discovery/filter tests
+   - Result:
+      - Filter surface classification:
+         - `web map`:
+            - `searchTerm`: visible purpose = search activities/events by text; actual behavior = local-only client filtering; status = **valid but frontend-only / misleading**.
+            - `activityTypes`: visible purpose = activity chips; actual behavior = backend filter via `/api/nearby`, with silent `activityTypes -> tags` fallback when support is missing; status = **valid but semantically duplicated / fragile**.
+            - `traits`: visible purpose = people/persona refinement; actual behavior = backend + client filter when supported; status = **valid but weak and mobile-divergent**.
+            - `taxonomyCategories`: visible purpose = tier-3 discovery categories; actual behavior = backend + client filter; status = **valid**.
+            - `priceLevels`, `capacityKey`, `timeWindow`: visible purpose = structured venue/activity refinement; actual behavior = backend + client filter; status = **valid**.
+            - `dataMode` (`activities` / `events` / `both`): visible purpose = result kind; actual behavior = separate local state, not part of shared filter contract; status = **valid but duplicated outside filter model**.
+         - `mobile map`:
+            - `searchText`: visible purpose = search places in view; actual behavior = local-only place text match; status = **valid but frontend-only / divergent from web backend path**.
+            - `categories`: visible purpose = place/activity taxonomy; actual behavior = backend discovery filter + local place filter; status = **valid**.
+            - `priceLevels`, `capacityKey`, `timeWindow`: visible purpose = refine places; actual behavior = backend discovery filter + local place filter; status = **valid**.
+            - `maxDistanceKm`: visible purpose = distance filter; actual behavior = local-only post-fetch place filter; status = **frontend-only / misleading**.
+            - events on mobile map are loaded separately and are not part of the same filter model; status = **web/mobile contract divergence**.
+         - `mobile home activity filters` (`/filter` + Home):
+            - `radius`, `categories`, `priceRange`, `timeOfDay`: visible purpose = tune nearby activity suggestions; actual behavior = stored as `ActivityFilterPreferences`, then partially mapped into discovery query filters and partially reimplemented in fallback Supabase session filtering; status = **valid but duplicated across two models and two code paths**.
+            - home search bar: local list search on fetched activities; status = **local-only search, outside backend contract**.
+         - `venues page`:
+            - `statusFilter` (`all` / `verified` / `needs_review` / `ai_only`): actual behavior = local filter on verification fields; status = **valid, admin-surface-specific**.
+            - `onlyOpenNow`, `onlyWithVotes`, `categorySignalOnly`, `keywordSignalOnly`, `priceLevelFilters`, `nameSearch`, `categoryFilter`: actual behavior = local filters on fetched venue rows; status = **valid but intentionally outside the consumer discovery contract**.
+         - `API / backend`:
+            - `/api/nearby`: accepts `types,tags,traits,taxonomy,prices,capacity,timeWindow`; no typed shared parser; no search text, trust filter, result kind, or sort support; status = **canonical but incomplete / duplicated parsing**.
+            - `/api/events`: separate `categories,verifiedOnly,minAccuracy`; status = **valid but isolated from discovery contract**.
+            - `/api/discovery/activities`: returns discovery inventory and filter support/facets but does not consume the same shared filter contract; status = **duplicated contract surface**.
+         - `shared / engine`:
+            - `MapFilters`, `MapFilterPreferences`, `ActivityFilterPreferences`, `NearbyQuery`, `DiscoveryFilters`, `MobileMap Filters`, and mobile-home mapping helpers currently represent overlapping filter meaning in parallel; status = **duplicated architecture**.
+      - Main root causes from the audit:
+         - search text is mostly local-only and not part of the backend discovery contract;
+         - result kind is handled outside the filter model;
+         - trust semantics live only in events or venues, not the shared discovery contract;
+         - `maxDistanceKm` on mobile map is a user-facing frontend-only filter;
+         - activity filter meaning is duplicated between `activityTypes` and `tags`;
+         - shared and backend normalization differ (`packages/shared/src/map/utils.ts` vs `apps/doWhat-web/src/lib/discovery/engine-core.ts`);
+         - mobile home fallback filtering re-implements price/time/category logic instead of reusing one contract.
+      - Explicit semantic definitions to carry into the contract refactor:
+         - multi-select taxonomy/activity filters should remain **OR within the same filter group**;
+         - text search should combine with structured filters as **AND**;
+         - `verifiedOnly` should mean only user-facing entities with verified confirmation state;
+         - `ai_only` should mean suggestion-only rows (`verification_state = suggested` or equivalent venue status);
+         - people filters should only apply when schema-backed traits are actually present/supported.
+   - Remaining risks or follow-up notes:
+      - The next step must replace the parallel filter models with one normalized shared contract before changing UI structure further.
+      - The mobile map distance filter must either become a real contract-backed geo filter or be removed from the UI.
+
+55. Filter contract implementation and backend alignment
+   - Timestamp: 2026-03-08 18:10:11 +0700
+   - Issue being worked on:
+      - FILTER FOUNDATION PASS phase 2 and phase 3.
+      - Replace parallel filter parsers and duplicated place-filter semantics with one shared typed contract used by shared request builders, `/api/nearby`, `/api/places`, web map, web places, mobile map, and fallback loaders.
+   - Files changed:
+      - `packages/shared/src/discovery/filters.ts`
+      - `packages/shared/src/discovery/index.ts`
+      - `packages/shared/src/index.ts`
+      - `packages/shared/src/map/types.ts`
+      - `packages/shared/src/map/utils.ts`
+      - `packages/shared/src/places/api.ts`
+      - `packages/shared/src/places/filtering.ts`
+      - `packages/shared/src/places/index.ts`
+      - `packages/shared/src/places/types.ts`
+      - `packages/shared/src/places/utils.ts`
+      - `packages/shared/src/preferences/mapFilters.ts`
+      - `apps/doWhat-web/src/lib/filters.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/app/api/places/route.ts`
+      - `apps/doWhat-web/src/lib/places/types.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/places/page.tsx`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `packages/shared/src/__tests__/discoveryFilters.test.ts`
+      - `packages/shared/src/places/__tests__/filtering.test.ts`
+      - `packages/shared/src/__tests__/mapApi.test.ts`
+      - `packages/shared/src/places/__tests__/queryKey.test.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/app/api/places/__tests__/route.test.ts`
+   - Decision made:
+      - Introduce one canonical `DiscoveryFilterContract` in `@dowhat/shared` with deterministic normalization, URL parse/serialize helpers, explicit `trustMode`, explicit `peopleTraits`, real `searchText`, real `maxDistanceKm`, and explicit `sortMode`.
+      - Keep ranking/dedupe orchestration code-driven; only tighten filter parsing, contract threading, and deterministic server-side filtering.
+      - Remove the duplicated category-only filter surface on the web places page and stop passing duplicate `categories + taxonomyCategories` in the mobile places query path.
+   - Why the decision was made:
+      - The audit showed the main problem was contract drift, not missing UI controls or a missing SQL abstraction.
+      - `searchText` and mobile distance were the clearest fake semantics because they were user-facing but not contract-backed.
+      - `traits` was semantically overloaded; renaming the query-layer field to `peopleTraits` makes people filtering explicit without rewriting the storage model.
+   - How it was tested:
+      - Added shared normalization tests, place-filter tests, nearby route contract tests, places route contract tests, mobile parity updates, and shared URL-serialization coverage.
+      - Full command execution still pending in the next verification step of this pass.
+   - Result:
+      - There is now one shared normalized filter contract in code.
+      - `/api/nearby` now parses the shared contract, respects `searchText`, `peopleTraits`, `trustMode`, and narrows radius by `maxDistanceKm`.
+      - `/api/places` now parses the shared contract, maps taxonomy into the canonical backend category query, and applies deterministic server-side place filtering before returning results.
+      - Web places stopped doing an extra local category filter on top of `/api/places`.
+      - Mobile map request building now includes `searchText` and `maxDistanceKm` in the shared contract and threads that contract into Supabase/OSM fallback filtering.
+   - Remaining risks or follow-up notes:
+      - Verification and typecheck may still expose integration drift from the `traits -> peopleTraits` query-layer rename.
+      - Event-route filters are still separate from the shared discovery contract; they were audited but not redesigned in this foundation pass.
+
+56. Filter foundation verification and final hardening
+   - Timestamp: 2026-03-08 18:15:04 +0700
+   - Issue being worked on:
+      - Complete the FILTER FOUNDATION PASS by fixing verification drift, running focused tests/typechecks, and confirming the repo is ready for the next filter-focused UI pass.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `packages/shared/src/places/filtering.ts`
+      - `packages/shared/src/map/types.ts`
+      - `packages/shared/src/discovery/filters.ts`
+      - `packages/shared/src/__tests__/discoveryFilters.test.ts`
+      - `packages/shared/src/__tests__/mapApi.test.ts`
+      - `apps/doWhat-web/src/app/api/places/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/places/route.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+   - Decision made:
+      - Keep the contract refactor narrow and finish by fixing only the compile/test issues introduced by contract threading.
+      - Do not expand the pass into event-filter redesign or broader ranking changes after verification succeeded.
+   - Why the decision was made:
+      - The remaining failures were all integration drift from the new shared contract, not signs that the architecture choice was wrong.
+      - Once web/shared/mobile typechecks and focused regression suites passed, there was no evidence supporting additional scope in this pass.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/discoveryFilters.test.ts src/__tests__/mapApi.test.ts src/places/__tests__/filtering.test.ts src/places/__tests__/queryKey.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/app/api/places/__tests__/route.test.ts src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm exec eslint packages/shared/src/discovery/filters.ts packages/shared/src/places/filtering.ts packages/shared/src/map/types.ts packages/shared/src/map/utils.ts packages/shared/src/places/api.ts packages/shared/src/places/types.ts packages/shared/src/places/utils.ts packages/shared/src/preferences/mapFilters.ts packages/shared/src/__tests__/discoveryFilters.test.ts packages/shared/src/__tests__/mapApi.test.ts packages/shared/src/places/__tests__/filtering.test.ts packages/shared/src/places/__tests__/queryKey.test.ts apps/doWhat-web/src/lib/filters.ts apps/doWhat-web/src/lib/discovery/engine-core.ts apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/ranking.ts apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts apps/doWhat-web/src/app/api/nearby/route.ts apps/doWhat-web/src/app/api/places/route.ts apps/doWhat-web/src/lib/places/types.ts apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/app/places/page.tsx apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts apps/doWhat-web/src/app/api/places/__tests__/route.test.ts apps/doWhat-mobile/src/lib/mobileDiscovery.ts apps/doWhat-mobile/src/lib/supabasePlaces.ts apps/doWhat-mobile/src/app/(tabs)/map/index.tsx apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - `node scripts/verify-discovery-contract.mjs`
+      - `node scripts/verify-discovery-sql-contract.mjs`
+   - Result:
+      - Shared filter-contract tests passed `9/9`.
+      - Focused web route/ranking tests passed `14/14`.
+      - Focused mobile parity tests passed `5/5`.
+      - Shared, web, and mobile typecheck passed.
+      - Targeted ESLint passed.
+      - Discovery contract verification scripts passed.
+      - The filter foundation pass is stable enough to hand off to the next UI-focused filter pass.
+   - Remaining risks or follow-up notes:
+      - `/api/events` still uses its own narrower filter query surface and should be folded into the shared contract only if the next pass decides event filters need redesign too.
+      - The next pass should redesign the filter UX on top of the stabilized contract rather than adding new filter meanings.
+
+57. Filter completion pass kickoff
+   - Timestamp: 2026-03-09 09:02:00 +0700
+   - Issue being worked on:
+      - FILTER COMPLETION PASS.
+      - The foundation pass stabilized the contract, but the real user-facing web map filter surface still shows placeholder “temporarily unavailable” states.
+   - Files to investigate first:
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/api/nearby/route.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - related tests and any filter-support helpers
+   - Decision made:
+      - Broad SQL refactor remains out of scope.
+      - This pass must remove placeholder filter blocks from the real user-facing discovery surface and either fully wire those filters end to end or remove them from the UI.
+   - Why the decision was made:
+      - From a product perspective, a visible filter section that says “temporarily unavailable” is still a broken feature.
+   - How it will be tested:
+      - Trace the exact placeholder root cause first, then add/update UI, route, and discovery tests so placeholder copy cannot silently return.
+   - Result:
+      - Kickoff logged before implementation.
+   - Remaining risks or follow-up notes:
+      - If a filter cannot be proven schema/query-backed on this surface, it must be removed rather than left visible.
+
+58. Filter completion root-cause investigation
+   - Timestamp: 2026-03-09 09:12:00 +0700
+   - Issue being worked on:
+      - Why the web map drawer renders placeholder filter sections instead of real working controls.
+   - Files investigated:
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+   - Decision made:
+      - Fix the root cause in two places:
+        1. discovery must stop collapsing filter capability to the weakest fallback source
+        2. the web map drawer must stop rendering “temporarily unavailable” / “appear when...” copy and instead only render real sections when the filter is supported and backed by actual options or active state
+   - Why the decision was made:
+      - The current `filterSupport` flow uses an `AND` merge across RPC/activity/place/venue fallback sources, so one low-fidelity fallback can disable filters for the whole surface even when the final result set contains valid taxonomy/price/time metadata.
+      - The map drawer then reads those downgraded flags and shows placeholder copy, especially before nearby data has loaded or when weaker fallback sources were merged.
+   - How it will be tested:
+      - Add/update web discovery and map-page regression tests so placeholder copy cannot return and supported filters still render as real controls.
+   - Result:
+      - Root cause confirmed; implementation can now be targeted instead of hiding the symptom.
+   - Remaining risks or follow-up notes:
+      - Unsupported saved filters also need to stop lingering in UI state once the new support semantics are in place.
+
+59. Filter completion implementation
+   - Timestamp: 2026-03-09 09:28:00 +0700
+   - Issue being worked on:
+      - Replace placeholder filter blocks on the web map discovery surface with only real, schema-backed filters.
+   - Files changed:
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/filterSupport.test.ts`
+   - Decision made:
+      - Treat discovery filter support as additive capability across sources instead of intersecting it down to the weakest fallback source.
+      - Remove the unsupported-filter warning strip and remove all “temporarily unavailable” / “appear when...” UI branches from the map drawer.
+      - Only render structured filter sections when there is real support plus actual facet/derived options or active state.
+   - Why the decision was made:
+      - The previous `AND` merge let venue/place fallback rows disable taxonomy, price, capacity, time, and people filters for the whole result set even when the canonical activities pipeline had enough metadata to support them.
+      - The map drawer then rendered broken placeholder UX instead of working controls.
+   - How it was tested:
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/page.smoke.test.tsx src/lib/discovery/__tests__/filterSupport.test.ts src/app/api/nearby/__tests__/payload.test.ts`
+      - `pnpm exec eslint apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/engine-core.ts apps/doWhat-web/src/lib/discovery/__tests__/filterSupport.test.ts`
+      - `pnpm --filter dowhat-web typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+      - `node scripts/verify-discovery-sql-contract.mjs`
+      - `rg -n "temporarily unavailable|appear when|temporarily disabled|Some filters aren't applied right now|Some filters aren&apos;t applied right now" apps/doWhat-web/src/app/map apps/doWhat-mobile/src/app -S`
+   - Result:
+      - The web map drawer no longer contains production placeholder copy for activity, people, taxonomy, price, group-size, or time-window sections.
+      - Supported filters now render as real controls; unsupported sections are removed from the drawer instead of shown as broken UI.
+      - Stale unsupported saved selections are pruned once real filter support arrives from discovery.
+      - Added regression coverage for both the UI surface and the support-merge logic that caused the issue.
+   - Remaining risks or follow-up notes:
+      - This pass fixed the user-facing web map filter surface, but it did not redesign the overall visual filter UX; that remains the next pass on top of the stabilized behavior.
+
+60. Activity-first discovery boundary kickoff
+   - Timestamp: 2026-03-09 10:02:00 +0700
+   - Issue being worked on:
+      - Introduce an explicit product boundary: doWhat discovers activities and activity-backed events, not generic food/drink/nightlife venues.
+   - Files to investigate first:
+      - `docs/activity-taxonomy.md`
+      - `docs/activity_discovery_overview.md`
+      - `packages/shared/src/activities/catalog.ts`
+      - `packages/shared/src/taxonomy/activityTaxonomy.ts`
+      - `packages/shared/src/places/filtering.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+      - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+      - `apps/doWhat-mobile/src/lib/supabasePlaces.ts`
+   - Decision made:
+      - Broad SQL refactor remains out of scope.
+      - Hospitality-first venues must be excluded from primary discovery by default unless there is strong activity evidence such as venue activity mappings, manual overrides, or real event/session support.
+   - Why the decision was made:
+      - The current taxonomy, fallback matching, and place filtering still allow cafes/bars/food-drink concepts to behave like top-level discovery targets, which conflicts with the product boundary for doWhat.
+   - How it will be tested:
+      - Add/update discovery, matching, ranking, and parity tests so restaurant/cafe/bar-only places cannot appear as primary results without activity evidence while activity-backed and user-created event locations still survive.
+   - Result:
+      - Kickoff logged before implementation.
+   - Remaining risks or follow-up notes:
+      - The taxonomy and catalog may contain hospitality-oriented legacy entries that need suppression rather than wholesale deletion if they are still used outside primary discovery.
+
+61. Shared activity-first discovery policy + taxonomy subset
+   - Timestamp: 2026-03-09 08:39:31 +0700
+   - Issue being worked on:
+      - Enforce the new activity-first product boundary in shared filter normalization, saved activity preferences, shared place filtering, and user-facing taxonomy exports.
+   - Files changed:
+      - `packages/shared/src/discovery/activityBoundary.ts`
+      - `packages/shared/src/discovery/index.ts`
+      - `packages/shared/src/discovery/filters.ts`
+      - `packages/shared/src/taxonomy/activityTaxonomy.ts`
+      - `packages/shared/src/preferences/activityFilters.ts`
+      - `packages/shared/src/places/filtering.ts`
+      - `packages/shared/src/places/index.ts`
+   - Decision made:
+      - Added one shared activity-first eligibility policy and one discovery-safe taxonomy subset instead of deleting hospitality metadata globally.
+      - Strip hospitality-first exact selections such as `coffee`, `food`, `nightlife`, `specialty-coffee-crawls`, and `natural-wine-tastings` from the normalized discovery contract and persisted activity filter preferences.
+      - Keep full taxonomy for non-discovery/internal surfaces, but expose a discovery-filtered taxonomy for user-facing discovery/filter surfaces.
+   - Why the decision was made:
+      - The same hospitality leakage was present in multiple layers, so the highest-leverage safe fix was a shared policy plus shared normalization instead of per-screen patches.
+      - Global category deletion would remove useful source evidence and create unnecessary risk for admin/verification surfaces.
+   - How it was tested:
+      - Static inspection only at this step; focused shared/web/mobile tests are still pending after the web/mobile wiring is complete.
+   - Result:
+      - Shared discovery normalization now has a single blocklist path for hospitality-first selections.
+      - Shared place filtering now excludes ineligible hospitality-first places even when no explicit filters are active.
+      - User-facing discovery can now consume a filtered taxonomy subset without losing the full taxonomy for other workflows.
+   - Remaining risks or follow-up notes:
+      - Web/mobile surfaces and discovery engine still need to switch over to the new subset/policy adapters.
+      - Ranking and place/activity matching still need explicit hospitality-aware adjustments.
+
+62. Discovery runtime boundary wiring
+   - Timestamp: 2026-03-09 08:56:00 +0700
+   - Issue being worked on:
+      - Thread the shared activity-first boundary through live discovery fallback paths, mobile ranking/filter building, and user-facing taxonomy pickers.
+   - Files changed:
+      - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+      - `packages/shared/src/activities/catalog.ts`
+      - `apps/doWhat-web/src/app/filter/page.tsx`
+      - `apps/doWhat-web/src/app/places/page.tsx`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+      - `apps/doWhat-mobile/src/app/filter.tsx`
+      - `apps/doWhat-mobile/src/components/TaxonomyCategoryPicker.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+   - Decision made:
+      - Discovery fallback rows now have to pass the shared activity-first eligibility policy before they become visible places.
+      - Legacy venue rows only count verified activities as structured evidence; AI-only tags no longer make a hospitality venue eligible by themselves.
+      - Hospitality keyword matching is being tightened, and user-facing category pickers now consume the discovery-safe taxonomy subset instead of the full taxonomy.
+   - Why the decision was made:
+      - Shared normalization alone was not enough; hospitality leakage could still re-enter through fallback discovery rows, weak keyword-derived matches, and direct UI imports of the full taxonomy.
+   - How it was tested:
+      - Tests still pending at this step; focused shared/web/mobile suites will be run after the regression cases are updated.
+   - Result:
+      - Discovery fallback and user-facing category selection now follow the same activity-first boundary.
+   - Remaining risks or follow-up notes:
+      - Existing stale keyword-generated venue mappings in remote data may still need a rematch sweep to disappear completely after deployment.
+      - Regression tests still need to be updated for the new boundary.
+
+63. Activity-first discovery boundary verification
+   - Timestamp: 2026-03-09 09:00:00 +0700
+   - Issue being worked on:
+      - Finalize and verify the new product boundary that excludes hospitality-first places from primary discovery unless they have strong activity evidence.
+   - Root causes confirmed:
+      - Full taxonomy was still being imported directly on user-facing discovery surfaces.
+      - Shared discovery normalization allowed hospitality-first values like `nightlife` and food/drink taxonomy ids to survive.
+      - Shared place filtering and discovery fallbacks did not apply an activity-first eligibility gate when no explicit filters were active.
+      - Hospitality venues could still receive activity mappings from weak keyword-only matching.
+   - Files changed or verified:
+      - `packages/shared/src/discovery/activityBoundary.ts`
+      - `packages/shared/src/discovery/filters.ts`
+      - `packages/shared/src/taxonomy/activityTaxonomy.ts`
+      - `packages/shared/src/preferences/activityFilters.ts`
+      - `packages/shared/src/places/filtering.ts`
+      - `packages/shared/src/__tests__/activityBoundary.test.ts`
+      - `packages/shared/src/__tests__/activityTaxonomy.test.ts`
+      - `packages/shared/src/__tests__/discoveryFilters.test.ts`
+      - `packages/shared/src/places/__tests__/filtering.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine.ts`
+      - `apps/doWhat-web/src/lib/discovery/ranking.ts`
+      - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+      - `apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts`
+      - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+      - `apps/doWhat-web/src/app/filter/page.tsx`
+      - `apps/doWhat-web/src/app/places/page.tsx`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - `apps/doWhat-mobile/src/app/filter.tsx`
+      - `apps/doWhat-mobile/src/components/TaxonomyCategoryPicker.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+   - Decision made:
+      - Keep hospitality metadata as source evidence, but exclude hospitality-first places from primary discovery unless at least one strong activity proof exists.
+      - Strong proof hierarchy for surviving hospitality venues is:
+        1. manual override
+        2. real event/session evidence
+        3. confirmed non-keyword venue activity mapping
+        4. structured activity signal
+        5. activity-supporting category evidence
+      - User-facing discovery surfaces now consume the discovery-safe taxonomy subset instead of the full taxonomy.
+   - Why the decision was made:
+      - This preserves useful source data for admin/internal workflows while making consumer discovery match the product boundary that doWhat is activity-first, not a food/drink finder.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/activityBoundary.test.ts src/__tests__/activityTaxonomy.test.ts src/__tests__/discoveryFilters.test.ts src/places/__tests__/filtering.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/placeActivityFilter.test.ts src/lib/places/__tests__/activityMatching.test.ts src/lib/discovery/__tests__/rankingTrustOrder.test.ts src/lib/discovery/__tests__/goldenScenarios.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/nearby/__tests__/payload.test.ts src/app/api/places/__tests__/route.test.ts`
+      - `pnpm exec eslint packages/shared/src/discovery/activityBoundary.ts packages/shared/src/discovery/filters.ts packages/shared/src/taxonomy/activityTaxonomy.ts packages/shared/src/preferences/activityFilters.ts packages/shared/src/places/filtering.ts packages/shared/src/__tests__/activityBoundary.test.ts packages/shared/src/__tests__/activityTaxonomy.test.ts packages/shared/src/__tests__/discoveryFilters.test.ts packages/shared/src/places/__tests__/filtering.test.ts apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts apps/doWhat-web/src/lib/discovery/engine.ts apps/doWhat-web/src/lib/discovery/ranking.ts apps/doWhat-web/src/lib/places/activityMatching.ts apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts apps/doWhat-web/src/lib/discovery/__tests__/rankingTrustOrder.test.ts apps/doWhat-web/src/app/filter/page.tsx apps/doWhat-web/src/app/places/page.tsx apps/doWhat-mobile/src/lib/mobileDiscovery.ts apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts apps/doWhat-mobile/src/app/filter.tsx apps/doWhat-mobile/src/components/TaxonomyCategoryPicker.tsx apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+      - `node scripts/verify-discovery-sql-contract.mjs`
+   - Result:
+      - Shared boundary tests passed `19/19`.
+      - Focused web discovery/matching/ranking/golden suites passed `15/15`.
+      - Focused mobile boundary/parity suite passed `6/6`.
+      - Web API payload/places route suites passed `11/11`.
+      - Targeted ESLint passed.
+      - Shared, web, and mobile typecheck passed.
+      - Discovery verification scripts passed.
+      - Primary discovery now suppresses restaurant/cafe/bar/nightlife-only places by default while preserving activity-backed hosts and activity-safe taxonomy families.
+   - Remaining risks or follow-up notes:
+      - Existing remote `venue_activities` rows that were generated from older keyword rules may still need a re-match or cleanup run in production data.
+      - This pass intentionally did not redesign the filter UI; the next pass can focus on the activity-first filter UX on top of the stabilized contract and boundary.
+
+64. Project operating system kickoff
+   - Timestamp: 2026-03-09 09:03:57 +0700
+   - Issue being worked on:
+      - Establish the doWhat project operating system so future implementation is governed by product truth, verification, logging, regression safety, and honest completion instead of ad-hoc AI iteration.
+   - Initial files/documents read:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `error_log.md`
+      - `ROADMAP.md`
+      - `PROJECT_STATE.md`
+      - `ENGINEERING_ROADMAP_2025.md`
+   - Decision made:
+      - Future implementation must be judged by product truth, verification, logs, and regression safety.
+      - This pass is moving the repo from ad-hoc AI-assisted iteration to controlled delivery with explicit operating documents.
+   - Why the decision was made:
+      - Existing roadmap/state docs are stale, partially overlapping, and not sufficient to guide disciplined discovery/filter/product work at the repo’s current state.
+   - How it will be tested:
+      - Audit the current repo state across discovery/filter surfaces, docs, scripts, migrations, and tests; then create/normalize the required operating documents and verify they are specific, usable, and synchronized with current code/log truth.
+   - Result:
+      - Kickoff logged before the control-system refactor.
+   - Remaining risks or follow-up notes:
+      - Some existing docs may conflict with current repo truth and will need consolidation rather than preservation.
+
+65. Project operating system audit completed
+   - Timestamp: 2026-03-09 09:18:42 +0700
+   - Issue being worked on:
+      - Audit the current repo state deeply enough to replace stale planning/state docs with a truthful project operating system.
+   - Files and areas inspected:
+      - `docs/filter_pass_handoff.md`
+      - `docs/discovery_playbook.md`
+      - `docs/discovery_verification_checklist.md`
+      - `docs/guardrails.md`
+      - `PROJECT_STATE.md`
+      - `PROJECT_OVERVIEW.md`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/venues/page.tsx`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `packages/shared/src/discovery/filters.ts`
+      - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `scripts/health-migrations.mjs`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+      - root `package.json`
+   - Decision made:
+      - Replace the lightweight root roadmap and create the missing operating files in the repo root instead of extending stale 2025 planning snapshots.
+      - Treat the current 2026 discovery/filter/log work as the source of truth, and record older docs as historical context only.
+   - Why the decision was made:
+      - The existing root docs describe old trait-vote, pilot, and roadmap priorities that no longer match the repo’s current discovery-first, activity-first stabilization work.
+      - Future AI and human passes need one operating layer that reflects the actual code, tests, migration reality, and open product risks.
+   - How it will be tested:
+      - Create normalized root operating documents, confirm the required sections exist, and verify they reference current repo realities such as shared discovery filters, activity-first discovery boundaries, remote migration drift, and remaining filter/event gaps.
+   - Result:
+      - Confirmed `ROADMAP.md` is stale and lightweight.
+      - Confirmed `CURRENT_STATE.md`, `OPEN_BUGS.md`, `QUALITY_GATES.md`, `DISCOVERY_TRUTH.md`, and `FILTER_CONTRACT.md` do not yet exist.
+      - Confirmed current truth that must be reflected in the new control system:
+        - `places` is the canonical place model.
+        - discovery/filter semantics are now partly normalized in shared code.
+        - the remote database is still behind on migrations `060`, `065`, `066`, `067`, and `068`.
+        - activity-first discovery policy is implemented in code, but UX and operational readiness are still incomplete.
+   - Remaining risks or follow-up notes:
+      - Some older docs still contain useful historical details and should be left in place as archives, not treated as current operating truth.
+
+66. Project operating system documents created and normalized
+   - Timestamp: 2026-03-09 09:31:55 +0700
+   - Issue being worked on:
+      - Create the repo-root operating system files that define current product truth, roadmap, quality gates, discovery truth, filter semantics, and ranked open bugs.
+   - Files changed:
+      - `ROADMAP.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `QUALITY_GATES.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Replace the old lightweight roadmap with a current phased roadmap tied to the repo’s actual dependencies and risks.
+      - Add explicit root-level truth documents instead of relying on scattered historical docs.
+      - Keep older documents in place as historical context, but define the new root files as the canonical operating layer going forward.
+   - Why the decision was made:
+      - The repo needed a clear control system that future human and AI contributors can use immediately without reconstructing truth from code, stale roadmaps, and partial logs.
+   - How it was tested:
+      - `ls -1 ROADMAP.md CURRENT_STATE.md OPEN_BUGS.md QUALITY_GATES.md DISCOVERY_TRUTH.md FILTER_CONTRACT.md`
+      - `rg -n "AI Operating Model|Phase A|Phase I|What Must Not Be Worked On Yet" ROADMAP.md`
+      - `rg -n "Product Surfaces|Working Areas|Fragile Areas|Known Contradictions|Data / Discovery Truth Gaps|Test / Verification State|Immediate Priorities" CURRENT_STATE.md`
+      - `rg -n "Critical|High|Medium|Low" OPEN_BUGS.md`
+      - `rg -n "Gate 1|Gate 7|Anti-hallucination Operating Rules|Reusable Pass Template|Reusable Completion Checklist" QUALITY_GATES.md`
+      - `rg -n "Product Boundary|Canonical Models|Evidence Hierarchy|Current Discovery Pipeline Summary|Desired Discovery Pipeline Summary|Known Current Deviations" DISCOVERY_TRUTH.md`
+      - `rg -n "Canonical Shared Contract|Global Semantics|## A\\. WHAT|## B\\. WHO|## C\\. TRUST / STRICTNESS|Rules Against Placeholder UX|Web / Mobile Parity Rules" FILTER_CONTRACT.md`
+      - `git status --short ROADMAP.md CURRENT_STATE.md OPEN_BUGS.md QUALITY_GATES.md DISCOVERY_TRUTH.md FILTER_CONTRACT.md changes_log.md ASSISTANT_CHANGES_LOG.md`
+   - Result:
+      - Added a current phased roadmap with explicit “do not move forward until” rules and an AI operating model.
+      - Added a brutally honest current-state file describing what works, what is fragile, and what blocks real-user readiness.
+      - Added a ranked open bug register grounded in current repo evidence.
+      - Added hard quality gates, pass templates, completion checklists, and anti-hallucination operating rules.
+      - Added canonical discovery and filter truth documents tied to the current shared contract and product boundary.
+      - Structural verification passed for all required sections.
+   - Remaining risks or follow-up notes:
+      - These docs are only useful if future passes keep them synchronized with real code, logs, and deployment truth.
+      - No automated markdown linter or doc test suite was run because this pass only changed docs/logs; verification was structural and content-based.
+
+67. Filter foundation API/query contract cleanup kickoff
+   - Timestamp: 2026-03-09 10:02:19 +0700
+   - Issue being worked on:
+      - Bring `/api/events` and remaining backend filter parsing closer to the shared discovery filter contract without pretending remote rollout, SQL proof, or final UX are complete.
+   - Files and docs read first:
+      - `ROADMAP.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `QUALITY_GATES.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `docs/filter_pass_handoff.md`
+      - `packages/shared/src/discovery/filters.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/queryEventsWithFallback.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `packages/shared/src/__tests__/discoveryFilters.test.ts`
+      - `packages/shared/src/events/api.ts`
+      - `packages/shared/src/events/utils.ts`
+   - Exact semantic drift found:
+      - `/api/events` still parses `categories`, `verifiedOnly`, and `minAccuracy` directly instead of consuming the shared normalized discovery contract.
+      - `/api/events` currently implies broader discovery-filter parity than it really supports, because it does not parse shared fields such as `kind`, `trust`, `q`, `taxonomy`, `traits`, `sort`, or `distanceKm` explicitly.
+      - Shared event fetch helpers in `packages/shared/src/events/*` still serialize the older route-specific event query shape (`verifiedOnly`, `minAccuracy`), so the narrower subset is real but not documented as a subset strongly enough in the route itself.
+   - Decision made:
+      - Keep this pass narrow: align `/api/events` to the shared contract where safe, make the supported subset explicit where full alignment is unsafe, and add regression coverage for deterministic defaults and supported/unsupported semantics.
+   - Why the decision was made:
+      - The control docs explicitly reject broad SQL rewriting, UX redesign, and speculative semantic changes in this phase.
+      - The highest-value fix is removing silent contract drift between the shared filter model and the route-level event parser.
+   - Planned files to touch:
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `packages/shared/src/events/api.ts`
+      - `packages/shared/src/events/utils.ts`
+      - `packages/shared/src/discovery/filters.ts` only if a minimal helper/export is needed
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - How it will be tested:
+      - targeted web/shared tests around event payload parsing and shared filter normalization
+      - targeted typecheck and eslint on touched files
+   - Result:
+      - Kickoff logged with the exact drift points and constrained scope before implementation.
+   - Remaining risks or follow-up notes:
+      - Remote migration rollout and live post-`068` proof remain blocked and will not be claimed as solved in this pass.
+
+68. `/api/events` filter subset aligned to the shared contract
+   - Timestamp: 2026-03-09 10:24:48 +0700
+   - Issue being worked on:
+      - Remove silent filter drift in `/api/events` by aligning it to the shared discovery contract where safe and enforcing an explicit event-only subset where full parity is still unsafe.
+   - Files changed:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/utils.ts`
+      - `packages/shared/src/events/api.ts`
+      - `packages/shared/src/__tests__/eventsQuery.test.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `ROADMAP.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Root cause:
+      - The shared discovery contract had become canonical for places/activities, but `/api/events` still parsed its own private params (`categories`, `verifiedOnly`, `minAccuracy`) and silently ignored broader discovery semantics.
+      - Internal shared event helpers also still serialized legacy event-only params, which kept the subset implicit rather than explicit.
+   - Decision made:
+      - Keep `/api/events` as a narrower subset for now because event/session truth is still not fully normalized.
+      - Move internal event query helpers toward the shared contract subset (`kind`, `q`, `types`, `tags`, `taxonomy`, `trust`) while preserving legacy aliases at the route boundary for backward compatibility.
+      - Fail fast on unsupported `/api/events` filter families (`traits`, `prices`, `capacity`, `timeWindow`, `distanceKm`, unsupported sort modes`) instead of silently ignoring them.
+   - Why the decision was made:
+      - Full contract parity is still unsafe while remote rollout, stale remote mappings, and the event/session truth pass remain open.
+      - The highest-value correction was to make event-filter behavior deterministic and honest without changing broad discovery semantics or touching SQL.
+   - Exact fix:
+      - Added canonical event query normalization in shared code so event fetchers/query keys collapse legacy aliases into one semantic subset.
+      - Updated the shared event fetcher to serialize the supported discovery-subset params instead of only the old legacy params.
+      - Updated `/api/events` to parse the shared contract subset, apply OR within structured groups, AND between search and structured filters, support `trust=verified_only` and `trust=ai_only`, return empty when `kind` excludes events, and reject unsupported filter families with HTTP 400.
+      - Documented the current event-route trust nuance that `ai_only` is a verification proxy (`unconfirmed non-session rows`) rather than a full discovery-engine suggestion-state.
+      - Added a route comment and updated the control docs to say `/api/events` is now an explicit subset, not a silent divergence point.
+   - How it was tested:
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventsQuery.test.ts src/__tests__/discoveryFilters.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/api/events/__tests__/payload.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/utils.ts packages/shared/src/events/api.ts packages/shared/src/__tests__/eventsQuery.test.ts apps/doWhat-web/src/app/api/events/route.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Shared event query tests passed `7/7`.
+      - `/api/events` payload tests passed `7/7`.
+      - Shared typecheck passed.
+      - Web typecheck passed.
+      - Targeted ESLint passed.
+      - Discovery contract guardrail script passed.
+      - `/api/events` no longer silently contradicts the shared filter contract; it now enforces a documented subset.
+   - Remaining risks or follow-up notes:
+      - `/api/events` still does not have full parity with place/activity discovery because event/session truth is still unresolved.
+      - Remote migration rollout, live post-`068` proof, and stale remote `venue_activities` cleanup remain blocked and were not claimed as solved here.
+      - The next correct pass is still remote rollout verification and event creation/hosting truth, not filter UX polish or broader SQL rewriting.
+
+69. Remote discovery rollout + post-deploy verification kickoff
+   - Timestamp: 2026-03-09 10:41:12 +0700
+   - Issue being worked on:
+      - Prepare the repo for a disciplined human-run remote rollout of discovery-critical migrations and post-deploy verification.
+   - Files and docs read first:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `ROADMAP.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `QUALITY_GATES.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `scripts/health-migrations.mjs`
+      - `scripts/verify-discovery-sql-contract.mjs`
+      - `docs/discovery_remote_rollout_pack.md`
+      - `docs/discovery_verification_checklist.md`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+      - discovery migrations `060`, `065`, `066`, `067`, `068`
+   - Decision made:
+      - This is the REMOTE DISCOVERY ROLLOUT + POST-DEPLOY VERIFICATION PASS.
+      - The purpose is to align the remote DB with the repo baseline and make the rollout/verification path clearer and safer.
+      - Broad SQL refactoring is explicitly out of scope.
+      - Filter UX redesign is explicitly deferred until this rollout is complete and verified.
+   - Why the decision was made:
+      - The control layer and open bugs agree that remote migration drift is the current blocking issue for trustworthy production discovery.
+   - How it will be tested:
+      - Audit the relevant migrations and current rollout tooling, tighten the health/verification pack where needed, then run every local/static check that this shell can support without pretending to have remote DB access.
+   - Result:
+      - Kickoff logged before modifying rollout scripts or docs.
+   - Remaining risks or follow-up notes:
+      - This shell still cannot apply the remote migrations directly, so the outcome of this pass must be operational readiness, not a false claim of remote completion.
+
+70. Remote discovery rollout readiness audit
+   - Timestamp: 2026-03-09 12:48:23 +0700
+   - Issue being worked on:
+      - Audit the existing migration-health tooling and rollout pack before making any operational changes.
+   - Files inspected:
+      - `scripts/health-migrations.mjs`
+      - `docs/discovery_remote_rollout_pack.md`
+      - `docs/discovery_verification_checklist.md`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+      - `apps/doWhat-web/supabase/migrations/060_sessions_place_label_finalize.sql`
+      - `apps/doWhat-web/supabase/migrations/065_discovery_exposures.sql`
+      - `apps/doWhat-web/supabase/migrations/066_place_tiles_discovery_cache.sql`
+      - `apps/doWhat-web/supabase/migrations/067_activity_catalog_city_keyword_pack.sql`
+      - `apps/doWhat-web/supabase/migrations/068_discovery_query_support_indexes.sql`
+   - Decision made:
+      - Keep this pass operational and narrow: improve health reporting, rollout instructions, and verification clarity only.
+   - Why the decision was made:
+      - The repo already contains the baseline rollout assets; the remaining gap is human-executable clarity and deterministic drift reporting, not missing product logic.
+      - The missing remote migrations still directly affect discovery correctness/performance:
+         - `060` session `place_label` integrity
+         - `065` discovery telemetry table
+         - `066` discovery cache column
+         - `067` activity-catalog city keyword pack
+         - `068` discovery hot-path indexes
+   - How it was investigated:
+      - Read the current migration-health script, rollout docs, SQL verification pack, and the five discovery-critical migrations themselves.
+      - Cross-checked repo references to rollout/health tooling to see what humans currently have available.
+   - Result:
+      - Confirmed the repo already has the right building blocks, but the runbook still needs tighter exact actions, clearer pass/fail criteria, and explicit caveats about what this shell cannot verify remotely.
+   - Remaining risks or follow-up notes:
+      - Remote application and live post-`068` plan verification remain blocked from this shell and must stay explicit in the final rollout pack.
+
+71. Remote rollout tooling + verification pack hardening
+   - Timestamp: 2026-03-09 12:52:21 +0700
+   - Issue being worked on:
+      - Tighten migration drift reporting and the human-run remote rollout pack so the missing discovery migrations can be applied and verified safely from a DB-connected machine.
+   - Files changed:
+      - `scripts/health-migrations.mjs`
+      - `scripts/verify-discovery-rollout-pack.mjs`
+      - `docs/discovery_remote_rollout_pack.md`
+      - `docs/discovery_verification_checklist.md`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Keep this pass operational only: better drift reporting, better rollout instructions, and stronger static verification of the rollout pack.
+      - Do not change discovery semantics, SQL behavior, ranking, or UI.
+   - Why the decision was made:
+      - The remote baseline is still blocked on unapplied migrations `060`, `065`, `066`, `067`, and `068`.
+      - The highest-value improvement available from this shell is making the human rollout path deterministic and testable.
+   - Exact fixes:
+      - `scripts/health-migrations.mjs`
+         - added explicit `status`, `missingDiscovery`, `discoveryBaselineReady`, and `nextActions` fields to the report
+         - now clearly calls out when discovery rollout is blocked by the five discovery-critical migrations
+         - now prints deterministic human output via a single stdout write
+      - `scripts/verify-discovery-rollout-pack.mjs`
+         - added a static guard that checks the rollout doc + SQL pack for the required migrations, commands, index checks, session place-label constraint check, and post-deploy `EXPLAIN (ANALYZE, BUFFERS)` follow-up
+      - `docs/discovery_remote_rollout_pack.md`
+         - added the exact human sequence, explicit manual order for `060` -> `065` -> `066` -> `067` -> `068`, stronger pass/fail expectations, post-deploy performance follow-up, and explicit caveats about what this shell cannot verify
+      - `docs/discovery_verification_checklist.md`
+         - now points humans to the rollout pack as the canonical sequence before running supplemental checks
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+         - now verifies cache/telemetry indexes, the `sessions_place_label_nonempty` constraint state, and includes optional post-deploy `EXPLAIN (ANALYZE, BUFFERS)` queries for the three hot paths
+   - Root cause found during verification:
+      - `scripts/health-migrations.mjs` mixed stdout and stderr while printing the blocked report, which caused the missing-discovery section and table section to interleave unpredictably on failure.
+   - Why that root cause mattered:
+      - This pass is supposed to make rollout failure obvious and deterministic; interleaved report output weakened exactly that goal.
+   - How it was tested:
+      - `node scripts/verify-discovery-rollout-pack.mjs`
+      - `node scripts/verify-discovery-sql-contract.mjs`
+      - `node scripts/verify-discovery-contract.mjs`
+      - `pnpm exec eslint scripts/health-migrations.mjs scripts/verify-discovery-rollout-pack.mjs scripts/verify-discovery-sql-contract.mjs`
+      - `node scripts/health-migrations.mjs --dowhat --json`
+      - `node scripts/health-migrations.mjs --dowhat --remote-rest --json`
+      - `node scripts/health-migrations.mjs --dowhat --strict`
+      - `node scripts/health-migrations.mjs --dowhat --remote-rest --strict`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/discovery/__tests__/goldenScenarios.test.ts src/app/api/events/__tests__/payload.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/goldenDiscoveryScenarios.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+   - Result:
+      - Static rollout verification passed.
+      - Discovery SQL contract verification passed.
+      - Discovery contract verification passed.
+      - Targeted ESLint passed.
+      - Focused web discovery/event tests passed `10/10`.
+      - Focused mobile discovery tests passed `7/7`.
+      - Both health-migrations JSON modes reported `status: blocked`, `missingDiscovery: 5`, and deterministic `nextActions`.
+      - Both strict health-migrations runs failed as expected because the target remote still lacks `060`, `065`, `066`, `067`, and `068`.
+      - Direct PostgreSQL connectivity is still unavailable from this shell (`getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`), so the script correctly fell back to REST when not forced and still reported the same drift.
+   - Remaining risks or follow-up notes:
+      - This pass does not apply the remote migrations and does not provide live post-`068` query-plan evidence.
+      - Older remote `venue_activities` rows may still contain stale hospitality-era matches; rollout does not clean those.
+      - After remote rollout, the next correct product/architecture pass remains:
+         1. event/session/place truth hardening
+         2. then final filter UX redesign
+
+72. Event / session / place truth hardening kickoff
+   - Timestamp: 2026-03-09 17:27:28 +0700
+   - Issue being worked on:
+      - Audit and harden the canonical truth for activities, sessions, events, and places across create flows, APIs, and web/mobile display surfaces.
+   - Files and docs read first:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `ROADMAP.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `QUALITY_GATES.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `docs/discovery_remote_rollout_pack.md`
+      - `docs/discovery_verification_checklist.md`
+      - `scripts/sql/discovery-postdeploy-checks.sql`
+   - Decision made:
+      - This is the EVENT / SESSION / PLACE TRUTH HARDENING PASS.
+      - Filter UX redesign is explicitly deferred until after this truth pass is complete.
+      - The goal is to eliminate semantic drift and user-facing contradictions between events, sessions, activities, and places without doing a broad SQL rewrite.
+   - Why the decision was made:
+      - The control docs and open bugs now identify event/session/place truth as the next product-critical layer after the remote rollout packaging work.
+   - How it will be investigated:
+      - Audit create flows, API routes, DTOs, discovery payloads, detail pages, and mobile/web surfaces before changing logic.
+   - Result:
+      - Kickoff logged before implementation.
+   - Remaining risks or follow-up notes:
+      - Remote discovery rollout is still not complete, so this pass must stay honest about anything that still depends on real remote verification.
+
+73. Event/session/place audit findings before implementation
+   - Timestamp: 2026-03-09 18:11:02 +0700
+   - Issue being worked on:
+      - Audit the current truth model across create flows, hydrated session payloads, event payloads, and mobile/web detail surfaces before applying the minimum safe hardening changes.
+   - Files inspected:
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-web/src/app/api/sessions/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/api.ts`
+      - `packages/shared/src/events/utils.ts`
+      - related route/server tests for sessions and events
+   - Root causes found:
+      - The product exposes “Create Event” on web and mobile, but both user-authored flows actually create `sessions`, not standalone `events`.
+      - `hydrateSessions()` ignores persisted `sessions.place_label` and can fall back to `activity.name`, which produces fake location labels.
+      - `/api/events` currently converts session-backed items into `EventSummary` rows that can leak `venueId` into `place_id`, blurring canonical place truth.
+      - Mobile “add event” and mobile session detail bypass the canonical web session API entirely and talk directly to Supabase, so they skip server-side place resolution and hydrated place truth.
+      - Event detail currently contains placeholder attendance/verification panels instead of truthful behavior descriptions.
+   - Canonical decisions made from the audit:
+      - In the current product, user-created content is a `session` creation flow, not a true standalone `event` creation flow.
+      - `places` remain canonical place truth.
+      - `venues` remain legacy compatibility/fallback only.
+      - This pass should make the current session-backed creation model explicit rather than inventing a broader event-creation model that the repo does not currently implement safely.
+   - Why the decisions were made:
+      - The inspected code and schema show working session creation and hydration paths, but no equivalent safe standalone user-event creation path.
+      - The highest-leverage truth fixes are to stop mislabeling sessions as events, preserve canonical place semantics in payloads, and route mobile through the same server truth path as web.
+   - How it was tested:
+      - Static code audit only at this stage via targeted `sed`/`rg` inspection before code changes.
+   - Result:
+      - Implementation scope narrowed to explicit truth fields, canonical place propagation, mobile/web parity on session APIs, and removal of misleading placeholders on touched surfaces.
+   - Remaining risks or follow-up notes:
+      - Remote migration rollout is still a separate blocker for production DB verification and must not be conflated with these code-side truth fixes.
+
+74. Event/session/place truth model hardening implementation
+   - Timestamp: 2026-03-09 18:49:14 +0700
+   - Issue being worked on:
+      - Implement the minimum safe runtime changes that make event/session/place semantics explicit and stop user-facing surfaces from mislabeling session-backed creation and legacy venue truth.
+   - Files changed:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/truth.ts`
+      - `packages/shared/src/index.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-web/src/app/page.tsx`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/components/WebMap.tsx`
+      - `apps/doWhat-mobile/src/lib/sessionApi.ts`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/activities/[id].tsx`
+      - `apps/doWhat-mobile/src/app/home.tsx`
+   - Decision made:
+      - Keep the existing product capability as session-backed creation rather than inventing a new standalone-event write path.
+      - Add explicit origin/location truth fields to event payloads and explicit location truth fields to hydrated sessions.
+      - Stop treating legacy `venueId` values as canonical `place_id` values.
+      - Route mobile create/detail flows through the web session API first so they inherit the same canonical place resolution used on web.
+   - Why the decision was made:
+      - The repo already had a working session truth path on the server.
+      - The highest-value bug fixes were payload honesty, label honesty, and web/mobile parity.
+      - Adding a new standalone user-event model would have been speculative and unsafe in this pass.
+   - Exact fixes:
+      - Added shared event-truth contract fields:
+         - `origin_kind`
+         - `location_kind`
+         - `is_place_backed`
+      - Added shared truth helpers in `packages/shared/src/events/truth.ts` and exported them from `@dowhat/shared`.
+      - `hydrateSessions()` now respects persisted `sessions.place_label` and classifies session location truth (`canonical_place`, `legacy_venue`, `custom_location`, `flexible`) instead of falling back to `activity.name` as a fake location label.
+      - Web session detail now displays canonical place-backed labels first and uses canonical place coordinates first for Maps links.
+      - `/api/events` session fallback no longer assigns `venueId` into `place_id`, no longer stuffs legacy venues into the `place` object, and annotates every event with explicit truth fields.
+      - `/api/events` and `/api/events/[id]` now keep flexible/unpinned listings explicit instead of normalizing them into fake venue labels.
+      - Event detail removed placeholder attendance/verification panels and replaced them with truthful attendance/location sections.
+      - Web and mobile creation surfaces now use “session” language instead of claiming to create standalone events.
+      - Mobile creation now POSTs to `/api/sessions` via bearer auth instead of directly inserting `activities`, `venues`, and `sessions`.
+      - Mobile session detail now fetches `/api/sessions/[id]` via bearer auth first and only falls back to direct Supabase reads if that fails.
+      - Mobile activity-detail prefill now passes `placeName` instead of an unused `venue` param so location context survives into creation.
+      - Mobile map event/session fallback rows now expose truth fields and no longer leak `venue_id` into `place_id`.
+   - Result:
+      - Canonical place truth, legacy venue truth, and flexible/custom-location truth are now structurally distinguishable in the runtime payloads touched by this pass.
+      - The most misleading product-language drift on create/session/event detail surfaces has been removed.
+   - Remaining risks or follow-up notes:
+      - Older remote `events` and `venue_activities` data may still contain legacy inconsistencies until remote rollout + cleanup work is completed.
+      - Some untouched surfaces outside this pass still say “Create event” or assume session/event equivalence and should be handled in a later UX sweep after this truth layer is verified.
+
+75. Event/session/place truth verification and control-doc update
+   - Timestamp: 2026-03-09 19:06:41 +0700
+   - Issue being worked on:
+      - Verify the truth-hardening changes with targeted lint/type/tests and align the root control docs with the new canonical local truth.
+   - Files changed:
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Root causes fixed during verification:
+      - Shared `EventPlaceSummary` still claimed `name` was always non-null even though the runtime payloads already allowed null place names.
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts` still passed an optional raw event `status` into a stricter `EventSummary` contract.
+      - `apps/doWhat-mobile/src/app/add-event.tsx` kept an unused `cents` local after switching from direct Supabase inserts to the web session API.
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx` still typed `ends_at` as always non-null even though the API and fallback data both allow null.
+   - Why the decisions were made:
+      - These were real contract mismatches surfaced by typecheck and lint; fixing them kept the new truth layer honest instead of weakening types to silence the tools.
+   - Tests and verification run:
+      - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/truth.ts packages/shared/src/__tests__/eventTruth.test.ts apps/doWhat-web/src/lib/sessions/server.ts 'apps/doWhat-web/src/app/sessions/[id]/page.tsx' apps/doWhat-web/src/app/api/events/route.ts 'apps/doWhat-web/src/app/api/events/[id]/route.ts' apps/doWhat-web/src/lib/events/presentation.ts 'apps/doWhat-web/src/app/events/[id]/page.tsx' apps/doWhat-web/src/app/create/page.tsx apps/doWhat-web/src/app/page.tsx apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/components/WebMap.tsx apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts apps/doWhat-mobile/src/lib/sessionApi.ts apps/doWhat-mobile/src/app/add-event.tsx 'apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx' 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx' 'apps/doWhat-mobile/src/app/(tabs)/activities/[id].tsx' apps/doWhat-mobile/src/app/home.tsx apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts src/__tests__/eventsQuery.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/lib/sessions/__tests__/server.test.ts src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/sessionApi.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Targeted ESLint passed.
+      - Shared tests passed `7/7`.
+      - Focused web truth tests passed `23/23`.
+      - Focused mobile truth/parity tests passed `8/8`.
+      - Shared, web, and mobile typecheck passed after tightening the event/session types.
+      - `verify-discovery-contract.mjs` passed.
+      - Root control docs now explicitly state:
+         - user-authored creation currently creates `sessions`
+         - event payloads carry `origin_kind`, `location_kind`, and `is_place_backed`
+         - remote rollout is still the operational blocker before any production performance claims
+   - Remaining risks or follow-up notes:
+      - This shell still did not complete the manual remote rollout, post-deploy DB checks, or live query-plan capture.
+      - Attendance/hosting truth on top of the now-hardened event/session/place layer still needs follow-through.
+      - Some untouched secondary surfaces still use legacy “Create event” copy and should be swept during the later UX pass.
+
+76. Final filter UX redesign kickoff
+   - Timestamp: 2026-03-09 11:53 UTC
+   - Issue being worked on:
+      - Start the FINAL FILTER UX REDESIGN PASS.
+   - Files planned for inspection and likely touch:
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/filter.tsx`
+      - `apps/doWhat-web/src/app/filter/page.tsx`
+      - `packages/shared/src/preferences/mapFilters.ts`
+      - shared filter/discovery tests and control docs
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Build this pass on top of the existing shared filter contract and hardened event/session/place truth.
+      - Broad SQL refactor remains out of scope.
+      - Unsupported placeholder filters must be removed, not displayed.
+      - The visible discovery UX must stay activity-first, not restaurant/bar/cafe-first.
+   - Why:
+      - The current repo truth says contract cleanup and truth hardening are complete enough to support the final filter UX pass, but the user-facing filter surfaces are still too fragmented and not final.
+   - How tested:
+      - Read-first audit of control docs and live filter surfaces before changing code.
+   - Result:
+      - Pass opened with the required guardrails.
+   - Remaining risks or follow-up notes:
+      - Remote rollout and live post-`068` proof are still blocked and will not be claimed in this pass.
+
+77. Final filter UX audit before implementation
+   - Timestamp: 2026-03-09 12:05 UTC
+   - Issue being worked on:
+      - Audit every visible discovery filter surface against `FILTER_CONTRACT.md` before redesigning the UX.
+   - Files inspected:
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `QUALITY_GATES.md`
+      - `packages/shared/src/discovery/filters.ts`
+      - `packages/shared/src/preferences/mapFilters.ts`
+      - `packages/shared/src/places/filtering.ts`
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/filter/page.tsx`
+      - `apps/doWhat-web/src/app/venues/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/filter.tsx`
+      - `apps/doWhat-mobile/src/components/TaxonomyCategoryPicker.tsx`
+      - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - `packages/shared/src/__tests__/discoveryFilters.test.ts`
+   - Audit findings:
+      - Web `/map`
+         - `Activities / Events / Both` toggle: valid, real result-kind control, keep.
+         - `Search by name`: valid `searchText`, keep.
+         - `Activity types`: real backend filter, but duplicates `taxonomy categories` meaning for users; merge into one activity-focus section.
+         - `People filters`: real only when trait facets exist; keep as secondary and rename to clearer participant wording.
+         - `Taxonomy categories`: real backend filter, but duplicated alongside `activity types`; keep only inside one merged activity-focus section.
+         - `Price levels`, `Group size`, `Time window`: backend-supported for activities, but too secondary for the final primary UX; remove from the visible map drawer in this pass rather than keep an overgrown panel.
+         - No trust/sort section is visible even though trust is part of the contract and `/api/nearby` supports it; add a truthful trust section.
+      - Mobile map
+         - `Search`: valid, keep, but copy currently leaks hospitality (`coffee`) and generic place language; rename/rewrite.
+         - `Categories`: valid taxonomy control, keep.
+         - `Distance`: valid and enforced via `maxDistanceKm`, keep.
+         - `Price`, `Group size`, `Working hours`: weak for place discovery because missing metadata currently passes instead of excluding unknowns in `packages/shared/src/places/filtering.ts`; remove from visible UI.
+         - `All place types` copy is too generic and not activity-first; rename.
+      - Mobile `/filter`
+         - This is a saved home/activity-preferences surface, not the live map discovery contract.
+         - Existing controls (`price`, `distance`, `time`, `activity types`) are backed by the home activity preference pipeline, but the title and copy incorrectly read like a general live discovery filter panel; rename and simplify as preferences, not map filters.
+      - Web `/filter`
+         - Same saved preference surface pattern as mobile.
+         - Not linked from the main web discovery flow right now, but the route exists and still presents older generic “Activity Filters” language; align copy with the preference meaning if touched.
+      - Web `/venues`
+         - This is a venue verification workflow, not the primary consumer discovery filter surface.
+         - Keep out of the main filter redesign except for documenting that it is secondary and separate.
+   - Decision made:
+      - Primary redesign target is web `/map` plus mobile map.
+      - Mobile `/filter` and web `/filter` will be treated as activity-preference surfaces and cleaned up for honesty, not folded into the live map contract.
+      - `/venues` stays secondary and out of the main consumer filter architecture.
+   - Why:
+      - This keeps the pass focused on real discovery UX while removing misleading or weak controls instead of preserving them for completeness.
+   - How tested:
+      - Static code audit only at this stage.
+   - Result:
+      - Keep / merge / remove decisions are now explicit before implementation.
+   - Remaining risks or follow-up notes:
+      - Price/capacity/time remain in the backend contract for specialized or future surfaces, but they will no longer be part of the primary consumer map UX after this pass.
+
+78. Timestamp: 2026-03-09 12:20 UTC
+   - Issue being worked on: Final filter UX redesign implementation cleanup and regression coverage.
+   - Files changed:
+      - `apps/doWhat-web/src/app/map/page.tsx`
+      - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+   - Decision made:
+      - Removed the last unused web-map helper left behind by the drawer simplification.
+      - Tightened the trust-chip smoke test to assert the real duplicated UI state intentionally: one visible trust option in the drawer plus one active filter chip.
+      - Added a mobile regression test that locks the final supported map filter copy and the split between live map filters and saved activity preferences.
+   - Why the decision was made:
+      - The first focused lint/test run surfaced only implementation residue, not a product-level flaw, so the correct response was to fix the exact leftovers and strengthen regression coverage on the final visible filter surface.
+   - How it was tested:
+      - `pnpm exec eslint ...touched filter files...` (first pass surfaced one unused helper)
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/discoveryFilters.test.ts src/__tests__/mapApi.test.ts src/__tests__/mapFilters.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/page.smoke.test.tsx` (first pass surfaced the duplicate trust-label assertion issue)
+   - Result:
+      - The redesign pass now has explicit fixes for the first focused failures and added mobile regression coverage for the supported final filter set.
+   - Remaining risks or follow-up notes:
+      - Full focused verification still needs to be rerun after these cleanup patches, then the control docs need to be updated with the final visible filter architecture.
+
+79. Timestamp: 2026-03-09 12:42 UTC
+   - Issue being worked on: Final filter UX redesign completion, mobile/web parity hardening, and control-layer normalization.
+   - Files changed:
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts`
+      - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `FILTER_CONTRACT.md`
+      - `DISCOVERY_TRUTH.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Added `trustMode` to the mobile map filter surface so mobile no longer lags the shared contract semantics exposed on web.
+      - Passed the safe filter subset (`searchText`, `taxonomyCategories`, `trustMode`) into the mobile events rail query so the visible rail stays aligned with the active map filters.
+      - Declared the final visible primary filter architecture in the control docs and removed “final filter UX redesign” from the immediate-open priority list.
+   - Why the decision was made:
+      - The first redesign implementation still left a product-level mismatch: web exposed result strictness while mobile did not. That would have violated the parity rule for core filter semantics. Fixing that was higher leverage than further cosmetic work.
+   - How it was tested:
+      - `pnpm exec eslint packages/shared/src/preferences/mapFilters.ts packages/shared/src/__tests__/mapFilters.test.ts apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx apps/doWhat-mobile/src/lib/mobileDiscovery.ts apps/doWhat-mobile/src/lib/__tests__/mobileDiscovery.test.ts apps/doWhat-mobile/src/app/(tabs)/map/index.tsx apps/doWhat-mobile/src/app/filter.tsx apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts apps/doWhat-web/src/app/filter/page.tsx`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/discoveryFilters.test.ts src/__tests__/mapApi.test.ts src/__tests__/mapFilters.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand src/app/map/__tests__/page.smoke.test.tsx`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/app/__tests__/map-filter-surface.test.ts src/lib/__tests__/mobileDiscovery.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck && pnpm --filter dowhat-web typecheck && pnpm --filter doWhat-mobile typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Final visible web map filters: search, result kind, result strictness, merged activity focus, people vibe when backed by facets, active chips, clear all.
+      - Final visible mobile map filters: search, activity categories, distance, result strictness, active chips, reset/apply.
+      - Price/group/time placeholder sections are gone from the primary consumer map UX, and web/mobile contract semantics are now aligned on the supported core filters.
+      - Control docs now describe the completed primary filter UX truth instead of treating it as an upcoming pass.
+   - Remaining risks or follow-up notes:
+      - Remote migration rollout and post-`068` live verification are still outstanding and still block production performance claims.
+      - `/api/events` remains an explicit subset of the full discovery contract.
+      - Secondary surfaces may still need occasional truth/copy sweeps when they are actively touched, but the primary filter architecture is now considered complete on the touched discovery surfaces.
+
+80. Timestamp: 2026-03-09 12:48 UTC
+   - Issue being worked on: Final control-doc truth check for the completed filter UX pass.
+   - Files changed:
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Corrected the contract doc to say `result kind` is currently visible on web map only, while mobile map remains place-first.
+      - Corrected the activity-type supported-surface note so it no longer implies the saved preference screens are using the live discovery contract.
+   - Why the decision was made:
+      - The final pass must not leave even small doc-level lies behind. The control layer has to match the verified implementation exactly.
+   - How it was tested:
+      - Static doc truth check against the verified implementation and focused test results from this pass.
+   - Result:
+      - The control docs now describe the final visible filter architecture without overstating mobile parity beyond what the code actually exposes.
+   - Remaining risks or follow-up notes:
+      - Mobile still intentionally omits the web-only result-kind toggle because the mobile map surface remains place-first.

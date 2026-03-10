@@ -344,7 +344,7 @@ export default function CreateEventPage() {
       const la = parseFloat(lat);
       const ln = parseFloat(lng);
       if (Number.isNaN(la) || Number.isNaN(ln)) {
-        throw new Error('Location is required to create an event. Please allow location access or enter coordinates.');
+        throw new Error('Location is required to create a session. Please allow location access or enter coordinates.');
       }
 
       const payload = {
@@ -372,7 +372,7 @@ export default function CreateEventPage() {
       const result = (await response.json()) as CreateSessionResponse;
       const sessionId = extractSessionId(result);
       if (!response.ok || !sessionId) {
-        throw new Error(result?.error || 'Failed to create event.');
+        throw new Error(result?.error || 'Failed to create session.');
       }
 
       if (typeof window !== 'undefined') {
@@ -382,7 +382,7 @@ export default function CreateEventPage() {
         );
       }
 
-      setMsg('Event created successfully!');
+      setMsg('Session created successfully!');
       const redirectTarget = buildReturnTarget(prefill.returnTo, sessionId);
       setTimeout(() => {
         router.push(redirectTarget as Route);
@@ -415,7 +415,10 @@ export default function CreateEventPage() {
         ← Go back
       </button>
       
-      <h1 className="mb-6 text-3xl font-bold">Create Event</h1>
+      <h1 className="text-3xl font-bold">Create Session</h1>
+      <p className="mb-6 mt-2 text-sm text-gray-600">
+        This flow creates a scheduled doWhat session tied to an activity and location.
+      </p>
       
       {err && (
         <div className="mb-4 rounded-lg bg-red-50 p-4 text-red-700 border border-red-200">
@@ -590,7 +593,7 @@ export default function CreateEventPage() {
                 color: '#374151',
               }}
             >
-              <div className="mb-2 font-medium">We need your location to create an event.</div>
+              <div className="mb-2 font-medium">We need your location to create a session.</div>
               {locationStatus === 'loading' && <div>📍 Getting your location…</div>}
               {locationStatus === 'denied' && (
                 <div>
@@ -703,7 +706,7 @@ export default function CreateEventPage() {
           disabled={disableSubmit}
           className="w-full rounded-lg bg-brand-teal px-4 py-3 text-white font-semibold hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-brand-teal focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {saving ? 'Creating Event...' : 'Create Event'}
+          {saving ? 'Creating Session...' : 'Create Session'}
         </button>
       </form>
     </div>

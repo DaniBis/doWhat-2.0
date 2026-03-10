@@ -1,3 +1,5 @@
+import type { DiscoveryFilterContract } from '@dowhat/shared';
+
 export type PlaceProvider = 'openstreetmap' | 'foursquare' | 'google_places';
 
 export interface ViewportBounds {
@@ -8,6 +10,7 @@ export interface ViewportBounds {
 export interface PlacesQuery {
   bounds: ViewportBounds;
   categories?: string[];
+  discoveryFilters?: DiscoveryFilterContract;
   limit?: number;
   forceRefresh?: boolean;
   city?: string;

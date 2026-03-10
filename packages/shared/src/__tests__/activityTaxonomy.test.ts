@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@jest/globals";
 
 import {
+  activityDiscoveryTaxonomy,
   activityTaxonomyVersion,
   buildTagLookup,
+  filterTaxonomyForActivityDiscovery,
   flattenTaxonomy,
+  getDiscoveryTier3Ids,
   getTier3Category,
   resolveTagToTier3,
 } from "../taxonomy";
@@ -46,5 +49,17 @@ describe("activityTaxonomy", () => {
     flattenTaxonomy().forEach(entry => {
       expect(entry.tags.length).toBeGreaterThan(0);
     });
+  });
+
+  it("builds a discovery-safe taxonomy subset without hospitality-first branches", () => {
+    const discoveryTaxonomy = filterTaxonomyForActivityDiscovery();
+    const discoveryIds = new Set(getDiscoveryTier3Ids(discoveryTaxonomy));
+    const relabeledTier1 = activityDiscoveryTaxonomy.find((entry) => entry.id === "discover-taste");
+
+    expect(discoveryIds.has("specialty-coffee-crawls")).toBe(false);
+    expect(discoveryIds.has("street-food-hunts")).toBe(false);
+    expect(discoveryIds.has("natural-wine-tastings")).toBe(false);
+    expect(discoveryIds.has("architecture-walks")).toBe(true);
+    expect(relabeledTier1?.label).toBe("Explore & Culture");
   });
 });

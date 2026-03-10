@@ -7,6 +7,7 @@ export interface CreateNearbyActivitiesFetcherOptions {
   buildUrl: NearbyUrlFactory;
   fetchImpl?: typeof fetch;
   includeCredentials?: boolean;
+  timeoutMs?: number;
 }
 
 export interface FetchNearbyActivitiesArgs extends MapActivitiesQuery {
@@ -16,8 +17,50 @@ export interface FetchNearbyActivitiesArgs extends MapActivitiesQuery {
 
 export type FetchNearbyActivities = (query: FetchNearbyActivitiesArgs) => Promise<MapActivitiesResponse>;
 
+const DEFAULT_NEARBY_FETCH_TIMEOUT_MS = 8_000;
+
+const createAbortError = (message: string) => {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+};
+
+const createRequestSignal = (signal: AbortSignal | undefined, timeoutMs: number) => {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onAbort = () => controller.abort(signal?.reason ?? createAbortError('Nearby activities request aborted.'));
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createAbortError('Nearby activities request timed out.'));
+  }, timeoutMs);
+
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timer);
+      controller.abort(signal.reason ?? createAbortError('Nearby activities request aborted.'));
+      return {
+        signal: controller.signal,
+        cleanup: () => undefined,
+        didTimeOut: () => timedOut,
+      };
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    },
+    didTimeOut: () => timedOut,
+  };
+};
+
 export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFetcherOptions): FetchNearbyActivities => {
-  const { buildUrl, fetchImpl, includeCredentials } = options;
+  const { buildUrl, fetchImpl, includeCredentials, timeoutMs = DEFAULT_NEARBY_FETCH_TIMEOUT_MS } = options;
   const http = fetchImpl ?? globalThis.fetch;
   if (!http) {
     throw new Error('Global fetch API is not available. Pass fetchImpl explicitly.');
@@ -36,14 +79,25 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
       url.searchParams.set(key, value);
     });
 
-    const res = await http(url.toString(), {
-      method: 'GET',
-      signal,
-      credentials: includeCredentials ? 'include' : 'same-origin',
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+    const request = createRequestSignal(signal, timeoutMs);
+    let res: Response;
+    try {
+      res = await http(url.toString(), {
+        method: 'GET',
+        signal: request.signal,
+        credentials: includeCredentials ? 'include' : 'same-origin',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+    } catch (error) {
+      if (request.didTimeOut()) {
+        throw new Error('Nearby activities request timed out.');
+      }
+      throw error;
+    } finally {
+      request.cleanup();
+    }
 
     if (!res.ok) {
       let info: unknown = null;

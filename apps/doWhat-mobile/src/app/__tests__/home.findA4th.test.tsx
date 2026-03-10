@@ -3,6 +3,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 let mockRouterPush: jest.Mock;
 const mockUseRankedOpenSessions = jest.fn();
+const mockNearbyActivitiesFetcher = jest.fn(async () => ({ activities: [] }));
 
 jest.mock('expo-router', () => {
   const React = jest.requireActual<typeof import('react')>('react');
@@ -89,6 +90,7 @@ jest.mock('@dowhat/shared', () => {
     ...actual,
     trackFindA4thImpression: jest.fn(),
     trackFindA4thCardTap: jest.fn(),
+    createNearbyActivitiesFetcher: () => mockNearbyActivitiesFetcher,
     createPlacesFetcher: () => async () => ({ places: [] }),
     getCityConfig: () => ({
       slug: 'test-city',
@@ -162,6 +164,8 @@ describe('HomeScreen Find a 4th hero', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseRankedOpenSessions.mockReset();
+    mockNearbyActivitiesFetcher.mockReset();
+    mockNearbyActivitiesFetcher.mockResolvedValue({ activities: [] });
     supabaseTableData = {
       profiles: null,
       user_sport_profiles: [],
@@ -238,5 +242,26 @@ describe('HomeScreen Find a 4th hero', () => {
         ],
       }),
     );
+  });
+
+  it('exits the initial loading skeleton when discovery requests fail', async () => {
+    mockNearbyActivitiesFetcher.mockRejectedValue(new Error('Nearby activities request timed out.'));
+    mockUseRankedOpenSessions.mockReturnValue({
+      sessions: [],
+      isLoading: false,
+      error: null,
+      refresh: jest.fn(async () => {
+        throw new Error('Open sessions request timed out.');
+      }),
+    });
+
+    const { queryByText, getByText } = render(<HomeScreen />);
+
+    expect(queryByText('🔄 Loading doWhat...')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(queryByText('🔄 Loading doWhat...')).toBeNull();
+      expect(getByText('Nearby Activities')).toBeTruthy();
+    });
   });
 });

@@ -1,5 +1,10 @@
 import ngeohash from 'ngeohash';
 
+import {
+  normalizeDiscoveryFilterContract,
+  type DiscoveryFilterContract,
+  type NormalizedDiscoveryFilterContract,
+} from '@dowhat/shared';
 import type { CapacityFilterKey, TimeWindowKey } from '@dowhat/shared';
 
 export type DiscoveryBounds = {
@@ -7,25 +12,8 @@ export type DiscoveryBounds = {
   ne: { lat: number; lng: number };
 };
 
-export type DiscoveryFilters = {
-  activityTypes?: string[];
-  tags?: string[];
-  traits?: string[];
-  taxonomyCategories?: string[];
-  priceLevels?: number[];
-  capacityKey?: CapacityFilterKey;
-  timeWindow?: TimeWindowKey;
-};
-
-export type NormalizedDiscoveryFilters = {
-  activityTypes: string[];
-  tags: string[];
-  traits: string[];
-  taxonomyCategories: string[];
-  priceLevels: number[];
-  capacityKey: CapacityFilterKey;
-  timeWindow: TimeWindowKey;
-};
+export type DiscoveryFilters = DiscoveryFilterContract;
+export type NormalizedDiscoveryFilters = NormalizedDiscoveryFilterContract;
 
 export type DiscoveryItem = {
   id: string;
@@ -33,9 +21,11 @@ export type DiscoveryItem = {
   venue?: string | null;
   place_id?: string | null;
   place_label?: string | null;
+  website?: string | null;
   lat: number;
   lng: number;
   distance_m?: number | null;
+  starts_at?: string | null;
   activity_types?: string[] | null;
   tags?: string[] | null;
   traits?: string[] | null;
@@ -74,6 +64,39 @@ export type DiscoveryFilterSupport = {
   capacityKey: boolean;
   timeWindow: boolean;
 };
+
+export const EMPTY_DISCOVERY_FILTER_SUPPORT: DiscoveryFilterSupport = {
+  activityTypes: false,
+  tags: false,
+  traits: false,
+  taxonomyCategories: false,
+  priceLevels: false,
+  capacityKey: false,
+  timeWindow: false,
+};
+
+export const FULL_DISCOVERY_FILTER_SUPPORT: DiscoveryFilterSupport = {
+  activityTypes: true,
+  tags: true,
+  traits: true,
+  taxonomyCategories: true,
+  priceLevels: true,
+  capacityKey: true,
+  timeWindow: true,
+};
+
+export const mergeDiscoveryFilterSupport = (
+  current: DiscoveryFilterSupport,
+  next: DiscoveryFilterSupport,
+): DiscoveryFilterSupport => ({
+  activityTypes: current.activityTypes || next.activityTypes,
+  tags: current.tags || next.tags,
+  traits: current.traits || next.traits,
+  taxonomyCategories: current.taxonomyCategories || next.taxonomyCategories,
+  priceLevels: current.priceLevels || next.priceLevels,
+  capacityKey: current.capacityKey || next.capacityKey,
+  timeWindow: current.timeWindow || next.timeWindow,
+});
 
 export type DiscoveryFacet = { value: string; count: number };
 
@@ -157,9 +180,6 @@ export const MAX_CACHE_ENTRIES = 30;
 export const MAX_CACHE_ITEMS = 2000;
 const DISCOVERY_CACHE_KEY_VERSION = 4;
 
-const CAPACITY_KEYS = new Set<CapacityFilterKey>(['any', 'couple', 'small', 'medium', 'large']);
-const TIME_WINDOW_KEYS = new Set<TimeWindowKey>(['any', 'open_now', 'morning', 'afternoon', 'evening', 'late']);
-
 export const roundCoordinate = (value: number, precision = 6): number =>
   Number.isFinite(value) ? Number(value.toFixed(precision)) : 0;
 
@@ -185,30 +205,8 @@ export const normalizeList = (values?: readonly (string | null | undefined)[] | 
   return Array.from(new Set(cleaned)).sort((a, b) => a.localeCompare(b));
 };
 
-const normalizeNumberValues = (values?: readonly (number | null | undefined)[] | null): number[] => {
-  if (!values?.length) return [];
-  const cleaned = values
-    .map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null))
-    .filter((value): value is number => value != null)
-    .filter((value) => value >= 1 && value <= 4);
-  return Array.from(new Set(cleaned)).sort((a, b) => a - b);
-};
-
-const normalizeCapacityKey = (value: unknown): CapacityFilterKey =>
-  CAPACITY_KEYS.has(value as CapacityFilterKey) ? (value as CapacityFilterKey) : 'any';
-
-const normalizeTimeWindow = (value: unknown): TimeWindowKey =>
-  TIME_WINDOW_KEYS.has(value as TimeWindowKey) ? (value as TimeWindowKey) : 'any';
-
-export const normalizeFilters = (filters?: DiscoveryFilters): NormalizedDiscoveryFilters => ({
-  activityTypes: normalizeList(filters?.activityTypes ?? null),
-  tags: normalizeList(filters?.tags ?? null),
-  traits: normalizeList(filters?.traits ?? null),
-  taxonomyCategories: normalizeList(filters?.taxonomyCategories ?? null),
-  priceLevels: normalizeNumberValues(filters?.priceLevels ?? null),
-  capacityKey: normalizeCapacityKey(filters?.capacityKey),
-  timeWindow: normalizeTimeWindow(filters?.timeWindow),
-});
+export const normalizeFilters = (filters?: DiscoveryFilters): NormalizedDiscoveryFilters =>
+  normalizeDiscoveryFilterContract(filters);
 
 export const computeTileKey = (center: { lat: number; lng: number }): string =>
   ngeohash.encode(center.lat, center.lng, TILE_PRECISION);

@@ -1,4 +1,8 @@
+import type { DiscoveryResultKind, DiscoveryTrustMode } from '../discovery';
+
 export type EventState = 'scheduled' | 'canceled';
+export type EventOriginKind = 'session' | 'event';
+export type EventLocationKind = 'canonical_place' | 'legacy_venue' | 'custom_location' | 'flexible';
 export type EventVerificationStatus =
   | 'verified'
   | 'rejected'
@@ -9,7 +13,7 @@ export type EventVerificationStatus =
 
 export interface EventPlaceSummary {
   id: string;
-  name: string;
+  name: string | null;
   lat: number | null;
   lng: number | null;
   address: string | null;
@@ -44,6 +48,9 @@ export interface EventSummary {
   place?: EventPlaceSummary | null;
   verification_confirmations?: number | null;
   verification_required?: number | null;
+  origin_kind?: EventOriginKind | null;
+  location_kind?: EventLocationKind | null;
+  is_place_backed?: boolean | null;
 }
 
 export interface EventsResponse {
@@ -55,8 +62,14 @@ export interface EventsQuery {
   ne?: { lat: number; lng: number };
   from?: string;
   to?: string;
-  categories?: string[];
   limit?: number;
+  resultKinds?: DiscoveryResultKind[];
+  searchText?: string;
+  activityTypes?: string[];
+  tags?: string[];
+  taxonomyCategories?: string[];
+  trustMode?: DiscoveryTrustMode;
+  categories?: string[];
   verifiedOnly?: boolean;
   minAccuracy?: number;
 }

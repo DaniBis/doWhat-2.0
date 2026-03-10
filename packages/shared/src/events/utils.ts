@@ -1,3 +1,4 @@
+import { normalizeDiscoveryFilterContract } from '../discovery';
 import type { EventsQuery, EventSummary } from './types';
 
 export const sortEventsByStart = (events: EventSummary[]): EventSummary[] =>
@@ -22,28 +23,54 @@ export const formatEventTimeRange = (event: EventSummary): { start: Date; end?: 
 
 const roundCoord = (value: number | undefined) => (typeof value === 'number' ? Number(value.toFixed(6)) : null);
 
-const normaliseCategories = (categories?: string[] | null): string[] =>
-  (categories ?? [])
-    .map((value) => value?.trim().toLowerCase())
-    .filter((value): value is string => Boolean(value))
-    .sort();
+export const normalizeEventsQuery = (query: EventsQuery) => {
+  const normalizedFilters = normalizeDiscoveryFilterContract({
+    resultKinds: query.resultKinds,
+    searchText: query.searchText,
+    activityTypes: query.activityTypes,
+    tags: [...(query.tags ?? []), ...(query.categories ?? [])],
+    taxonomyCategories: query.taxonomyCategories,
+    trustMode: query.trustMode ?? (query.verifiedOnly ? 'verified_only' : undefined),
+  });
+
+  return {
+    sw: query.sw ? { lat: roundCoord(query.sw.lat), lng: roundCoord(query.sw.lng) } : null,
+    ne: query.ne ? { lat: roundCoord(query.ne.lat), lng: roundCoord(query.ne.lng) } : null,
+    from: query.from ?? null,
+    to: query.to ?? null,
+    limit: query.limit ?? null,
+    filters: {
+      resultKinds: normalizedFilters.resultKinds,
+      searchText: normalizedFilters.searchText,
+      activityTypes: normalizedFilters.activityTypes,
+      tags: normalizedFilters.tags,
+      taxonomyCategories: normalizedFilters.taxonomyCategories,
+      trustMode: normalizedFilters.trustMode,
+    },
+    minAccuracy:
+      typeof query.minAccuracy === 'number' && Number.isFinite(query.minAccuracy)
+        ? Math.max(0, Math.min(100, Math.round(query.minAccuracy)))
+        : null,
+  } as const;
+};
 
 export const eventsQueryKey = (query: EventsQuery) => {
-  const categories = normaliseCategories(query.categories);
+  const normalized = normalizeEventsQuery(query);
   return [
     'events',
     {
-      sw: query.sw ? { lat: roundCoord(query.sw.lat), lng: roundCoord(query.sw.lng) } : null,
-      ne: query.ne ? { lat: roundCoord(query.ne.lat), lng: roundCoord(query.ne.lng) } : null,
-      from: query.from ?? null,
-      to: query.to ?? null,
-      categories,
-      limit: query.limit ?? null,
-      verifiedOnly: query.verifiedOnly ?? false,
-      minAccuracy:
-        typeof query.minAccuracy === 'number' && Number.isFinite(query.minAccuracy)
-          ? Math.max(0, Math.min(100, Math.round(query.minAccuracy)))
-          : null,
+      sw: normalized.sw,
+      ne: normalized.ne,
+      from: normalized.from,
+      to: normalized.to,
+      resultKinds: normalized.filters.resultKinds,
+      searchText: normalized.filters.searchText,
+      activityTypes: normalized.filters.activityTypes,
+      tags: normalized.filters.tags,
+      taxonomyCategories: normalized.filters.taxonomyCategories,
+      limit: normalized.limit,
+      trustMode: normalized.filters.trustMode,
+      minAccuracy: normalized.minAccuracy,
     },
   ] as const;
 };

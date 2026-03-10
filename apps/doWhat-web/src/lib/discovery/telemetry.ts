@@ -62,6 +62,7 @@ const dedupeDropRate = (debug?: DiscoveryDebug): number | null => {
 };
 
 let warnedExposureInsertFailure = false;
+let exposurePersistenceDisabled = false;
 let exposureQueue: Array<{
   requestId: string | null;
   query: Record<string, unknown>;
@@ -69,6 +70,23 @@ let exposureQueue: Array<{
   at: string;
 }> = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const describeErrorMessage = (error: unknown): string => {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return '';
+};
+
+const isMissingExposureSchemaError = (error: unknown): boolean => {
+  const message = describeErrorMessage(error).toLowerCase();
+  return message.includes('discovery_exposures') && (
+    message.includes('does not exist')
+    || message.includes('relation')
+    || message.includes('schema cache')
+  );
+};
 
 const persistExposureBatch = async (
   rows: Array<{
@@ -79,6 +97,7 @@ const persistExposureBatch = async (
   }>,
 ) => {
   if (!rows.length) return;
+  if (exposurePersistenceDisabled) return;
   const client = getOptionalServiceClient();
   if (!client) return;
   const payload = rows.map((row) => ({
@@ -109,6 +128,9 @@ const flushExposureQueue = async (): Promise<void> => {
   try {
     await persistExposureBatch(rows);
   } catch (error) {
+    if (isMissingExposureSchemaError(error)) {
+      exposurePersistenceDisabled = true;
+    }
     if (!warnedExposureInsertFailure) {
       console.warn('[discovery.exposure] failed to persist sampled exposure batch', error);
       warnedExposureInsertFailure = true;
@@ -167,6 +189,7 @@ export const __telemetryTesting = {
   },
   resetWarnings() {
     warnedExposureInsertFailure = false;
+    exposurePersistenceDisabled = false;
     clearFlushTimer();
     exposureQueue = [];
   },

@@ -209,4 +209,77 @@ describe('discovery telemetry', () => {
     expect(batchPayload[0]?.request_id).toBe('batch-1');
     expect(batchPayload[1]?.request_id).toBe('batch-2');
   });
+
+  it('disables telemetry persistence after a missing discovery_exposures schema error', async () => {
+    process.env.DISCOVERY_EXPOSURE_SAMPLE_RATE = '1';
+    insertMock.mockResolvedValue({
+      error: { message: 'relation "discovery_exposures" does not exist' },
+    });
+
+    await recordDiscoveryExposure({
+      requestId: 'missing-schema-1',
+      query: { lat: 1, lng: 2, radiusMeters: 1000, limit: 10, filtersApplied: 0 },
+      result: {
+        center: { lat: 1, lng: 2 },
+        radiusMeters: 1000,
+        count: 0,
+        items: [],
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: true,
+          taxonomyCategories: true,
+          priceLevels: true,
+          capacityKey: true,
+          timeWindow: true,
+        },
+        facets: {
+          activityTypes: [],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        sourceBreakdown: {},
+      },
+    });
+
+    await recordDiscoveryExposure({
+      requestId: 'missing-schema-2',
+      query: { lat: 1, lng: 2, radiusMeters: 1000, limit: 10, filtersApplied: 0 },
+      result: {
+        center: { lat: 1, lng: 2 },
+        radiusMeters: 1000,
+        count: 0,
+        items: [],
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: true,
+          taxonomyCategories: true,
+          priceLevels: true,
+          capacityKey: true,
+          timeWindow: true,
+        },
+        facets: {
+          activityTypes: [],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        sourceBreakdown: {},
+      },
+    });
+
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[discovery.exposure] failed to persist sampled exposure batch',
+      expect.objectContaining({ message: expect.stringContaining('discovery_exposures') }),
+    );
+  });
 });

@@ -5,25 +5,12 @@ import { View, Text, TextInput, Pressable, ScrollView, Alert } from 'react-nativ
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { createSessionViaWebApi } from '../lib/sessionApi';
 import { supabase } from '../lib/supabase';
 import { searchGeocode } from '../lib/geocode';
 import { fetchNearbyPlaces, type PlaceSuggestion } from '../lib/placesSearch';
 
 type Option = { id: string; name: string };
-
-type VenueInsert = { name: string; lat?: number; lng?: number };
-
-type SessionInsert = {
-  activity_id: string;
-  venue_id: string;
-  host_user_id: string;
-  price_cents: number;
-  starts_at: string;
-  ends_at: string;
-  max_attendees: number;
-  visibility: 'public' | 'friends' | 'private';
-  description?: string;
-};
 
 type GeocodeSuggestion = {
   label: string;
@@ -50,13 +37,6 @@ const toOption = (value: unknown): Option | null => {
   if (!id) return null;
   const name = typeof value.name === 'string' && value.name ? value.name : id;
   return { id, name };
-};
-
-const extractId = (value: unknown): string => {
-  if (isRecord(value) && typeof value.id === 'string' && value.id) {
-    return value.id;
-  }
-  throw new Error('Response missing identifier');
 };
 
 const formatDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -95,7 +75,7 @@ const getErrorMessage = (error: unknown): string => {
   try {
     return JSON.stringify(error);
   } catch {
-    return 'Failed to create event';
+    return 'Failed to create session';
   }
 };
 
@@ -106,6 +86,7 @@ export default function AddEvent() {
     lng?: string;
     activityId?: string;
     activityName?: string;
+    placeId?: string;
     placeName?: string;
     placeAddress?: string;
   }>();
@@ -117,6 +98,7 @@ export default function AddEvent() {
   const [activityName, setActivityName] = useState(
     params.activityName && typeof params.activityName === 'string' ? params.activityName : ''
   );
+  const [placeId, setPlaceId] = useState(params.placeId && typeof params.placeId === 'string' ? params.placeId : '');
   const [selectedActivityLabel, setSelectedActivityLabel] = useState<string | null>(
     params.activityName && typeof params.activityName === 'string' ? params.activityName : null
   );
@@ -386,6 +368,7 @@ export default function AddEvent() {
     const latString = Number.isFinite(suggestion.lat) ? suggestion.lat.toFixed(6) : '';
     const lngString = Number.isFinite(suggestion.lng) ? suggestion.lng.toFixed(6) : '';
     setVenueId('');
+    setPlaceId('');
     setSelectedVenueLabel(null);
     setVenueName(suggestion.label);
     setSuggestedName(null);
@@ -398,6 +381,7 @@ export default function AddEvent() {
 
   const applyNearbyPlace = (place: PlaceSuggestion) => {
     setVenueId('');
+    setPlaceId('');
     setSelectedVenueLabel(null);
     setVenueName(place.name);
     setSuggestedName(place.address ?? null);
@@ -409,126 +393,52 @@ export default function AddEvent() {
     setAutocompleteLoading(false);
   };
 
-  const ensureActivity = async (): Promise<string> => {
-    if (activityId) return activityId;
-    const name = activityName.trim();
-    if (!name) throw new Error('Enter an activity name or choose one.');
-
-    const { data: existing, error: existingError } = await supabase
-      .from('activities')
-      .select('id')
-      .eq('name', name)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existing?.id) return existing.id;
-
-    const { data: ilikeExisting, error: ilikeError } = await supabase
-      .from('activities')
-      .select('id')
-      .limit(1)
-      .ilike('name', name)
-      .maybeSingle();
-    if (ilikeError) throw ilikeError;
-    if (ilikeExisting?.id) return ilikeExisting.id;
-
-    const latValue = Number.isFinite(parseFloat(lat)) ? Number.parseFloat(lat) : null;
-    const lngValue = Number.isFinite(parseFloat(lng)) ? Number.parseFloat(lng) : null;
-
-    const { data, error } = await supabase
-      .from('activities')
-      .insert({
-        name,
-        lat: latValue,
-        lng: lngValue,
-      })
-      .select('id')
-      .single();
-    if (error) throw error;
-    const createdId = extractId(data);
-
-    setActivityId(createdId);
-    setSelectedActivityLabel(name);
-    return createdId;
-  };
-
-  const ensureVenue = async (): Promise<string> => {
-    if (venueId) return venueId;
-    const name = venueName.trim();
-    if (!name) throw new Error('Enter a venue name or choose one.');
-
-    const { data: existing, error: existingError } = await supabase
-      .from('venues')
-      .select('id')
-      .eq('name', name)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existing?.id) return existing.id;
-
-    const la = parseFloat(lat);
-    const ln = parseFloat(lng);
-    const payload: VenueInsert = { name };
-    if (!Number.isNaN(la)) payload.lat = la;
-    if (!Number.isNaN(ln)) payload.lng = ln;
-    const { data, error } = await supabase
-      .from('venues')
-      .insert(payload)
-      .select('id')
-      .single();
-    if (error) throw error;
-    return extractId(data);
-  };
-
   async function submit() {
     try {
       setErr(null);
       setMsg(null);
       setSaving(true);
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id;
-      if (!uid) throw new Error('Please sign in.');
-      const act = await ensureActivity();
-      const ven = await ensureVenue();
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token ?? null;
+      if (!accessToken) throw new Error('Please sign in.');
 
       const start = parseDateTime(startDate, startTime);
       const end = parseDateTime(endDate, endTime);
       if (!start || !end) throw new Error('Enter valid start/end date and time (YYYY-MM-DD and HH:MM).');
       if (end <= start) throw new Error('End time must be after the start time.');
 
-      const cents = Math.round((Number(price) || 0) * 100);
       const parsedMaxAttendees = Number(maxAttendees);
       if (!Number.isFinite(parsedMaxAttendees) || parsedMaxAttendees <= 0) {
         throw new Error('Enter a valid max attendees count (> 0).');
       }
-
-      const payload: SessionInsert = {
-        activity_id: act,
-        venue_id: ven,
-        host_user_id: uid,
-        price_cents: cents,
-        starts_at: start.toISOString(),
-        ends_at: end.toISOString(),
-        max_attendees: Math.floor(parsedMaxAttendees),
-        visibility,
-      };
-
-      if (description.trim()) {
-        payload.description = description.trim();
+      const latValue = Number.parseFloat(lat);
+      const lngValue = Number.parseFloat(lng);
+      if (!Number.isFinite(latValue) || !Number.isFinite(lngValue)) {
+        throw new Error('Choose a valid location before creating the session.');
       }
 
-      const { data, error } = await supabase
-        .from('sessions')
-        .insert(payload)
-        .select('id')
-        .single();
-      if (error) throw error;
-      const sessionId = extractId(data);
+      const created = await createSessionViaWebApi({
+        activityId: activityId || null,
+        activityName: activityName.trim() || null,
+        venueId: venueId || null,
+        placeId: placeId || null,
+        venueName: venueName.trim() || null,
+        lat: latValue,
+        lng: lngValue,
+        price: Number(price) || 0,
+        startsAt: start.toISOString(),
+        endsAt: end.toISOString(),
+        maxAttendees: Math.floor(parsedMaxAttendees),
+        visibility,
+        description: description.trim() || null,
+      }, accessToken);
 
-      setMsg('Event created successfully!');
-      Alert.alert('Success', 'Event created successfully!', [
-        { text: 'OK', onPress: () => router.replace(`/sessions/${sessionId}`) },
+      setMsg('Session created successfully!');
+      Alert.alert('Success', 'Session created successfully!', [
+        { text: 'OK', onPress: () => router.replace(`/sessions/${created.id}`) },
       ]);
     } catch (error) {
-      console.error('Event creation failed', error);
+      console.error('Session creation failed', error);
       setErr(getErrorMessage(error));
     } finally {
       setSaving(false);
@@ -562,9 +472,9 @@ export default function AddEvent() {
           </Pressable>
         </View>
 
-        <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 8 }}>Create Event</Text>
+        <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 8 }}>Create Session</Text>
         <Text style={{ color: '#6b7280', marginBottom: 16 }}>
-          Share what you're planning and invite others to join!
+          Schedule a real session and invite others to join.
         </Text>
 
         {err && (
@@ -674,10 +584,11 @@ export default function AddEvent() {
             {venues.slice(0, 10).map((venue) => (
               <Pressable
                 key={venue.id}
-                onPress={() => {
-                  setVenueId(venue.id);
-                  setVenueName(venue.name);
-                  setSelectedVenueLabel(venue.name);
+                  onPress={() => {
+                    setVenueId(venue.id);
+                    setPlaceId('');
+                    setVenueName(venue.name);
+                    setSelectedVenueLabel(venue.name);
                   setAutocompleteResults([]);
                   setAutocompleteError(null);
                 }}
@@ -704,6 +615,7 @@ export default function AddEvent() {
           onChangeText={(text) => {
             setVenueName(text);
             if (text !== selectedVenueLabel) setVenueId('');
+            if (text !== selectedVenueLabel) setPlaceId('');
             setSelectedVenueLabel(null);
             setAutocompleteError(null);
           }}
@@ -912,7 +824,7 @@ export default function AddEvent() {
       {/* Date & Time Section */}
       <View style={{ marginBottom: 20 }}>
         <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Date & Time *</Text>
-        <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 12 }}>When does your event start and end?</Text>
+        <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 12 }}>When does your session start and end?</Text>
         <Text style={{ color: '#9ca3af', fontSize: 12, marginBottom: 12 }}>
           Tap the fields below to edit. Use the format YYYY-MM-DD and 24h time (HH:MM).
         </Text>
@@ -992,7 +904,7 @@ export default function AddEvent() {
         <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Description</Text>
         <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Tell people what to expect (optional)</Text>
         <TextInput
-          placeholder="What should people bring? Any special instructions? Tell them what makes this event special!"
+          placeholder="What should people bring? Any special instructions? Tell them what makes this session special."
           value={description}
           onChangeText={setDescription}
           multiline
@@ -1027,7 +939,7 @@ export default function AddEvent() {
           }}
         >
           <Text style={{ color: 'white', fontSize: 18, fontWeight: '600' }}>
-            {saving ? 'Creating Event...' : '🎉 Create Event'}
+            {saving ? 'Creating Session...' : '🎉 Create Session'}
           </Text>
         </Pressable>
       </ScrollView>

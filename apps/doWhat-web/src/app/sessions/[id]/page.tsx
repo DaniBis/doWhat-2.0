@@ -108,7 +108,8 @@ export default async function SessionDetails({ params }: SessionPageProps) {
 
   const voteState = getVoteUnlockState(hydrated.endsAt ?? null);
   const scheduleLabel = formatSessionTimeRange(hydrated);
-  const locationLabel = hydrated.venue?.name ?? hydrated.activity?.venueLabel ?? "Location TBA";
+  const locationLabel = resolveSessionLocationLabel(hydrated);
+  const locationHelper = describeSessionLocationHelper(hydrated);
   const priceLabel = formatPrice(hydrated.priceCents);
   const hostLabel = hydrated.host?.fullName || hydrated.host?.username || "Your host";
   const description = hydrated.description || hydrated.activity?.description || null;
@@ -173,7 +174,7 @@ export default async function SessionDetails({ params }: SessionPageProps) {
             label="Location"
             value={locationLabel}
             href={mapsHref}
-            helper={mapsHref ? "Open in Maps" : undefined}
+            helper={locationHelper ?? (mapsHref ? "Open in Maps" : undefined)}
           />
           <InfoItem label="Host" value={hostLabel} helper={hydrated.host ? undefined : "Assigned host TBD"} />
           <InfoItem label="Price" value={priceLabel} />
@@ -383,12 +384,33 @@ function formatPrice(priceCents: number | null): string {
 }
 
 function buildMapsLink(session: HydratedSession): string | null {
-  const lat = session.venue?.lat ?? session.activity?.lat;
-  const lng = session.venue?.lng ?? session.activity?.lng;
+  const lat = session.place?.lat ?? session.venue?.lat ?? session.activity?.lat;
+  const lng = session.place?.lng ?? session.venue?.lng ?? session.activity?.lng;
   if (lat == null || lng == null) {
     return null;
   }
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+function resolveSessionLocationLabel(session: HydratedSession): string {
+  const label = session.placeLabel?.trim() || session.place?.name?.trim() || session.venue?.name?.trim() || session.activity?.venueLabel?.trim();
+  if (label && label.toLowerCase() !== 'unknown location') {
+    return label;
+  }
+  return 'Location to be confirmed';
+}
+
+function describeSessionLocationHelper(session: HydratedSession): string | undefined {
+  if (session.locationKind === 'canonical_place') {
+    return 'Confirmed place';
+  }
+  if (session.locationKind === 'legacy_venue') {
+    return 'Legacy venue record';
+  }
+  if (session.locationKind === 'custom_location') {
+    return 'Organizer-set location';
+  }
+  return 'Location still being finalized';
 }
 
 function hydrateVisibility(value: HydratedSession["visibility"]): string {

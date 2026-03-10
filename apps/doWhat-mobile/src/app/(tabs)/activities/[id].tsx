@@ -262,7 +262,7 @@ export default function ActivityPage() {
 	if (resolvedActivityId) addEventParams.activityId = resolvedActivityId;
 	else if (id) addEventParams.activityId = id;
 	if (resolvedActivityName) addEventParams.activityName = resolvedActivityName;
-	if (initialVenue) addEventParams.venue = initialVenue;
+	if (initialVenue) addEventParams.placeName = initialVenue;
 	if (fallbackLat != null && Number.isFinite(fallbackLat)) addEventParams.lat = String(fallbackLat);
 	if (fallbackLng != null && Number.isFinite(fallbackLng)) addEventParams.lng = String(fallbackLng);
 	const visual = activityVisuals[activityName] || { icon: '🎯', color: '#fbbf24' };
@@ -470,7 +470,7 @@ export default function ActivityPage() {
 					asChild
 				>
 					<Pressable style={{ marginTop: 18, alignSelf: 'flex-start', backgroundColor: '#FBBF24', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 999 }}>
-						<Text style={{ fontWeight: '700', color: '#1F2937' }}>+ Create new event</Text>
+						<Text style={{ fontWeight: '700', color: '#1F2937' }}>+ Create new session</Text>
 					</Pressable>
 				</Link>
 			</View>
@@ -511,7 +511,7 @@ export default function ActivityPage() {
 							{isExternal ? 'No hosted sessions yet. Start one at this spot!' : 'No upcoming sessions just yet.'}
 						</Text>
 						<Text style={{ textAlign: 'center', color: '#64748B', marginTop: 6 }}>
-							Create an event to bring people together.
+							Start a session to bring people together.
 						</Text>
 						{fallbackLat != null && fallbackLng != null && Number.isFinite(fallbackLat) && Number.isFinite(fallbackLng) && (
 							<TouchableOpacity
@@ -524,7 +524,7 @@ export default function ActivityPage() {
 						)}
 						<Link href={{ pathname: '/add-event', params: addEventParams }} asChild>
 							<Pressable style={{ backgroundColor: '#2563eb', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 }}>
-								<Text style={{ color: 'white', fontWeight: '600' }}>Create an event</Text>
+								<Text style={{ color: 'white', fontWeight: '600' }}>Create a session</Text>
 							</Pressable>
 						</Link>
 						</View>

@@ -1,4 +1,5 @@
 import type { PlacesResponse, PlacesViewportQuery } from './types';
+import { mergeLegacyCategoriesIntoDiscoveryFilters, serializeDiscoveryFilterContractToSearchParams } from '../discovery';
 
 export type FetchPlacesArgs = PlacesViewportQuery & { signal?: AbortSignal };
 
@@ -17,6 +18,12 @@ const serializeBounds = (query: PlacesViewportQuery) => {
   if (query.categories?.length) {
     url.searchParams.set('categories', query.categories.join(','));
   }
+  const discoveryParams = serializeDiscoveryFilterContractToSearchParams(
+    mergeLegacyCategoriesIntoDiscoveryFilters(query.discoveryFilters, query.categories),
+  );
+  discoveryParams.forEach((value, key) => {
+    url.searchParams.set(key, value);
+  });
   if (query.limit) {
     url.searchParams.set('limit', String(query.limit));
   }

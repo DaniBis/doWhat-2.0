@@ -29,9 +29,11 @@ import {
   saveUserPreference,
   isUuid,
   type CapacityFilterKey,
+  type DiscoveryTrustMode,
   type TimeWindowKey,
 } from "@dowhat/shared";
 import SaveToggleButton from "@/components/SaveToggleButton";
+import PlaceBrandMark from "@/components/PlaceBrandMark";
 
 import WebMap, { type MapMovePayload, type ViewBounds } from "@/components/WebMap";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
@@ -65,10 +67,9 @@ const FALLBACK_CENTER: MapCoordinates = { lat: 51.5074, lng: -0.1278 }; // Londo
 const EMPTY_ACTIVITIES: MapActivity[] = [];
 const EMPTY_EVENTS: EventSummary[] = [];
 const EMPTY_STRING_LIST: string[] = [];
-const EMPTY_NUMBER_LIST: number[] = [];
 const EMPTY_FACETS: Array<{ value: string; count: number }> = [];
 const MAP_FILTERS_LOCAL_KEY = "map_filters:v1";
-const MAP_FILTERS_VERSION = 2;
+const MAP_FILTERS_VERSION = 3;
 const MOVE_END_DEBOUNCE_MS = 250;
 const CENTER_UPDATE_THRESHOLD = 0.0005;
 const BOUNDS_UPDATE_THRESHOLD = 0.0008;
@@ -77,9 +78,11 @@ const MAP_NEARBY_LIMIT = 1200;
 const MAP_SEARCH_AUGMENT_LIMIT = 2000;
 const MAP_SPARSE_RESULTS_THRESHOLD = 8;
 const MAP_EVENTS_LOOKBACK_MS = 12 * 60 * 60 * 1000;
+const MAP_NEARBY_FETCH_TIMEOUT_MS = 20_000;
 
 type CapacityOption = { key: CapacityFilterKey; label: string };
 type TimeWindowOption = { key: TimeWindowKey; label: string };
+type TrustOption = { key: DiscoveryTrustMode; label: string; helper: string };
 
 const PRICE_LEVEL_OPTIONS: Array<{ level: number; label: string }> = [
   { level: 1, label: '$' },
@@ -105,12 +108,22 @@ const TIME_WINDOW_OPTIONS: TimeWindowOption[] = [
   { key: 'late', label: 'Late night' },
 ];
 
+const TRUST_OPTIONS: TrustOption[] = [
+  { key: 'all', label: 'All results', helper: 'Show every eligible activity or event in this map area.' },
+  { key: 'verified_only', label: 'Confirmed only', helper: 'Keep the strongest confirmed results and hide suggestion-first matches.' },
+  { key: 'ai_only', label: 'Suggestions only', helper: 'Inspect early leads that still need stronger confirmation.' },
+];
+
 const CAPACITY_OPTION_BY_KEY = new Map<CapacityFilterKey, CapacityOption>(
   CAPACITY_OPTIONS.map((option) => [option.key, option]),
 );
 
 const TIME_WINDOW_OPTION_BY_KEY = new Map<TimeWindowKey, TimeWindowOption>(
   TIME_WINDOW_OPTIONS.map((option) => [option.key, option]),
+);
+
+const TRUST_OPTION_BY_KEY = new Map<DiscoveryTrustMode, TrustOption>(
+  TRUST_OPTIONS.map((option) => [option.key, option]),
 );
 
 const formatPriceLevelLabel = (level: number): string => {
@@ -136,6 +149,11 @@ const normalizePriceLevels = (values?: readonly (number | null | undefined)[]): 
     ),
   ).sort((a, b) => a - b);
 };
+
+const mergeStringFilterOptions = (available: readonly string[], selected: readonly string[]): string[] =>
+  Array.from(new Set([...available, ...selected].map((value) => value.trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b),
+  );
 
 const buildActivityMetadataChips = (activity: MapActivity): ActivityMetadataChip[] => {
   const chips: ActivityMetadataChip[] = [];
@@ -177,6 +195,16 @@ const activityPlaceLabel = (activity: MapActivity): string => {
 
 type StoredMapFilters = MapFilterPreferences & { version?: number };
 
+const sanitizeVisibleMapFilters = (prefs?: MapFilterPreferences | null): MapFilterPreferences => {
+  const normalized = normaliseMapFilterPreferences(prefs);
+  return {
+    ...normalized,
+    priceLevels: [],
+    capacityKey: 'any',
+    timeWindow: 'any',
+  };
+};
+
 const isCurrentMapFilters = (value: unknown): value is StoredMapFilters => {
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return false;
@@ -191,7 +219,7 @@ const readLocalMapFilters = (): MapFilterPreferences | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!isCurrentMapFilters(parsed)) return null;
-    return normaliseMapFilterPreferences(parsed as MapFilterPreferences);
+    return sanitizeVisibleMapFilters(parsed as MapFilterPreferences);
   } catch (error) {
     console.warn("[map] unable to parse cached map filters", error);
     return null;
@@ -201,7 +229,7 @@ const readLocalMapFilters = (): MapFilterPreferences | null => {
 const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
   if (typeof window === "undefined") return;
   try {
-    const normalised = normaliseMapFilterPreferences(prefs);
+    const normalised = sanitizeVisibleMapFilters(prefs);
     const payload = { ...normalised, version: MAP_FILTERS_VERSION };
     window.localStorage.setItem(MAP_FILTERS_LOCAL_KEY, JSON.stringify(payload));
   } catch (error) {
@@ -211,7 +239,7 @@ const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
 
 const resolveStoredMapFilters = (value: unknown): MapFilterPreferences | null => {
   if (!isCurrentMapFilters(value)) return null;
-  return normaliseMapFilterPreferences(value as MapFilterPreferences);
+  return sanitizeVisibleMapFilters(value as MapFilterPreferences);
 };
 
 const formatKilometres = (meters?: number | null) => {
@@ -257,7 +285,6 @@ type MovePayload = MapMovePayload;
 
 type ToggleOption = "map" | "list";
 type FilterChip = { key: string; label: string; onRemove: () => void };
-type UnsupportedFilterNotice = { id: string; label: string; onClear: () => void };
 type FilterSupportFlags = {
   activityTypes: boolean;
   tags: boolean;
@@ -266,6 +293,16 @@ type FilterSupportFlags = {
   priceLevels: boolean;
   capacityKey: boolean;
   timeWindow: boolean;
+};
+
+const EMPTY_FILTER_SUPPORT: FilterSupportFlags = {
+  activityTypes: false,
+  tags: false,
+  traits: false,
+  taxonomyCategories: false,
+  priceLevels: false,
+  capacityKey: false,
+  timeWindow: false,
 };
 
 const roundCoordinate = (value: number, precision = 6) =>
@@ -365,7 +402,7 @@ export default function MapPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [copiedActivityLink, setCopiedActivityLink] = useState(false);
   const [toastMessage, setToastMessage] = useState<MapToast | null>(null);
-  const [filters, setFilters] = useState<MapFilterPreferences>(DEFAULT_MAP_FILTER_PREFERENCES);
+  const [filters, setFilters] = useState<MapFilterPreferences>(() => sanitizeVisibleMapFilters(DEFAULT_MAP_FILTER_PREFERENCES));
   const [useTagsForActivityTypes, setUseTagsForActivityTypes] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -386,7 +423,7 @@ export default function MapPage() {
     if (!pathname) return '/map';
     return searchParamsString ? `${pathname}?${searchParamsString}` : pathname;
   }, [pathname, searchParamsString]);
-  const coreAccessState = useCoreAccessGuard(redirectTarget);
+  const coreAccessState = useCoreAccessGuard(redirectTarget, { bypass: e2eBypassAuth });
   const highlightSessionId = searchParams?.get('highlightSession');
   const [storedHighlightSessionId, setStoredHighlightSessionId] = useState<string | null>(null);
   const effectiveHighlightSessionId = highlightSessionId ?? storedHighlightSessionId;
@@ -433,7 +470,7 @@ export default function MapPage() {
   }, []);
   const updateFilters = useCallback(
     (updater: (prev: MapFilterPreferences) => MapFilterPreferences) => {
-      setFilters((prev) => normaliseMapFilterPreferences(updater(prev)));
+      setFilters((prev) => sanitizeVisibleMapFilters(updater(prev)));
     },
     [],
   );
@@ -479,15 +516,9 @@ export default function MapPage() {
     () => filters.taxonomyCategories ?? EMPTY_STRING_LIST,
     [filters.taxonomyCategories],
   );
-  const selectedPriceLevels = useMemo(
-    () => filters.priceLevels ?? EMPTY_NUMBER_LIST,
-    [filters.priceLevels],
-  );
-  const selectedCapacityKey = filters.capacityKey ?? 'any';
-  const selectedTimeWindow = filters.timeWindow ?? 'any';
+  const selectedTrustMode = filters.trustMode ?? 'all';
 
   type StringListUpdater = string[] | ((prev: string[]) => string[]);
-  type NumberListUpdater = number[] | ((prev: number[]) => number[]);
 
   const setSelectedActivityTypes = useCallback(
     (updater: StringListUpdater) => {
@@ -520,31 +551,11 @@ export default function MapPage() {
     [updateFilters],
   );
 
-  const setSelectedPriceLevels = useCallback(
-    (updater: NumberListUpdater) => {
+  const setTrustMode = useCallback(
+    (next: DiscoveryTrustMode) => {
       updateFilters((prev) => ({
         ...prev,
-        priceLevels: typeof updater === 'function' ? (updater as (prev: number[]) => number[])(prev.priceLevels) : updater,
-      }));
-    },
-    [updateFilters],
-  );
-
-  const setCapacityKey = useCallback(
-    (next: CapacityFilterKey) => {
-      updateFilters((prev) => ({
-        ...prev,
-        capacityKey: next,
-      }));
-    },
-    [updateFilters],
-  );
-
-  const setTimeWindow = useCallback(
-    (next: TimeWindowKey) => {
-      updateFilters((prev) => ({
-        ...prev,
-        timeWindow: next,
+        trustMode: next,
       }));
     },
     [updateFilters],
@@ -552,13 +563,20 @@ export default function MapPage() {
 
   const filtersForQuery = useMemo(() => {
     const mapped = mapPreferencesToQueryFilters(filters);
-    if (!mapped) return undefined;
+    if (!mapped && !searchTerm.trim()) return undefined;
 
-    let result: typeof mapped | undefined = mapped;
-    if (useTagsForActivityTypes && mapped.activityTypes?.length) {
-      const { activityTypes, ...rest } = mapped;
+    let result = mapped ? { ...mapped } : undefined;
+    if (searchTerm.trim()) {
       result = {
-        ...rest,
+        ...(result ?? {}),
+        searchText: searchTerm,
+      };
+    }
+    if (useTagsForActivityTypes && result?.activityTypes?.length) {
+      const activityTypes = result.activityTypes;
+      delete result.activityTypes;
+      result = {
+        ...result,
         tags: activityTypes,
       };
     }
@@ -574,8 +592,8 @@ export default function MapPage() {
         delete next.tags;
         changed = true;
       }
-      if (next.traits && lastFilterSupport.traits === false) {
-        delete next.traits;
+      if (next.peopleTraits && lastFilterSupport.traits === false) {
+        delete next.peopleTraits;
         changed = true;
       }
       if (next.taxonomyCategories && lastFilterSupport.taxonomyCategories === false) {
@@ -599,11 +617,11 @@ export default function MapPage() {
       }
     }
 
-    return result;
-  }, [filters, lastFilterSupport, useTagsForActivityTypes]);
+    return result && Object.keys(result).length ? result : undefined;
+  }, [filters, lastFilterSupport, searchTerm, useTagsForActivityTypes]);
 
   const hydrateAnonymousPreferences = useCallback(() => {
-    const next = readLocalMapFilters() ?? DEFAULT_MAP_FILTER_PREFERENCES;
+    const next = readLocalMapFilters() ?? sanitizeVisibleMapFilters(DEFAULT_MAP_FILTER_PREFERENCES);
     updateFilters(() => next);
     setPreferencesUserId(null);
     setPreferencesInitialised(true);
@@ -619,7 +637,7 @@ export default function MapPage() {
           writeLocalMapFilters(resolvedRemote);
         } else {
           const fallback = readLocalMapFilters();
-          const next = fallback ?? DEFAULT_MAP_FILTER_PREFERENCES;
+          const next = fallback ?? sanitizeVisibleMapFilters(DEFAULT_MAP_FILTER_PREFERENCES);
           updateFilters(() => next);
         }
         setPreferencesUserId(userId);
@@ -639,7 +657,7 @@ export default function MapPage() {
 
   const persistPreferences = useCallback(
     async (next: MapFilterPreferences) => {
-      const normalised = normaliseMapFilterPreferences(next);
+      const normalised = sanitizeVisibleMapFilters(next);
       writeLocalMapFilters(normalised);
       if (preferencesUserId) {
         try {
@@ -834,6 +852,7 @@ export default function MapPage() {
           return debugDiscovery ? `${origin}/api/nearby?debug=1` : `${origin}/api/nearby`;
         },
         includeCredentials: true,
+        timeoutMs: MAP_NEARBY_FETCH_TIMEOUT_MS,
       }),
     [debugDiscovery],
   );
@@ -880,11 +899,12 @@ export default function MapPage() {
     return Boolean(
       (next.activityTypes?.length ?? 0)
       || (next.tags?.length ?? 0)
-      || (next.traits?.length ?? 0)
+      || (next.peopleTraits?.length ?? 0)
       || (next.taxonomyCategories?.length ?? 0)
       || (next.priceLevels?.length ?? 0)
       || next.capacityKey
-      || next.timeWindow,
+      || next.timeWindow
+      || next.searchText,
     );
   }, [query?.filters]);
   const searchActivityTokens = useMemo(
@@ -1013,6 +1033,7 @@ export default function MapPage() {
     return Array.from(merged.values());
   }, [nearbyData?.activities, searchActivities, searchTypeActivities, filteredAugmentActivities]);
   const filterSupport = nearbyData?.filterSupport ?? null;
+  const effectiveFilterSupport = filterSupport ?? lastFilterSupport ?? EMPTY_FILTER_SUPPORT;
   const facets = nearbyData?.facets ?? null;
   const facetActivityTypes = useMemo(
     () => facets?.activityTypes ?? EMPTY_FACETS,
@@ -1030,25 +1051,10 @@ export default function MapPage() {
     () => facets?.taxonomyCategories ?? EMPTY_FACETS,
     [facets?.taxonomyCategories],
   );
-  const facetPriceLevels = useMemo(
-    () => facets?.priceLevels ?? EMPTY_FACETS,
-    [facets?.priceLevels],
-  );
-  const facetCapacityKey = useMemo(
-    () => facets?.capacityKey ?? EMPTY_FACETS,
-    [facets?.capacityKey],
-  );
-  const facetTimeWindow = useMemo(
-    () => facets?.timeWindow ?? EMPTY_FACETS,
-    [facets?.timeWindow],
-  );
-  const activityTypesSupported = filterSupport?.activityTypes ?? true;
-  const tagsSupported = filterSupport?.tags ?? true;
-  const traitsSupported = filterSupport?.traits ?? true;
-  const taxonomyCategoriesSupported = filterSupport?.taxonomyCategories ?? false;
-  const priceLevelsSupported = filterSupport?.priceLevels ?? false;
-  const capacitySupported = filterSupport?.capacityKey ?? false;
-  const timeWindowSupported = filterSupport?.timeWindow ?? false;
+  const activityTypesSupported = effectiveFilterSupport.activityTypes;
+  const tagsSupported = effectiveFilterSupport.tags;
+  const traitsSupported = effectiveFilterSupport.traits;
+  const taxonomyCategoriesSupported = effectiveFilterSupport.taxonomyCategories;
 
   useEffect(() => {
     if (!filterSupport) return;
@@ -1059,6 +1065,34 @@ export default function MapPage() {
       setUseTagsForActivityTypes(false);
     }
   }, [filterSupport]);
+
+  useEffect(() => {
+    if (!loadActivities || !filterSupport) return;
+
+    const filtersToClear: string[] = [];
+    if (!filterSupport.activityTypes && selectedActivityTypes.length) filtersToClear.push('activityTypes');
+    if (!filterSupport.traits && selectedTraits.length) filtersToClear.push('peopleTraits');
+    if (!filterSupport.taxonomyCategories && selectedTaxonomyCategories.length) filtersToClear.push('taxonomyCategories');
+
+    if (!filtersToClear.length) return;
+
+    updateFilters((prev) => ({
+      ...prev,
+      activityTypes: filterSupport.activityTypes ? prev.activityTypes : [],
+      traits: filterSupport.traits ? prev.traits : [],
+      taxonomyCategories: filterSupport.taxonomyCategories ? prev.taxonomyCategories : [],
+    }));
+
+    track('map_filters_pruned', { filters: filtersToClear });
+  }, [
+    filterSupport,
+    loadActivities,
+    selectedActivityTypes.length,
+    selectedTraits.length,
+    selectedTaxonomyCategories.length,
+    track,
+    updateFilters,
+  ]);
 
   const eventsRangeDays = dataMode === 'events' ? 21 : 14;
   const eventsWindow = useMemo(() => {
@@ -1131,27 +1165,14 @@ export default function MapPage() {
     const selectedTaxonomies = selectedTaxonomyCategories
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
-    const selectedPriceSet = new Set(
-      selectedPriceLevels
-        .map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null))
-        .filter((value): value is number => value != null),
-    );
-    const capacityFilter = selectedCapacityKey !== 'any' ? selectedCapacityKey : null;
-    const timeWindowFilter = selectedTimeWindow !== 'any' ? selectedTimeWindow : null;
 
     const filterActivityTypes = selectedTypes.length > 0 && (activityTypesSupported || tagsSupported);
     const filterTraits = selectedTraitsList.length > 0 && traitsSupported;
     const filterTaxonomy = selectedTaxonomies.length > 0 && taxonomyCategoriesSupported;
-    const filterPrice = selectedPriceSet.size > 0 && priceLevelsSupported;
-    const filterCapacity = Boolean(capacityFilter && capacitySupported);
-    const filterTimeWindow = Boolean(timeWindowFilter && timeWindowSupported);
     const hasAnyStructuredFilter =
       filterActivityTypes
       || filterTraits
-      || filterTaxonomy
-      || filterPrice
-      || filterCapacity
-      || filterTimeWindow;
+      || filterTaxonomy;
 
     const applyFilters = (activity: MapActivity): boolean => {
       if (filterActivityTypes) {
@@ -1170,14 +1191,6 @@ export default function MapPage() {
         const categories = normalizeSet(activity.taxonomy_categories);
         if (!selectedTaxonomies.some((value) => categories.has(value))) return false;
       }
-
-      if (filterPrice) {
-        const levels = normalizePriceLevels(activity.price_levels ?? undefined);
-        if (!levels.some((value) => selectedPriceSet.has(value))) return false;
-      }
-
-      if (filterCapacity && activity.capacity_key !== capacityFilter) return false;
-      if (filterTimeWindow && activity.time_window !== timeWindowFilter) return false;
 
       if (hasSearch) {
         const intentTokens = new Set<string>([
@@ -1256,16 +1269,10 @@ export default function MapPage() {
     selectedActivityTypes,
     selectedTraits,
     selectedTaxonomyCategories,
-    selectedPriceLevels,
-    selectedCapacityKey,
-    selectedTimeWindow,
     activityTypesSupported,
     tagsSupported,
     traitsSupported,
     taxonomyCategoriesSupported,
-    priceLevelsSupported,
-    capacitySupported,
-    timeWindowSupported,
     useTagsForActivityTypes,
   ]);
 
@@ -1414,6 +1421,10 @@ export default function MapPage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [activities, activityTypesSupported, facetActivityTypes, facetTags, tagsSupported, useTagsForActivityTypes]);
+  const activityTypeOptions = useMemo(
+    () => mergeStringFilterOptions(availableActivityTypes, selectedActivityTypes),
+    [availableActivityTypes, selectedActivityTypes],
+  );
 
   const availableTraits = useMemo(() => {
     if (!traitsSupported) return [];
@@ -1428,6 +1439,10 @@ export default function MapPage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [activities, facetTraits, traitsSupported]);
+  const traitOptions = useMemo(
+    () => mergeStringFilterOptions(availableTraits, selectedTraits),
+    [availableTraits, selectedTraits],
+  );
 
   const availableTaxonomyCategories = useMemo(() => {
     if (!taxonomyCategoriesSupported) return [];
@@ -1442,6 +1457,10 @@ export default function MapPage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [activities, facetTaxonomyCategories, taxonomyCategoriesSupported]);
+  const taxonomyOptions = useMemo(
+    () => mergeStringFilterOptions(availableTaxonomyCategories, selectedTaxonomyCategories),
+    [availableTaxonomyCategories, selectedTaxonomyCategories],
+  );
 
   const taxonomyFacetCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -1453,57 +1472,10 @@ export default function MapPage() {
     return map;
   }, [facetTaxonomyCategories]);
 
-  const availablePriceLevels = useMemo(() => {
-    if (!priceLevelsSupported) return [];
-    const values: number[] = [];
-    if (facetPriceLevels.length) {
-      facetPriceLevels.forEach((entry) => {
-        const parsed = Number(entry.value);
-        if (Number.isFinite(parsed)) values.push(Math.round(parsed));
-      });
-    } else {
-      for (const activity of activities) {
-        for (const level of activity.price_levels ?? []) {
-          if (typeof level === 'number' && Number.isFinite(level)) values.push(Math.round(level));
-        }
-      }
-    }
-    const unique = Array.from(new Set(values.map((value) => Math.min(Math.max(value, 1), PRICE_LEVEL_OPTIONS.length))));
-    return unique.sort((a, b) => a - b);
-  }, [activities, facetPriceLevels, priceLevelsSupported]);
-
-  const priceLevelFacetCounts = useMemo(() => {
-    const map = new Map<number, number>();
-    facetPriceLevels.forEach((entry) => {
-      const parsed = Number(entry.value);
-      if (Number.isFinite(parsed)) {
-        map.set(Math.min(Math.max(Math.round(parsed), 1), PRICE_LEVEL_OPTIONS.length), entry.count);
-      }
-    });
-    return map;
-  }, [facetPriceLevels]);
-
-  const availablePriceLevelSet = useMemo(() => new Set(availablePriceLevels), [availablePriceLevels]);
-
-  const capacityFacetCounts = useMemo(() => {
-    const map = new Map<CapacityFilterKey, number>();
-    facetCapacityKey.forEach((entry) => {
-      if (entry.value) {
-        map.set(entry.value as CapacityFilterKey, entry.count);
-      }
-    });
-    return map;
-  }, [facetCapacityKey]);
-
-  const timeWindowFacetCounts = useMemo(() => {
-    const map = new Map<TimeWindowKey, number>();
-    facetTimeWindow.forEach((entry) => {
-      if (entry.value) {
-        map.set(entry.value as TimeWindowKey, entry.count);
-      }
-    });
-    return map;
-  }, [facetTimeWindow]);
+  const showActivityTypeFilter = loadActivities && (activityTypesSupported || tagsSupported) && activityTypeOptions.length > 0;
+  const showPeopleTraitsFilter = loadActivities && traitsSupported && traitOptions.length > 0;
+  const showTaxonomyFilter = loadActivities && taxonomyCategoriesSupported && taxonomyOptions.length > 0;
+  const showActivityFocusFilter = loadActivities && (showActivityTypeFilter || showTaxonomyFilter);
 
   const toggleActivityType = useCallback(
     (value: string) => {
@@ -1541,47 +1513,15 @@ export default function MapPage() {
     [setSelectedTaxonomyCategories, track],
   );
 
-  const togglePriceLevel = useCallback(
-    (level: number) => {
-      setSelectedPriceLevels((prev) => {
-        const active = prev.includes(level);
-        const next = active ? prev.filter((entry) => entry !== level) : [...prev, level];
-        track('map_filter_price', { level, active: !active });
-        return next;
-      });
-    },
-    [setSelectedPriceLevels, track],
-  );
-
-  const toggleCapacityKey = useCallback(
-    (key: CapacityFilterKey) => {
-      const next = selectedCapacityKey === key && key !== 'any' ? 'any' : key;
-      setCapacityKey(next);
-      track('map_filter_capacity', { key, active: next === key && key !== 'any' });
-    },
-    [selectedCapacityKey, setCapacityKey, track],
-  );
-
-  const toggleTimeWindow = useCallback(
-    (key: TimeWindowKey) => {
-      const next = selectedTimeWindow === key && key !== 'any' ? 'any' : key;
-      setTimeWindow(next);
-      track('map_filter_time', { key, active: next === key && key !== 'any' });
-    },
-    [selectedTimeWindow, setTimeWindow, track],
-  );
-
   const resetFilters = () => {
     track('map_filters_reset', {
       activityTypes: selectedActivityTypes.length,
       traits: selectedTraits.length,
       taxonomyCategories: selectedTaxonomyCategories.length,
-      priceLevels: selectedPriceLevels.length,
-      capacityKey: selectedCapacityKey,
-      timeWindow: selectedTimeWindow,
+      trustMode: selectedTrustMode,
     });
     setSearchTerm('');
-    updateFilters(() => DEFAULT_MAP_FILTER_PREFERENCES);
+    updateFilters(() => sanitizeVisibleMapFilters(DEFAULT_MAP_FILTER_PREFERENCES));
   };
 
   const changeViewMode = useCallback(
@@ -1823,31 +1763,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
         onRemove: () => toggleTaxonomyCategory(category),
       });
     });
-    [...selectedPriceLevels]
-      .sort((a, b) => a - b)
-      .forEach((level) => {
-        chips.push({
-          key: `price:${level}`,
-          label: `Price ${formatPriceLevelLabel(level)}`,
-          onRemove: () => togglePriceLevel(level),
-        });
-      });
-    if (selectedCapacityKey !== 'any') {
-      const option = CAPACITY_OPTION_BY_KEY.get(selectedCapacityKey);
-      const label = option?.label ?? `Group ${selectedCapacityKey}`;
+    if (selectedTrustMode !== 'all') {
+      const option = TRUST_OPTION_BY_KEY.get(selectedTrustMode);
       chips.push({
-        key: `capacity:${selectedCapacityKey}`,
-        label,
-        onRemove: () => toggleCapacityKey(selectedCapacityKey),
-      });
-    }
-    if (selectedTimeWindow !== 'any') {
-      const option = TIME_WINDOW_OPTION_BY_KEY.get(selectedTimeWindow);
-      const label = option?.label ?? `Time ${selectedTimeWindow}`;
-      chips.push({
-        key: `time:${selectedTimeWindow}`,
-        label,
-        onRemove: () => toggleTimeWindow(selectedTimeWindow),
+        key: `trust:${selectedTrustMode}`,
+        label: option?.label ?? selectedTrustMode,
+        onRemove: () => setTrustMode('all'),
       });
     }
     return chips;
@@ -1857,16 +1778,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     selectedActivityTypes,
     selectedTraits,
     selectedTaxonomyCategories,
-    selectedPriceLevels,
-    selectedCapacityKey,
-    selectedTimeWindow,
+    selectedTrustMode,
     setSearchTerm,
     toggleActivityType,
     toggleTrait,
     toggleTaxonomyCategory,
-    togglePriceLevel,
-    toggleCapacityKey,
-    toggleTimeWindow,
+    setTrustMode,
   ]);
 
   const activeFiltersCount = activeFilterChips.length;
@@ -1919,69 +1836,6 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     const target = `/create?${params.toString()}`;
     router.push(target as Route);
   }, [queryCenter, router]);
-
-  const unsupportedFilters = useMemo<UnsupportedFilterNotice[]>(() => {
-    if (!filterSupport) return [];
-    const notices: UnsupportedFilterNotice[] = [];
-    const activityFiltersUnavailable = !filterSupport.activityTypes && !filterSupport.tags;
-    if (activityFiltersUnavailable && selectedActivityTypes.length) {
-      notices.push({
-        id: 'activityTypes',
-        label: 'Activity types',
-        onClear: () => setSelectedActivityTypes([]),
-      });
-    }
-    if (!filterSupport.traits && selectedTraits.length) {
-      notices.push({
-        id: 'traits',
-        label: 'People traits',
-        onClear: () => setSelectedTraits([]),
-      });
-    }
-    if (!filterSupport.taxonomyCategories && selectedTaxonomyCategories.length) {
-      notices.push({
-        id: 'taxonomy',
-        label: 'Taxonomy categories',
-        onClear: () => setSelectedTaxonomyCategories([]),
-      });
-    }
-    if (!filterSupport.priceLevels && selectedPriceLevels.length) {
-      notices.push({
-        id: 'priceLevels',
-        label: 'Price levels',
-        onClear: () => setSelectedPriceLevels([]),
-      });
-    }
-    if (!filterSupport.capacityKey && selectedCapacityKey !== 'any') {
-      notices.push({
-        id: 'capacity',
-        label: 'Group size',
-        onClear: () => setCapacityKey('any'),
-      });
-    }
-    if (!filterSupport.timeWindow && selectedTimeWindow !== 'any') {
-      notices.push({
-        id: 'timeWindow',
-        label: 'Time window',
-        onClear: () => setTimeWindow('any'),
-      });
-    }
-    return notices;
-  }, [
-    filterSupport,
-    selectedActivityTypes,
-    selectedTraits,
-    selectedTaxonomyCategories,
-    selectedPriceLevels,
-    selectedCapacityKey,
-    selectedTimeWindow,
-    setCapacityKey,
-    setSelectedActivityTypes,
-    setSelectedPriceLevels,
-    setSelectedTaxonomyCategories,
-    setSelectedTraits,
-    setTimeWindow,
-  ]);
 
   useEffect(() => {
     if (!nearby.data) return;
@@ -2066,6 +1920,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       id: selectedActivity.id,
       name: selectedActivity.name ?? 'Activity',
       place,
+      website: selectedActivity.website ?? null,
       types: types.slice(0, 3),
       traits: traitsList.slice(0, 3),
       taxonomy: taxonomy.slice(0, 3),
@@ -2152,10 +2007,18 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   const eventListEmpty = loadEvents && !eventsQuery.isLoading && filteredEvents.length === 0;
   const activityEmptyCopy = hasSearchFilter
     ? `No activities match "${searchTerm}". Try another name or clear the search.`
-    : "No activities match those filters yet. Try widening your search.";
+    : selectedTrustMode === 'verified_only'
+      ? 'No confirmed activities match here yet. Try showing all results or widening the map.'
+      : selectedTrustMode === 'ai_only'
+        ? 'No suggestion-first activities match here yet. Try showing all results or widening the map.'
+        : "No activities match those filters yet. Try widening your search.";
   const eventEmptyCopy = hasSearchFilter
     ? `No events match "${searchTerm}". Try another name or clear the search.`
-    : "No events match those filters yet. Try widening your search.";
+    : selectedTrustMode === 'verified_only'
+      ? 'No confirmed events match here yet. Try showing all results or widening the map.'
+      : selectedTrustMode === 'ai_only'
+        ? 'No suggestion-first events match here yet. Try showing all results or widening the map.'
+        : "No events match those filters yet. Try widening your search.";
 
   if (!e2eBypassAuth && (coreAccessState !== 'allowed' || isAuthenticated !== true)) {
     return (
@@ -2261,30 +2124,6 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           </button>
         </div>
       )}
-      {unsupportedFilters.length > 0 && (
-        <div className="border-b border-amber-200 bg-amber-50 px-md py-sm text-xs text-amber-900">
-          <p className="font-semibold text-amber-800">Some filters aren&apos;t applied right now</p>
-          <p className="mt-xxs">
-            {unsupportedFilters.length === 1
-              ? `${unsupportedFilters[0]?.label} is temporarily disabled because fallback sources in this area do not include that metadata.`
-              : `The following filters are temporarily disabled because fallback sources in this area do not include that metadata: ${unsupportedFilters
-                  .map((filter) => filter.label)
-                  .join(', ')}.`}
-          </p>
-          <div className="mt-xxs flex flex-wrap gap-xs">
-            {unsupportedFilters.map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                onClick={filter.onClear}
-                className="rounded-full border border-amber-300 bg-white/70 px-sm py-hairline text-[11px] font-semibold text-amber-800 hover:border-amber-400"
-              >
-                Clear {filter.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       {radiusExpansion && (
         <div className="border-b border-sky-200 bg-sky-50 px-md py-sm text-xs text-sky-900">
           <p className="font-semibold text-sky-800">Search radius auto-expanded</p>
@@ -2328,20 +2167,28 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
           {selectedActivitySummary && loadActivities && (
             <div className="border-b border-midnight-border/40 px-md py-sm text-[11px] text-ink-muted">
               <div className="flex items-start justify-between gap-sm">
-                <div>
-                  <div className="font-semibold uppercase tracking-wide text-brand-teal">Focused activity</div>
-                  <div className="text-sm font-semibold text-ink">{selectedActivitySummary.name}</div>
-                  <div className="mt-hairline flex items-center gap-xxs">
-                    <span aria-hidden>📍</span>
-                    <span>{selectedActivitySummary.place}</span>
-                  </div>
-                  <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
-                    <span className={`rounded-full border px-xs py-hairline ${selectedActivitySummary.verificationClass}`}>
-                      {selectedActivitySummary.verificationLabel}
-                    </span>
-                    <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
-                      Trust {formatTrustPercent(selectedActivitySummary.trustScore)}
-                    </span>
+                <div className="flex items-start gap-sm">
+                  <PlaceBrandMark
+                    name={selectedActivitySummary.place}
+                    website={selectedActivitySummary.website}
+                    size="sm"
+                    className="shrink-0"
+                  />
+                  <div>
+                    <div className="font-semibold uppercase tracking-wide text-brand-teal">Focused activity</div>
+                    <div className="text-sm font-semibold text-ink">{selectedActivitySummary.name}</div>
+                    <div className="mt-hairline flex items-center gap-xxs">
+                      <span aria-hidden>📍</span>
+                      <span>{selectedActivitySummary.place}</span>
+                    </div>
+                    <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
+                      <span className={`rounded-full border px-xs py-hairline ${selectedActivitySummary.verificationClass}`}>
+                        {selectedActivitySummary.verificationLabel}
+                      </span>
+                      <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                        Trust {formatTrustPercent(selectedActivitySummary.trustScore)}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-xxs text-right">
@@ -2452,7 +2299,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                         onClick={handleCreateFromCenter}
                         className="rounded-full bg-brand-teal px-sm py-xxs text-[11px] font-semibold text-white hover:bg-brand-dark"
                       >
-                        Create event here
+                        Start session here
                       </button>
                     </div>
                   </div>
@@ -2483,56 +2330,64 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                           className={`cursor-pointer rounded-2xl border px-md py-md transition ${isSelected ? "border-brand-teal bg-brand-teal/10 shadow" : "border-midnight-border/40 bg-surface hover:border-brand-teal/60"}`}
                         >
                           <div className="flex items-start justify-between gap-md">
-                            <div>
-                              <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                                Activity
-                              </div>
-                              <div className="mt-xxs flex items-center gap-xxs text-xs text-ink-muted">
-                                <span aria-hidden>📍</span>
-                                <span>{activitySubtitle}</span>
-                              </div>
-                              <div className="text-base font-semibold text-ink">{activity.name}</div>
-                              <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
-                                <span className={`rounded-full border px-xs py-hairline ${verificationClass}`}>
-                                  {verificationLabel}
-                                </span>
-                                <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
-                                  Trust {formatTrustPercent(activity.trust_score)}
-                                </span>
-                              </div>
-                              <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up backed by nearby venues.</p>
-                              {activity.activity_types && activity.activity_types.length > 0 && (
-                                <div className="mt-xs flex flex-wrap gap-xxs">
-                                  {activity.activity_types.slice(0, 3).map((type) => (
-                                    <span
-                                      key={type}
-                                      className="inline-flex items-center rounded-full bg-brand-teal/15 px-xs py-hairline text-[11px] font-semibold text-brand-teal"
-                                    >
-                                      {type}
-                                    </span>
-                                  ))}
-                                  {activity.activity_types.length > 3 && (
-                                    <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-xs py-hairline text-[11px] text-brand-teal">
-                                      +{activity.activity_types.length - 3}
-                                    </span>
-                                  )}
+                            <div className="flex min-w-0 items-start gap-sm">
+                              <PlaceBrandMark
+                                name={activitySubtitle}
+                                website={activity.website ?? null}
+                                size="sm"
+                                className="shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                                  Activity
                                 </div>
-                              )}
-                              {metadataChips.length > 0 && (
-                                <div className="mt-xs flex flex-wrap gap-xxs text-[11px] text-ink-muted">
-                                  {metadataChips.map((chip) => (
-                                    <span
-                                      key={chip.key}
-                                      className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline"
-                                    >
-                                      {chip.icon ? (
-                                        <span aria-hidden>{chip.icon}</span>
-                                      ) : null}
-                                      <span>{chip.label}</span>
-                                    </span>
-                                  ))}
+                                <div className="mt-xxs flex items-center gap-xxs text-xs text-ink-muted">
+                                  <span aria-hidden>📍</span>
+                                  <span>{activitySubtitle}</span>
                                 </div>
-                              )}
+                                <div className="text-base font-semibold text-ink">{activity.name}</div>
+                                <div className="mt-xxs flex flex-wrap items-center gap-xxs text-[10px] font-semibold uppercase tracking-wide">
+                                  <span className={`rounded-full border px-xs py-hairline ${verificationClass}`}>
+                                    {verificationLabel}
+                                  </span>
+                                  <span className="rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline text-ink-muted">
+                                    Trust {formatTrustPercent(activity.trust_score)}
+                                  </span>
+                                </div>
+                                <p className="mt-xxs text-[11px] text-ink-muted">Recurring crew meet-up backed by nearby venues.</p>
+                                {activity.activity_types && activity.activity_types.length > 0 && (
+                                  <div className="mt-xs flex flex-wrap gap-xxs">
+                                    {activity.activity_types.slice(0, 3).map((type) => (
+                                      <span
+                                        key={type}
+                                        className="inline-flex items-center rounded-full bg-brand-teal/15 px-xs py-hairline text-[11px] font-semibold text-brand-teal"
+                                      >
+                                        {type}
+                                      </span>
+                                    ))}
+                                    {activity.activity_types.length > 3 && (
+                                      <span className="inline-flex items-center rounded-full bg-brand-teal/10 px-xs py-hairline text-[11px] text-brand-teal">
+                                        +{activity.activity_types.length - 3}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {metadataChips.length > 0 && (
+                                  <div className="mt-xs flex flex-wrap gap-xxs text-[11px] text-ink-muted">
+                                    {metadataChips.map((chip) => (
+                                      <span
+                                        key={chip.key}
+                                        className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/30 bg-surface-alt px-xs py-hairline"
+                                      >
+                                        {chip.icon ? (
+                                          <span aria-hidden>{chip.icon}</span>
+                                        ) : null}
+                                        <span>{chip.label}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <div className="flex flex-col items-end gap-xs text-right text-xs text-ink-muted">
                               {activity.distance_m != null ? `~${formatKilometres(activity.distance_m)}` : null}
@@ -2564,7 +2419,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                               }}
                               className="rounded-full bg-brand-teal/90 px-sm py-xxs text-[11px] font-semibold text-surface transition hover:bg-brand-teal"
                             >
-                              Create event
+                              Create session
                             </button>
                             <button
                               type="button"
@@ -2723,7 +2578,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
             <div className="flex items-center justify-between border-b border-midnight-border/40 px-lg py-md">
               <div>
                 <h2 className="text-base font-semibold text-ink">Filters</h2>
-                <p className="text-xs text-ink-muted">Refine by activity, taxonomy, price, and people preferences.</p>
+                <p className="text-xs text-ink-muted">Search first, focus on activities, and choose how strict the results should be.</p>
               </div>
               <button
                 type="button"
@@ -2772,168 +2627,128 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   Matching results update instantly across the map and list.
                 </p>
               </div>
-              {loadActivities ? (
-                <>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{activityTypesSupported ? 'Activity types' : tagsSupported ? 'Activity tags' : 'Activity types'}</div>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!availableActivityTypes.length ? (
-                        !activityTypesSupported && !tagsSupported ? (
-                          <p className="text-xs text-ink-muted">Activity types are temporarily unavailable.</p>
-                        ) : (
-                          <p className="text-xs text-ink-muted">We will populate suggestions as soon as activities load.</p>
-                        )
-                      ) : null}
-                      {availableActivityTypes.map((type) => {
-                        const active = selectedActivityTypes.includes(type);
-                        return (
-                          <button
-                            key={type}
-                            type="button"
-                            onClick={() => toggleActivityType(type)}
-                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                          >
-                            {type}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">People filters</h3>
-                    <p className="mt-xxs text-[11px] text-ink-muted">Control preferred vibe traits for participants.</p>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!traitsSupported ? (
-                        <p className="text-xs text-ink-muted">People traits are temporarily unavailable.</p>
-                      ) : availableTraits.length === 0 ? (
-                        <p className="text-xs text-ink-muted">Traits appear when activities provide preferences.</p>
-                      ) : null}
-                      {availableTraits.map((trait) => {
-                        const active = selectedTraits.includes(trait);
-                        return (
-                          <button
-                            key={trait}
-                            type="button"
-                            onClick={() => toggleTrait(trait)}
-                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                          >
-                            {trait}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Taxonomy categories</div>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!taxonomyCategoriesSupported ? (
-                        <p className="text-xs text-ink-muted">Taxonomy filters are temporarily unavailable.</p>
-                      ) : availableTaxonomyCategories.length === 0 ? (
-                        <p className="text-xs text-ink-muted">Categories appear once activities report taxonomy metadata.</p>
-                      ) : null}
-                      {taxonomyCategoriesSupported && availableTaxonomyCategories.map((category) => {
-                        const active = selectedTaxonomyCategories.includes(category);
-                        const count = taxonomyFacetCounts.get(category);
-                        return (
-                          <button
-                            key={category}
-                            type="button"
-                            onClick={() => toggleTaxonomyCategory(category)}
-                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                            title={formatTaxonomyLabel(category)}
-                          >
-                            <span>{formatTaxonomyLabel(category)}</span>
-                            {typeof count === 'number' ? (
-                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Price levels</div>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!priceLevelsSupported ? (
-                        <p className="text-xs text-ink-muted">Price filters are temporarily unavailable.</p>
-                      ) : availablePriceLevels.length === 0 ? (
-                        <p className="text-xs text-ink-muted">We will populate suggestions as soon as price metadata is available.</p>
-                      ) : null}
-                      {priceLevelsSupported && PRICE_LEVEL_OPTIONS.filter((option) => availablePriceLevelSet.has(option.level)).map((option) => {
-                        const active = selectedPriceLevels.includes(option.level);
-                        const count = priceLevelFacetCounts.get(option.level);
-                        return (
-                          <button
-                            key={option.level}
-                            type="button"
-                            onClick={() => togglePriceLevel(option.level)}
-                            className={`min-w-[3rem] rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                          >
-                            <span>{option.label}</span>
-                            {typeof count === 'number' ? (
-                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Group size</div>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!capacitySupported ? (
-                        <p className="text-xs text-ink-muted">Group size filters appear when activities share capacity.</p>
-                      ) : null}
-                      {capacitySupported && CAPACITY_OPTIONS.map((option) => {
-                        const active = selectedCapacityKey === option.key;
-                        const count = capacityFacetCounts.get(option.key);
-                        return (
-                          <button
-                            key={option.key}
-                            type="button"
-                            onClick={() => toggleCapacityKey(option.key)}
-                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                          >
-                            <span>{option.label}</span>
-                            {option.key !== 'any' && typeof count === 'number' ? (
-                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Time window</div>
-                    <div className="mt-sm flex flex-wrap gap-xs">
-                      {!timeWindowSupported ? (
-                        <p className="text-xs text-ink-muted">Time-of-day filters appear when activities expose schedule metadata.</p>
-                      ) : null}
-                      {timeWindowSupported && TIME_WINDOW_OPTIONS.map((option) => {
-                        const active = selectedTimeWindow === option.key;
-                        const count = timeWindowFacetCounts.get(option.key);
-                        return (
-                          <button
-                            key={option.key}
-                            type="button"
-                            onClick={() => toggleTimeWindow(option.key)}
-                            className={`rounded-full border px-sm py-xxs text-sm ${active ? "border-brand-teal bg-brand-teal/10 text-brand-teal" : "border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"}`}
-                          >
-                            <span>{option.label}</span>
-                            {option.key !== 'any' && typeof count === 'number' ? (
-                              <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
-                  Activity filters (types, taxonomy, price, capacity, and time) are available when viewing activities. Switch to “Activities” or “Both” to adjust those selections.
+              <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">Search area</h3>
+                <p className="mt-xxs text-[11px] text-ink-muted">
+                  The visible map controls where we search. Move or zoom the map to change the area.
+                </p>
+                <p className="mt-xxs text-[11px] font-medium text-ink">Current area: radius ~{radiusLabel}</p>
+              </section>
+              <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">Result strictness</h3>
+                <p className="mt-xxs text-[11px] text-ink-muted">
+                  Choose how much proof a place or event needs before it appears here.
+                </p>
+                <div className="mt-sm grid gap-xs">
+                  {TRUST_OPTIONS.map((option) => {
+                    const active = selectedTrustMode === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setTrustMode(option.key)}
+                        className={`rounded-2xl border px-sm py-sm text-left transition ${
+                          active
+                            ? 'border-brand-teal bg-brand-teal/10 text-brand-teal'
+                            : 'border-midnight-border/40 bg-surface text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal'
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">{option.label}</span>
+                        <span className="mt-hairline block text-[11px] text-ink-muted">{option.helper}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+              </section>
+              {showActivityFocusFilter ? (
+                <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">Activity focus</h3>
+                  <p className="mt-xxs text-[11px] text-ink-muted">
+                    Start broad with activity types, then tighten to specific categories only if you need to.
+                  </p>
+                  {showActivityTypeFilter ? (
+                    <div className="mt-sm">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                        {activityTypesSupported ? 'Activity types' : 'Activity tags'}
+                      </div>
+                      <div className="mt-xs flex flex-wrap gap-xs">
+                        {activityTypeOptions.map((type) => {
+                          const active = selectedActivityTypes.includes(type);
+                          return (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => toggleActivityType(type)}
+                              className={`rounded-full border px-sm py-xxs text-sm ${
+                                active ? 'border-brand-teal bg-brand-teal/10 text-brand-teal' : 'border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal'
+                              }`}
+                            >
+                              {type}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                  {showTaxonomyFilter ? (
+                    <div className={showActivityTypeFilter ? 'mt-md' : 'mt-sm'}>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Specific categories</div>
+                      <div className="mt-xs flex flex-wrap gap-xs">
+                        {taxonomyOptions.map((category) => {
+                          const active = selectedTaxonomyCategories.includes(category);
+                          const count = taxonomyFacetCounts.get(category);
+                          return (
+                            <button
+                              key={category}
+                              type="button"
+                              onClick={() => toggleTaxonomyCategory(category)}
+                              className={`rounded-full border px-sm py-xxs text-sm ${
+                                active ? 'border-brand-teal bg-brand-teal/10 text-brand-teal' : 'border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal'
+                              }`}
+                              title={formatTaxonomyLabel(category)}
+                            >
+                              <span>{formatTaxonomyLabel(category)}</span>
+                              {typeof count === 'number' ? (
+                                <span className="ml-xxs text-[10px] text-ink-muted">({count})</span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+              {showPeopleTraitsFilter ? (
+                <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">People vibe</h3>
+                  <p className="mt-xxs text-[11px] text-ink-muted">
+                    Narrow activity crews by the participant traits we can actually filter here.
+                  </p>
+                  <div className="mt-sm flex flex-wrap gap-xs">
+                    {traitOptions.map((trait) => {
+                      const active = selectedTraits.includes(trait);
+                      return (
+                        <button
+                          key={trait}
+                          type="button"
+                          onClick={() => toggleTrait(trait)}
+                          className={`rounded-full border px-sm py-xxs text-sm ${
+                            active ? 'border-brand-teal bg-brand-teal/10 text-brand-teal' : 'border-midnight-border/40 text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal'
+                          }`}
+                        >
+                          {trait}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+              {!loadActivities ? (
+                <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
+                  Activity filters only apply when “Activities” or “Both” is active. Events still follow the same search text, trust mode, and map area.
+                </div>
+              ) : null}
             </div>
             <div className="border-t border-midnight-border/40 px-lg py-md text-sm">
               <div className="flex items-center justify-between">
