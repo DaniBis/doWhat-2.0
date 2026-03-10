@@ -2646,3 +2646,102 @@
   - Static doc verification against the shipped code paths and the passing focused map filter tests from this pass.
 - Result:
   - The final docs now match the verified visible filter set precisely.
+
+- Timestamp: 2026-03-10 12:26 +07
+- Focus: EVENT / SESSION / PLACE TRUTH HARDENING PASS kickoff.
+- Files inspected:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+- Decision:
+  - Remote discovery rollout is treated as complete for this pass.
+  - Broad SQL or rollout work stays out of scope unless a fresh regression proves otherwise.
+  - The pass will target semantic truth across payloads, hydration, create flows, and web/mobile presentation.
+- Why:
+  - The highest-value remaining product risk is not rollout packaging anymore; it is whether the app tells the truth about place-backed sessions/events versus custom or flexible locations.
+- Testing status:
+  - Control-layer audit only so far.
+- Result:
+  - Kickoff recorded before touching implementation files.
+
+- Timestamp: 2026-03-10 16:24 +07
+- Focus: event/session/place truth audit before implementation.
+- Files inspected:
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+  - `apps/doWhat-web/src/lib/sessions/server.ts`
+  - `apps/doWhat-web/src/app/api/sessions/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+  - `apps/doWhat-web/src/app/create/page.tsx`
+  - `apps/doWhat-mobile/src/app/add-event.tsx`
+  - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+- Root cause / finding:
+  - Flexible session rows are still vulnerable to being turned into fake printable place labels because session hydration normalizes fallback labels through the generic place-label helper.
+  - Session PATCH does not currently re-derive `place_label` when place truth changes.
+  - Event payload tests still enforce non-empty labels even for flexible listings.
+- Decision:
+  - Patch the truth model in the session server and session API first, then update the event/session contract tests to lock the honest semantics.
+- Why:
+  - This is the narrowest safe fix set that removes fabricated place truth without rewriting discovery or rollout infrastructure.
+- Testing status:
+  - Static audit only in this step.
+- Result:
+  - The next code changes are now scoped to session hydration, session POST/PATCH synchronization, and the affected regression tests.
+
+- Timestamp: 2026-03-10 16:37 +07
+- Focus: event/session/place truth hardening implementation, verification, and control-doc alignment.
+- Files changed:
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+  - `apps/doWhat-web/src/lib/sessions/server.ts`
+  - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+  - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+  - `apps/doWhat-web/src/app/create/page.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+  - `apps/doWhat-mobile/src/app/add-event.tsx`
+  - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+- Root cause / finding:
+  - Fake location truth was coming from three places at once: shared placeholder labels were treated as meaningful text, session PATCH did not re-derive `place_label`, and activities could still get `place_label = activity name` when no real location existed.
+- Decision:
+  - Keep the scope narrow and fix the truth model at the shared helper, session server, session PATCH, event normalization, and touched presentation surfaces.
+- Why:
+  - This removes fabricated place truth without reopening SQL rollout or rewriting discovery/ranking logic.
+- Testing:
+  - Targeted ESLint passed on all touched truth files.
+  - Shared truth tests passed (`5/5`).
+  - Focused web event/session tests passed (`30/30`) including the new session PATCH suite.
+  - Mobile session API tests passed (`3/3`).
+  - Shared, web, and mobile typecheck passed.
+  - `node scripts/verify-discovery-contract.mjs` passed.
+- Result:
+  - Flexible sessions/events now expose explicit truth instead of fake place labels.
+  - Session PATCH keeps `place_id`, `place_label`, and legacy venue behavior synchronized.
+  - Activity creation no longer manufactures a place label from the activity title.
+  - Touched create/detail/map surfaces now use more truthful place wording and custom-location fallbacks.
+  - Control docs now reflect the user-provided rollout-complete baseline and the remaining open risks.
+- Remaining risks:
+  - The DB still stores an internal session place-label fallback for compatibility.
+  - Mixed `events` + `sessions` discovery and the broader attendance/hosting system still need follow-through.

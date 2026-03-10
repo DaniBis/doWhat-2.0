@@ -1,6 +1,6 @@
 # doWhat Current State
 
-This file is the brutally honest snapshot of the repo as of **2026-03-09**.
+This file is the brutally honest snapshot of the repo as of **2026-03-10**.
 
 Use this file, not old 2025 planning snapshots, when deciding what to work on next.
 
@@ -38,8 +38,10 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
   - `places` is the intended canonical place model.
 - **Event/session/place truth is materially better on the touched surfaces**
   - user-authored creation is now explicitly a session flow
-  - session hydration preserves persisted `place_label`
+  - session hydration now distinguishes canonical place, legacy venue, custom location, and flexible location states
+  - flexible and unlabeled custom states no longer surface fake printable place labels in hydrated/API payloads
   - event payloads expose `origin_kind`, `location_kind`, and `is_place_backed`
+  - session PATCH now re-derives `place_id` and `place_label` together when location truth changes
   - mobile create/session detail use the web session API truth path first
 - **Discovery and filter regression coverage is much stronger than before**
   - recent passes added focused shared/web/mobile tests and verification scripts.
@@ -54,10 +56,6 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Fragile Areas
 
-- **Remote Supabase discovery migrations are still behind**
-  - the target environment was last verified as missing `060`, `065`, `066`, `067`, and `068`.
-- **No live post-068 performance proof yet**
-  - the repo contains the migration and rollout pack, but this shell could not apply it or run live `EXPLAIN ANALYZE`.
 - **Event discovery is still a mixed model**
   - user-facing event results still combine `events` and `sessions`.
 - **Standalone user-event creation is still not a separate product capability**
@@ -74,12 +72,10 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 - Old root docs describe a 2025 product posture that no longer matches the current 2026 discovery/filter work.
 - The repo direction says `places` is canonical, but some live code still carries `venues` compatibility and fallback behavior.
 - The repo has a shared discovery filter contract, but event discovery still uses a narrower explicit subset rather than full parity.
-- Activity-first discovery is now enforced in code, but remote data may still include older hospitality-derived `venue_activities` rows until cleanup/rematch is run.
+- Activity-first discovery is now enforced in code, but some remote data may still include older hospitality-derived `venue_activities` rows until cleanup/rematch is run.
 
 ## Data / Discovery Truth Gaps
 
-- The target remote DB has not yet been proven to match the new discovery migration baseline.
-- Real-world performance of migration `068_discovery_query_support_indexes.sql` is not yet measured in the target environment.
 - There is still no final operational answer to whether stale remote `venue_activities` rows need cleanup, rematch, or both.
 - Event/session/place truth is much clearer on the touched create/detail/API surfaces, but attendance/hosting truth and mixed `events` + `sessions` discovery still need follow-through.
 - The product now knows what it should discover, but real-user readiness in target cities still depends on actual remote inventory quality.
@@ -92,23 +88,18 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
   - Discovery contract verification scripts exist.
   - Migration health tooling exists.
 - **Not good enough yet**
-  - Remote rollout has not been completed from this shell.
   - Live browser/simulator smoke verification was not re-run after every discovery pass.
   - Full end-to-end real-user scenarios are not yet represented as a release gate.
 
 ## Immediate Priorities
 
-1. Apply the missing remote discovery migrations from a DB-connected environment and run the rollout pack.
-2. Re-verify the target environment with post-deploy checks and real query-plan inspection where possible.
-3. Audit stale remote activity mappings once the rollout baseline is live.
-4. Continue attendance / hosting truth follow-through where event/session detail semantics are still incomplete.
-5. Decide whether `/api/events` should widen beyond its current explicit subset only after the remote baseline and event truth are stable.
-6. Build a real-user readiness gate only after discovery, filters, event truth, and reliability truth are all verified.
+1. Continue attendance / hosting truth follow-through where event/session detail semantics are still incomplete.
+2. Audit stale remote activity mappings and clean them up if they still leak pre-boundary hospitality matches.
+3. Decide whether `/api/events` should widen beyond its current explicit subset only after the mixed event/session truth is stable.
+4. Build a real-user readiness gate only after discovery, filters, event truth, and reliability truth are all verified.
 
 ## What Blocks Real-Life Readiness
 
-- Remote migration drift
-- unmeasured live discovery performance after the latest SQL support work
 - incomplete attendance/hosting truth on top of the now-hardened event/session/place layer
 - remaining legacy-model overlap (`places` vs `venues`, `events` vs `sessions`)
 

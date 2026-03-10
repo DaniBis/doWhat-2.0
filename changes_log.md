@@ -5266,3 +5266,115 @@
       - The control docs now describe the final visible filter architecture without overstating mobile parity beyond what the code actually exposes.
    - Remaining risks or follow-up notes:
       - Mobile still intentionally omits the web-only result-kind toggle because the mobile map surface remains place-first.
+
+81. Timestamp: 2026-03-10 12:26 +07
+   - Issue being worked on: Event / session / place truth hardening pass kickoff.
+   - Files inspected:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+   - Decision made:
+      - Treat remote discovery rollout as complete baseline for this pass and do not revisit rollout work unless a new regression proves it necessary.
+      - Focus this pass on canonical truth, payload hardening, discovery hydration, create-flow correctness, and web/mobile parity for places, sessions, and events.
+   - Why the decision was made:
+      - The next unresolved product-level risk is semantic drift between place-backed items, session-backed items, ingested events, and flexible/custom location states.
+   - How it was tested:
+      - Control-layer document audit only at this stage.
+   - Result:
+      - Phase kickoff logged before code changes.
+   - Remaining risks or follow-up notes:
+      - Current control docs still describe remote rollout as incomplete, so this pass must verify and update those docs if the code evidence confirms the new baseline.
+
+82. Timestamp: 2026-03-10 16:24 +07
+   - Issue being worked on: Event / session / place truth audit before implementation.
+   - Files inspected:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/truth.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/app/api/sessions/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+   - Decision made:
+      - Treat the main truth bugs as narrow session/event contract issues instead of a discovery-engine rewrite.
+      - Fix session hydration, session create/update writes, and the event/session payload tests together so flexible locations stop being misrepresented as meaningful place labels.
+   - Why the decision was made:
+      - The audit showed that the highest-risk semantic drift is not ranking or rollout anymore. It is the mismatch between stored fallback labels, derived location kinds, and what the API/UI present as real place truth.
+   - How it was tested:
+      - Static audit only in this step.
+   - Result:
+      - Confirmed four concrete contradictions:
+        1. `hydrateSessions()` can normalize internal fallback labels into `Nearby spot`, then incorrectly classify flexible sessions as `custom_location`.
+        2. `POST /api/sessions` still persists a fabricated fallback location label for sessions with no canonical/custom location truth because the current schema path requires a non-empty `place_label`.
+        3. `PATCH /api/sessions/[sessionId]` does not keep `place_id`, `place_label`, and legacy `venue_id` semantics synchronized when location data changes.
+        4. `/api/events` tests still lock in dishonest behavior by expecting every event payload to expose a non-empty `place_label`.
+   - Remaining risks or follow-up notes:
+      - The remote rollout baseline is now a user-provided project truth, but the control docs still need to be updated later in this pass so they stop describing rollout as incomplete.
+
+83. Timestamp: 2026-03-10 16:37 +07
+   - Issue being worked on: Event / session / place truth hardening implementation, regression coverage, and control-layer alignment.
+   - Files changed:
+      - `packages/shared/src/events/truth.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Keep the DB-facing `sessions.place_label` fallback for compatibility, but stop exposing that fallback as user-facing place truth.
+      - Use one shared “meaningful location label” rule across event/session hydration and presentation.
+      - Re-derive `place_id` and `place_label` together on session PATCH so edited sessions cannot keep stale location truth.
+      - Remove the fake activity-name fallback for `activities.place_label` so standalone activity/session creation no longer manufactures a location label from the activity title.
+      - Update create-flow copy to say `Place` / custom location instead of implying everything is a canonical venue record.
+   - Why the decision was made:
+      - The pass needed to eliminate semantic drift without reopening rollout or doing a broad SQL rewrite. The smallest safe path was to harden the shared truth helper, then thread that rule through session hydration, session writes, event payload normalization, and the touched web/mobile surfaces.
+   - How it was tested:
+      - `pnpm exec eslint packages/shared/src/events/truth.ts packages/shared/src/__tests__/eventTruth.test.ts apps/doWhat-web/src/lib/sessions/server.ts apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts apps/doWhat-web/src/app/api/sessions/route.ts apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts apps/doWhat-web/src/app/api/sessions/[sessionId]/__tests__/route.test.ts apps/doWhat-web/src/app/api/events/route.ts apps/doWhat-web/src/app/api/events/[id]/route.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/sessions/[id]/page.tsx apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx apps/doWhat-mobile/src/app/(tabs)/map/index.tsx apps/doWhat-web/src/app/create/page.tsx apps/doWhat-mobile/src/app/add-event.tsx apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/sessions/[sessionId]/__tests__/route.test.ts src/lib/sessions/__tests__/server.test.ts src/app/api/sessions/__tests__/route.test.ts src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/sessionApi.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Flexible sessions are no longer misclassified as `custom_location` just because fallback labels were normalized through the generic place-label helper.
+      - Unlabeled custom/flexible sessions and events now expose `place_label: null` and rely on explicit `location_kind`-based presentation instead of fake printable place names.
+      - Session PATCH now keeps canonical `place_id`, derived `place_label`, and legacy `venue_id` behavior synchronized when a host edits location data.
+      - `/api/events` and event detail payloads now avoid generic fallback labels for custom/flexible locations while preserving canonical place and legacy venue truth.
+      - Mobile and web session/event consumers now use the same truth contract for flexible/custom location states on the touched surfaces.
+      - Control docs now treat remote rollout as complete baseline and record the remaining open risks accurately.
+   - Remaining risks or follow-up notes:
+      - `sessions.place_label` still stores an internal fallback string because of the legacy DB constraint; the truth layer now hides that fallback from clients, but the storage model is not fully normalized yet.
+      - Event discovery still merges ingested `events` with first-party `sessions`.
+      - Standalone user-created events are still not a separate product capability.
+      - Attendance / hosting truth still needs a dedicated follow-through pass.

@@ -98,7 +98,7 @@ Important:
 | Backend meaning | map bounds or radius passed into discovery endpoints, with explicit distance limits when supported |
 | Supported surfaces | web map, mobile map, places discovery |
 | Default behavior | current map viewport or requested nearby location |
-| Current implementation status | supported, but remote migration rollout is still needed for final performance proof |
+| Current implementation status | supported |
 | Test status | covered by golden discovery scenarios and verification scripts |
 | Keep / remove / defer | keep |
 
@@ -307,6 +307,7 @@ Important:
 - `/api/events` payload truth:
   - consumers should use `origin_kind`, `location_kind`, and `is_place_backed` instead of inferring session/place truth from `place_id`, `venue_name`, or metadata alone
   - `place_id` is canonical place truth only; it must not be treated as a legacy venue id
+  - `place_label` may be `null` for flexible or unlabeled custom-location states; clients should render the explicit state label instead of fabricating a venue name
 - `/api/events` still does not support:
   - `peopleTraits`
   - `priceLevels`

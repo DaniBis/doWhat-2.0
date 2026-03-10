@@ -37,7 +37,8 @@ doWhat must not surface restaurants, cafes, bars, pubs, nightlife, or food/drink
 - **Sessions**
   - Real scheduled community/hosted occurrences.
   - Current user-authored creation writes `sessions`, not standalone `events`.
-  - Place-backed sessions should preserve canonical `place_id` and a non-empty `place_label`.
+  - Place-backed sessions should preserve canonical `place_id`.
+  - Hydrated/API session payloads may expose `placeLabel: null` when the session is flexible or only has an internal placeholder label.
 - **Events**
   - Ingested or external events.
   - User-facing event discovery currently combines `events` and `sessions`.
@@ -84,8 +85,10 @@ Important rule:
 - `places` are the canonical place truth.
 - `venues` remain legacy compatibility/fallback only.
 - `sessions.place_id` must represent canonical place truth only.
+- `sessions.place_label` may still store an internal fallback value to satisfy the legacy DB constraint, but clients must not treat that fallback as a real place label.
 - `events.place_id` must represent canonical place truth only and must never be populated with a legacy `venueId`.
 - Flexible or unpinned listings must stay explicit instead of being normalized into fake venue labels.
+- Coordinate-backed custom locations without a real label should stay explicit and render as a pinned meetup point, not a fake venue name.
 
 ## Source-of-Truth Hierarchy
 
@@ -194,16 +197,13 @@ The product should be able to explain why a result appeared and why a result was
 
 ## Known Current Deviations
 
-- The remote target environment is still behind on discovery migrations.
-- Live post-`068` query-plan verification has not been captured from the target DB.
 - `/api/events` still does not fully use the same shared filter contract as place/activity discovery; it now enforces a documented subset instead.
 - Some older remote `venue_activities` rows may still reflect pre-boundary matching rules until rematch/cleanup is run.
 - Attendance / hosting truth is not yet closed as a product system even though create/detail/API place semantics are now much clearer.
 
 ## Next Implementation Priorities
 
-1. Apply missing remote discovery migrations and run the rollout pack.
-2. Capture live post-deploy query plans and performance measurements.
-3. Audit and clean stale remote activity mappings if needed.
-4. Complete the remaining attendance / hosting truth work on top of the hardened event/session/place semantics.
-5. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and session-truth copy.
+1. Complete the remaining attendance / hosting truth work on top of the hardened event/session/place semantics.
+2. Audit and clean stale remote activity mappings if needed.
+3. Decide whether `/api/events` should expand beyond its current explicit subset once mixed event/session truth is stable.
+4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and session-truth copy.

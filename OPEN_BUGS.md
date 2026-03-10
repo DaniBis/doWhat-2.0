@@ -1,35 +1,33 @@
 # doWhat Open Bugs
 
-Ranked bug register as of **2026-03-09**.
+Ranked bug register as of **2026-03-10**.
 
 Only list issues that are still open, operationally unresolved, or not yet proven closed.
 
 ## Critical
 
-### 1. Remote discovery migrations are missing
+### 1. Attendance and hosting truth is still incomplete on some session/event surfaces
 
 - Surface/page/system
-  - Supabase discovery backend, `/api/nearby`, `/api/places`, discovery cache/telemetry paths
+  - session detail, attendance flows, event detail truth messaging, any surface that summarizes host or RSVP state
 - Symptom
-  - The target remote project is still missing migrations `060`, `065`, `066`, `067`, and `068`, so the deployed schema is behind the repo.
+  - Location truth is now much stronger, but the product still has uneven rules for when attendance is first-party, source-owned, or not available at all.
 - Likely root cause
-  - Remote migration rollout has not kept up with the repo migration set.
+  - Event/session/place truth was hardened before the broader attendance/hosting model was fully normalized.
 - Current status
-  - Open
+  - Open / partially mitigated
 - Owner
-  - manual
+  - Codex
 - Blocking or non-blocking
-  - Blocking
+  - Blocking for full real-user readiness
 - Recommended next action
-  - Run the remote rollout pack from a machine with DB access, then rerun health and post-deploy checks.
+  - Complete the attendance/hosting truth pass on top of the hardened place/session/event contract.
 - Related files/tests if known
-  - `apps/doWhat-web/supabase/migrations/060_sessions_place_label_finalize.sql`
-  - `apps/doWhat-web/supabase/migrations/065_discovery_exposures.sql`
-  - `apps/doWhat-web/supabase/migrations/066_place_tiles_discovery_cache.sql`
-  - `apps/doWhat-web/supabase/migrations/067_activity_catalog_city_keyword_pack.sql`
-  - `apps/doWhat-web/supabase/migrations/068_discovery_query_support_indexes.sql`
-  - `scripts/health-migrations.mjs`
-  - `docs/discovery_remote_rollout_pack.md`
+  - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+  - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+  - `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`
+  - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/*`
 
 ## High
 
@@ -75,30 +73,9 @@ Only list issues that are still open, operationally unresolved, or not yet prove
   - `packages/shared/src/discovery/activityBoundary.ts`
   - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
 
-### 4. No live post-068 query-plan verification yet
-
-- Surface/page/system
-  - Discovery performance and SQL evidence
-- Symptom
-  - The repo contains migration `068` and contract checks, but there is still no verified live `EXPLAIN ANALYZE` or equivalent proof that the intended indexes improve the hot paths remotely.
-- Likely root cause
-  - Current shell lacked direct DB access, `supabase` CLI, and `psql`.
-- Current status
-  - Open
-- Owner
-  - manual
-- Blocking or non-blocking
-  - Blocking for performance claims
-- Recommended next action
-  - Apply the migration remotely and capture live plans for `activities_nearby`, tag-overlap event queries, and session-count queries.
-- Related files/tests if known
-  - `apps/doWhat-web/supabase/migrations/068_discovery_query_support_indexes.sql`
-  - `scripts/sql/discovery-postdeploy-checks.sql`
-  - `docs/discovery_remote_rollout_pack.md`
-
 ## Medium
 
-### 5. Event/session/place truth is improved locally but still split across multiple models
+### 4. Event/session/place truth is improved locally but still split across multiple models
 
 - Surface/page/system
   - discovery, create flow, sessions pages, event rail
@@ -121,7 +98,7 @@ Only list issues that are still open, operationally unresolved, or not yet prove
   - `apps/doWhat-mobile/src/lib/sessionApi.ts`
   - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
 
-### 6. Some secondary surfaces may still use older filter or session-copy language
+### 5. Some secondary surfaces may still use older filter or session-copy language
 
 - Surface/page/system
   - secondary discovery/supporting surfaces outside the primary web/mobile map flows
@@ -142,7 +119,7 @@ Only list issues that are still open, operationally unresolved, or not yet prove
   - `apps/doWhat-web/src/app/discover/page.tsx`
   - `apps/doWhat-mobile/src/app/home.tsx`
 
-### 7. Web typecheck is sensitive to `.next/types` generation order
+### 6. Web typecheck is sensitive to `.next/types` generation order
 
 - Surface/page/system
   - local/dev verification for `dowhat-web`
@@ -164,7 +141,7 @@ Only list issues that are still open, operationally unresolved, or not yet prove
 
 ## Low
 
-### 8. Some historical docs still describe obsolete repo truth
+### 7. Some historical docs still describe obsolete repo truth
 
 - Surface/page/system
   - root/docs planning layer
@@ -184,24 +161,3 @@ Only list issues that are still open, operationally unresolved, or not yet prove
   - `PROJECT_STATE.md`
   - `ENGINEERING_ROADMAP_2025.md`
   - `docs/current_app_overview_2025-12-03.md`
-
-### 9. Remote verification still depends on a human-run machine with DB access
-
-- Surface/page/system
-  - deployment workflow
-- Symptom
-  - The repo has a rollout pack, but this shell cannot complete the deploy/verify loop end-to-end.
-- Likely root cause
-  - Direct Postgres tooling and connectivity are external to this environment.
-- Current status
-  - Open
-- Owner
-  - manual
-- Blocking or non-blocking
-  - Non-blocking for local code work, blocking for final production claims
-- Recommended next action
-  - Run the rollout pack from a DB-connected operator machine and store the results in the logs.
-- Related files/tests if known
-  - `docs/discovery_remote_rollout_pack.md`
-  - `scripts/health-migrations.mjs`
-  - `scripts/sql/discovery-postdeploy-checks.sql`
