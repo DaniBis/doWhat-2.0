@@ -48,6 +48,7 @@ Important:
   - Example: text search + taxonomy + verified means the result must satisfy all active groups.
 - **Hospitality-first selections**
   - Must be stripped from user-facing activity discovery filters unless the product later adds a distinct supported use case.
+  - Inventory truth rules also exclude hospitality-first places by default, so filters must not assume those rows are valid just because stale mappings may still exist remotely before a rematch cleanup.
 - **Unsupported filters**
   - Must not render as placeholders.
   - Must be removed from the visible surface until real backend support exists.

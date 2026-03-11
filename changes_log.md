@@ -1,5 +1,136 @@
 # Changes Log
 
+### 2026-03-11 04:59 UTC — Inventory truth policy + stale mapping cleanup pass kickoff
+- Issue: begin the inventory truth policy and stale mapping cleanup pass now that rollout, event/session/place truth, attendance truth, and mixed discovery truth are complete enough to move forward.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: keep rollout/filter redesign/speculative SQL refactors out of scope and focus this pass on inventory truth sources, stale `venue_activities` cleanup, hospitality leakage suppression, and test-backed matching hardening.
+- Why: the current control layer identifies stale remote `venue_activities` rows and inventory truth quality as the highest-priority readiness gap after the recent truth-hardening passes.
+- How tested: control-layer review of `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`, `CURRENT_STATE.md`, `OPEN_BUGS.md`, `DISCOVERY_TRUTH.md`, and `FILTER_CONTRACT.md` before starting implementation.
+- Result: pass scope is locked to inventory truth policy, stale mapping cleanup, and shared/web/mobile discovery consistency.
+- Remaining risks / follow-up: remote data issues may require a maintenance script and a documented rerun flow in addition to code-side suppression; the audit must confirm the exact failure points before cleanup logic is changed.
+
+### 2026-03-11 05:15 UTC — Inventory truth audit completed / stale mapping persistence traced
+- Issue: audit the current inventory truth pipeline across `places`, `place_sources`, `place_tiles`, `activity_catalog`, `activity_manual_overrides`, `venue_activities`, votes, seeding, and hospitality suppression before implementing cleanup.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: implement cleanup through the canonical matcher plus explicit operator tooling, instead of a UI-only suppression patch or a broad SQL rewrite.
+- Why:
+  - `activity_catalog` + `place_sources` + `places` create the canonical structured inventory inputs,
+  - `matchActivitiesForPlaces()` is the canonical writer for `venue_activities`, but stale rows persist remotely until that matcher is rerun against existing places,
+  - `activity_manual_overrides` already provides the strongest admin-confirmed mapping layer,
+  - `venue_activity_votes` still only strengthen legacy `venues` search, not canonical `places` matching,
+  - the current matcher blocks hospitality-first keyword matches, but it does **not** yet consider real `sessions`/`events` evidence when deciding whether a hospitality venue is a valid activity host exception,
+  - city seeding still contains a chess pack oriented around “cafes and clubs” with a `cafe chess` term, which is broader than the current activity-first product boundary.
+- Audit findings:
+  - Source of activity truth:
+    - `activity_catalog` keywords + Foursquare category ids define candidate activities,
+    - `place_sources` supplies structured provider categories,
+    - `activity_manual_overrides` can force keep a mapping,
+    - `venue_activities` persists inferred/manual mappings with `source` and `confidence`,
+    - `place_tiles.discovery_cache` controls seeded place inventory reuse, not mapping truth.
+  - How mappings are created:
+    - `seedCityInventory()` warms place inventory and optionally triggers `matchActivitiesForPlaces()`,
+    - `matchActivitiesForPlaces()` loads places, Foursquare categories, and manual overrides, then writes/deletes `venue_activities`.
+  - How stale mappings persist:
+    - historical `venue_activities` rows survive until the matcher is rerun for those places/cities,
+    - the repo had no dedicated operator wrapper for a full rematch/cleanup pass,
+    - the current matcher cannot preserve hospitality exceptions based on real event/session evidence because it never loads that evidence.
+  - Where hospitality/noise can leak in:
+    - older remote `venue_activities.source='keyword'` rows created before the activity-first boundary,
+    - city seed pack keywords such as `cafe chess`,
+    - legacy `venue_activity_votes` live on `venues`, so canonical place matching cannot currently use them as first-class evidence.
+  - Where matching is too broad or too weak:
+    - too broad: hospitality-era keyword mappings can remain in `venue_activities` after policy changes,
+    - too weak: legitimate hospitality exceptions with real session/event evidence can be dropped because matcher policy only sees manual overrides + place tags/categories today.
+- How tested:
+  - reviewed `packages/shared/src/discovery/activityBoundary.ts`,
+  - reviewed `packages/shared/src/places/filtering.ts`,
+  - reviewed `apps/doWhat-web/src/lib/places/activityMatching.ts`,
+  - reviewed `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`,
+  - reviewed `apps/doWhat-web/src/lib/discovery/engine.ts`,
+  - reviewed `apps/doWhat-web/src/lib/seed/citySeeding.ts`,
+  - reviewed `apps/doWhat-web/supabase/migrations/024_smart_activity_discovery.sql`, `026_activity_catalog.sql`, and `067_activity_catalog_city_keyword_pack.sql`,
+  - reviewed `docs/seeding.md`, `docs/discovery_playbook.md`, and `docs/activity_discovery_overview.md`,
+  - attempted live DB audit query from this shell and confirmed direct Postgres access is still blocked here with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.
+- Result: the next implementation slice is now clear: add real event/session evidence to matcher policy, narrow the seeding pack vocabulary, and add explicit rematch/cleanup tooling so stale `venue_activities` rows can be audited and removed deterministically.
+- Remaining risks / follow-up: live remote inventory counts still cannot be measured from this shell, so cleanup validation here will be code/test based plus operator tooling rather than a fresh remote DB apply.
+
+### 2026-03-11 05:31 UTC — Canonical matcher hardened for inventory cleanup / operator rematch flow added
+- Issue: implement the minimum safe code-side hardening needed to clean stale `venue_activities` rows and reduce hospitality leakage without hiding bad data in the UI.
+- Files changed:
+  - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+  - `scripts/rematch-venue-activities.mjs`
+  - `package.json`
+  - `docs/inventory_truth_policy.md`
+  - `docs/seeding.md`
+  - `docs/discovery_playbook.md`
+  - `packages/shared/src/__tests__/activityBoundary.test.ts`
+  - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+  - `apps/doWhat-web/src/lib/seed/__tests__/citySeeding.test.ts`
+- Root cause:
+  - stale remote `venue_activities` rows were only cleaned when the matcher happened to rerun,
+  - the matcher did not consider activity-specific first-party session evidence, so valid hospitality exceptions could be dropped,
+  - seed vocabulary still included a `cafe chess`-style term that widened inventory toward hospitality noise.
+- Exact fix:
+  - `matchActivitiesForPlaces()` now loads activity-specific session evidence per canonical place and uses it to protect only the matching activity when a hospitality-primary place is otherwise blocked from keyword inference,
+  - matcher summaries now expose `hospitalityKeywordDeletes` and `eventEvidenceProtectedMatches` so cleanup runs are auditable,
+  - added `pnpm inventory:rematch` via `scripts/rematch-venue-activities.mjs`; it calls the canonical cron matcher with a dry-run default and apply mode,
+  - narrowed the chess city seed pack from “cafes and clubs” to “clubs and community boards” and removed `cafe chess`,
+  - documented the canonical inventory truth policy and rematch flow.
+- Why:
+  - inventory cleanup should happen through the same matcher that creates `venue_activities`, not via ad-hoc deletions or presentation-only suppression,
+  - activity-specific session evidence is a real product-truth exception and should protect valid hosts without letting unrelated hospitality keywords back in,
+  - reducing hospitality vocabulary at seed time lowers future cleanup pressure.
+- How tested: targeted unit and integration coverage added/updated before full verification:
+  - shared boundary test for hospitality venues with real event/session evidence,
+  - activity-matching regressions for stale hospitality keyword deletion and evidence-protected exceptions,
+  - city-seeding regression to keep `cafe chess` out of the chess pack.
+- Result: the repo now has a deterministic inventory cleanup path (`inventory:rematch`) and the canonical matcher is stricter about stale hospitality keyword rows while preserving legitimate session-backed exceptions.
+- Remaining risks / follow-up:
+  - imported external events are still not used as activity-specific matcher evidence,
+  - direct remote cleanup still requires a machine that can reach the live cron route or DB,
+  - legacy `venue_activity_votes` remain a `venues`-only signal and are not yet canonical place truth.
+
+### 2026-03-11 05:47 UTC — Inventory truth pass verification + control layer updates completed
+- Issue: complete verification for the inventory truth pass and update the control docs with the new canonical policy and remaining operational risks.
+- Files changed:
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+  - the first implementation pass introduced a type-only problem in `activityMatching.ts` because Supabase’s generated parser types do not model the `activities` select shape (`catalog_activity_id,name,tags`) well enough,
+  - the control docs still described stale inventory cleanup as an unresolved question instead of a now-defined rematch policy.
+- Exact fix:
+  - replaced the typed `activities` evidence lookup query with an intentionally narrow untyped select guarded by a comment, keeping the runtime fallback logic unchanged,
+  - updated the control layer to state that inventory cleanup now uses `pnpm inventory:rematch` and that the remaining gap is operational execution against live cities, not missing repo policy.
+- Why:
+  - the type failure was tooling-only and did not justify changing the runtime behavior,
+  - current docs must reflect the actual repo state so future passes do not reopen already-settled policy questions.
+- How tested:
+  - `pnpm exec eslint apps/doWhat-web/src/lib/places/activityMatching.ts apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts apps/doWhat-web/src/lib/seed/citySeeding.ts apps/doWhat-web/src/lib/seed/__tests__/citySeeding.test.ts packages/shared/src/__tests__/activityBoundary.test.ts scripts/rematch-venue-activities.mjs`
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/activityBoundary.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts`
+  - `node scripts/rematch-venue-activities.mjs --help`
+  - `pnpm --filter @dowhat/shared typecheck`
+  - `pnpm --filter dowhat-web typecheck`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - targeted lint passed,
+  - shared activity-boundary tests passed (`4/4`),
+  - focused web inventory/matching tests passed (`12/12`, then rerun critical subset `6/6` after the type-only fix),
+  - shared typecheck passed,
+  - web typecheck passed after replacing the over-typed query,
+  - discovery contract verification passed,
+  - the new rematch script prints correct usage/help output.
+- Remaining risks / follow-up:
+  - direct Postgres access from this shell is still blocked (`getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`), so live city cleanup was not executed here,
+  - imported external events are still not used as activity-specific matcher evidence,
+  - legacy `venue_activity_votes` remain a `venues`-only signal.
+
 	migrations 060/065/066/067/068 were verified and registered
 	•	health-migrations --dowhat --remote-rest --strict passed
 	•	verify-discovery-rollout-pack.mjs passed
@@ -5621,3 +5752,108 @@
   - Shared event dedupe remains deterministic for session mirrors and provider-backed external events, while avoiding URL-based over-collapse risk.
 - Remaining risks or follow-up notes:
   - Imported rows without stable provider ids can still appear as separate items if upstream sources duplicate them under different event ids; that is acceptable until there is a stronger proven-safe external-event identity strategy.
+
+## 2026-03-11 12:26:51 +0700 — target city validation + inventory audit tooling kickoff
+
+- Issue being worked on:
+  - Build deterministic city validation standards and audit tooling for Hanoi, Da Nang, and Bangkok so launch inventory can be checked for hospitality leakage, stale mappings, duplicate clusters, weak-confidence matches, and missing expected activity coverage.
+- Files planned to change:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - new city validation docs/scripts/tests under `docs/`, `scripts/`, and `apps/doWhat-web/src/lib/.../__tests__`
+- Decision made:
+  - Extend the existing seed-health + rematch workflow with city-specific inventory audit tooling instead of reopening matcher/discovery semantics.
+- Why the decision was made:
+  - The previous pass already established the inventory policy and cleanup path. The current launch blocker is repeatable validation for Hanoi, Da Nang, and Bangkok, not another policy rewrite.
+- How it will be tested:
+  - Targeted unit tests for the validation/audit helpers.
+  - Targeted verification of any new script contracts.
+  - Existing discovery/inventory verification scripts rerun where relevant.
+- Result:
+  - Kickoff logged. Audit of current scripts/docs is in progress.
+- Remaining risks or follow-up notes:
+  - Live city validation still depends on DB-connected environments; this shell may only support static/tooling verification if direct database access remains unavailable.
+
+## 2026-03-11 12:36:17 +0700 — target city validation + inventory audit tooling implemented
+
+- Issue being worked on:
+  - Create deterministic launch-city inventory validation for Hanoi, Da Nang, and Bangkok so the team can detect hospitality leakage, stale/weak mappings, duplicate clusters, session-to-mapping gaps, and missing activity coverage after seeding/rematch.
+- Files changed:
+  - `scripts/city-inventory-audit.mjs`
+  - `scripts/__tests__/city-inventory-audit.test.mjs`
+  - `package.json`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The repo had seed-health verification and the canonical rematch path, but it still lacked a deterministic city-level audit for launch-quality inventory. There was no single tool that could grade target cities for hospitality leakage, stale keyword matches, duplicate place clusters, session-backed mapping gaps, or required category coverage.
+- Decision made:
+  - Add a DB-backed inventory audit CLI instead of another passive doc-only checklist.
+  - Keep the audit deterministic and policy-aligned by grading explicit metrics:
+    - `hospitalityLeakage`
+    - `weakMappings`
+    - `staleMappings`
+    - `duplicateClusters`
+    - `providerDisagreements`
+    - `sessionMappingGaps`
+    - `manualOverrides`
+    - city-specific activity coverage minima
+  - Use review-only coverage for chess, and city-specific required minima for climbing, bouldering, yoga, running, and padel where appropriate.
+- Why the decision was made:
+  - Launch readiness needs repeatable pass/fail checks, not subjective inventory review. The existing seed/rematch tooling already handled freshness and cleanup; the missing piece was a city audit layer that translates the current inventory truth policy into actionable launch checks.
+- How it is run:
+  - `pnpm inventory:audit:city --city=hanoi --strict`
+  - `pnpm inventory:audit:city --city=danang --strict`
+  - `pnpm inventory:audit:city --city=bangkok --strict`
+  - `pnpm inventory:audit:cities --format=json --output=launch-city-inventory-audit.json`
+- What a pass means:
+  - No failing required coverage gaps for the city.
+  - No unacceptable hospitality leakage / stale keyword leakage / duplicate clusters / session-to-mapping gaps under the scripted thresholds.
+  - Manual-override and provider-disagreement review lists are visible for human follow-up.
+- What a fail means:
+  - The city inventory is not launch-trustworthy yet and needs rematch, reseed, manual override review, duplicate cleanup, or explicit documentation of missing categories.
+- How it was tested:
+  - `node scripts/city-inventory-audit.mjs --help`
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `node scripts/verify-discovery-contract.mjs`
+  - `pnpm inventory:audit:city --city=hanoi --strict`
+- Result:
+  - The new audit CLI and node tests passed.
+  - Existing inventory/matcher regressions still passed.
+  - Control docs now describe the target-city launch checklist and the new audit commands.
+  - A real audit attempt from this shell failed with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`, confirming the tooling is ready but live target-city validation still requires a DB-connected environment.
+- Remaining risks or follow-up notes:
+  - The scripted audit cannot prove real-world market completeness; it only proves the current repo baseline can be audited consistently.
+  - Imported external events are still not treated as canonical activity-mapping evidence in the audit.
+  - Live city status for Hanoi, Da Nang, and Bangkok is still unknown until the audit is run from a connected machine.
+
+## 2026-03-11 12:37:28 +0700 — city audit manual-override grading correction
+
+- Issue being worked on:
+  - Final verification of the new city audit report semantics.
+- Files changed:
+  - `scripts/city-inventory-audit.mjs`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The first implementation graded `manualOverrides` as `suspicious` when a city had zero manual overrides, which would have incorrectly penalized a genuinely clean city with no override debt.
+- Decision made:
+  - Make `manualOverrides` informational-only and always `acceptable`, while still exposing the sample list/count for operators.
+- Why the decision was made:
+  - Manual overrides are a visibility/audit signal, not a required launch-quality minimum.
+- How it was tested:
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+- Result:
+  - City audit status now depends on real inventory quality metrics instead of the incidental presence of manual overrides.
+- Remaining risks or follow-up notes:
+  - Live city audits still require a DB-connected environment.

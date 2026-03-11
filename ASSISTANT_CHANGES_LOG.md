@@ -1,6 +1,12 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2026-03-11
+- Started the inventory truth policy + stale mapping cleanup pass after re-reading the current control docs/logs. Scope is intentionally narrow: audit inventory truth sources, define the canonical policy, clean stale `venue_activities` mappings, harden activity-place matching, and keep hospitality/noise excluded by default without reopening rollout, filter redesign, or speculative SQL rewrites.
+- Finished the audit of the inventory pipeline. Main findings: `matchActivitiesForPlaces()` is the canonical writer for `venue_activities`, but stale rows persist until that matcher is rerun; the matcher still ignores real `sessions`/`events` evidence when deciding whether a hospitality venue is a valid activity-host exception; city seeding still carries a `cafe chess`-style keyword; and legacy `venue_activity_votes` only strengthen old `venues` search, not canonical `places` matching.
+- Implemented the core cleanup slice: `activityMatching.ts` now loads activity-specific session evidence and exposes cleanup counters, the chess city seed pack no longer contains `cafe chess`, and `scripts/rematch-venue-activities.mjs` + `pnpm inventory:rematch` provide the dry-run/apply operator path for canonical rematch cleanup. Added/updated regression tests around hospitality deletion, session-backed exceptions, and seed-pack leakage, and documented the policy in `docs/inventory_truth_policy.md`.
+- Finished verification and doc normalization for the pass. I hit one type-only issue because Supabase’s generated parser types do not understand the `activities` select shape used for evidence lookup; I fixed that by making that one query intentionally untyped with a narrow comment, then reran lint, focused shared/web tests, shared/web typecheck, `node scripts/rematch-venue-activities.mjs --help`, and `node scripts/verify-discovery-contract.mjs`. Control docs now state that inventory cleanup is a solved repo policy with an outstanding live execution step, not an undefined future decision.
+
 ## 2026-03-07
 - Completed the strict duplicate/logo/session-count/discovery verification pass without reworking already-correct code: current source still contains the `VietClimb` semantic dedupe, the doWhat/place logo pipeline, the mobile home event-count fix, and the mobile discovery parity/performance helpers, so I validated those paths with focused Jest coverage instead of rewriting them.
 - Ran focused regressions for `dedupe.test.ts`, `branding.test.ts`, `/api/place-logo` route tests, `homeActivityCounts.test.ts`, and `mobileDiscovery.test.ts` (`20 passed, 0 failed`), then reran workspace `typecheck`, `lint`, and `/api/health`.
@@ -2909,3 +2915,74 @@
   - Shared event truth/discovery tests passed again (`11/11`).
   - Focused web event/map tests passed again (`21/21`).
   - Targeted ESLint on `packages/shared/src/events/truth.ts` passed.
+
+## 2026-03-11 12:26:51 +0700 — target city validation + inventory audit tooling kickoff
+
+- Scope:
+  - Launch-checkable city inventory validation for Hanoi, Da Nang, and Bangkok.
+- Intent:
+  - Add deterministic audit standards and tooling for hospitality leakage, stale mappings, duplicate clusters, weak-confidence mappings, manual override visibility, and expected category coverage.
+- Planned touch points:
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - new city validation docs/scripts/tests
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Constraints:
+  - No rollout reopening, no speculative SQL rewrite, no UI redesign.
+  - Be explicit if city coverage cannot be fully measured from repo data alone.
+- Status:
+  - Control docs and current seed/rematch scripts reviewed; schema/query audit for audit-tool inputs is underway.
+
+## 2026-03-11 12:36:17 +0700 — target city validation + inventory audit tooling implemented
+
+- Scope:
+  - Deterministic launch-city inventory audit tooling for Hanoi, Da Nang, and Bangkok.
+- Findings:
+  - Existing tooling already covered seed freshness (`verify:seed-health`) and canonical cleanup (`inventory:rematch`), but there was no city-quality audit for hospitality leakage, duplicate clusters, stale keyword mappings, session-to-mapping gaps, or required category coverage.
+- Files changed:
+  - `scripts/city-inventory-audit.mjs`
+  - `scripts/__tests__/city-inventory-audit.test.mjs`
+  - `package.json`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Decision:
+  - Add one DB-backed audit CLI with explicit city standards instead of another vague review doc or UI-only inventory sweep.
+- Behavior:
+  - `pnpm inventory:audit:city --city=<slug> --strict` now grades each target city by:
+    - required activity coverage
+    - review-only chess coverage
+    - hospitality leakage
+    - weak mappings
+    - stale mappings
+    - duplicate clusters
+    - provider disagreements
+    - session mapping gaps
+    - manual override visibility
+- Testing:
+  - `node scripts/city-inventory-audit.mjs --help`
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `node scripts/verify-discovery-contract.mjs`
+  - `pnpm inventory:audit:city --city=hanoi --strict`
+- Result:
+  - New script and regression tests passed.
+  - Existing inventory/matcher tests still passed.
+  - Live city audit remains blocked from this shell by DB hostname resolution (`getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`), so launch status for the three cities still needs a connected-environment run.
+
+## 2026-03-11 12:37:28 +0700 — city audit manual-override grading correction
+
+- Finding:
+  - The first city-audit version treated zero manual overrides as `suspicious`, which would have made clean cities look unhealthy for the wrong reason.
+- Fix:
+  - `manualOverrides` is now informational-only and always `acceptable`; it still surfaces counts/samples for operator review.
+- Testing:
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`

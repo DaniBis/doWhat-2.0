@@ -1,6 +1,6 @@
 # doWhat Current State
 
-This file is the brutally honest snapshot of the repo as of **2026-03-10**.
+This file is the brutally honest snapshot of the repo as of **2026-03-11**.
 
 Use this file, not old 2025 planning snapshots, when deciding what to work on next.
 
@@ -53,6 +53,13 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
   - the repo now loudly detects discovery-critical migration drift instead of silently assuming schema health.
 - **Logo handling and duplicate suppression improved**
   - recent passes hardened place logos and duplicate-place behavior.
+- **Inventory truth policy and cleanup path now exist**
+  - the repo now has an explicit inventory truth policy in `docs/inventory_truth_policy.md`
+  - `pnpm inventory:rematch` is the canonical dry-run/apply path for cleaning stale `venue_activities`
+  - the matcher now preserves hospitality exceptions only when there is activity-specific session evidence
+- **Target-city inventory audit tooling now exists**
+  - `pnpm inventory:audit:city --city=<slug>` now audits Hanoi, Da Nang, and Bangkok for hospitality leakage, stale mappings, duplicate clusters, missing activity coverage, session-to-mapping gaps, and manual override visibility
+  - `docs/launch_city_inventory_checklist.md` now defines acceptable / suspicious / failing launch-review standards for those cities
 
 ## Fragile Areas
 
@@ -66,6 +73,8 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
   - discovery still has compatibility/fallback logic that touches `venues`, even though `places` is the canonical direction.
 - **Secondary surfaces still need periodic truth sweeps**
   - the main map flows are in better shape, but some secondary screens may still carry older copy or narrower semantics until they are explicitly touched.
+- **Live inventory quality still needs remote cleanup/application**
+  - the repo now knows how to clean stale `venue_activities` and how to audit target cities, but the actual city-by-city rematch + audit still must be run against the connected environment.
 
 ## Known Contradictions
 
@@ -76,7 +85,7 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Data / Discovery Truth Gaps
 
-- There is still no final operational answer to whether stale remote `venue_activities` rows need cleanup, rematch, or both.
+- The repo now has a clear answer for stale `venue_activities`: run the canonical rematch/cleanup flow, inspect `hospitalityKeywordDeletes`, then run the city inventory audit and manual review checklist. The remaining gap is operational execution against the connected environment.
 - Event/session/place truth is much clearer on the touched create/detail/API surfaces, attendance/hosting truth is explicit on the main session/event detail paths, and mixed discovery truth is now explicit on the primary web/mobile map surfaces. Remaining risk is mostly in untouched secondary surfaces and legacy remote data, not the main mixed map contract.
 - The product now knows what it should discover, but real-user readiness in target cities still depends on actual remote inventory quality.
 
@@ -93,10 +102,10 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Immediate Priorities
 
-1. Audit stale remote activity mappings and clean them up if they still leak pre-boundary hospitality matches.
+1. Run `pnpm inventory:rematch --city=<slug> --apply` and `pnpm inventory:audit:city --city=<slug> --strict` against the connected environment for Hanoi, Da Nang, and Bangkok, then complete the manual sample review checklist.
 2. Decide whether `/api/events` should widen beyond its current explicit subset now that mixed event/session truth is explicit on the main discovery surfaces.
 3. Sweep untouched secondary surfaces that still carry older event/session wording so they inherit the same explicit discovery and participation contract.
-4. Build a real-user readiness gate only after discovery, filters, event truth, and reliability truth are all verified.
+4. Build a real-user readiness gate only after discovery, filters, event truth, reliability truth, and target-city inventory audits are all verified.
 
 ## What Blocks Real-Life Readiness
 

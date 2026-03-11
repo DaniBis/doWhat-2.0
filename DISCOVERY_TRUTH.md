@@ -78,6 +78,7 @@ Current activity-host evidence should be treated in this order:
 Important rule:
 
 - Hospitality-first places must not survive on weak keyword-only signal alone.
+- Activity-specific first-party session evidence may protect an otherwise blocked hospitality place/activity mapping, but it must not be treated as a generic license to reopen all hospitality keyword matches.
 
 ## Event / Session / Place Truth Rules
 
@@ -101,6 +102,14 @@ For showing a place/activity relationship:
 5. fallback inference
 
 Fallback inference is allowed, but it must be visible in code, testable, and weaker than confirmed evidence.
+
+## Inventory Cleanup Rule
+
+- Stale `venue_activities` rows must be cleaned by rerunning the canonical matcher, not by UI-only suppression.
+- The canonical operator path is `pnpm inventory:rematch`, which calls the cron matcher in dry-run or apply mode.
+- Cleanup runs should inspect `hospitalityKeywordDeletes` and `eventEvidenceProtectedMatches` so operators can see what was removed and what survived due to real session evidence.
+- After cleanup, launch-city inventory should be audited with `pnpm inventory:audit:city --city=<slug> --strict`.
+- The launch review checklist for Hanoi, Da Nang, and Bangkok lives in `docs/launch_city_inventory_checklist.md`.
 
 ## Dedupe Rules
 
@@ -198,13 +207,13 @@ The product should be able to explain why a result appeared and why a result was
 ## Known Current Deviations
 
 - `/api/events` still does not fully use the same shared filter contract as place/activity discovery; it now enforces a documented subset instead.
-- Some older remote `venue_activities` rows may still reflect pre-boundary matching rules until rematch/cleanup is run.
+- Some older remote `venue_activities` rows may still reflect pre-boundary matching rules until the rematch/cleanup flow is run against the connected environment.
 - Session-backed participation truth is now explicit on the main touched surfaces, primary mixed discovery map surfaces now distinguish doWhat sessions vs imported events explicitly, and there is still no standalone first-party event attendance model.
 - Some untouched secondary discovery/supporting screens may still carry older generic event wording until they are explicitly swept.
 
 ## Next Implementation Priorities
 
-1. Audit and clean stale remote activity mappings if needed.
+1. Run the canonical rematch/cleanup flow against Hanoi, Da Nang, and Bangkok, then complete the deterministic city audit + manual review checklist for each.
 2. Decide whether `/api/events` should expand beyond its current explicit subset now that mixed event/session truth is explicit on primary discovery surfaces.
 3. Close the remaining standalone-event participation gap without weakening the explicit session attendance contract.
 4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and mixed-discovery truth copy.
