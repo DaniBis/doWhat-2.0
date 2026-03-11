@@ -76,28 +76,28 @@ Only list issues that are still open, operationally unresolved, or not yet prove
 
 ## Medium
 
-### 4. Event/session/place truth is improved locally but still split across multiple models
+### 4. Some secondary discovery surfaces may still carry older mixed event/session wording
 
 - Surface/page/system
-  - discovery, create flow, sessions pages, event rail
+  - secondary discovery/supporting surfaces outside the primary web/mobile map flows
 - Symptom
-  - User-authored creation and touched detail surfaces now tell the truth about session-backed creation and canonical place truth, but user-facing event discovery still merges ingested `events` with `sessions`, and some untouched surfaces still carry legacy event/session language.
+  - The primary web/mobile map discovery surfaces now distinguish doWhat sessions, imported events, and activity/place results explicitly, but untouched secondary screens may still use older generic “event” wording until they are swept.
 - Likely root cause
-  - Historical product evolution created parallel models that are only partially normalized.
+  - Truth hardening focused on the highest-traffic create/detail/map paths first, so some secondary entry points were left for a later sweep.
 - Current status
-  - Open / partially mitigated
+  - Open / narrowed
 - Owner
   - Codex
 - Blocking or non-blocking
-  - Non-blocking for narrow fixes, blocking for real-user readiness
+  - Non-blocking
 - Recommended next action
-  - Keep the new truth contract stable, then finish the remaining attendance/hosting and mixed-model cleanup work after remote rollout.
+  - Sweep remaining secondary discovery/supporting screens only when they are actively touched for product work; do not reopen the primary mixed discovery contract unless a regression proves it necessary.
 - Related files/tests if known
-  - `apps/doWhat-web/src/app/api/events/route.ts`
-  - `apps/doWhat-web/src/app/create/page.tsx`
-  - `apps/doWhat-web/src/lib/discovery/engine.ts`
-  - `apps/doWhat-mobile/src/lib/sessionApi.ts`
-  - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+  - `apps/doWhat-web/src/app/discover/page.tsx`
+  - `apps/doWhat-web/src/app/venues/page.tsx`
+  - `apps/doWhat-mobile/src/app/home.tsx`
+  - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
 
 ### 5. Some secondary surfaces may still use older filter or session-copy language
 

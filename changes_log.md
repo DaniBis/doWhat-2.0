@@ -5467,3 +5467,157 @@
       - There is still no standalone first-party event attendance model; open/imported events remain source-owned or unavailable by design.
       - Discovery still merges ingested `events` with first-party `sessions`, so mixed-model truth remains a follow-up area.
       - Untouched secondary surfaces may still need the same copy/contract sweep when they are modified later.
+
+## 2026-03-10 22:37:50 +0700 — MIXED EVENT / SESSION DISCOVERY TRUTH HARDENING PASS kickoff
+
+- Issue being worked on:
+  - Mixed discovery truth across map, nearby, and feed/list surfaces where first-party sessions, session-backed event mirrors, imported external events, and place-backed activity results can appear close together.
+- Files planned for investigation first:
+  - `apps/doWhat-web/src/app/page.tsx`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/lib/discovery/*`
+  - `apps/doWhat-mobile/src/app/home.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+  - shared event/discovery types under `packages/shared/src`
+- Decision made:
+  - Keep this pass tightly scoped to mixed discovery truth, merge/dedupe behavior, labels, CTA wording, and parity. Rollout, broad filter redesign, speculative SQL work, and a standalone first-party event product model stay out of scope.
+- Why the decision was made:
+  - The highest-priority remaining product-truth gap is that mixed discovery entities are still partially synthesized and labeled in separate pipelines, which risks ambiguous session/event/mirror semantics even though location and attendance truth were hardened already.
+- How it was tested:
+  - Required control docs were read first; code audit is now in progress before implementation.
+- Result:
+  - Kickoff logged and mixed discovery audit started.
+- Remaining risks or follow-up notes:
+  - Until this pass lands, `/api/events`, web map event presentation, and mobile fallback event synthesis may still drift in how they distinguish source sessions, linked mirrors, and imported events.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery audit findings
+
+- Issue being worked on:
+  - Audit of every touched mixed discovery surface before code changes.
+- Files inspected:
+  - `apps/doWhat-web/src/app/page.tsx`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-mobile/src/app/home.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/map/types.ts`
+  - `packages/shared/src/events/api.ts`
+  - `packages/shared/src/events/utils.ts`
+- Root cause / finding:
+  - Mixed discovery truth is still split across three different models:
+    - `/api/nearby` returns place/activity discovery items only and is already honest about that.
+    - `/api/events` merges imported `events` with session-derived event mirrors, but the only explicit truth fields on the payload are `origin_kind`, `location_kind`, and `participation`.
+    - Mobile map still has an independent Supabase fallback that synthesizes `EventSummary` rows from sessions with its own session-to-event and dedupe rules instead of reusing one shared helper.
+  - The current UI is therefore still partially inference-driven:
+    - Web map list/popup uses generic `Events` headings and generic `View details` / `View source` affordances even when the row is really a linked session mirror.
+    - Mobile map event rail presents all items under `Community confirmations nearby`, without an explicit session/imported/open badge or CTA distinction.
+    - `apps/doWhat-web/src/app/page.tsx` is session-only and honest, but it proves the product already has separate truth models for sessions vs event summaries instead of a single mixed-discovery contract.
+  - Dedupe is only partially explicit:
+    - `/api/events` dedupes by `sessionId` metadata or `id`, which suppresses session-origin duplicates but does not expose to clients that a surviving row is a session mirror.
+    - Mobile fallback dedupes only by `event.id`, so it can diverge from the web path if imported rows and synthesized session rows collide differently.
+- Decision made:
+  - Introduce one shared mixed-discovery event truth layer on top of `EventSummary` instead of letting web/mobile keep inferring mirror/imported/open distinctions independently.
+  - Keep `/api/nearby` activity-only; do not merge activities and event summaries into one broad payload in this pass.
+- Why the decision was made:
+  - The backend already exposes enough truth to classify mixed event rows cleanly. The current product risk is duplicated local inference and CTA drift, not the absence of one more broad entity union.
+- How it was tested:
+  - Static audit only so far; implementation and regression tests follow next.
+- Result:
+  - Audit completed for the primary mixed discovery surfaces. The highest-leverage fix is shared event discovery identity + shared dedupe key + shared card/CTA presentation.
+- Remaining risks or follow-up notes:
+  - Untouched secondary feeds may still use older event wording until they are migrated to the shared identity helper later.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery truth hardening implementation
+
+- Issue being worked on:
+  - Make mixed discovery surfaces explicit and deterministic when they include place/activity results, doWhat session mirrors, and imported events.
+- Files changed:
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/events/presentation.ts`
+  - `packages/shared/src/events/utils.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+  - `packages/shared/src/__tests__/eventDiscovery.test.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - Mixed discovery truth still depended on local inference. `/api/events` only exposed generic `EventSummary` rows, web map UI still used generic event wording/CTAs, and mobile map had its own separate session-to-event fallback + dedupe logic.
+- Decision made:
+  - Add one explicit shared mixed-discovery identity layer to `EventSummary`:
+    - `result_kind`
+    - `discovery_kind`
+    - `discovery_dedupe_key`
+  - Centralize linked-session detection, discovery dedupe keys, duplicate merging, and badge/CTA wording in shared helpers.
+  - Keep `/api/nearby` activity-only and keep `/api/events` as the mixed event/session-mirror surface instead of widening the payload architecture in this pass.
+  - Rename misleading activity CTAs from `View events` to `View sessions` on the touched web map surfaces.
+- Why the decision was made:
+  - The product problem was split event/session/mirror inference, not missing rollout work or missing filter/UI features. One shared truth layer fixes the ambiguity with less risk than another endpoint or schema redesign.
+- How it was tested:
+  - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/truth.ts packages/shared/src/events/presentation.ts packages/shared/src/events/utils.ts packages/shared/src/__tests__/eventTruth.test.ts packages/shared/src/__tests__/eventDiscovery.test.ts apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/api/events/route.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx apps/doWhat-web/src/components/WebMap.tsx 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx' apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts src/__tests__/eventDiscovery.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts src/app/map/__tests__/page.smoke.test.tsx`
+  - `pnpm --filter doWhat-mobile test -- --runInBand src/app/__tests__/map-filter-surface.test.ts`
+  - `pnpm --filter @dowhat/shared typecheck`
+  - `pnpm --filter dowhat-web typecheck`
+  - `pnpm --filter doWhat-mobile typecheck`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - Event summaries now expose explicit mixed-discovery identity and a stable dedupe key.
+  - Shared dedupe now prefers the doWhat session mirror when a linked session row collides with a mirrored/imported event row for the same session.
+  - `/api/events` now dedupes through the shared logic instead of local `sessionId-or-id` heuristics.
+  - Web map event list and map popup now use session/imported/open labels and truthful CTAs (`View session` vs `View event`).
+  - Mobile map fallback now uses the same event dedupe and discovery identity logic, and the rail copy now explicitly says `Sessions & events nearby`.
+  - Control docs now reflect that mixed discovery truth is explicit on the primary map surfaces; the remaining risks are stale remote activity mappings, the explicit `/api/events` filter subset, and untouched secondary wording.
+- Remaining risks or follow-up notes:
+  - Untouched secondary discovery/supporting screens may still use older generic event wording until they are swept when next modified.
+  - There is still no standalone first-party event attendance model; imported/open events remain source-owned or unavailable by design.
+  - `/api/events` still intentionally exposes only a documented subset of the full discovery filter contract.
+  - Older remote `venue_activities` rows may still need cleanup/rematch even though the mixed-discovery presentation is now explicit.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery dedupe safety follow-up
+
+- Issue being worked on:
+  - Final review of the new shared event dedupe key.
+- Files changed:
+  - `packages/shared/src/events/truth.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The first implementation allowed `discovery_dedupe_key` to fall back to a raw external source URL when `source_id/source_uid` were absent, which could over-collapse two distinct imported events that happened to share one provider page.
+- Decision made:
+  - Remove the raw-URL fallback and keep dedupe conservative: session id first, provider source ids second, otherwise discovery kind + event id.
+- Why the decision was made:
+  - It is safer to leave a rare duplicate visible than to silently hide a real imported event.
+- How it was tested:
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts src/__tests__/eventDiscovery.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts src/app/map/__tests__/page.smoke.test.tsx`
+  - `pnpm exec eslint packages/shared/src/events/truth.ts`
+- Result:
+  - Shared event dedupe remains deterministic for session mirrors and provider-backed external events, while avoiding URL-based over-collapse risk.
+- Remaining risks or follow-up notes:
+  - Imported rows without stable provider ids can still appear as separate items if upstream sources duplicate them under different event ids; that is acceptable until there is a stronger proven-safe external-event identity strategy.

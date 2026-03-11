@@ -78,6 +78,11 @@ Important:
 | Test status | covered by contract tests and nearby payload tests |
 | Keep / remove / defer | keep |
 
+Notes:
+
+- On mixed discovery surfaces, `events` currently means imported external events plus doWhat session mirrors returned by `/api/events`.
+- `events` does not imply a standalone first-party event attendance model; session-backed mirrors and imported events still carry different ownership and participation truth in the payload.
+
 ### Search text
 
 | Field | Meaning |
@@ -306,6 +311,7 @@ Important:
   - `ai_only` currently means unconfirmed non-session rows, because the route does not yet have a stable cross-environment suggestion-state column
 - `/api/events` payload truth:
   - consumers should use `origin_kind`, `location_kind`, and `is_place_backed` instead of inferring session/place truth from `place_id`, `venue_name`, or metadata alone
+  - mixed discovery consumers should also use `result_kind`, `discovery_kind`, and `discovery_dedupe_key` instead of locally guessing whether a row is a session mirror or an imported event
   - `place_id` is canonical place truth only; it must not be treated as a legacy venue id
   - `place_label` may be `null` for flexible or unlabeled custom-location states; clients should render the explicit state label instead of fabricating a venue name
 - `/api/events` still does not support:

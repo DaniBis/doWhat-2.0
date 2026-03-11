@@ -77,7 +77,7 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 ## Data / Discovery Truth Gaps
 
 - There is still no final operational answer to whether stale remote `venue_activities` rows need cleanup, rematch, or both.
-- Event/session/place truth is much clearer on the touched create/detail/API surfaces, and attendance/hosting truth is now explicit on the main session/event detail paths, but mixed `events` + `sessions` discovery still needs follow-through.
+- Event/session/place truth is much clearer on the touched create/detail/API surfaces, attendance/hosting truth is explicit on the main session/event detail paths, and mixed discovery truth is now explicit on the primary web/mobile map surfaces. Remaining risk is mostly in untouched secondary surfaces and legacy remote data, not the main mixed map contract.
 - The product now knows what it should discover, but real-user readiness in target cities still depends on actual remote inventory quality.
 
 ## Test / Verification State
@@ -94,8 +94,8 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 ## Immediate Priorities
 
 1. Audit stale remote activity mappings and clean them up if they still leak pre-boundary hospitality matches.
-2. Decide whether `/api/events` should widen beyond its current explicit subset only after the mixed event/session truth is stable.
-3. Close the remaining standalone-event and secondary-surface participation gaps without weakening the new explicit attendance contract.
+2. Decide whether `/api/events` should widen beyond its current explicit subset now that mixed event/session truth is explicit on the main discovery surfaces.
+3. Sweep untouched secondary surfaces that still carry older event/session wording so they inherit the same explicit discovery and participation contract.
 4. Build a real-user readiness gate only after discovery, filters, event truth, and reliability truth are all verified.
 
 ## What Blocks Real-Life Readiness

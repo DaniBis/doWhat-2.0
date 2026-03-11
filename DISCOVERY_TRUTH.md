@@ -199,11 +199,12 @@ The product should be able to explain why a result appeared and why a result was
 
 - `/api/events` still does not fully use the same shared filter contract as place/activity discovery; it now enforces a documented subset instead.
 - Some older remote `venue_activities` rows may still reflect pre-boundary matching rules until rematch/cleanup is run.
-- Session-backed participation truth is now explicit on the main touched surfaces, but discovery still mixes imported `events` with first-party `sessions`, and there is still no standalone first-party event attendance model.
+- Session-backed participation truth is now explicit on the main touched surfaces, primary mixed discovery map surfaces now distinguish doWhat sessions vs imported events explicitly, and there is still no standalone first-party event attendance model.
+- Some untouched secondary discovery/supporting screens may still carry older generic event wording until they are explicitly swept.
 
 ## Next Implementation Priorities
 
 1. Audit and clean stale remote activity mappings if needed.
-2. Decide whether `/api/events` should expand beyond its current explicit subset once mixed event/session truth is stable.
-3. Close the remaining standalone-event and secondary-surface participation gaps without weakening the explicit session attendance contract.
-4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and session-truth copy.
+2. Decide whether `/api/events` should expand beyond its current explicit subset now that mixed event/session truth is explicit on primary discovery surfaces.
+3. Close the remaining standalone-event participation gap without weakening the explicit session attendance contract.
+4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and mixed-discovery truth copy.

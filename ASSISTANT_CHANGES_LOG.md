@@ -2830,3 +2830,82 @@
   - There is still no standalone first-party event attendance model.
   - Mixed `events` + `sessions` discovery still needs a future truth sweep beyond the touched attendance surfaces.
   - Untouched secondary surfaces may still need the same contract-driven copy cleanup when they are next modified.
+
+## 2026-03-10 22:37:50 +0700 — MIXED EVENT / SESSION DISCOVERY TRUTH HARDENING PASS kickoff
+
+- Issue:
+  - Mixed discovery truth across web/mobile map, nearby, and feed/list surfaces.
+- Scope:
+  - Audit and harden result-kind/origin/location/participation truth, merge and dedupe behavior, and discovery labels/CTAs for sessions, session-backed event mirrors, imported external events, and place-backed activity results.
+- Out of scope:
+  - Rollout work, broad filter redesign, speculative SQL refactors, and a standalone first-party event attendance model.
+- Why:
+  - Attendance and location truth were hardened already, but mixed discovery still relies on partial local inference and duplicate local synthesis paths.
+- Status:
+  - Kickoff logged; code audit in progress.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery audit findings
+
+- Finding:
+  - `/api/nearby` is activity-only and already honest, but `/api/events` and the mobile map fallback both synthesize session-derived `EventSummary` rows with separate local rules.
+- Main drift points:
+  - Web map events list/popup still uses generic event wording and CTA logic that has to infer whether a row is a linked session mirror or an imported event.
+  - Mobile map fallback converts sessions into event summaries locally and only dedupes by `event.id`, so it can drift from the web event merge path.
+  - Shared `EventSummary` truth currently lacks one explicit mixed-discovery identity field for `session_mirror` vs `imported_event` vs `open_event`.
+- Decision:
+  - Add one shared mixed-discovery identity layer and use it for dedupe keys, badges, and CTA labels instead of expanding the discovery payload architecture.
+- Why:
+  - The gap is duplicated local inference, not missing rollout work or missing SQL.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery truth hardening complete
+
+- Root cause / finding:
+  - Mixed discovery rows still depended on local inference for mirror/imported/open identity, dedupe, and CTA wording.
+- Decision:
+  - Add shared `result_kind`, `discovery_kind`, and `discovery_dedupe_key` truth on `EventSummary`, plus shared mixed-discovery presentation and dedupe helpers.
+- Files:
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/events/presentation.ts`
+  - `packages/shared/src/events/utils.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+  - `packages/shared/src/__tests__/eventDiscovery.test.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+- Testing:
+  - Targeted ESLint passed.
+  - Shared mixed-discovery tests passed (`11/11`).
+  - Focused web event/map tests passed (`21/21`).
+  - Mobile mixed-surface regression test passed (`3/3`).
+  - Shared/web/mobile typecheck passed.
+  - `node scripts/verify-discovery-contract.mjs` passed.
+- Result:
+  - Primary web/mobile map discovery surfaces now label doWhat session mirrors, imported events, and place/activity results explicitly.
+  - Shared event dedupe now suppresses mirrored session duplicates deterministically.
+  - Activity cards on the touched web map surfaces no longer say `View events` when they mean doWhat sessions.
+- Remaining risks:
+  - Secondary untouched surfaces may still use older generic event wording.
+  - `/api/events` still intentionally exposes a narrower contract subset.
+  - No standalone first-party event attendance model exists yet.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery dedupe safety follow-up
+
+- Finding:
+  - Raw external source URLs were too risky as a last-resort dedupe key because they could collapse distinct imported events from the same provider page.
+- Fix:
+  - Remove the raw-URL fallback. Shared event dedupe now uses session id first, provider source ids second, otherwise discovery kind + event id.
+- Testing:
+  - Shared event truth/discovery tests passed again (`11/11`).
+  - Focused web event/map tests passed again (`21/21`).
+  - Targeted ESLint on `packages/shared/src/events/truth.ts` passed.
