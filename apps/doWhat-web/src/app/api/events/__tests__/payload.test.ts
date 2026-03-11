@@ -1,5 +1,4 @@
 import type { EventSummary } from '@dowhat/shared';
-import { PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
 
 const jsonMock = jest.fn();
 
@@ -59,7 +58,7 @@ describe('/api/events payload', () => {
     createServiceClientMock.mockClear();
   });
 
-  it('always returns a non-empty place_label for events', async () => {
+  it('keeps unlabeled coordinate-backed events explicit instead of fabricating a place label', async () => {
     const eventRow: EventSummary = {
       id: 'event-1',
       title: 'Forest party',
@@ -99,7 +98,25 @@ describe('/api/events payload', () => {
     expect(jsonMock).toHaveBeenCalledTimes(1);
     const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
     expect(Array.isArray(payload.events)).toBe(true);
-    expect(payload.events[0]?.place_label).toBe(PLACE_FALLBACK_LABEL);
+    expect(payload.events[0]).toMatchObject({
+      id: 'event-1',
+      result_kind: 'events',
+      discovery_kind: 'open_event',
+      discovery_dedupe_key: 'open_event:event-1',
+      place_label: null,
+      location_kind: 'custom_location',
+      is_place_backed: false,
+      participation: {
+        attendance_supported: false,
+        attendance_source_kind: 'none',
+        first_party_attendance: false,
+        rsvp_supported: false,
+        verification_supported: false,
+        participation_truth_level: 'unavailable',
+        host_kind: 'unknown',
+        organizer_kind: 'unknown',
+      },
+    });
   });
 
   it('filters out events that do not satisfy verifiedOnly + minAccuracy constraints', async () => {
@@ -472,15 +489,105 @@ describe('/api/events payload', () => {
     const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
     const sessionEvent = payload.events.find((event) => event.id === 'session-legacy-venue');
     expect(sessionEvent).toMatchObject({
+      result_kind: 'events',
       origin_kind: 'session',
       location_kind: 'legacy_venue',
+      discovery_kind: 'session_mirror',
+      discovery_dedupe_key: 'session:session-legacy-venue',
       is_place_backed: false,
       place_id: null,
       venue_name: 'Old Hall',
+      participation: {
+        attendance_supported: false,
+        attendance_source_kind: 'session_attendance',
+        first_party_attendance: true,
+        rsvp_supported: false,
+        verification_supported: true,
+        participation_truth_level: 'linked_first_party',
+        host_kind: 'session_host',
+        organizer_kind: 'dowhat_host',
+      },
     });
     expect(sessionEvent?.metadata).toMatchObject({
       venueId: 'legacy-venue-1',
       sessionId: 'session-legacy-venue',
+    });
+  });
+
+  it('dedupes a mirrored session row against a session-origin event row by linked session id', async () => {
+    const now = Date.now();
+    const eventRow: EventSummary = {
+      id: 'event-imported-session',
+      title: 'Imported mirror',
+      description: null,
+      start_at: new Date(now + 60 * 60 * 1000).toISOString(),
+      end_at: null,
+      timezone: null,
+      venue_name: 'Peak Climb',
+      place_label: 'Peak Climb',
+      lat: 44.43,
+      lng: 26.1,
+      address: 'Climbing Street',
+      url: 'https://source.example/session-1',
+      image_url: null,
+      status: 'verified',
+      event_state: null,
+      tags: ['climbing'],
+      place_id: null,
+      source_id: 'provider',
+      source_uid: 'provider-session-1',
+      metadata: {
+        source: 'session',
+        sessionId: 'session-1',
+        sourceUrl: 'https://source.example/session-1',
+      },
+      reliability_score: null,
+      verification_confirmations: null,
+      verification_required: null,
+      place: null,
+    };
+
+    const sessionRow = {
+      id: 'session-1',
+      activity_id: 'activity-1',
+      venue_id: null,
+      place_id: 'place-1',
+      host_user_id: 'host-1',
+      starts_at: new Date(now + 60 * 60 * 1000).toISOString(),
+      ends_at: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
+      price_cents: 0,
+      visibility: 'public',
+      max_attendees: 20,
+      place_label: 'Peak Climb',
+      reliability_score: null,
+      description: null,
+      created_at: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    };
+
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'events') return createQuery({ data: [eventRow], error: null });
+      if (table === 'sessions') return createQuery({ data: [sessionRow], error: null });
+      if (table === 'activities') return createQuery({ data: [{ id: 'activity-1', name: 'Climbing Night', description: null, venue: null, lat: null, lng: null }], error: null });
+      if (table === 'venues') return createQuery({ data: [], error: null });
+      if (table === 'places') return createQuery({ data: [{ id: 'place-1', name: 'Peak Climb', lat: 44.43, lng: 26.1, address: 'Climbing Street', locality: null, region: null, country: null, categories: ['climbing'] }], error: null });
+      if (table === 'profiles') return createQuery({ data: [], error: null });
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await GET({ url: 'http://localhost/api/events?limit=20' } as unknown as Request);
+
+    const payload = jsonMock.mock.calls[0]?.[0] as { events: EventSummary[] };
+    expect(payload.events).toHaveLength(1);
+    expect(payload.events[0]).toMatchObject({
+      id: 'session-1',
+      title: 'Climbing Night',
+      result_kind: 'events',
+      origin_kind: 'session',
+      discovery_kind: 'session_mirror',
+      discovery_dedupe_key: 'session:session-1',
+      place_id: 'place-1',
+      place_label: 'Peak Climb',
     });
   });
 });

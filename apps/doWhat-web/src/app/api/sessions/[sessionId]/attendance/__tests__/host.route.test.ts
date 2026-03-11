@@ -83,6 +83,16 @@ describe("attendance host route", () => {
             username: "tay",
           },
         ],
+        participation: {
+          attendance_supported: true,
+          attendance_source_kind: "session_attendance",
+          first_party_attendance: true,
+          rsvp_supported: true,
+          verification_supported: true,
+          participation_truth_level: "first_party",
+          host_kind: "session_host",
+          organizer_kind: "dowhat_host",
+        },
       });
     });
 
@@ -117,6 +127,16 @@ describe("attendance host route", () => {
             username: "jord",
           },
         ],
+        participation: {
+          attendance_supported: true,
+          attendance_source_kind: "session_attendance",
+          first_party_attendance: true,
+          rsvp_supported: true,
+          verification_supported: true,
+          participation_truth_level: "first_party",
+          host_kind: "session_host",
+          organizer_kind: "dowhat_host",
+        },
       });
     });
   });
@@ -181,7 +201,20 @@ describe("attendance host route", () => {
       );
       expect(updateStub.updateMock.mock.calls[2]?.[0]).not.toHaveProperty("status");
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ sessionId: "session-apply", applied: 3 });
+      await expect(response.json()).resolves.toEqual({
+        sessionId: "session-apply",
+        applied: 3,
+        participation: {
+          attendance_supported: true,
+          attendance_source_kind: "session_attendance",
+          first_party_attendance: true,
+          rsvp_supported: true,
+          verification_supported: true,
+          participation_truth_level: "first_party",
+          host_kind: "session_host",
+          organizer_kind: "dowhat_host",
+        },
+      });
     });
 
     it("restores RSVP going when moving from late_cancel back to registered", async () => {
@@ -209,7 +242,20 @@ describe("attendance host route", () => {
         }),
       );
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ sessionId: "session-registered", applied: 1 });
+      await expect(response.json()).resolves.toEqual({
+        sessionId: "session-registered",
+        applied: 1,
+        participation: {
+          attendance_supported: true,
+          attendance_source_kind: "session_attendance",
+          first_party_attendance: true,
+          rsvp_supported: true,
+          verification_supported: true,
+          participation_truth_level: "first_party",
+          host_kind: "session_host",
+          organizer_kind: "dowhat_host",
+        },
+      });
     });
   });
 });

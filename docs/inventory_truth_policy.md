@@ -95,17 +95,17 @@ Use the canonical matcher to audit and clean stale `venue_activities` rows.
 Dry run:
 
 ```bash
-pnpm inventory:rematch --city=hanoi
-pnpm inventory:rematch --city=bangkok
-pnpm inventory:rematch --city=danang
+pnpm inventory:rematch --city=hanoi --all --batchSize=500
+pnpm inventory:rematch --city=bangkok --all --batchSize=500
+pnpm inventory:rematch --city=danang --all --batchSize=500
 ```
 
 Apply:
 
 ```bash
-pnpm inventory:rematch --city=hanoi --apply
-pnpm inventory:rematch --city=bangkok --apply
-pnpm inventory:rematch --city=danang --apply
+pnpm inventory:rematch --city=hanoi --apply --all --batchSize=500
+pnpm inventory:rematch --city=bangkok --apply --all --batchSize=500
+pnpm inventory:rematch --city=danang --apply --all --batchSize=500
 ```
 
 Targeted place cleanup:

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ACTIVITY_CATALOG_PRESETS, evaluateActivityFirstDiscoveryPolicy, type ActivityCatalogEntry } from '@dowhat/shared';
 
+import { resolveCityScope } from '@/lib/places/cityScope';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
@@ -20,6 +21,8 @@ export type MatchSummary = {
   matches: number;
   upserts: number;
   deletes: number;
+  hospitalityKeywordDeletes: number;
+  eventEvidenceProtectedMatches: number;
   manualApplied: number;
   dryRun: boolean;
   catalogSize: number;
@@ -72,6 +75,7 @@ type SearchIndex = {
 
 type ActivityMatchingPolicy = {
   allowKeywordMatch: boolean;
+  activityEvidenceIds: Set<number>;
 };
 
 type ActivityMatch = {
@@ -79,13 +83,28 @@ type ActivityMatch = {
   source: VenueActivitySource;
   confidence: number;
   detail?: string;
+  usedEventEvidence?: boolean;
 };
 
 type PlaceMatchResult = {
   matches: Map<number, ActivityMatch>;
   upserts: Array<{ venue_id: string; activity_id: number; source: VenueActivitySource; confidence: number; matched_at: string }>;
   deletes: number[];
+  hospitalityKeywordDeletes: number;
+  eventEvidenceProtectedMatches: number;
   manualCount: number;
+};
+
+type SessionEvidenceRow = {
+  place_id: string;
+  activity_id: string | null;
+};
+
+type ActivityEvidenceRow = {
+  id: string;
+  catalog_activity_id?: number | null;
+  name?: string | null;
+  tags?: string[] | null;
 };
 
 const SOURCE_PRIORITY: Record<VenueActivitySource, number> = {
@@ -104,9 +123,10 @@ export async function matchActivitiesForPlaces(options: MatchOptions = {}): Prom
   const places = await loadPlacesBatch(supabase, options);
   const placeIds = places.map((place) => place.id);
 
-  const [fsqCategoryMap, manualOverrideMap] = await Promise.all([
+  const [fsqCategoryMap, manualOverrideMap, activityEvidenceByPlaceId] = await Promise.all([
     loadFoursquareCategoryMap(supabase, placeIds),
     loadManualOverrides(supabase, placeIds),
+    loadPlaceActivityEvidence(supabase, placeIds),
   ]);
 
   const summary: MatchSummary = {
@@ -114,6 +134,8 @@ export async function matchActivitiesForPlaces(options: MatchOptions = {}): Prom
     matches: 0,
     upserts: 0,
     deletes: 0,
+    hospitalityKeywordDeletes: 0,
+    eventEvidenceProtectedMatches: 0,
     manualApplied: 0,
     dryRun: Boolean(options.dryRun),
     catalogSize: catalog.length,
@@ -131,11 +153,21 @@ export async function matchActivitiesForPlaces(options: MatchOptions = {}): Prom
     try {
       const fsqCategories = fsqCategoryMap.get(place.id) ?? new Set<string>();
       const manualOverrides = manualOverrideMap.get(place.id) ?? [];
-      const result = computeMatchesForPlace({ place, catalog, fsqCategories, manualOverrides, nowIso });
+      const activityEvidenceIds = activityEvidenceByPlaceId.get(place.id) ?? new Set<number>();
+      const result = computeMatchesForPlace({
+        place,
+        catalog,
+        fsqCategories,
+        manualOverrides,
+        activityEvidenceIds,
+        nowIso,
+      });
 
       summary.matches += result.matches.size;
       summary.upserts += result.upserts.length;
       summary.deletes += result.deletes.length;
+      summary.hospitalityKeywordDeletes += result.hospitalityKeywordDeletes;
+      summary.eventEvidenceProtectedMatches += result.eventEvidenceProtectedMatches;
       summary.manualApplied += result.manualCount;
 
       if (!options.dryRun) {
@@ -179,11 +211,12 @@ type PlaceMatchContext = {
   catalog: ActivityCatalogRow[];
   fsqCategories: Set<string>;
   manualOverrides: ManualOverrideRow[];
+  activityEvidenceIds: Set<number>;
   nowIso: string;
 };
 
 function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
-  const { place, catalog, fsqCategories, manualOverrides, nowIso } = context;
+  const { place, catalog, fsqCategories, manualOverrides, activityEvidenceIds, nowIso } = context;
   const existingRows = Array.isArray(place.venue_activities) ? place.venue_activities : [];
   const existingMap = new Map<number, { source: VenueActivitySource; confidence: number | null }>();
   existingRows.forEach((row) => {
@@ -216,9 +249,11 @@ function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
     categories: place.categories,
     tags: place.tags,
     hasManualOverride: manualOverrides.length > 0,
+    hasEventOrSessionEvidence: activityEvidenceIds.size > 0,
   });
   const matchingPolicy: ActivityMatchingPolicy = {
     allowKeywordMatch: !boundary.isHospitalityPrimary || boundary.hasActivityCategoryEvidence,
+    activityEvidenceIds,
   };
 
   catalog.forEach((activity) => {
@@ -255,25 +290,44 @@ function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
     }
   });
 
-  return { matches, upserts, deletes, manualCount };
+  const hospitalityKeywordDeletes = boundary.isHospitalityPrimary
+    ? deletes.filter((activityId) => existingMap.get(activityId)?.source === 'keyword' && !activityEvidenceIds.has(activityId)).length
+    : 0;
+  const eventEvidenceProtectedMatches = Array.from(matches.values()).filter((match) => match.usedEventEvidence).length;
+
+  return {
+    matches,
+    upserts,
+    deletes,
+    hospitalityKeywordDeletes,
+    eventEvidenceProtectedMatches,
+    manualCount,
+  };
 }
 
 function evaluateActivityMatch(
   activity: ActivityCatalogRow,
   searchIndex: SearchIndex,
   fsqCategories: Set<string>,
-  policy: ActivityMatchingPolicy = { allowKeywordMatch: true },
+  policy: ActivityMatchingPolicy = { allowKeywordMatch: true, activityEvidenceIds: new Set<number>() },
 ): ActivityMatch | null {
   const fsqMatch = findFsqCategoryMatch(activity, fsqCategories);
   if (fsqMatch) {
     return { activityId: activity.id, source: 'category', confidence: CATEGORY_CONFIDENCE, detail: fsqMatch };
   }
 
-  if (!policy.allowKeywordMatch) return null;
+  const hasEventEvidence = policy.activityEvidenceIds.has(activity.id);
+  if (!policy.allowKeywordMatch && !hasEventEvidence) return null;
 
   const keywordMatch = findKeywordMatch(activity, searchIndex);
   if (keywordMatch) {
-    return { activityId: activity.id, source: 'keyword', confidence: KEYWORD_CONFIDENCE, detail: keywordMatch };
+    return {
+      activityId: activity.id,
+      source: 'keyword',
+      confidence: KEYWORD_CONFIDENCE,
+      detail: keywordMatch,
+      usedEventEvidence: !policy.allowKeywordMatch && hasEventEvidence,
+    };
   }
 
   return null;
@@ -373,10 +427,22 @@ async function loadActivityCatalog(client: SupabaseClient): Promise<ActivityCata
 async function loadPlacesBatch(client: SupabaseClient, options: MatchOptions): Promise<PlaceRow[]> {
   const selectClause =
     `id,name,description,categories,tags,metadata,city,locality,foursquare_id,updated_at,venue_activities!left(activity_id,source,confidence)`;
-  const applyCityFilter = <T extends { or: (value: string) => T }>(query: T): T => {
+  const applyCityFilter = <T extends {
+    or: (value: string) => T;
+    gte: (column: string, value: number) => T;
+    lte: (column: string, value: number) => T;
+  }>(query: T): T => {
     if (!options.city) return query;
     const normalizedCity = options.city.trim();
     if (!normalizedCity.length) return query;
+    const scope = resolveCityScope(normalizedCity);
+    if (scope) {
+      return query
+        .gte('lat', scope.bbox.sw.lat)
+        .lte('lat', scope.bbox.ne.lat)
+        .gte('lng', scope.bbox.sw.lng)
+        .lte('lng', scope.bbox.ne.lng);
+    }
     const escaped = normalizedCity.replace(/[%_,]/g, (match) => `\\${match}`);
     return query.or(`city.ilike.%${escaped}%,locality.ilike.%${escaped}%`);
   };
@@ -475,6 +541,116 @@ async function loadManualOverrides(client: SupabaseClient, placeIds: string[]): 
   return map;
 }
 
+async function loadPlaceActivityEvidence(client: SupabaseClient, placeIds: string[]): Promise<Map<string, Set<number>>> {
+  const map = new Map<string, Set<number>>();
+  const uniqueIds = Array.from(new Set(placeIds.filter(Boolean)));
+  if (!uniqueIds.length) return map;
+
+  const sessionRows: SessionEvidenceRow[] = [];
+  const chunkSize = 180;
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    const { data, error } = await client
+      .from('sessions')
+      .select('place_id,activity_id')
+      .in('place_id', chunk)
+      .not('activity_id', 'is', null)
+      .returns<SessionEvidenceRow[]>();
+    if (error) throw error;
+    if (data?.length) sessionRows.push(...data);
+  }
+
+  const activityIds = Array.from(
+    new Set(
+      sessionRows
+        .map((row) => row.activity_id)
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+    ),
+  );
+  if (!activityIds.length) return map;
+
+  const activityEvidenceMap = await loadActivityEvidenceLookup(client, activityIds);
+  sessionRows.forEach((row) => {
+    if (!row.place_id || !row.activity_id) return;
+    const evidenceIds = activityEvidenceMap.get(row.activity_id);
+    if (!evidenceIds?.size) return;
+    const bucket = map.get(row.place_id) ?? new Set<number>();
+    evidenceIds.forEach((activityId) => bucket.add(activityId));
+    map.set(row.place_id, bucket);
+  });
+
+  return map;
+}
+
+async function loadActivityEvidenceLookup(
+  client: SupabaseClient,
+  activityIds: string[],
+): Promise<Map<string, Set<number>>> {
+  const map = new Map<string, Set<number>>();
+  if (!activityIds.length) return map;
+
+  const rows: ActivityEvidenceRow[] = [];
+  const chunkSize = 180;
+  let includeCatalogActivityId = true;
+  // Generated DB types do not currently model the legacy activities table well enough
+  // for typed select parsing here, so keep this lookup intentionally untyped.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activitiesTable = client.from('activities') as any;
+
+  for (let index = 0; index < activityIds.length; index += chunkSize) {
+    const chunk = activityIds.slice(index, index + chunkSize);
+    let result = await activitiesTable
+      .select(includeCatalogActivityId ? 'id,catalog_activity_id,name,tags' : 'id,name,tags')
+      .in('id', chunk);
+    if (
+      result.error &&
+      includeCatalogActivityId &&
+      isMissingColumnError(result.error, 'catalog_activity_id')
+    ) {
+      includeCatalogActivityId = false;
+      result = await activitiesTable
+        .select('id,name,tags')
+        .in('id', chunk);
+    }
+    if (result.error) throw result.error;
+    const data = result.data as ActivityEvidenceRow[] | null;
+    if (data?.length) rows.push(...data);
+  }
+
+  rows.forEach((row) => {
+    const ids = new Set<number>();
+    if (typeof row.catalog_activity_id === 'number' && Number.isFinite(row.catalog_activity_id)) {
+      ids.add(row.catalog_activity_id);
+    }
+    inferCatalogActivityIdsFromText([row.name ?? null, ...(row.tags ?? [])]).forEach((activityId) => ids.add(activityId));
+    if (ids.size) {
+      map.set(row.id, ids);
+    }
+  });
+
+  return map;
+}
+
+function inferCatalogActivityIdsFromText(values: Array<string | null | undefined>): Set<number> {
+  const normalized = normalizeSearchString(values.filter((value): value is string => typeof value === 'string').join(' '));
+  if (!normalized) return new Set<number>();
+  const searchIndex: SearchIndex = {
+    text: ` ${normalized} `,
+    tokens: new Set(normalized.split(' ')),
+    empty: false,
+  };
+  const result = new Set<number>();
+  ACTIVITY_CATALOG_PRESETS.forEach((activity) => {
+    const keywordMatch = (activity.keywords ?? []).some((keyword) => matchesKeyword(searchIndex, keyword));
+    const slugMatch = matchesKeyword(searchIndex, activity.slug.replace(/-/g, ' '));
+    const nameMatch = matchesKeyword(searchIndex, activity.name);
+    if (keywordMatch || slugMatch || nameMatch) {
+      result.add(activity.id);
+    }
+  });
+  return result;
+}
+
 function extractFsqCategoryIds(payload: unknown): string[] {
   const result: string[] = [];
   const value = normalizeJson(payload);
@@ -512,6 +688,16 @@ function isMissingTableError(error: unknown): boolean {
   );
 }
 
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? (error as { code?: string | null }).code : null;
+  const message = 'message' in error ? (error as { message?: string | null }).message : null;
+  const hint = 'hint' in error ? (error as { hint?: string | null }).hint : null;
+  if (code !== '42703') return false;
+  const haystack = `${message ?? ''} ${hint ?? ''}`.toLowerCase();
+  return haystack.includes(columnName.toLowerCase());
+}
+
 function clampLimit(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 50;
   return Math.min(2000, Math.max(1, Math.floor(value)));
@@ -521,4 +707,6 @@ export const __activityMatchingTestUtils = {
   computeMatchesForPlace,
   evaluateActivityMatch,
   buildSearchIndex,
+  inferCatalogActivityIdsFromText,
+  resolveCityScope,
 };

@@ -107,6 +107,8 @@ Fallback inference is allowed, but it must be visible in code, testable, and wea
 
 - Stale `venue_activities` rows must be cleaned by rerunning the canonical matcher, not by UI-only suppression.
 - The canonical operator path is `pnpm inventory:rematch`, which calls the cron matcher in dry-run or apply mode.
+- Before trusting a tiny rematch count, operators should run `pnpm inventory:diagnose:city --city=<slug>` to compare bbox inventory against the current city/locality scope.
+- City rematch/audit selection for Hanoi, Da Nang, and Bangkok is now bbox-aware and no longer depends on raw `city/locality ilike` alone.
 - Cleanup runs should inspect `hospitalityKeywordDeletes` and `eventEvidenceProtectedMatches` so operators can see what was removed and what survived due to real session evidence.
 - After cleanup, launch-city inventory should be audited with `pnpm inventory:audit:city --city=<slug> --strict`.
 - The launch review checklist for Hanoi, Da Nang, and Bangkok lives in `docs/launch_city_inventory_checklist.md`.
@@ -208,12 +210,14 @@ The product should be able to explain why a result appeared and why a result was
 
 - `/api/events` still does not fully use the same shared filter contract as place/activity discovery; it now enforces a documented subset instead.
 - Some older remote `venue_activities` rows may still reflect pre-boundary matching rules until the rematch/cleanup flow is run against the connected environment.
+- Live target-city diagnostics now prove that Hanoi, Da Nang, and Bangkok are not truly empty inside their bounding boxes, and the repo now scopes rematch/audit across the full bbox inventory.
+- The remaining live target-city blockers are missing seed cache entries for pack version `2026-03-04.v1`, large null/district-level city-field hygiene gaps, and effectively zero mapped `venue_activities` coverage across those city inventories.
 - Session-backed participation truth is now explicit on the main touched surfaces, primary mixed discovery map surfaces now distinguish doWhat sessions vs imported events explicitly, and there is still no standalone first-party event attendance model.
 - Some untouched secondary discovery/supporting screens may still carry older generic event wording until they are explicitly swept.
 
 ## Next Implementation Priorities
 
-1. Run the exact live operator sequence in `docs/live_inventory_execution_pack.md` for Hanoi, Da Nang, and Bangkok, then complete the deterministic city audit + manual review checklist for each.
-2. Decide whether `/api/events` should expand beyond its current explicit subset now that mixed event/session truth is explicit on primary discovery surfaces.
-3. Close the remaining standalone-event participation gap without weakening the explicit session attendance contract.
-4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and mixed-discovery truth copy.
+1. Rerun the live operator sequence in `docs/live_inventory_execution_pack.md` using the new batched city rematch path, then measure whether mapped activity coverage materially improves.
+2. Restore or prove the missing target-city seed cache baseline for pack version `2026-03-04.v1`, then rerun the live operator sequence in `docs/live_inventory_execution_pack.md`.
+3. Decide whether `/api/events` should expand beyond its current explicit subset now that mixed event/session truth is explicit on primary discovery surfaces.
+4. Close the remaining standalone-event participation gap without weakening the explicit session attendance contract.

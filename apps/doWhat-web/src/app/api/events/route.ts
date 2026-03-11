@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 
 import { normalizeEventState } from '@/lib/events/state';
-import { hydratePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
+import { hydratePlaceLabel } from '@/lib/places/labels';
 import { createServiceClient } from '@/lib/supabase/service';
 import { hydrateSessions, type HydratedSession } from '@/lib/sessions/server';
 import {
   annotateEventTruth,
+  dedupeEventSummaries,
   inferEventLocationKind,
+  isMeaningfulLocationLabel,
   normalizeDiscoveryFilterContract,
   parseDiscoveryFilterContractSearchParams,
   type EventSummary,
@@ -45,8 +47,11 @@ const sessionToEventSummary = (session: HydratedSession): EventSummary => {
     venue: session.venue?.name ?? session.activity?.venueLabel ?? null,
     address: session.venue?.address ?? null,
   });
-  const eventPlaceLabel = session.locationKind === 'flexible' ? null : placeLabel;
-  const title = session.activity?.name ?? (placeLabel === PLACE_FALLBACK_LABEL ? 'Community session' : placeLabel);
+  const eventPlaceLabel =
+    session.locationKind === 'flexible' || !isMeaningfulLocationLabel(placeLabel)
+      ? null
+      : placeLabel;
+  const title = session.activity?.name ?? (eventPlaceLabel ?? 'Community session');
   const metadata: Record<string, unknown> = {
     source: 'session',
     sessionId: session.id,
@@ -94,20 +99,6 @@ const sessionToEventSummary = (session: HydratedSession): EventSummary => {
     is_place_backed: session.isPlaceBacked,
     origin_kind: 'session',
   });
-};
-
-const dedupeEvents = (events: EventSummary[]): EventSummary[] => {
-  const seen = new Set<string>();
-  const result: EventSummary[] = [];
-  for (const event of events) {
-    const key = (typeof event.metadata === 'object' && event.metadata && 'sessionId' in event.metadata)
-      ? String((event.metadata as Record<string, unknown>).sessionId)
-      : event.id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(event);
-  }
-  return result;
 };
 
 const parseCoordinatePair = (value: string | null): { lat: number; lng: number } | null => {
@@ -374,7 +365,7 @@ export async function GET(request: Request) {
     verification_required: omittedVerificationRequired ? null : event.verification_required ?? null,
   }));
   const sessionEvents = await fetchSessionEvents({ client, sw, ne, fromIso, toIso, limit });
-  const combined = dedupeEvents([...rows, ...sessionEvents]).sort(
+  const combined = dedupeEventSummaries([...rows, ...sessionEvents]).sort(
     (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
   );
   const placeIds = Array.from(
@@ -431,13 +422,17 @@ export async function GET(request: Request) {
       address: event.address ?? null,
       fallbackLabel: event.place_label ?? null,
     });
+    const locationKind = inferEventLocationKind(event);
     const placeLabel =
-      inferEventLocationKind(event) === 'flexible' && hydratedPlaceLabel === PLACE_FALLBACK_LABEL
-        ? null
-        : hydratedPlaceLabel;
+      locationKind === 'canonical_place' || locationKind === 'legacy_venue'
+        ? hydratedPlaceLabel
+        : isMeaningfulLocationLabel(hydratedPlaceLabel)
+          ? hydratedPlaceLabel
+          : null;
 
     return annotateEventTruth({
       ...event,
+      location_kind: locationKind,
       place_label: placeLabel,
     });
   });

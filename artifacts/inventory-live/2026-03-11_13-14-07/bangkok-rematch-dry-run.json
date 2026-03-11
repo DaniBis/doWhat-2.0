@@ -1,0 +1,29 @@
+{
+  "city": "bangkok",
+  "scope": {
+    "city": "bangkok"
+  },
+  "dryRun": true,
+  "requestedAt": "2026-03-11T06:20:43.549Z",
+  "baseUrl": "http://localhost:3002",
+  "runStatus": "ok",
+  "processed": 1,
+  "matches": 0,
+  "upserts": 0,
+  "deletes": 0,
+  "hospitalityKeywordDeletes": 0,
+  "eventEvidenceProtectedMatches": 0,
+  "manualApplied": 0,
+  "errorCount": 0,
+  "details": [
+    {
+      "placeId": "1e61ceaf-a537-4705-9387-0a2acab0d75a",
+      "name": "Pakalolo Cannabis Bar & Dispensary - Khaosan",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    }
+  ],
+  "errors": []
+}

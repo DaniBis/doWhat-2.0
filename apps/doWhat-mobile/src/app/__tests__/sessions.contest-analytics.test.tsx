@@ -13,7 +13,18 @@ const baseAttendanceSummary: AttendanceSummary = {
   status: 'going',
   counts: { going: 1, interested: 0, declined: 0, total: 1, verified: 0 },
   maxAttendees: 4,
+  participation: {
+    attendance_supported: true,
+    attendance_source_kind: 'session_attendance',
+    first_party_attendance: true,
+    rsvp_supported: true,
+    verification_supported: true,
+    participation_truth_level: 'first_party',
+    host_kind: 'session_host',
+    organizer_kind: 'dowhat_host',
+  },
 };
+const originalFetch = global.fetch;
 
 jest.mock('../lib/sessionAttendance', () => ({
   fetchAttendanceSummary: jest.fn(),
@@ -103,8 +114,32 @@ const sessionRow = {
   activities: { id: 'activity-1', name: 'Morning Yoga' },
   venues: { id: 'venue-1', name: 'Skyline Studio', address: '123 Main', lat: 0, lng: 0 },
 };
+const webApiSession = {
+  id: 'session-123',
+  activityId: 'activity-1',
+  venueId: 'venue-1',
+  placeId: null,
+  startsAt: sessionRow.starts_at,
+  endsAt: sessionRow.ends_at,
+  priceCents: sessionRow.price_cents,
+  maxAttendees: sessionRow.max_attendees,
+  visibility: 'public',
+  hostUserId: 'host-1',
+  description: null,
+  placeLabel: 'Skyline Studio',
+  locationKind: 'legacy_venue',
+  isPlaceBacked: false,
+  participation: baseAttendanceSummary.participation,
+  activity: { id: 'activity-1', name: 'Morning Yoga' },
+  venue: { id: 'venue-1', name: 'Skyline Studio', address: '123 Main', lat: 0, lng: 0 },
+  place: null,
+};
 
 const mockSupabaseAuthGetUser = jest.fn(async () => ({ data: { user: { id: 'user-9' } }, error: null }));
+const mockSupabaseAuthGetSession = jest.fn(async () => ({
+  data: { session: { access_token: 'token-123', user: { id: 'user-9' } } },
+  error: null,
+}));
 const mockSupabaseRemoveChannel = jest.fn();
 
 const buildSessionsQuery = () => ({
@@ -159,6 +194,7 @@ jest.mock('../../lib/supabase', () => ({
   supabase: {
     auth: {
       getUser: () => mockSupabaseAuthGetUser(),
+      getSession: () => mockSupabaseAuthGetSession(),
     },
     from: (table: string) => mockSupabaseFrom(table),
     channel: () => mockSupabaseChannel(),
@@ -167,7 +203,7 @@ jest.mock('../../lib/supabase', () => ({
 }));
 
 describe('SessionDetails reliability contest analytics', () => {
-  beforeEach(() => {
+beforeEach(() => {
     jest.clearAllMocks();
     mockFetchAttendanceSummary.mockClear();
     mockFetchAttendanceSummary.mockResolvedValue(baseAttendanceSummary);
@@ -175,12 +211,21 @@ describe('SessionDetails reliability contest analytics', () => {
     mockFetchAttendanceDisputes.mockResolvedValue([]);
     mockSubmitAttendanceDispute.mockClear();
     mockSupabaseAuthGetUser.mockClear();
+    mockSupabaseAuthGetSession.mockClear();
     mockSupabaseFrom.mockClear();
     mockSupabaseChannel.mockClear();
     mockSupabaseRemoveChannel.mockClear();
     trackContestMock.mockClear();
     trackHistoryMock.mockClear();
     trackHistoryFailMock.mockClear();
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ session: webApiSession }),
+    })) as unknown as typeof fetch;
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
   });
 
   it('emits analytics when contest CTA is tapped', async () => {

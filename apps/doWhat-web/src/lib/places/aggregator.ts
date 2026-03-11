@@ -12,6 +12,7 @@ import { getCachedTaxonomy, getCachedTier3Index, loadTaxonomy } from '@/lib/taxo
 import { getOptionalServiceClient } from '@/lib/supabase/service';
 
 import { expandCategoryAliases, NORMALIZED_CATEGORIES, type NormalizedCategory } from './categories';
+import { canonicalizeKnownCityFields } from './cityScope';
 import { fetchFoursquarePlaces } from './providers/foursquare';
 import { fetchGooglePlaces } from './providers/google';
 import { fetchOverpassPlaces } from './providers/osm';
@@ -537,6 +538,15 @@ const applyProviderPlace = (
     aggregate.foursquareId = providerPlace.providerId;
   }
 
+  const normalizedLocation = canonicalizeKnownCityFields({
+    lat: aggregate.lat,
+    lng: aggregate.lng,
+    city: aggregate.city,
+    locality: aggregate.locality,
+  });
+  aggregate.city = normalizedLocation.city ?? undefined;
+  aggregate.locality = normalizedLocation.locality ?? undefined;
+
   if (typeof providerPlace.rating === 'number') aggregate.ratingSamples.push(providerPlace.rating);
   if (typeof providerPlace.ratingCount === 'number') {
     aggregate.ratingCountTotal += providerPlace.ratingCount;
@@ -693,6 +703,12 @@ const upsertPlaces = async (
     const slug = aggregate.slug ?? slugFromNameAndCoords(aggregate.name, aggregate.lat, aggregate.lng);
     aggregate.slug = slug;
     const geohash6 = computeTileKey(aggregate.lat, aggregate.lng);
+    const normalizedLocation = canonicalizeKnownCityFields({
+      lat: aggregate.lat,
+      lng: aggregate.lng,
+      city: aggregate.city,
+      locality: aggregate.locality,
+    });
 
     const row: {
       slug: string;
@@ -731,8 +747,8 @@ const upsertPlaces = async (
       categories: Array.from(aggregate.categories),
       tags: Array.from(aggregate.tags),
       address: aggregate.address ?? null,
-      city: aggregate.city ?? aggregate.locality ?? null,
-      locality: aggregate.locality ?? null,
+      city: normalizedLocation.city,
+      locality: normalizedLocation.locality,
       region: aggregate.region ?? null,
       country: aggregate.country ?? null,
       postcode: aggregate.postcode ?? null,

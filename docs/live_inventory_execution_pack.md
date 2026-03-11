@@ -28,6 +28,7 @@ mkdir -p "$INVENTORY_ARTIFACT_DIR"
 
 Expected files per city:
 
+- `<city>-diagnostics.json`
 - `<city>-rematch-dry-run.json`
 - `<city>-rematch-apply.json`
 - `<city>-audit.json`
@@ -41,7 +42,32 @@ Optional:
 
 Replace `<city>` with `hanoi`, `danang`, or `bangkok`.
 
-### 1. Seed Health Check
+### 1. City Diagnostics Snapshot
+
+```bash
+pnpm inventory:diagnose:city --city=<city> --format=json --output="$INVENTORY_ARTIFACT_DIR/<city>-diagnostics.json"
+```
+
+Capture and inspect before trusting rematch counts:
+
+- `seed.cacheEntries`
+- `scope.bboxPlaceCount`
+- `scope.currentScopeCount`
+- `scope.legacyStringScopeCount`
+- `scope.normalizedScopeCount`
+- `scope.nullCityFieldsCount`
+- `inventory.mappedCount`
+- `inventory.activityEligibleCount`
+- `rootCauses`
+
+Interpretation:
+
+- `scope.currentScopeCount` should now be close to `scope.bboxPlaceCount`; if it is not, treat that as a regression
+- `scope.legacyStringScopeCount << scope.currentScopeCount` means persisted city/locality strings are still weak even though the current matcher scope is fixed
+- `seed.cacheEntries = 0` means the current environment has no target-city seed cache baseline for that pack version
+- `inventory.mappedCount = 0` with large `activityEligibleCount` means the canonical place base exists but usable `venue_activities` do not
+
+### 2. Seed Health Check
 
 ```bash
 pnpm verify:seed-health --city=<city> --packVersion=2026-03-04.v1
@@ -55,10 +81,10 @@ Pass:
 Fail:
 - stop and fix seed freshness before rematch/audit
 
-### 2. Rematch Dry Run
+### 3. Rematch Dry Run
 
 ```bash
-pnpm inventory:rematch --city=<city> --output="$INVENTORY_ARTIFACT_DIR/<city>-rematch-dry-run.json"
+pnpm inventory:rematch --city=<city> --all --batchSize=500 --output="$INVENTORY_ARTIFACT_DIR/<city>-rematch-dry-run.json"
 ```
 
 Capture and inspect:
@@ -72,23 +98,24 @@ Interpretation:
 - `hospitalityKeywordDeletes > 0` means stale hospitality keyword mappings are ready to be removed
 - `errorCount > 0` means do not trust the run yet; investigate before applying
 
-### 3. Rematch Apply
+### 4. Rematch Apply
 
 Only run apply if the dry run completed cleanly enough to proceed.
 
 ```bash
-pnpm inventory:rematch --city=<city> --apply --output="$INVENTORY_ARTIFACT_DIR/<city>-rematch-apply.json"
+pnpm inventory:rematch --city=<city> --apply --all --batchSize=500 --output="$INVENTORY_ARTIFACT_DIR/<city>-rematch-apply.json"
 ```
 
 Pass:
 - `runStatus = ok`
 - `errorCount = 0`
+- `batchCount >= 1`
 
 Fail / block:
 - `runStatus = partial`
 - non-zero `errorCount`
 
-### 4. Strict City Audit
+### 5. Strict City Audit
 
 ```bash
 pnpm inventory:audit:city --city=<city> --strict --format=json --output="$INVENTORY_ARTIFACT_DIR/<city>-audit.json"
@@ -106,7 +133,7 @@ Fail / block:
 - command exits non-zero because `overallStatus = failing`
 - city is not launch-ready
 
-### 5. Generate Final City Status Summary
+### 6. Generate Final City Status Summary
 
 ```bash
 pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --city=<city> --format=markdown --output="$INVENTORY_ARTIFACT_DIR/<city>-status.md"
@@ -123,7 +150,7 @@ This report summarizes:
 - manual review required yes/no
 - launch recommendation
 
-### 6. Manual Review Sweep
+### 7. Manual Review Sweep
 
 Use both:
 
@@ -159,8 +186,9 @@ Run these in order:
 
 ```bash
 for city in hanoi danang bangkok; do
+  pnpm inventory:diagnose:city --city="$city" --format=json --output="$INVENTORY_ARTIFACT_DIR/${city}-diagnostics.json"
   pnpm verify:seed-health --city="$city" --packVersion=2026-03-04.v1
-  pnpm inventory:rematch --city="$city" --output="$INVENTORY_ARTIFACT_DIR/${city}-rematch-dry-run.json"
+  pnpm inventory:rematch --city="$city" --all --batchSize=500 --output="$INVENTORY_ARTIFACT_DIR/${city}-rematch-dry-run.json"
 done
 ```
 
@@ -168,7 +196,7 @@ After reviewing the dry-run artifacts:
 
 ```bash
 for city in hanoi danang bangkok; do
-  pnpm inventory:rematch --city="$city" --apply --output="$INVENTORY_ARTIFACT_DIR/${city}-rematch-apply.json"
+  pnpm inventory:rematch --city="$city" --apply --all --batchSize=500 --output="$INVENTORY_ARTIFACT_DIR/${city}-rematch-apply.json"
   pnpm inventory:audit:city --city="$city" --strict --format=json --output="$INVENTORY_ARTIFACT_DIR/${city}-audit.json"
   pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --city="$city" --format=markdown --output="$INVENTORY_ARTIFACT_DIR/${city}-status.md"
 done
@@ -201,6 +229,7 @@ pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --all --format=markdown --
 
 For every city, save:
 
+- diagnostics JSON
 - rematch dry-run JSON
 - rematch apply JSON
 - audit JSON

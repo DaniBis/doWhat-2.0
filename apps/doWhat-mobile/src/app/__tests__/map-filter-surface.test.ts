@@ -25,6 +25,19 @@ describe('mobile map filter surface', () => {
     expect(source).not.toContain('temporarily unavailable');
   });
 
+  it('labels mixed discovery results as sessions and imported events instead of generic event placeholders', () => {
+    const source = readSource('(tabs)', 'map', 'index.tsx');
+
+    expect(source).toContain('Sessions & events nearby');
+    expect(source).toContain('doWhat sessions plus imported happenings in this map view.');
+    expect(source).toContain('No upcoming sessions or events here yet. Move the map or zoom out.');
+    expect(source).toContain('discoverySummary.badgeLabel');
+    expect(source).toContain('discoverySummary.primaryActionLabel');
+
+    expect(source).not.toContain('Community confirmations nearby');
+    expect(source).not.toContain('No upcoming events here yet. Move the map or zoom out.');
+  });
+
   it('keeps saved activity preferences separate from live map filters', () => {
     const source = readSource('filter.tsx');
 

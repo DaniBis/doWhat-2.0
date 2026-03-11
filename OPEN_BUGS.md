@@ -53,27 +53,36 @@ Only list issues that are still open, operationally unresolved, or not yet prove
   - `packages/shared/src/discovery/filters.ts`
   - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
 
-### 3. Target-city inventory still needs live rematch + audit execution
+### 3. Target-city mapped inventory is still effectively zero even after scope hardening
 
 - Surface/page/system
-  - Remote discovery inventory quality for Hanoi, Da Nang, and Bangkok
+  - Target-city inventory tooling, rematch scope selection, and launch-city review flow
 - Symptom
-  - Even though the code now enforces an activity-first boundary and the repo can audit target cities deterministically, the actual live city inventory may still contain stale keyword-era mappings, duplicate clusters, or missing launch categories until the connected-environment rematch/audit is run.
+  - Live diagnostics now prove that matcher/audit selection can see the full launch-city bbox inventory, but mapped activity coverage is still effectively zero:
+    - Hanoi: `currentScopeCount=2220`, `mappedCount=0`, `activityEligibleCount=2094`
+    - Da Nang: `currentScopeCount=329`, `mappedCount=0`, `activityEligibleCount=304`
+    - Bangkok: `currentScopeCount=2706`, `mappedCount=0`, `activityEligibleCount=2291`
 - Likely root cause
-  - Existing rows were created before the latest hospitality suppression and matching safeguards, and the new target-city audit workflow has not yet been executed against the live environment.
+  - The old raw city/locality scope collapse has been fixed in repo code, but the current environment still has:
+    - no target-city seed cache entries under pack version `2026-03-04.v1`,
+    - large null or district-level `city/locality` hygiene gaps,
+    - effectively zero persisted `venue_activities` coverage across activity-looking places.
 - Current status
-  - Open / repo-side cleanup path and city audit tooling now exist, remote execution still pending
+  - Open / live diagnostics now prove the remaining failure mode and operator tooling exists to rerun it
 - Owner
-  - manual
+  - Codex
 - Blocking or non-blocking
   - Blocking for production discovery trust
 - Recommended next action
-  - Run the exact sequence in `docs/live_inventory_execution_pack.md`, capture the per-city artifacts, generate the final city status reports with `pnpm inventory:status`, and complete the manual review checklist in `docs/launch_city_inventory_checklist.md`.
+  - Rerun the exact sequence in `docs/live_inventory_execution_pack.md` with `inventory:rematch --apply --all --batchSize=500`, then evaluate whether the strengthened seed packs and canonical city normalization materially improve mapped coverage before adding manual overrides.
 - Related files/tests if known
+  - `apps/doWhat-web/src/lib/places/cityScope.ts`
   - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `apps/doWhat-web/src/lib/places/aggregator.ts`
   - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
   - `scripts/rematch-venue-activities.mjs`
   - `scripts/city-inventory-audit.mjs`
+  - `scripts/city-inventory-diagnostics.mjs`
   - `scripts/city-inventory-status-report.mjs`
   - `docs/inventory_truth_policy.md`
   - `docs/launch_city_inventory_checklist.md`

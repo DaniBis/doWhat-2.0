@@ -1,3 +1,5 @@
+import type { ParticipationTruthSummary } from '@dowhat/shared';
+
 import { buildWebUrl } from './web';
 
 type JsonObject = Record<string, unknown>;
@@ -19,6 +21,7 @@ export type MobileSessionDetail = {
   placeLabel: string | null;
   locationKind: MobileSessionLocationKind;
   isPlaceBacked: boolean;
+  participation: ParticipationTruthSummary;
   activity: {
     id: string | null;
     name: string | null;

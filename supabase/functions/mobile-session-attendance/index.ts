@@ -18,6 +18,7 @@ type AttendanceSummaryResponse = {
   status: AttendanceStatus;
   counts: AttendanceCounts;
   maxAttendees: number;
+  participation: ParticipationTruthSummary;
 };
 
 type AttendanceMutationResponse = {
@@ -26,6 +27,18 @@ type AttendanceMutationResponse = {
   status: AttendanceStatus;
   previousStatus: AttendanceStatus;
   counts: AttendanceCounts;
+  participation: ParticipationTruthSummary;
+};
+
+type ParticipationTruthSummary = {
+  attendance_supported: boolean;
+  attendance_source_kind: "session_attendance" | "external_source" | "none";
+  first_party_attendance: boolean;
+  rsvp_supported: boolean;
+  verification_supported: boolean;
+  participation_truth_level: "first_party" | "linked_first_party" | "external_source" | "unavailable";
+  host_kind: "session_host" | "external_organizer" | "unknown";
+  organizer_kind: "dowhat_host" | "external_source" | "unknown";
 };
 
 type RequestPayload = {
@@ -58,6 +71,17 @@ if (!supabaseUrl || !serviceRoleKey) {
 const supabase = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false },
 });
+
+const SESSION_PARTICIPATION_TRUTH: ParticipationTruthSummary = {
+  attendance_supported: true,
+  attendance_source_kind: "session_attendance",
+  first_party_attendance: true,
+  rsvp_supported: true,
+  verification_supported: true,
+  participation_truth_level: "first_party",
+  host_kind: "session_host",
+  organizer_kind: "dowhat_host",
+};
 
 class AttendanceError extends Error {
   status: number;
@@ -120,6 +144,7 @@ async function handleSummary(req: Request, payload: RequestPayload): Promise<Att
     status,
     counts,
     maxAttendees: session.max_attendees ?? 0,
+    participation: SESSION_PARTICIPATION_TRUTH,
   };
 }
 
@@ -155,6 +180,7 @@ async function handleJoin(req: Request, payload: RequestPayload): Promise<Attend
     status: desiredStatus,
     previousStatus: existingStatus,
     counts,
+    participation: SESSION_PARTICIPATION_TRUTH,
   };
 }
 
@@ -184,6 +210,7 @@ async function handleLeave(req: Request, payload: RequestPayload): Promise<Atten
     status: null,
     previousStatus,
     counts,
+    participation: SESSION_PARTICIPATION_TRUTH,
   };
 }
 

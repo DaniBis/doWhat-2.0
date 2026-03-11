@@ -44,6 +44,7 @@ describe('activity matching inference', () => {
       ],
       fsqCategories: new Set<string>(),
       manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
       nowIso: new Date().toISOString(),
     } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
 
@@ -87,6 +88,7 @@ describe('activity matching inference', () => {
       ],
       fsqCategories: new Set<string>(),
       manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
       nowIso: new Date().toISOString(),
     } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
 
@@ -120,10 +122,82 @@ describe('activity matching inference', () => {
       ],
       fsqCategories: new Set<string>(),
       manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
       nowIso: new Date().toISOString(),
     } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
 
     expect(Array.from(result.matches.keys())).toEqual([]);
     expect(result.upserts).toEqual([]);
+  });
+
+  test('keeps activity-specific keyword matches for hospitality places when real session evidence exists', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: 'place-4',
+        name: 'Chess Cafe',
+        description: 'Coffee bar with weekly club nights',
+        categories: ['coffee'],
+        tags: ['cafe'],
+        metadata: null,
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: null,
+        updated_at: new Date().toISOString(),
+        venue_activities: [],
+      },
+      catalog: [
+        {
+          id: 4001,
+          slug: 'chess',
+          name: 'Chess',
+          description: null,
+          keywords: ['chess', 'chess club'],
+          fsq_categories: [],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [],
+      activityEvidenceIds: new Set<number>([4001]),
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys())).toEqual([4001]);
+    expect(result.eventEvidenceProtectedMatches).toBe(1);
+  });
+
+  test('deletes stale hospitality keyword mappings when no activity evidence remains', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: 'place-5',
+        name: 'Chess Cafe',
+        description: 'Specialty coffee and pastries',
+        categories: ['coffee'],
+        tags: ['cafe'],
+        metadata: null,
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: null,
+        updated_at: new Date().toISOString(),
+        venue_activities: [{ activity_id: 4001, source: 'keyword', confidence: 0.6 }],
+      },
+      catalog: [
+        {
+          id: 4001,
+          slug: 'chess',
+          name: 'Chess',
+          description: null,
+          keywords: ['chess', 'chess club'],
+          fsq_categories: [],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys())).toEqual([]);
+    expect(result.deletes).toEqual([4001]);
+    expect(result.hospitalityKeywordDeletes).toBe(1);
   });
 });

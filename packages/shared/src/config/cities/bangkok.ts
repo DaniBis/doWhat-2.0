@@ -5,6 +5,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   chess: "Chess Clubs",
   art_gallery: "Art Galleries",
   board_games: "Board Games",
+  padel: "Padel Courts",
   yoga: "Yoga Studios",
   rock_climbing: "Climbing Gyms",
   running_parks: "Running Parks",
@@ -25,6 +26,7 @@ export const bangkokCityConfig: CityConfig = {
   slug: "bangkok",
   name: "Bangkok",
   label: "Showing results near Bangkok, Thailand",
+  scopeAliases: ["Bangkok", "Bangkok, Thailand", "Krung Thep", "Krung Thep Maha Nakhon", "กรุงเทพ", "กรุงเทพมหานคร"],
   center: {
     lat: 13.7563,
     lng: 100.5018,
@@ -40,11 +42,12 @@ export const bangkokCityConfig: CityConfig = {
   },
   enabledCategories: [
     category("badminton", ["fitness"], ["badminton"]),
-    category("chess", ["community"], ["chess", "board_games", "board_game"]),
+    category("chess", ["community"], ["chess", "หมากรุก", "ชมรมหมากรุก", "board_games", "board_game"]),
     category("art_gallery", ["arts_culture"], ["art_gallery", "gallery"]),
-    category("board_games", ["community"], ["board_games", "board_game"]),
-    category("yoga", ["fitness"], ["yoga"]),
-    category("rock_climbing", ["fitness"], ["climbing", "rock_climbing", "bouldering"]),
-    category("running_parks", ["outdoors"], ["running", "jogging", "track"]),
+    category("board_games", ["community"], ["board_games", "board_game", "บอร์ดเกม"]),
+    category("padel", ["fitness"], ["padel", "pádel", "padel club", "padel court", "สนามพาเดล"]),
+    category("yoga", ["fitness"], ["yoga", "โยคะ", "yoga studio", "สตูดิโอโยคะ"]),
+    category("rock_climbing", ["fitness"], ["climbing", "climbing gym", "rock_climbing", "bouldering", "ปีนผา", "โบลเดอร์"]),
+    category("running_parks", ["outdoors"], ["running", "jogging", "track", "สวนวิ่ง", "สนามกรีฑา"]),
   ],
 };

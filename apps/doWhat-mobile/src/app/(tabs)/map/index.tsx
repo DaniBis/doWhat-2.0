@@ -26,15 +26,19 @@ import {
   createNearbyActivitiesFetcher,
   createEventsFetcher,
   defaultDiscoveryTier3Index,
+  dedupeEventSummaries,
   dedupePlaceSummaries,
+  describeEventDiscoveryPresentation,
   estimateRadiusFromBounds,
   extractPlaceWebsiteHost,
   filterPlaceSummariesByDiscoveryFilters,
   fetchOverpassPlaceSummaries,
   formatEventTimeRange,
+  getEventSessionId,
   getCityCategoryConfigMap,
   getCityConfig,
   getDiscoveryTier3Ids,
+  inferEventLocationKind,
   isUuid,
   listCities,
   normalizePlaceWebsiteUrl,
@@ -409,13 +413,7 @@ const fetchSupabaseEventsFallback = async (query: {
   const merged = [...events, ...sessions].sort(
     (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
   );
-  const deduped = new Map<string, EventSummary>();
-  merged.forEach((event) => {
-    if (!deduped.has(event.id)) {
-      deduped.set(event.id, event);
-    }
-  });
-  return { events: Array.from(deduped.values()).slice(0, requestedLimit) };
+  return { events: dedupeEventSummaries(merged).slice(0, requestedLimit) };
 };
 
 const coordsApproximatelyEqual = (
@@ -433,13 +431,6 @@ const describeActionError = (error: unknown): string => {
   return 'Something went wrong.';
 };
 
-const getSessionIdFromMetadata = (metadata: unknown): string | null => {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const record = metadata as Record<string, unknown>;
-  const candidate = record.sessionId ?? record.session_id;
-  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
-};
-
 const resolveEventUrl = (value?: string | null): string | null => {
   if (!value || typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -454,8 +445,11 @@ const resolveEventUrl = (value?: string | null): string | null => {
   }
 };
 
-const describeEventPlaceLabel = (event: EventSummary): string | null =>
-  event.place_label ?? event.venue_name ?? event.address ?? 'Location to be confirmed';
+const describeEventPlaceLabel = (event: EventSummary): string | null => {
+  const label = event.place?.name ?? event.place_label ?? event.venue_name ?? event.address ?? null;
+  if (label) return label;
+  return inferEventLocationKind(event) === 'custom_location' ? 'Pinned meetup point' : 'Location to be confirmed';
+};
 
 const clampEventReliability = (score?: number | null): number | null => {
   if (typeof score !== 'number' || Number.isNaN(score)) return null;
@@ -2050,7 +2044,7 @@ export default function MapScreen() {
 
   const handleOpenEvent = useCallback(
     (eventSummary: EventSummary) => {
-      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      const sessionId = getEventSessionId(eventSummary);
       if (sessionId) {
         router.push({ pathname: '/sessions/[id]', params: { id: sessionId } });
         return;
@@ -2286,7 +2280,7 @@ export default function MapScreen() {
   }, [filteredPlaces.length]);
 
   const shouldShowEventsRail = eventsQuery.isFetching || eventHighlights.length > 0 || eventsQuery.isError;
-  const eventsErrorMessage = eventsQuery.error?.message ?? 'Unable to load nearby events.';
+  const eventsErrorMessage = eventsQuery.error?.message ?? 'Unable to load nearby sessions and events.';
 
   const dismissActivePlace = useCallback(() => setActivePlaceId(null), []);
 
@@ -2716,14 +2710,14 @@ export default function MapScreen() {
         <View style={styles.eventsSection}>
           <View style={styles.eventsSectionHeader}>
             <View>
-              <Text style={styles.eventsSectionTitle}>Community confirmations nearby</Text>
-              <Text style={styles.eventsSectionSubtitle}>Upcoming events validating places in this view.</Text>
+              <Text style={styles.eventsSectionTitle}>Sessions & events nearby</Text>
+              <Text style={styles.eventsSectionSubtitle}>doWhat sessions plus imported happenings in this map view.</Text>
             </View>
             {eventsQuery.isFetching ? <ActivityIndicator color="#0F172A" size="small" /> : null}
           </View>
           {eventsQuery.isError ? <Text style={styles.eventsSectionError}>{eventsErrorMessage}</Text> : null}
           {!eventsQuery.isFetching && !eventsQuery.isError && !eventHighlights.length ? (
-            <Text style={styles.eventsEmptyCopy}>No upcoming events here yet. Move the map or zoom out.</Text>
+            <Text style={styles.eventsEmptyCopy}>No upcoming sessions or events here yet. Move the map or zoom out.</Text>
           ) : null}
           {eventHighlights.length ? (
             <ScrollView
@@ -2732,6 +2726,7 @@ export default function MapScreen() {
               contentContainerStyle={styles.eventsCarousel}
             >
               {eventHighlights.map((eventSummary) => {
+                const discoverySummary = describeEventDiscoveryPresentation(eventSummary);
                 const timeLabel = describeEventTime(eventSummary);
                 const placeLabel = describeEventPlaceLabel(eventSummary) ?? 'Location to be confirmed';
                 const verificationProgress = buildEventVerificationProgress(eventSummary);
@@ -2747,8 +2742,12 @@ export default function MapScreen() {
                     style={styles.eventCard}
                     activeOpacity={0.88}
                   >
+                    <Text style={styles.eventCardBadge}>{discoverySummary.badgeLabel}</Text>
                     <Text style={styles.eventCardTitle} numberOfLines={2}>
                       {eventSummary.title}
+                    </Text>
+                    <Text style={styles.eventCardHelper} numberOfLines={2}>
+                      {discoverySummary.helper}
                     </Text>
                     <Text style={styles.eventCardTime}>{timeLabel}</Text>
                     <Text style={styles.eventCardPlace} numberOfLines={1}>
@@ -2798,6 +2797,7 @@ export default function MapScreen() {
                         ))}
                       </View>
                     ) : null}
+                    <Text style={styles.eventCardAction}>{discoverySummary.primaryActionLabel}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -3092,10 +3092,29 @@ const styles = StyleSheet.create({
     marginRight: 12,
     backgroundColor: '#0F172A',
   },
+  eventCardBadge: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(16,185,129,0.18)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#6EE7B7',
+  },
   eventCardTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#F8FAFC',
+  },
+  eventCardHelper: {
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 16,
+    color: 'rgba(226,232,240,0.78)',
   },
   eventCardTime: {
     marginTop: 4,
@@ -3163,6 +3182,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.6,
     color: '#FCD34D',
+  },
+  eventCardAction: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6EE7B7',
   },
   headerRow: {
     flexDirection: 'row',

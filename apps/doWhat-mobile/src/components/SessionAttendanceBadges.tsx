@@ -9,6 +9,7 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
   const [going, setGoing] = useState<number | null>(null);
   const [interested, setInterested] = useState<number | null>(null);
   const [verified, setVerified] = useState<number | null>(null);
+  const [attendanceSupported, setAttendanceSupported] = useState(true);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -18,6 +19,7 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
       try {
         const summary = await fetchAttendanceSummary(sessionId);
         if (!mounted) return;
+        setAttendanceSupported(summary?.participation?.attendance_supported !== false);
         setGoing(summary?.counts?.going ?? 0);
         setInterested(summary?.counts?.interested ?? 0);
         setVerified(summary?.counts?.verified ?? 0);
@@ -45,7 +47,7 @@ export default function SessionAttendanceBadges({ sessionId }: { sessionId?: str
     };
   }, [sessionId]);
 
-  if (!sessionId) return null;
+  if (!sessionId || !attendanceSupported) return null;
 
   const badgeValues = useMemo<Record<ReliabilityBadgeKey, number | null>>(() => ({ going, interested, verified }), [going, interested, verified]);
 

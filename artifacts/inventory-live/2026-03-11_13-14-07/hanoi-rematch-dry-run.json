@@ -1,0 +1,69 @@
+{
+  "city": "hanoi",
+  "scope": {
+    "city": "hanoi"
+  },
+  "dryRun": true,
+  "requestedAt": "2026-03-11T06:18:45.513Z",
+  "baseUrl": "http://localhost:3002",
+  "runStatus": "ok",
+  "processed": 6,
+  "matches": 0,
+  "upserts": 0,
+  "deletes": 0,
+  "hospitalityKeywordDeletes": 0,
+  "eventEvidenceProtectedMatches": 0,
+  "manualApplied": 0,
+  "errorCount": 0,
+  "details": [
+    {
+      "placeId": "d6b543f4-5a5d-4362-882a-4714dbf29041",
+      "name": "Sunkat’s Burgers",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    },
+    {
+      "placeId": "53d2aa08-bafa-4d6d-a4a1-adf70cd294c8",
+      "name": "O'DOUCEURS French Pastry & Bakery Coffee House",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    },
+    {
+      "placeId": "174f5cf3-e62a-4fe4-90c4-3b899360a52e",
+      "name": "Nhà Văn Hóa Thôn Hương trầm",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    },
+    {
+      "placeId": "cc54633c-7139-4979-826d-e3b4f61e2849",
+      "name": "Vinhomes Riverside",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    },
+    {
+      "placeId": "b6099d73-f041-47f4-8b53-00df2ee6ce18",
+      "name": "The Oasis Grocery Store",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    },
+    {
+      "placeId": "d7c4e255-0fd2-465d-96f9-a2394ec04e49",
+      "name": "Titops",
+      "matches": 0,
+      "upserts": 0,
+      "deletes": 0,
+      "preview": []
+    }
+  ],
+  "errors": []
+}

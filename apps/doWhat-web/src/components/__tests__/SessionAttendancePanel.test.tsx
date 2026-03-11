@@ -53,6 +53,16 @@ describe("SessionAttendancePanel", () => {
         initialCounts={{ going: 1, interested: 0, declined: 0, total: 1, verified: 0 }}
         hostUserId="host-1"
         currentUserId="host-1"
+        participation={{
+          attendance_supported: true,
+          attendance_source_kind: "session_attendance",
+          first_party_attendance: true,
+          rsvp_supported: true,
+          verification_supported: true,
+          participation_truth_level: "first_party",
+          host_kind: "session_host",
+          organizer_kind: "dowhat_host",
+        }}
       />,
     );
 
@@ -62,7 +72,7 @@ describe("SessionAttendancePanel", () => {
     const statusSelect = screen.getByRole("combobox") as HTMLSelectElement;
     fireEvent.change(statusSelect, { target: { value: "attended" } });
 
-    const verifiedCheckbox = screen.getByLabelText("Verified via GPS") as HTMLInputElement;
+    const verifiedCheckbox = screen.getByLabelText("Host confirmed attendance") as HTMLInputElement;
     fireEvent.click(verifiedCheckbox);
 
     const saveButton = screen.getByRole("button", { name: "Record attendance" });

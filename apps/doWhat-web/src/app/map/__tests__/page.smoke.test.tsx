@@ -14,7 +14,39 @@ jest.mock('@dowhat/shared', () => ({
   DEFAULT_RADIUS_METERS: 2000,
   createEventsFetcher: () => jest.fn(),
   createNearbyActivitiesFetcher: () => jest.fn(),
+  buildEventVerificationProgress: () => null,
+  describeEventDiscoveryPresentation: (event: { origin_kind?: string | null; url?: string | null; metadata?: Record<string, unknown> | null }) => {
+    if (event.origin_kind === 'session' || event.metadata?.source === 'session') {
+      return {
+        badgeLabel: 'doWhat session',
+        helper: 'Hosted on doWhat at a confirmed place. RSVPs stay on the session page.',
+        primaryActionLabel: 'View session',
+        primaryActionKind: 'view_session',
+        secondaryActionLabel: null,
+      };
+    }
+    return {
+      badgeLabel: 'Imported event',
+      helper: 'Published by an external source. Attendance stays on the source page.',
+      primaryActionLabel: 'View event',
+      primaryActionKind: 'view_event',
+      secondaryActionLabel: typeof event.url === 'string' && event.url.startsWith('http') ? 'View source' : null,
+    };
+  },
   formatEventTimeRange: () => ({ start: new Date('2026-01-01T00:00:00.000Z'), end: null }),
+  getEventSessionId: (event: { metadata?: Record<string, unknown> | null }) => {
+    const candidate = event.metadata?.sessionId ?? event.metadata?.session_id;
+    return typeof candidate === 'string' ? candidate : null;
+  },
+  inferEventLocationKind: (event: { location_kind?: string | null; place_id?: string | null; metadata?: Record<string, unknown> | null; place_label?: string | null; venue_name?: string | null; address?: string | null; lat?: number | null; lng?: number | null }) => {
+    if (event.location_kind) return event.location_kind;
+    if (event.place_id) return 'canonical_place';
+    if (event.metadata?.venueId) return 'legacy_venue';
+    if (event.place_label || event.venue_name || event.address || (typeof event.lat === 'number' && typeof event.lng === 'number')) {
+      return 'custom_location';
+    }
+    return 'flexible';
+  },
   sortEventsByStart: (events: unknown[]) => events,
   trackAnalyticsEvent: jest.fn(),
   mapActivitiesQueryKey: () => ['map-activities'],
@@ -241,5 +273,72 @@ describe('MapPage smoke', () => {
     expect(screen.queryByText('Price levels')).not.toBeInTheDocument();
     expect(screen.queryByText('Group size')).not.toBeInTheDocument();
     expect(screen.queryByText('Time window')).not.toBeInTheDocument();
+  });
+
+  it('renders session mirrors and imported events with distinct labels and CTAs', async () => {
+    useEventsMock.mockReturnValue({
+      ...emptyEventsState,
+      data: {
+        events: [
+          {
+            id: 'session-1',
+            title: 'Morning Climb',
+            start_at: '2026-01-01T10:00:00.000Z',
+            end_at: null,
+            timezone: 'UTC',
+            venue_name: 'Peak Climb',
+            place_label: 'Peak Climb',
+            lat: 44.43,
+            lng: 26.1,
+            address: null,
+            url: '/sessions/session-1',
+            image_url: null,
+            status: 'scheduled',
+            event_state: 'scheduled',
+            tags: ['climbing'],
+            place_id: 'place-1',
+            source_id: null,
+            source_uid: 'session-1',
+            metadata: { source: 'session', sessionId: 'session-1' },
+            origin_kind: 'session',
+            location_kind: 'canonical_place',
+            reliability_score: 92,
+          },
+          {
+            id: 'event-2',
+            title: 'Imported board game night',
+            start_at: '2026-01-02T10:00:00.000Z',
+            end_at: null,
+            timezone: 'UTC',
+            venue_name: 'Play House',
+            place_label: 'Play House',
+            lat: 44.44,
+            lng: 26.11,
+            address: null,
+            url: 'https://source.example/event-2',
+            image_url: null,
+            status: 'verified',
+            event_state: 'scheduled',
+            tags: ['board games'],
+            place_id: null,
+            source_id: 'provider',
+            source_uid: 'provider-2',
+            metadata: { sourceUrl: 'https://source.example/event-2' },
+            origin_kind: 'event',
+            location_kind: 'custom_location',
+            reliability_score: 77,
+          },
+        ],
+      },
+    });
+
+    render(<MapPage />);
+
+    expect(await screen.findByText('Sessions & events')).toBeInTheDocument();
+    expect(screen.getByText('doWhat session')).toBeInTheDocument();
+    expect(screen.getByText('Imported event')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View event' })).toBeInTheDocument();
+    expect(screen.queryByText(/View details/i)).not.toBeInTheDocument();
   });
 });

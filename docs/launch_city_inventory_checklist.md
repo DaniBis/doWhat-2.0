@@ -27,6 +27,21 @@ This does **not** prove full market completeness. It proves that the current rep
 Run these from a DB-connected environment:
 
 ```bash
+pnpm inventory:diagnose:city --city=hanoi --format=json --output="$INVENTORY_ARTIFACT_DIR/hanoi-diagnostics.json"
+pnpm inventory:diagnose:city --city=danang --format=json --output="$INVENTORY_ARTIFACT_DIR/danang-diagnostics.json"
+pnpm inventory:diagnose:city --city=bangkok --format=json --output="$INVENTORY_ARTIFACT_DIR/bangkok-diagnostics.json"
+```
+
+Interpret the diagnostics before trusting a small rematch count:
+
+- `scope.currentScopeCount` vs `scope.bboxPlaceCount`
+- `scope.legacyStringScopeCount`
+- `scope.normalizedScopeCount`
+- `scope.nullCityFieldsCount`
+- `inventory.mappedCount` vs `inventory.activityEligibleCount`
+- `seed.cacheEntries`
+
+```bash
 pnpm verify:seed-health --city=hanoi --packVersion=2026-03-04.v1
 pnpm verify:seed-health --city=danang --packVersion=2026-03-04.v1
 pnpm verify:seed-health --city=bangkok --packVersion=2026-03-04.v1
@@ -35,17 +50,17 @@ pnpm verify:seed-health --city=bangkok --packVersion=2026-03-04.v1
 Dry-run mapping cleanup:
 
 ```bash
-pnpm inventory:rematch --city=hanoi
-pnpm inventory:rematch --city=danang
-pnpm inventory:rematch --city=bangkok
+pnpm inventory:rematch --city=hanoi --all --batchSize=500
+pnpm inventory:rematch --city=danang --all --batchSize=500
+pnpm inventory:rematch --city=bangkok --all --batchSize=500
 ```
 
 Apply cleanup when the dry-run shows stale or hospitality keyword deletions:
 
 ```bash
-pnpm inventory:rematch --city=hanoi --apply
-pnpm inventory:rematch --city=danang --apply
-pnpm inventory:rematch --city=bangkok --apply
+pnpm inventory:rematch --city=hanoi --apply --all --batchSize=500
+pnpm inventory:rematch --city=danang --apply --all --batchSize=500
+pnpm inventory:rematch --city=bangkok --apply --all --batchSize=500
 ```
 
 Run the deterministic city audit:
@@ -59,6 +74,7 @@ pnpm inventory:audit:city --city=bangkok --strict
 To save machine-readable reports:
 
 ```bash
+pnpm inventory:diagnose:cities --format=json --output=launch-city-inventory-diagnostics.json
 pnpm inventory:audit:cities --format=json --output=launch-city-inventory-audit.json
 ```
 
@@ -157,18 +173,23 @@ For each city:
    - If it is truly wrong, rerun `pnpm inventory:rematch --city=<slug> --apply`.
    - If it is a legitimate exception, add a manual override or confirm the session evidence path.
 
-2. Inspect every `sessionMappingGaps` sample.
+2. Inspect the diagnostics scope counts.
+   - `currentScopeCount` should now track the bbox-aware matcher scope.
+   - If `legacyStringScopeCount` is tiny while `currentScopeCount` is large, the repo fix is working and the remaining issue is persisted city/locality hygiene rather than operator scope.
+   - If `currentScopeCount` is still tiny but `bboxPlaceCount` is large, stop and investigate a real scope regression before trusting rematch output.
+
+3. Inspect every `sessionMappingGaps` sample.
    - If the place hosts real sessions, the activity matcher or override layer must be corrected.
 
-3. Inspect every `duplicateClusters` sample.
+4. Inspect every `duplicateClusters` sample.
    - Merge/canonicalize duplicates if they represent the same real place.
    - Leave them alone only if the cluster is actually multiple distinct places.
 
-4. Inspect every missing required activity category.
+5. Inspect every missing required activity category.
    - Re-check seeding coverage and provider fetches.
    - If the city truly lacks the activity, document that explicitly before launch.
 
-5. Inspect every `providerDisagreements` sample.
+6. Inspect every `providerDisagreements` sample.
    - These are allowed exceptions, not automatic failures.
    - Confirm the manual/session evidence is still real.
 

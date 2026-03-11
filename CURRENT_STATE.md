@@ -63,6 +63,13 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 - **Live operator execution pack now exists**
   - `docs/live_inventory_execution_pack.md` defines the exact live command order, artifact capture, status reporting, and manual review sweep for Hanoi, Da Nang, and Bangkok
   - `pnpm inventory:status --dir=<artifact-dir> --all` now turns captured rematch + audit artifacts into a compact launch recommendation report
+- **Target-city diagnostics now prove the live bottleneck**
+  - Hanoi, Da Nang, and Bangkok are not empty inside their city bounding boxes, and the repo now scopes matcher/audit selection across the real city bbox instead of the old `6 / 0 / 1` raw city-string subset.
+  - Current live proofs after the scope fix:
+    - Hanoi: `bboxPlaceCount=2220`, `currentScopeCount=2220`, `legacyStringScopeCount=6`, `nullCityFieldsCount=1477`
+    - Da Nang: `bboxPlaceCount=329`, `currentScopeCount=329`, `legacyStringScopeCount=0`, `nullCityFieldsCount=125`
+    - Bangkok: `bboxPlaceCount=2706`, `currentScopeCount=2706`, `legacyStringScopeCount=1`, `nullCityFieldsCount=1717`
+  - The remaining proven blockers are missing target-city seed cache entries for pack version `2026-03-04.v1`, effectively zero mapped `venue_activities` coverage in those cities, and large null/district-level city-field hygiene gaps.
 
 ## Fragile Areas
 
@@ -78,6 +85,8 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
   - the main map flows are in better shape, but some secondary screens may still carry older copy or narrower semantics until they are explicitly touched.
 - **Live inventory quality still needs remote cleanup/application**
   - the repo now knows how to clean stale `venue_activities` and how to audit target cities, but the actual city-by-city rematch + audit still must be run against the connected environment.
+- **Persisted target-city inventory is still under-mapped**
+  - the repo can now see the full target-city bbox inventory, but mapped `venue_activities` coverage is still effectively zero in Hanoi, Da Nang, and Bangkok.
 
 ## Known Contradictions
 
@@ -89,6 +98,10 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 ## Data / Discovery Truth Gaps
 
 - The repo now has a clear answer for stale `venue_activities`: run the canonical rematch/cleanup flow, inspect `hospitalityKeywordDeletes`, then run the city inventory audit and manual review checklist. The remaining gap is operational execution against the connected environment.
+- The repo now has live proof that current target-city pain is not simply “empty cities”. The larger gaps are:
+  - city/locality scope collapse
+  - missing target-city seed cache entries
+  - effectively zero `venue_activities` coverage across many activity-looking canonical places
 - Event/session/place truth is much clearer on the touched create/detail/API surfaces, attendance/hosting truth is explicit on the main session/event detail paths, and mixed discovery truth is now explicit on the primary web/mobile map surfaces. Remaining risk is mostly in untouched secondary surfaces and legacy remote data, not the main mixed map contract.
 - The product now knows what it should discover, but real-user readiness in target cities still depends on actual remote inventory quality.
 
@@ -105,10 +118,10 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Immediate Priorities
 
-1. Run the exact flow from `docs/live_inventory_execution_pack.md` against the connected environment for Hanoi, Da Nang, and Bangkok, then complete the manual sample review checklist.
-2. Decide whether `/api/events` should widen beyond its current explicit subset now that mixed event/session truth is explicit on the main discovery surfaces.
-3. Sweep untouched secondary surfaces that still carry older event/session wording so they inherit the same explicit discovery and participation contract.
-4. Build a real-user readiness gate only after discovery, filters, event truth, reliability truth, and target-city inventory audits are all verified.
+1. Rerun the exact flow from `docs/live_inventory_execution_pack.md` against the connected environment for Hanoi, Da Nang, and Bangkok using the new `--all --batchSize=500` rematch path.
+2. Restore or prove the missing target-city seed cache baseline for pack version `2026-03-04.v1`.
+3. Validate whether the strengthened city seed packs materially improve mapped activity coverage after a live reseed/rematch.
+4. Decide whether `/api/events` should widen beyond its current explicit subset now that mixed event/session truth is explicit on the main discovery surfaces.
 
 ## What Blocks Real-Life Readiness
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildRematchReport,
   parseArgs,
+  summarizeRematchBatches,
 } from '../rematch-venue-activities.mjs';
 
 test('parseArgs supports output and apply mode', () => {
@@ -12,6 +13,16 @@ test('parseArgs supports output and apply mode', () => {
   assert.equal(args.city, 'bangkok');
   assert.equal(args.dryRun, false);
   assert.equal(args.output, 'artifacts/bangkok-rematch-apply.json');
+});
+
+test('parseArgs supports full-city batched execution flags', () => {
+  const args = parseArgs(['--city=hanoi', '--apply', '--all', '--batchSize=500', '--offset=1000']);
+
+  assert.equal(args.city, 'hanoi');
+  assert.equal(args.dryRun, false);
+  assert.equal(args.all, true);
+  assert.equal(args.batchSize, '500');
+  assert.equal(args.offset, '1000');
 });
 
 test('buildRematchReport exposes partial run status when matcher returns errors', () => {
@@ -36,4 +47,52 @@ test('buildRematchReport exposes partial run status when matcher returns errors'
   assert.equal(report.errorCount, 1);
   assert.equal(report.city, 'hanoi');
   assert.equal(report.hospitalityKeywordDeletes, 1);
+});
+
+test('summarizeRematchBatches aggregates full-city rematch reports', () => {
+  const report = summarizeRematchBatches({
+    args: { city: 'danang', placeId: '', dryRun: false, batchSize: '500' },
+    reports: [
+      buildRematchReport({
+        args: { city: 'danang', placeId: '', dryRun: false, limit: '500', offset: '0' },
+        payload: {
+          processed: 500,
+          matches: 40,
+          upserts: 20,
+          deletes: 6,
+          hospitalityKeywordDeletes: 4,
+          eventEvidenceProtectedMatches: 2,
+          manualApplied: 1,
+          errors: [],
+          details: [],
+        },
+        requestedAt: '2026-03-11T14:40:00.000Z',
+        baseUrl: 'https://example.test',
+      }),
+      buildRematchReport({
+        args: { city: 'danang', placeId: '', dryRun: false, limit: '500', offset: '500' },
+        payload: {
+          processed: 186,
+          matches: 25,
+          upserts: 9,
+          deletes: 3,
+          hospitalityKeywordDeletes: 1,
+          eventEvidenceProtectedMatches: 1,
+          manualApplied: 0,
+          errors: [],
+          details: [],
+        },
+        requestedAt: '2026-03-11T14:41:00.000Z',
+        baseUrl: 'https://example.test',
+      }),
+    ],
+    requestedAt: '2026-03-11T14:42:00.000Z',
+    baseUrl: 'https://example.test',
+  });
+
+  assert.equal(report.runStatus, 'ok');
+  assert.equal(report.processed, 686);
+  assert.equal(report.upserts, 29);
+  assert.equal(report.hospitalityKeywordDeletes, 5);
+  assert.equal(report.batchCount, 2);
 });

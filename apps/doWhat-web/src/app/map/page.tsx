@@ -13,6 +13,7 @@ import {
   createEventsFetcher,
   createNearbyActivitiesFetcher,
   formatEventTimeRange,
+  getEventSessionId,
   sortEventsByStart,
   trackAnalyticsEvent,
   type EventSummary,
@@ -46,6 +47,7 @@ import { parseCoordinateLabel, resolveMapCenterFromProfile, type MapProfileLocat
 import {
   clampReliabilityScore,
   describeEventOrigin,
+  describeEventPrimaryAction,
   describeEventState,
   describeEventVerification,
   describeReliabilityConfidence,
@@ -271,13 +273,6 @@ const isWithinRadius = (
   }
 
   return finiteFallback == null || finiteFallback <= maxDistance;
-};
-
-const getSessionIdFromMetadata = (metadata: unknown): string | null => {
-  if (!metadata || typeof metadata !== "object") return null;
-  const record = metadata as Record<string, unknown>;
-  const candidate = record.sessionId ?? record.session_id;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
 };
 
 type Bounds = ViewBounds;
@@ -1300,7 +1295,7 @@ export default function MapPage() {
 
     const match = filteredEvents.find((eventSummary) => {
       if (eventSummary.id === effectiveHighlightSessionId) return true;
-      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      const sessionId = getEventSessionId(eventSummary);
       return sessionId === effectiveHighlightSessionId;
     });
     if (match) {
@@ -1699,7 +1694,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     hasUrl: Boolean(eventSummary.url),
   });
 
-  const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+  const sessionId = getEventSessionId(eventSummary);
   if (sessionId) {
     router.push(`/sessions/${sessionId}` as Route);
     return;
@@ -1969,13 +1964,13 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }, [setSelectedActivityId, syncFocusedActivityParam]);
 
   const radiusLabel = formatKilometres(radiusMeters);
-  const headerTitle = dataMode === 'events' ? 'Nearby events' : dataMode === 'both' ? 'Activities & events nearby' : 'Nearby activities';
+  const headerTitle = dataMode === 'events' ? 'Nearby sessions & events' : dataMode === 'both' ? 'Activities · sessions & events nearby' : 'Nearby activities';
   const filteredActivitiesCount = filteredActivities.length;
   const filteredEventsCount = filteredEvents.length;
   const headerSummary = dataMode === 'events'
-    ? `Showing ${filteredEventsCount} events in ~${radiusLabel} radius`
+    ? `Showing ${filteredEventsCount} sessions/events in ~${radiusLabel} radius`
     : dataMode === 'both'
-      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events in ~${radiusLabel} radius`
+      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} sessions/events in ~${radiusLabel} radius`
       : `Showing ${filteredActivitiesCount} activities in ~${radiusLabel} radius`;
 
   const eventTimeFormatter = useMemo(
@@ -2013,12 +2008,12 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
         ? 'No suggestion-first activities match here yet. Try showing all results or widening the map.'
         : "No activities match those filters yet. Try widening your search.";
   const eventEmptyCopy = hasSearchFilter
-    ? `No events match "${searchTerm}". Try another name or clear the search.`
+    ? `No sessions or events match "${searchTerm}". Try another name or clear the search.`
     : selectedTrustMode === 'verified_only'
-      ? 'No confirmed events match here yet. Try showing all results or widening the map.'
+      ? 'No confirmed sessions or events match here yet. Try showing all results or widening the map.'
       : selectedTrustMode === 'ai_only'
-        ? 'No suggestion-first events match here yet. Try showing all results or widening the map.'
-        : "No events match those filters yet. Try widening your search.";
+        ? 'No suggestion-first sessions or events match here yet. Try showing all results or widening the map.'
+        : "No sessions or events match those filters yet. Try widening your search.";
 
   if (!e2eBypassAuth && (coreAccessState !== 'allowed' || isAuthenticated !== true)) {
     return (
@@ -2065,7 +2060,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     dataMode === mode ? 'bg-brand-teal text-white shadow-sm' : 'bg-white/80 text-ink-strong hover:bg-white'
                 }`}
               >
-                {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Events' : 'Both'}
+                {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Schedules' : 'Both'}
               </button>
             ))}
           </div>
@@ -2408,7 +2403,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 }}
                                 className="rounded-full border border-brand-teal/40 px-sm py-xxs text-[11px] font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
                               >
-                                View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
+                                View sessions{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
                               </button>
                             )}
                             <button
@@ -2440,22 +2435,22 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               </section>
             )}
             {loadEvents && (
-              <section className={listSectionCardClass} aria-label="Events list">
+              <section className={listSectionCardClass} aria-label="Sessions and events list">
                 <header className="mb-sm flex items-start gap-sm">
                   <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-feedback-warning/10 text-lg">🎟️</span>
                   <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Events</h3>
-                    <p className="text-xs text-ink-muted">One-off happenings around this area.</p>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Sessions &amp; events</h3>
+                    <p className="text-xs text-ink-muted">doWhat sessions plus imported happenings around this area.</p>
                   </div>
                 </header>
                 {eventsQuery.isLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
-                    Loading events…
+                    Loading sessions &amp; events…
                   </div>
                 )}
                 {eventsQuery.isError && (
                   <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
-                    {(eventsQuery.error?.message ?? "Failed to load events")}
+                    {(eventsQuery.error?.message ?? "Failed to load sessions and events")}
                   </div>
                 )}
                 {eventListEmpty && (
@@ -2481,6 +2476,10 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const reliabilityWidth = reliabilityScore == null ? 12 : reliabilityScore;
                     const verificationProgress = buildEventVerificationProgress(eventSummary);
                     const verificationProgressClass = verificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
+                    const eventAction = describeEventPrimaryAction(eventSummary);
+                    const externalSourceUrl = typeof eventSummary.url === 'string' && /^https?:\/\//i.test(eventSummary.url)
+                      ? eventSummary.url
+                      : null;
                     return (
                       <li key={eventSummary.id}>
                         <div
@@ -2558,6 +2557,29 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                     style={{ width: `${reliabilityWidth}%` }}
                                   />
                                 </div>
+                              </div>
+                              <div className="mt-sm flex flex-wrap gap-xs text-xs">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleEventDetails(eventSummary);
+                                  }}
+                                  className="rounded-full border border-feedback-warning/40 px-sm py-xxs text-[11px] font-semibold text-feedback-warning hover:border-feedback-warning hover:bg-feedback-warning/5"
+                                >
+                                  {eventAction.label}
+                                </button>
+                                {eventAction.secondaryLabel && externalSourceUrl ? (
+                                  <a
+                                    href={externalSourceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
+                                  >
+                                    {eventAction.secondaryLabel}
+                                  </a>
+                                ) : null}
                               </div>
                             </div>
                           </div>
@@ -2746,7 +2768,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               ) : null}
               {!loadActivities ? (
                 <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
-                  Activity filters only apply when “Activities” or “Both” is active. Events still follow the same search text, trust mode, and map area.
+                  Activity filters only apply when “Activities” or “Both” is active. Sessions/events still follow the same search text, trust mode, and map area.
                 </div>
               ) : null}
             </div>

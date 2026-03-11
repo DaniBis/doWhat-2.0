@@ -12,11 +12,13 @@ export async function POST(request: Request) {
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get('limit');
+  const offsetParam = url.searchParams.get('offset');
   const city = sanitize(url.searchParams.get('city'));
   const placeId = sanitize(url.searchParams.get('placeId'));
   const dryRun = parseBoolean(url.searchParams.get('dryRun'));
 
   let limit: number | undefined;
+  let offset: number | undefined;
   if (limitParam) {
     const parsed = Number.parseInt(limitParam, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -24,9 +26,16 @@ export async function POST(request: Request) {
     }
     limit = Math.min(parsed, 500);
   }
+  if (offsetParam) {
+    const parsed = Number.parseInt(offsetParam, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return NextResponse.json({ error: 'Invalid offset parameter' }, { status: 400 });
+    }
+    offset = parsed;
+  }
 
   try {
-    const result = await matchActivitiesForPlaces({ limit, city, placeId, dryRun });
+    const result = await matchActivitiesForPlaces({ limit, offset, city, placeId, dryRun });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Activity matcher failed';

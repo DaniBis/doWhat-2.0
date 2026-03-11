@@ -80,6 +80,11 @@ These currently run:
 - `refresh=1`
 - `precision=6`
 
+Important:
+
+- seed packs are activity-first and must not be widened with hospitality-first keywords unless there is a deliberate product exception backed by real activity-host evidence.
+- after major inventory or policy changes, rerun the canonical activity matcher so stale `venue_activities` rows are deleted instead of lingering in remote inventory.
+
 ## Explain Output (Seed Summary)
 
 `seed:city` returns rollups including:
@@ -166,6 +171,28 @@ pnpm verify:seed-health --city=danang --packVersion=2026-03-04.v1
 - no recently touched tiles exist for the city+packVersion,
 - required packs are missing,
 - provider counts are zero.
+
+## Activity Rematch / Cleanup
+
+Use the canonical matcher to audit and clean stale `venue_activities` rows after seeding or policy changes:
+
+```bash
+pnpm inventory:rematch --city=hanoi
+pnpm inventory:rematch --city=bangkok
+pnpm inventory:rematch --city=danang
+```
+
+Apply changes:
+
+```bash
+pnpm inventory:rematch --city=hanoi --apply
+```
+
+The rematch summary now exposes:
+
+- `deletes`
+- `hospitalityKeywordDeletes`
+- `eventEvidenceProtectedMatches`
 
 ## Runtime Discovery Regression Checks (Map)
 

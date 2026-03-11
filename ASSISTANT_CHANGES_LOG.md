@@ -2,6 +2,10 @@
 # Assistant Change Log
 
 ## 2026-03-11
+- Finished the target-city inventory quality implementation pass. The repo now has shared launch-city scope aliases and stronger Hanoi/Da Nang/Bangkok activity tag filters, a new `cityScope.ts` helper that canonicalizes persisted city/locality values for known launch cities, bbox-aware matcher/audit selection, and batched `inventory:rematch --all --batchSize=500` execution. Focused web/script tests, shared/web typecheck, `verify-discovery-contract`, and live Supabase REST diagnostics all passed; the live proof now shows `currentScopeCount` equals the real bbox inventory (`2220`, `329`, `2706`) while the old `legacyStringScopeCount` remains `6`, `0`, `1`, proving the scope fix is real and the remaining blockers are seed/mapping quality rather than city selection collapse.
+- Started the target-city inventory quality implementation pass after re-reading the current control docs, inventory policy, operator runbook, and live artifacts. This pass is intentionally narrow: fix city-scope collapse for Hanoi/Da Nang/Bangkok, improve canonical city/locality persistence for known launch cities, and strengthen activity-first city seed relevance without reopening rollout, filter redesign, or speculative SQL work.
+
+## 2026-03-11
 - Started the inventory truth policy + stale mapping cleanup pass after re-reading the current control docs/logs. Scope is intentionally narrow: audit inventory truth sources, define the canonical policy, clean stale `venue_activities` mappings, harden activity-place matching, and keep hospitality/noise excluded by default without reopening rollout, filter redesign, or speculative SQL rewrites.
 - Finished the audit of the inventory pipeline. Main findings: `matchActivitiesForPlaces()` is the canonical writer for `venue_activities`, but stale rows persist until that matcher is rerun; the matcher still ignores real `sessions`/`events` evidence when deciding whether a hospitality venue is a valid activity-host exception; city seeding still carries a `cafe chess`-style keyword; and legacy `venue_activity_votes` only strengthen old `venues` search, not canonical `places` matching.
 - Implemented the core cleanup slice: `activityMatching.ts` now loads activity-specific session evidence and exposes cleanup counters, the chess city seed pack no longer contains `cafe chess`, and `scripts/rematch-venue-activities.mjs` + `pnpm inventory:rematch` provide the dry-run/apply operator path for canonical rematch cleanup. Added/updated regression tests around hospitality deletion, session-backed exceptions, and seed-pack leakage, and documented the policy in `docs/inventory_truth_policy.md`.
@@ -3043,3 +3047,67 @@
 - Result:
   - Operator flow is now packaged and capture-ready.
   - Live city execution is still pending because this shell cannot reach the target DB/cron environment directly.
+
+## 2026-03-11 13:22:50 +0700 — target-city live inventory diagnosis kickoff
+
+- Scope:
+  - Diagnose why Hanoi, Da Nang, and Bangkok still have tiny or irrelevant live inventory after the rematch operator flow.
+- Evidence base:
+  - control docs,
+  - saved live operator artifacts under `artifacts/inventory-live/2026-03-11_13-14-07`,
+  - seeding/provider/canonical-write/matcher code paths.
+- Intent:
+  - Produce ranked root causes and add diagnostics that show where candidate inventory is lost.
+- Constraints:
+  - No filter redesign, no speculative SQL rewrite, no reopening prior truth phases unless the artifacts prove a regression there.
+
+## 2026-03-11 13:36:12 +0700 — live target-city diagnosis instrumented and proven
+
+- Files changed:
+  - `scripts/city-inventory-diagnostics.mjs`
+  - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `package.json`
+  - `docs/discovery_playbook.md`
+  - `docs/live_inventory_execution_pack.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Key findings:
+  - Hanoi, Da Nang, and Bangkok are not near-empty inside their bounding boxes.
+  - The current operator rematch scope is near-empty because raw `city/locality` matching misses accented, spaced, native-script, district-level, and null city/locality rows.
+  - Current live proofs:
+    - Hanoi: `6 / 2220`
+    - Da Nang: `0 / 329`
+    - Bangkok: `1 / 2706`
+  - Target-city seed cache entries for pack version `2026-03-04.v1` are missing in `place_tiles.discovery_cache`.
+  - `venue_activities` coverage is effectively zero in all three cities despite many persisted canonical places.
+- What changed:
+  - Added `inventory:diagnose:city` / `inventory:diagnose:cities`.
+  - Diagnostics now expose seed-stage counts, bbox inventory counts, current scope counts, normalized scope counts, null city/locality counts, mapped vs unmatched counts, hospitality-primary noise, and ranked root causes.
+  - Operator docs now require the diagnostics snapshot before trusting tiny rematch counts.
+- Testing:
+  - `pnpm exec eslint scripts/city-inventory-diagnostics.mjs scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `node --test scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `node scripts/city-inventory-diagnostics.mjs --city=hanoi`
+  - `node scripts/city-inventory-diagnostics.mjs --city=danang --format=json`
+  - `node scripts/city-inventory-diagnostics.mjs --city=bangkok --format=json`
+- Result:
+  - The failure mode is now explained deterministically instead of inferred from tiny rematch counts.
+  - Next work should fix city scope visibility and seed baseline visibility, not rollout mechanics.
+
+## 2026-03-11 13:36:59 +0700 — diagnosis verification locked
+
+- Verification:
+  - `pnpm exec eslint scripts/city-inventory-diagnostics.mjs scripts/__tests__/city-inventory-diagnostics.test.mjs scripts/city-inventory-audit.mjs scripts/city-inventory-status-report.mjs`
+  - `node --test scripts/__tests__/city-inventory-diagnostics.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `node scripts/verify-discovery-contract.mjs`
+- Outcome:
+  - diagnostics tests passed
+  - existing inventory matcher/filter regressions passed
+  - discovery contract verification passed
+- Remaining blind spots:
+  - Direct Postgres access still fails from this shell, so live proof came through Supabase REST rather than raw SQL.

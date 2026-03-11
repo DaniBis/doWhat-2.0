@@ -1,4 +1,12 @@
-import { annotateEventTruth, inferEventLocationKind, inferEventOriginKind, isEventPlaceBacked, type EventSummary } from '../index';
+import {
+  annotateEventTruth,
+  inferEventParticipationTruth,
+  inferEventLocationKind,
+  inferEventOriginKind,
+  isEventPlaceBacked,
+  isMeaningfulLocationLabel,
+  type EventSummary,
+} from '../index';
 
 const baseEvent = (overrides: Partial<EventSummary> = {}): EventSummary => ({
   id: overrides.id ?? 'event-1',
@@ -42,9 +50,22 @@ describe('event truth helpers', () => {
     expect(inferEventOriginKind(event)).toBe('session');
     expect(inferEventLocationKind(event)).toBe('canonical_place');
     expect(isEventPlaceBacked(event)).toBe(true);
+    expect(event.result_kind).toBe('events');
     expect(event.origin_kind).toBe('session');
     expect(event.location_kind).toBe('canonical_place');
+    expect(event.discovery_kind).toBe('session_mirror');
+    expect(event.discovery_dedupe_key).toBe('session:session-1');
     expect(event.is_place_backed).toBe(true);
+    expect(event.participation).toEqual({
+      attendance_supported: false,
+      attendance_source_kind: 'session_attendance',
+      first_party_attendance: true,
+      rsvp_supported: false,
+      verification_supported: true,
+      participation_truth_level: 'linked_first_party',
+      host_kind: 'session_host',
+      organizer_kind: 'dowhat_host',
+    });
   });
 
   it('keeps legacy venue-backed session summaries out of canonical place truth', () => {
@@ -56,6 +77,7 @@ describe('event truth helpers', () => {
     );
 
     expect(event.location_kind).toBe('legacy_venue');
+    expect(event.discovery_kind).toBe('session_mirror');
     expect(event.is_place_backed).toBe(false);
   });
 
@@ -70,6 +92,7 @@ describe('event truth helpers', () => {
 
     expect(event.origin_kind).toBe('event');
     expect(event.location_kind).toBe('custom_location');
+    expect(event.discovery_kind).toBe('open_event');
     expect(event.is_place_backed).toBe(false);
   });
 
@@ -85,6 +108,57 @@ describe('event truth helpers', () => {
     );
 
     expect(event.location_kind).toBe('flexible');
+    expect(event.discovery_kind).toBe('open_event');
     expect(event.is_place_backed).toBe(false);
+  });
+
+  it('treats internal placeholder labels as non-meaningful location text', () => {
+    expect(isMeaningfulLocationLabel('Nearby spot')).toBe(false);
+    expect(isMeaningfulLocationLabel('Unknown location')).toBe(false);
+    expect(isMeaningfulLocationLabel('Location to be confirmed')).toBe(false);
+    expect(isMeaningfulLocationLabel('South gate meetup point')).toBe(true);
+  });
+
+  it('marks imported source events as external-source attendance', () => {
+    expect(
+      inferEventParticipationTruth(
+        baseEvent({
+          source_id: 'foursquare',
+          source_uid: 'ext-1',
+          metadata: { sourceUrl: 'https://source.example/event/1' },
+        }),
+      ),
+    ).toEqual({
+      attendance_supported: false,
+      attendance_source_kind: 'external_source',
+      first_party_attendance: false,
+      rsvp_supported: false,
+      verification_supported: false,
+      participation_truth_level: 'external_source',
+      host_kind: 'external_organizer',
+      organizer_kind: 'external_source',
+    });
+  });
+
+  it('marks unlabeled standalone events as attendance-unavailable', () => {
+    expect(
+      inferEventParticipationTruth(
+        baseEvent({
+          source_id: null,
+          source_uid: null,
+          url: null,
+          metadata: null,
+        }),
+      ),
+    ).toEqual({
+      attendance_supported: false,
+      attendance_source_kind: 'none',
+      first_party_attendance: false,
+      rsvp_supported: false,
+      verification_supported: false,
+      participation_truth_level: 'unavailable',
+      host_kind: 'unknown',
+      organizer_kind: 'unknown',
+    });
   });
 });

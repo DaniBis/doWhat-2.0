@@ -1,5 +1,11 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
-import { isUuid, type EventLocationKind } from '@dowhat/shared';
+import {
+  buildFirstPartySessionParticipationTruth,
+  isMeaningfulLocationLabel,
+  isUuid,
+  type EventLocationKind,
+  type ParticipationTruthSummary,
+} from '@dowhat/shared';
 import { hydratePlaceLabel } from '@/lib/places/labels';
 import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 import { createClient } from '@/lib/supabase/server';
@@ -64,6 +70,7 @@ export type HydratedSession = {
   placeLabel: string | null;
   locationKind: EventLocationKind;
   isPlaceBacked: boolean;
+  participation: ParticipationTruthSummary;
   place: PlaceSummary | null;
   reliabilityScore: number | null;
   activity: ActivitySummary | null;
@@ -112,7 +119,7 @@ const resolveSessionLocationKind = (input: {
   const activityLng = input.activity?.lng ?? null;
   const hasActivityCoords = activityLat != null && activityLng != null;
 
-  if (label && label.toLowerCase() !== SESSION_PLACE_LABEL_FALLBACK.toLowerCase()) {
+  if (isMeaningfulLocationLabel(label)) {
     return 'custom_location';
   }
   if (hasActivityCoords) {
@@ -129,6 +136,27 @@ export type AttendanceCounts = {
   total: number;
   verified: number;
 };
+
+export type SessionAttendanceSummaryPayload = {
+  sessionId: string;
+  userId: string | null;
+  status: SessionAttendeeRow['status'] | null;
+  counts: AttendanceCounts;
+  maxAttendees: number;
+  participation: ParticipationTruthSummary;
+};
+
+export type SessionAttendanceMutationPayload = {
+  sessionId: string;
+  userId: string;
+  status: SessionAttendeeRow['status'] | null;
+  previousStatus: SessionAttendeeRow['status'] | null;
+  counts: AttendanceCounts;
+  participation: ParticipationTruthSummary;
+};
+
+export const buildSessionParticipationTruth = (): ParticipationTruthSummary =>
+  buildFirstPartySessionParticipationTruth();
 
 export type ParsedSessionPayload = {
   activityId?: string | null;
@@ -197,6 +225,8 @@ const markActivitiesPlaceLabelColumnMissing = () => {
   }
 };
 
+// Stored fallback required by the legacy sessions.place_label constraint.
+// Hydrated/API payloads must still expose flexible/custom location truth honestly.
 const SESSION_PLACE_LABEL_FALLBACK = 'Unknown location';
 
 const trimLabel = (value: string | null | undefined): string => {
@@ -383,10 +413,8 @@ const resolveActivityPlaceLabel = async (
   input: {
     placeId?: string | null;
     venueName?: string | null;
-    fallbackLabel?: string | null;
   },
-): Promise<string> => {
-  let place: { name?: string | null } | null = null;
+): Promise<string | null> => {
   if (input.placeId) {
     const { data, error } = await service
       .from('places')
@@ -394,14 +422,11 @@ const resolveActivityPlaceLabel = async (
       .eq('id', input.placeId)
       .maybeSingle<PlaceLabelRow>();
     if (!error && data?.name) {
-      place = { name: data.name };
+      return trimLabel(data.name);
     }
   }
-  return hydratePlaceLabel({
-    place,
-    venue: input.venueName ?? null,
-    fallbackLabel: input.fallbackLabel ?? null,
-  });
+  const venueLabel = trimLabel(input.venueName ?? null);
+  return venueLabel || null;
 };
 
 export async function ensureActivity(service: SupabaseClient, input: {
@@ -458,9 +483,10 @@ export async function ensureActivity(service: SupabaseClient, input: {
         const placeLabel = await resolveActivityPlaceLabel(service, {
           placeId: (updates.place_id as string | null | undefined) ?? nextPlaceId,
           venueName: input.venueName ?? null,
-          fallbackLabel: activityName,
         });
-        updates.place_label = placeLabel;
+        if (placeLabel) {
+          updates.place_label = placeLabel;
+        }
       }
     }
     if (Object.keys(updates).length) {
@@ -478,9 +504,10 @@ export async function ensureActivity(service: SupabaseClient, input: {
     const placeLabel = await resolveActivityPlaceLabel(service, {
       placeId: input.placeId ?? null,
       venueName: input.venueName ?? null,
-      fallbackLabel: activityName,
     });
-    insert.place_label = placeLabel;
+    if (placeLabel) {
+      insert.place_label = placeLabel;
+    }
   }
 
   const { data: inserted, error: insertError } = await service
@@ -589,9 +616,10 @@ export async function resolveSessionPlaceId(
       const placeLabel = await resolveActivityPlaceLabel(service, {
         placeId: resolvedPlace.placeId,
         venueName: input.labelHint ?? null,
-        fallbackLabel: input.labelHint ?? null,
       });
-      updates.place_label = placeLabel;
+      if (placeLabel) {
+        updates.place_label = placeLabel;
+      }
     }
     const { error: updateError } = await service
       .from('activities')
@@ -639,7 +667,7 @@ export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[
     const placeId = typeof row.place_id === 'string' ? row.place_id : null;
     const place = placeId ? placeMap.get(placeId) ?? null : null;
     const persistedPlaceLabel = trimLabel(row.place_label ?? null) || null;
-    const placeLabel = hydratePlaceLabel({
+    const hydratedPlaceLabel = hydratePlaceLabel({
       place,
       venue: persistedPlaceLabel ?? venue?.name ?? activity?.venueLabel ?? null,
       address: venue?.address ?? null,
@@ -650,9 +678,15 @@ export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[
       place,
       venueId: row.venue_id,
       venue,
-      placeLabel,
+      placeLabel: persistedPlaceLabel ?? hydratedPlaceLabel,
       activity,
     });
+    const placeLabel =
+      locationKind === 'canonical_place' || locationKind === 'legacy_venue'
+        ? hydratedPlaceLabel
+        : isMeaningfulLocationLabel(hydratedPlaceLabel)
+          ? hydratedPlaceLabel
+          : null;
 
     return {
       id: row.id,
@@ -672,6 +706,7 @@ export async function hydrateSessions(service: SupabaseClient, rows: SessionRow[
       placeLabel,
       locationKind,
       isPlaceBacked: locationKind === 'canonical_place',
+      participation: buildSessionParticipationTruth(),
       place,
       reliabilityScore: normalizeReliabilityScore(row.reliability_score),
       activity,

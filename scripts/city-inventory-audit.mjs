@@ -5,6 +5,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
+import { LAUNCH_CITY_CONFIG } from './utils/launch-city-config.mjs';
 import loadEnv from './utils/load-env.mjs';
 
 loadEnv(['.env.local', 'apps/doWhat-web/.env.local', 'apps/doWhat-mobile/.env.local']);
@@ -630,8 +631,10 @@ const createPool = () => {
 };
 
 const queryCityPlaces = async (pool, cityKey) => {
-  const standard = TARGET_CITY_STANDARDS[cityKey];
-  const aliases = standard.aliases.map(normalizeComparable);
+  const config = LAUNCH_CITY_CONFIG[cityKey];
+  if (!config) {
+    throw new Error(`Unknown launch city '${cityKey}'`);
+  }
   const { rows } = await pool.query(
     `
       select
@@ -647,11 +650,13 @@ const queryCityPlaces = async (pool, cityKey) => {
         tags,
         primary_source
       from public.places
-      where regexp_replace(lower(coalesce(city, '')), '[^a-z0-9]+', '', 'g') = any($1::text[])
-         or regexp_replace(lower(coalesce(locality, '')), '[^a-z0-9]+', '', 'g') = any($1::text[])
+      where lat >= $1
+        and lat <= $2
+        and lng >= $3
+        and lng <= $4
       order by name asc
     `,
-    [aliases],
+    [config.bbox.sw.lat, config.bbox.ne.lat, config.bbox.sw.lng, config.bbox.ne.lng],
   );
   return rows.map((row) => ({
     id: row.id,

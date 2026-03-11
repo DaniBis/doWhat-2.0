@@ -71,6 +71,16 @@ describe("attendance leave route", () => {
       status: null,
       previousStatus: "going",
       counts: { going: 1, interested: 0, declined: 0, total: 1, verified: 0 },
+      participation: {
+        attendance_supported: true,
+        attendance_source_kind: "session_attendance",
+        first_party_attendance: true,
+        rsvp_supported: true,
+        verification_supported: true,
+        participation_truth_level: "first_party",
+        host_kind: "session_host",
+        organizer_kind: "dowhat_host",
+      },
     });
     expect(stub.eqMock).toHaveBeenNthCalledWith(1, "session_id", "session-5");
     expect(stub.eqMock).toHaveBeenNthCalledWith(2, "user_id", "user-5");

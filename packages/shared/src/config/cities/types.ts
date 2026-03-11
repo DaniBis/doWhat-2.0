@@ -11,6 +11,8 @@ export interface CityConfig {
   slug: string;
   name: string;
   label: string;
+  /** Alias values accepted for city-scope selection and canonical city normalization. */
+  scopeAliases: string[];
   center: { lat: number; lng: number };
   defaultZoom: number;
   defaultRegion: { latitudeDelta: number; longitudeDelta: number };

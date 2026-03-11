@@ -2,6 +2,7 @@ import {
 	formatDateRange,
 	formatPrice,
 	buildSessionSavePayload,
+	type ParticipationTruthSummary,
 	type SavePayload,
 	type ActivityRow,
 	trackReliabilityContestOpened,
@@ -36,6 +37,7 @@ type SessionDetailRow = {
 	place_label?: string | null;
 	location_kind?: "canonical_place" | "legacy_venue" | "custom_location" | "flexible" | null;
 	is_place_backed?: boolean | null;
+	participation?: ParticipationTruthSummary | null;
 	activities: { id?: string | null; name?: string | null } | null;
 	venues: { id?: string | null; name?: string | null; address?: string | null; lat?: number | null; lng?: number | null } | null;
 	place?: { id?: string | null; name?: string | null; address?: string | null; lat?: number | null; lng?: number | null } | null;
@@ -58,6 +60,7 @@ const mapApiSessionToDetailRow = (session: MobileSessionDetail): SessionDetailRo
 	place_label: session.placeLabel ?? null,
 	location_kind: session.locationKind ?? null,
 	is_place_backed: session.isPlaceBacked ?? null,
+	participation: session.participation ?? null,
 	activities: session.activity
 		? {
 			id: session.activity.id ?? null,
@@ -122,6 +125,7 @@ export default function SessionDetails() {
 	const [goingCount, setGoingCount] = useState<number | null>(null);
 	const [interestedCount, setInterestedCount] = useState<number | null>(null);
 	const [maxAttendees, setMaxAttendees] = useState<number | null>(null);
+	const [attendanceParticipation, setAttendanceParticipation] = useState<ParticipationTruthSummary | null>(null);
 	const [goingAttendees, setGoingAttendees] = useState<AttendeePreview[]>([]);
 	const [interestedAttendees, setInterestedAttendees] = useState<AttendeePreview[]>([]);
 	const [sessionId, setSessionId] = useState<string | null>(null);
@@ -320,6 +324,7 @@ const refreshAttendanceSummary = useCallback(async (sessionIdentifier: string) =
 		setInterestedCount(summary?.counts?.interested ?? null);
 		setMaxAttendees(summary?.maxAttendees ?? null);
 		setStatus(summary?.status ?? null);
+		setAttendanceParticipation(summary?.participation ?? null);
 	} catch (err) {
 		if (__DEV__) console.error("[sessions][details] attendance summary", err);
 	}
@@ -471,15 +476,26 @@ useEffect(() => {
 		}
 	}, [isSaved, savePayload, toggle]);
 
+	const participationTruth = attendanceParticipation ?? row?.participation ?? null;
+	const attendanceSupported = participationTruth?.attendance_supported !== false;
+	const attendanceHelperText = !attendanceSupported
+		? 'Attendance is not managed in doWhat for this session.'
+		: 'doWhat tracks RSVPs and attendance for this session.';
 	const isSessionFull = maxAttendees != null && (goingCount ?? 0) >= maxAttendees;
 	const isGoing = status === "going";
-	const disableGoingButton = loading || isGoing || (isSessionFull && !isGoing);
-	const disableInterestedButton = loading || status === "interested";
+	const disableGoingButton = loading || !attendanceSupported || isGoing || (isSessionFull && !isGoing);
+	const disableInterestedButton = loading || !attendanceSupported || status === "interested";
 	const saveButtonColor = saved ? '#065f46' : '#0d9488';
 	const saveIcon = saved ? 'bookmark' : 'bookmark-outline';
 	const sessionEndDate = row?.ends_at ? new Date(row.ends_at) : null;
 	const sessionHasEnded = sessionEndDate ? sessionEndDate.getTime() <= Date.now() : false;
-	const locationLabel = row?.place_label?.trim() || row?.place?.name?.trim() || row?.venues?.name?.trim() || 'Location to be confirmed';
+	const locationLabel = row?.location_kind === 'canonical_place'
+		? row?.place?.name?.trim() || row?.place_label?.trim() || row?.venues?.name?.trim() || 'Location to be confirmed'
+		: row?.location_kind === 'legacy_venue'
+			? row?.venues?.name?.trim() || row?.place_label?.trim() || 'Location to be confirmed'
+			: row?.location_kind === 'custom_location'
+				? row?.place_label?.trim() || row?.activities?.name?.trim() || 'Pinned meetup point'
+				: 'Location to be confirmed';
 	const locationLat = row?.place?.lat ?? row?.venues?.lat ?? null;
 	const locationLng = row?.place?.lng ?? row?.venues?.lng ?? null;
 	const canContestReliability = Boolean(row?.id && status === "going" && sessionHasEnded);
@@ -497,6 +513,9 @@ useEffect(() => {
 		setMsg(null);
 		setActionError(null);
 		try {
+			if (!attendanceSupported) {
+				throw new Error("Attendance is not available for this session.");
+			}
 			if (next !== "going" && next !== "interested") {
 				throw new Error("Unsupported response.");
 			}
@@ -677,12 +696,13 @@ useEffect(() => {
 						</Pressable>
 					)}
 					<View style={{ marginTop: 12 }}>
-						<Text>Your attendance: <Text style={{ fontWeight: '700' }}>{status ?? 'not set'}</Text></Text>
+						<Text>Your doWhat RSVP: <Text style={{ fontWeight: '700' }}>{status ?? 'not set'}</Text></Text>
+						<Text style={{ marginTop: 4, color: '#6b7280', fontSize: 12 }}>{attendanceHelperText}</Text>
 						{!userId ? (
 							<Pressable onPress={handleSignIn} style={{ marginTop: 8, padding: 10, borderWidth: 1, borderRadius: 8 }}>
 								<Text>Sign in to update attendance</Text>
 							</Pressable>
-						) : (
+						) : attendanceSupported ? (
 				<View style={{ marginTop: 8, flexDirection: 'row', gap: 8 }}>
 					<Pressable
 								onPress={() => updateAttendance('going')}
@@ -699,6 +719,10 @@ useEffect(() => {
 						<Text>I'm interested</Text>
 					</Pressable>
 				</View>
+						) : (
+							<View style={{ marginTop: 8 }}>
+								<Text style={{ color: '#6b7280' }}>RSVP actions are not available for this session.</Text>
+							</View>
 						)}
 						{msg && <Text style={{ marginTop: 8, color: '#065f46' }}>{msg}</Text>}
 						{actionError && <Text style={{ marginTop: 8, color: '#b91c1c' }}>{actionError}</Text>}

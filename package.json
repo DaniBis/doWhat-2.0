@@ -36,6 +36,8 @@
     "seed:events:bangkok": "node scripts/seed-events-bangkok.mjs",
     "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs",
     "inventory:rematch": "node scripts/rematch-venue-activities.mjs",
+    "inventory:diagnose:city": "node scripts/city-inventory-diagnostics.mjs",
+    "inventory:diagnose:cities": "node scripts/city-inventory-diagnostics.mjs --all",
     "inventory:audit:city": "node scripts/city-inventory-audit.mjs",
     "inventory:audit:cities": "node scripts/city-inventory-audit.mjs --all",
     "inventory:status": "node scripts/city-inventory-status-report.mjs",
