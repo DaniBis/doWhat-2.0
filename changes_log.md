@@ -5857,3 +5857,115 @@
   - City audit status now depends on real inventory quality metrics instead of the incidental presence of manual overrides.
 - Remaining risks or follow-up notes:
   - Live city audits still require a DB-connected environment.
+
+## 2026-03-11 13:04:49 +0700 — live inventory execution pack + manual review sweep prep kickoff
+
+- Issue being worked on:
+  - Package the live operator flow for Hanoi, Da Nang, and Bangkok so a DB-connected human can run rematch, capture artifacts, run city audits, summarize status, and complete the manual review sweep without guessing.
+- Files planned to change:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - `scripts/rematch-venue-activities.mjs`
+  - new operator/reporting script(s) under `scripts/`
+  - new or updated docs under `docs/`
+  - targeted node tests for the operator/reporting flow
+- Decision made:
+  - Keep discovery semantics stable and focus on execution packaging: artifact capture, report summarization, exact command order, and manual-review handoff.
+- Why the decision was made:
+  - The repo already has the cleanup policy and city audit tooling. The remaining launch-readiness gap is operator usability against the live environment.
+- How it will be tested:
+  - Node-level tests for the new reporting flow.
+  - Targeted ESLint on new/changed operator scripts.
+  - Existing inventory verification scripts rerun where relevant.
+- Result:
+  - Kickoff logged. Operator flow packaging is underway.
+- Remaining risks or follow-up notes:
+  - This shell still cannot execute the live DB-connected run, so the pass must stay honest about artifacts and commands rather than pretending to complete the live sweep.
+
+## 2026-03-11 13:07:46 +0700 — live inventory execution pack + operator status reporting implemented
+
+- Issue being worked on:
+  - Make the live target-city rematch + audit flow operator-readable and capture-ready for Hanoi, Da Nang, and Bangkok.
+- Files changed:
+  - `scripts/rematch-venue-activities.mjs`
+  - `scripts/city-inventory-status-report.mjs`
+  - `scripts/__tests__/rematch-venue-activities.test.mjs`
+  - `scripts/__tests__/city-inventory-status-report.test.mjs`
+  - `package.json`
+  - `docs/live_inventory_execution_pack.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The repo had the right cleanup and audit primitives, but the live operator flow still required too much guesswork:
+    - rematch output was stdout-only and awkward to preserve,
+    - there was no single summary format that combined rematch + audit outputs into launch guidance,
+    - the target-city checklist described what to inspect but not the exact artifact naming and per-city run order.
+- Exact fix:
+  - `scripts/rematch-venue-activities.mjs`
+    - now supports `--output=<file>`
+    - now emits a stable report object with `city`, `requestedAt`, `runStatus`, `errorCount`, and the cleanup counters needed for launch review
+    - was refactored into testable exports (`parseArgs`, `buildRematchReport`, `executeRematch`, `main`)
+  - Added `scripts/city-inventory-status-report.mjs`
+    - reads `<city>-rematch-dry-run.json`, `<city>-rematch-apply.json`, and `<city>-audit.json`
+    - outputs a compact per-city status with:
+      - `city`
+      - `rematchRunStatus`
+      - `auditStatus`
+      - `coverageStatus`
+      - `hospitalityLeakageStatus`
+      - `duplicateStaleStatus`
+      - `manualReviewRequired`
+      - `launchRecommendation`
+    - also lists manual-review candidate buckets for operator follow-through
+  - Added the live runbook in `docs/live_inventory_execution_pack.md`
+    - exact command order
+    - artifact directory convention
+    - pass/fail meaning
+    - final combined status report step
+    - manual review note template
+  - Updated the existing checklist and control docs so the next human step is now the execution pack, not an improvised live sweep.
+- Why the decision was made:
+  - Launch readiness now depends more on consistent operator execution than on new discovery semantics. The cleanest improvement was to package the already-approved rematch/audit flow into one deterministic artifact/reporting process.
+- How it is run:
+  - Create an artifact directory:
+    - `export INVENTORY_RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"`
+    - `export INVENTORY_ARTIFACT_DIR="artifacts/inventory-live/${INVENTORY_RUN_ID}"`
+    - `mkdir -p "$INVENTORY_ARTIFACT_DIR"`
+  - For each city:
+    - `pnpm verify:seed-health --city=<slug> --packVersion=2026-03-04.v1`
+    - `pnpm inventory:rematch --city=<slug> --output="$INVENTORY_ARTIFACT_DIR/<slug>-rematch-dry-run.json"`
+    - `pnpm inventory:rematch --city=<slug> --apply --output="$INVENTORY_ARTIFACT_DIR/<slug>-rematch-apply.json"`
+    - `pnpm inventory:audit:city --city=<slug> --strict --format=json --output="$INVENTORY_ARTIFACT_DIR/<slug>-audit.json"`
+    - `pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --city=<slug> --format=markdown --output="$INVENTORY_ARTIFACT_DIR/<slug>-status.md"`
+  - Final combined summary:
+    - `pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --all --format=markdown --output="$INVENTORY_ARTIFACT_DIR/live-inventory-status.md"`
+- What a pass means:
+  - The rematch apply artifact is clean (`runStatus=ok`, `errorCount=0`).
+  - The audit artifact is `acceptable`.
+  - The final status report says `launchRecommendation=launch-acceptable`.
+- What a fail / block means:
+  - Rematch apply is missing or errored.
+  - Audit is missing or `failing`.
+  - Coverage, hospitality leakage, or duplicate/stale mapping status is `failing`.
+- How it was tested:
+  - `node scripts/rematch-venue-activities.mjs --help`
+  - `node scripts/city-inventory-status-report.mjs --help`
+  - `node --test scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/rematch-venue-activities.mjs scripts/city-inventory-status-report.mjs scripts/city-inventory-audit.mjs scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - The repo now has a complete live inventory execution pack:
+    - deterministic artifact capture
+    - deterministic per-city status reporting
+    - deterministic manual review handoff
+  - Local script/tests passed.
+  - No discovery semantics were changed.
+- Remaining risks or follow-up notes:
+  - This shell still cannot run the real DB-connected sweep, so no live city status was produced here.
+  - Operator discipline still matters: the report summarizes artifacts, but a human must still inspect suspicious sample buckets and write the manual review note.

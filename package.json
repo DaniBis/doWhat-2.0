@@ -38,6 +38,7 @@
     "inventory:rematch": "node scripts/rematch-venue-activities.mjs",
     "inventory:audit:city": "node scripts/city-inventory-audit.mjs",
     "inventory:audit:cities": "node scripts/city-inventory-audit.mjs --all",
+    "inventory:status": "node scripts/city-inventory-status-report.mjs",
     "seed:dowhat": "node scripts/seed-dowhat.mjs",
     "rollback:dowhat": "node scripts/rollback-dowhat.mjs",
     "verify:dowhat": "node scripts/verify-dowhat-guardrails.mjs",

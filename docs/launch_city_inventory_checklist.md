@@ -8,6 +8,8 @@ This checklist makes inventory review deterministic for the current launch citie
 
 Use it after seeding, after `venue_activities` cleanup, and before any launch readiness sign-off.
 
+For the exact live command sequence and artifact naming convention, use [live_inventory_execution_pack.md](/Users/danielbisceanu/doWhat/docs/live_inventory_execution_pack.md).
+
 ## What This Validates
 
 - obvious hospitality pollution
@@ -58,6 +60,12 @@ To save machine-readable reports:
 
 ```bash
 pnpm inventory:audit:cities --format=json --output=launch-city-inventory-audit.json
+```
+
+To summarize the captured rematch + audit artifacts into a launch recommendation:
+
+```bash
+pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --all --format=markdown --output="$INVENTORY_ARTIFACT_DIR/live-inventory-status.md"
 ```
 
 ## City Coverage Standards

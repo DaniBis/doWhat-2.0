@@ -60,6 +60,9 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 - **Target-city inventory audit tooling now exists**
   - `pnpm inventory:audit:city --city=<slug>` now audits Hanoi, Da Nang, and Bangkok for hospitality leakage, stale mappings, duplicate clusters, missing activity coverage, session-to-mapping gaps, and manual override visibility
   - `docs/launch_city_inventory_checklist.md` now defines acceptable / suspicious / failing launch-review standards for those cities
+- **Live operator execution pack now exists**
+  - `docs/live_inventory_execution_pack.md` defines the exact live command order, artifact capture, status reporting, and manual review sweep for Hanoi, Da Nang, and Bangkok
+  - `pnpm inventory:status --dir=<artifact-dir> --all` now turns captured rematch + audit artifacts into a compact launch recommendation report
 
 ## Fragile Areas
 
@@ -102,7 +105,7 @@ Use this file, not old 2025 planning snapshots, when deciding what to work on ne
 
 ## Immediate Priorities
 
-1. Run `pnpm inventory:rematch --city=<slug> --apply` and `pnpm inventory:audit:city --city=<slug> --strict` against the connected environment for Hanoi, Da Nang, and Bangkok, then complete the manual sample review checklist.
+1. Run the exact flow from `docs/live_inventory_execution_pack.md` against the connected environment for Hanoi, Da Nang, and Bangkok, then complete the manual sample review checklist.
 2. Decide whether `/api/events` should widen beyond its current explicit subset now that mixed event/session truth is explicit on the main discovery surfaces.
 3. Sweep untouched secondary surfaces that still carry older event/session wording so they inherit the same explicit discovery and participation contract.
 4. Build a real-user readiness gate only after discovery, filters, event truth, reliability truth, and target-city inventory audits are all verified.

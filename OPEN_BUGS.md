@@ -68,14 +68,16 @@ Only list issues that are still open, operationally unresolved, or not yet prove
 - Blocking or non-blocking
   - Blocking for production discovery trust
 - Recommended next action
-  - Run `pnpm inventory:rematch --city=<slug> --apply`, then `pnpm inventory:audit:city --city=<slug> --strict` for Hanoi, Da Nang, and Bangkok, and complete the manual review checklist in `docs/launch_city_inventory_checklist.md`.
+  - Run the exact sequence in `docs/live_inventory_execution_pack.md`, capture the per-city artifacts, generate the final city status reports with `pnpm inventory:status`, and complete the manual review checklist in `docs/launch_city_inventory_checklist.md`.
 - Related files/tests if known
   - `apps/doWhat-web/src/lib/places/activityMatching.ts`
   - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
   - `scripts/rematch-venue-activities.mjs`
   - `scripts/city-inventory-audit.mjs`
+  - `scripts/city-inventory-status-report.mjs`
   - `docs/inventory_truth_policy.md`
   - `docs/launch_city_inventory_checklist.md`
+  - `docs/live_inventory_execution_pack.md`
   - `packages/shared/src/discovery/activityBoundary.ts`
   - `apps/doWhat-web/src/lib/discovery/__tests__/placeActivityFilter.test.ts`
 

@@ -213,7 +213,7 @@ The product should be able to explain why a result appeared and why a result was
 
 ## Next Implementation Priorities
 
-1. Run the canonical rematch/cleanup flow against Hanoi, Da Nang, and Bangkok, then complete the deterministic city audit + manual review checklist for each.
+1. Run the exact live operator sequence in `docs/live_inventory_execution_pack.md` for Hanoi, Da Nang, and Bangkok, then complete the deterministic city audit + manual review checklist for each.
 2. Decide whether `/api/events` should expand beyond its current explicit subset now that mixed event/session truth is explicit on primary discovery surfaces.
 3. Close the remaining standalone-event participation gap without weakening the explicit session attendance contract.
 4. Sweep any untouched secondary surfaces only when they are actively modified so they inherit the same activity-first and mixed-discovery truth copy.

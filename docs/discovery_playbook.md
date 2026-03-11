@@ -74,7 +74,7 @@ pnpm inventory:audit:city --city=bangkok --strict
 pnpm inventory:audit:city --city=danang --strict
 ```
 
-For launch review, use [launch_city_inventory_checklist.md](/Users/danielbisceanu/doWhat/docs/launch_city_inventory_checklist.md) after `verify:seed-health` and `inventory:rematch`.
+For launch review, use [launch_city_inventory_checklist.md](/Users/danielbisceanu/doWhat/docs/launch_city_inventory_checklist.md) after `verify:seed-health` and `inventory:rematch`, then follow [live_inventory_execution_pack.md](/Users/danielbisceanu/doWhat/docs/live_inventory_execution_pack.md) to capture per-city artifacts and a final operator-readable status report.
 
 ## API Smoke Checks
 

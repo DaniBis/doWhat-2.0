@@ -142,6 +142,8 @@ Use [launch_city_inventory_checklist.md](/Users/danielbisceanu/doWhat/docs/launc
 - acceptable / suspicious / failing interpretation
 - manual review rules for hospitality exceptions, duplicates, and session-to-mapping gaps
 
+Use [live_inventory_execution_pack.md](/Users/danielbisceanu/doWhat/docs/live_inventory_execution_pack.md) for the exact live command sequence, artifact naming, and final city status reporting flow.
+
 ## Remaining Known Limits
 
 - Imported external events are not yet used as activity-specific mapping evidence in `venue_activities`; first-party sessions are the current deterministic evidence path.

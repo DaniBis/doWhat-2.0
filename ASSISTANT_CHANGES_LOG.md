@@ -2986,3 +2986,60 @@
 - Testing:
   - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
   - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+
+## 2026-03-11 13:04:49 +0700 — live inventory execution pack + manual review sweep prep kickoff
+
+- Scope:
+  - Final operator packaging for the live target-city rematch + audit run.
+- Intent:
+  - Make Hanoi / Da Nang / Bangkok execution unambiguous: exact command order, artifact capture, compact city status summary, and explicit manual-review follow-through.
+- Planned touch points:
+  - `scripts/rematch-venue-activities.mjs`
+  - new reporting helper(s) under `scripts/`
+  - live execution docs under `docs/`
+  - node tests for the operator/reporting contract
+- Constraints:
+  - No discovery/filter/SQL redesign.
+  - Be explicit that live execution still requires a DB-connected environment.
+
+## 2026-03-11 13:07:46 +0700 — live inventory execution pack + operator status reporting implemented
+
+- Files changed:
+  - `scripts/rematch-venue-activities.mjs`
+  - `scripts/city-inventory-status-report.mjs`
+  - `scripts/__tests__/rematch-venue-activities.test.mjs`
+  - `scripts/__tests__/city-inventory-status-report.test.mjs`
+  - `package.json`
+  - `docs/live_inventory_execution_pack.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Key decisions:
+  - Add `--output` support and a stable report shape to `inventory:rematch` so live runs can be archived and summarized.
+  - Add one separate summary script (`inventory:status`) rather than overloading the audit CLI with rematch logic.
+  - Keep the execution pack doc explicit about file naming and launch recommendation rules.
+- What changed:
+  - Rematch artifacts can now be saved directly to JSON files.
+  - Final city status can now be generated from saved artifacts with:
+    - `rematchRunStatus`
+    - `auditStatus`
+    - `coverageStatus`
+    - `hospitalityLeakageStatus`
+    - `duplicateStaleStatus`
+    - `manualReviewRequired`
+    - `launchRecommendation`
+  - The live runbook now gives exact per-city command order and a final combined summary step.
+- Testing:
+  - `node scripts/rematch-venue-activities.mjs --help`
+  - `node scripts/city-inventory-status-report.mjs --help`
+  - `node --test scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/rematch-venue-activities.mjs scripts/city-inventory-status-report.mjs scripts/city-inventory-audit.mjs scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - Operator flow is now packaged and capture-ready.
+  - Live city execution is still pending because this shell cannot reach the target DB/cron environment directly.
