@@ -115,18 +115,76 @@ const SOURCE_PRIORITY: Record<VenueActivitySource, number> = {
 
 const CATEGORY_CONFIDENCE = 0.92;
 const KEYWORD_CONFIDENCE = 0.6;
+const MATCHER_QUERY_CHUNK_SIZE = 180;
+
+const logMatcherInfo = (message: string, meta?: Record<string, unknown>) => {
+  if (process.env.NODE_ENV === 'production') return;
+  console.info('[activity-matcher]', message, meta ?? {});
+};
+
+const logMatcherWarn = (message: string, meta?: Record<string, unknown>) => {
+  if (process.env.NODE_ENV === 'production') return;
+  console.warn('[activity-matcher]', message, meta ?? {});
+};
+
+const chunkValues = <T,>(values: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    const chunk = values.slice(index, index + size);
+    if (chunk.length) chunks.push(chunk);
+  }
+  return chunks;
+};
+
+const describeArrayLike = (value: unknown): string => {
+  if (Array.isArray(value)) return `array:${value.length}`;
+  if (value == null) return 'nullish';
+  return typeof value;
+};
+
+const runMatcherStep = async <T,>(
+  step: string,
+  meta: Record<string, unknown>,
+  fn: () => Promise<T>,
+): Promise<T> => {
+  logMatcherInfo(`${step}:start`, meta);
+  try {
+    const result = await fn();
+    logMatcherInfo(`${step}:ok`, meta);
+    return result;
+  } catch (error) {
+    console.error('[activity-matcher]', `${step}:failed`, { ...meta, error });
+    throw error;
+  }
+};
 
 export async function matchActivitiesForPlaces(options: MatchOptions = {}): Promise<MatchSummary> {
   const supabase = createServiceClient();
-  const catalog = await loadActivityCatalog(supabase);
+  const requestMeta = {
+    city: options.city ?? null,
+    placeId: options.placeId ?? null,
+    placeIds: options.placeIds?.length ?? 0,
+    limit: options.limit ?? null,
+    offset: options.offset ?? 0,
+    dryRun: Boolean(options.dryRun),
+  };
+  logMatcherInfo('run:start', requestMeta);
 
-  const places = await loadPlacesBatch(supabase, options);
+  const catalog = await runMatcherStep('catalog', requestMeta, () => loadActivityCatalog(supabase));
+
+  const places = await runMatcherStep('places-batch', requestMeta, () => loadPlacesBatch(supabase, options));
   const placeIds = places.map((place) => place.id);
 
   const [fsqCategoryMap, manualOverrideMap, activityEvidenceByPlaceId] = await Promise.all([
-    loadFoursquareCategoryMap(supabase, placeIds),
-    loadManualOverrides(supabase, placeIds),
-    loadPlaceActivityEvidence(supabase, placeIds),
+    runMatcherStep('foursquare-category-preload', { ...requestMeta, placeCount: placeIds.length }, () =>
+      loadFoursquareCategoryMap(supabase, placeIds),
+    ),
+    runMatcherStep('manual-override-preload', { ...requestMeta, placeCount: placeIds.length }, () =>
+      loadManualOverrides(supabase, placeIds),
+    ),
+    runMatcherStep('activity-evidence-preload', { ...requestMeta, placeCount: placeIds.length }, () =>
+      loadPlaceActivityEvidence(supabase, placeIds),
+    ),
   ]);
 
   const summary: MatchSummary = {
@@ -199,9 +257,28 @@ export async function matchActivitiesForPlaces(options: MatchOptions = {}): Prom
         });
       }
     } catch (error) {
+      logMatcherWarn('place-processing-failed', {
+        placeId: place.id,
+        name: place.name,
+        city: place.city ?? null,
+        locality: place.locality ?? null,
+        categories: describeArrayLike(place.categories),
+        tags: describeArrayLike(place.tags),
+        metadataType: place.metadata == null ? 'nullish' : typeof place.metadata,
+        error: getErrorMessage(error),
+      });
       summary.errors.push({ placeId: place.id, message: getErrorMessage(error) });
     }
   }
+
+  logMatcherInfo('run:complete', {
+    ...requestMeta,
+    processed: summary.processed,
+    matches: summary.matches,
+    upserts: summary.upserts,
+    deletes: summary.deletes,
+    errors: summary.errors.length,
+  });
 
   return summary;
 }
@@ -507,19 +584,21 @@ async function loadFoursquareCategoryMap(client: SupabaseClient, placeIds: strin
   const map = new Map<string, Set<string>>();
   if (!placeIds.length) return map;
   const uniqueIds = Array.from(new Set(placeIds));
-  const { data, error } = await client
-    .from('place_sources')
-    .select('place_id, raw')
-    .eq('provider', 'foursquare')
-    .in('place_id', uniqueIds);
-  if (error) throw error;
-  (data as FoursquareSourceRow[] | null)?.forEach((row) => {
-    const ids = extractFsqCategoryIds(row.raw);
-    if (!ids.length) return;
-    const entry = map.get(row.place_id) ?? new Set<string>();
-    ids.forEach((id) => entry.add(id));
-    map.set(row.place_id, entry);
-  });
+  for (const chunk of chunkValues(uniqueIds, MATCHER_QUERY_CHUNK_SIZE)) {
+    const { data, error } = await client
+      .from('place_sources')
+      .select('place_id, raw')
+      .eq('provider', 'foursquare')
+      .in('place_id', chunk);
+    if (error) throw error;
+    (data as FoursquareSourceRow[] | null)?.forEach((row) => {
+      const ids = extractFsqCategoryIds(row.raw);
+      if (!ids.length) return;
+      const entry = map.get(row.place_id) ?? new Set<string>();
+      ids.forEach((id) => entry.add(id));
+      map.set(row.place_id, entry);
+    });
+  }
   return map;
 }
 
@@ -527,17 +606,19 @@ async function loadManualOverrides(client: SupabaseClient, placeIds: string[]): 
   const map = new Map<string, ManualOverrideRow[]>();
   if (!placeIds.length) return map;
   const uniqueIds = Array.from(new Set(placeIds));
-  const { data, error } = await client
-    .from('activity_manual_overrides')
-    .select('activity_id, venue_id, reason')
-    .in('venue_id', uniqueIds);
-  if (error) throw error;
-  (data as ManualOverrideRow[] | null)?.forEach((row) => {
-    if (!map.has(row.venue_id)) {
-      map.set(row.venue_id, []);
-    }
-    map.get(row.venue_id)!.push(row);
-  });
+  for (const chunk of chunkValues(uniqueIds, MATCHER_QUERY_CHUNK_SIZE)) {
+    const { data, error } = await client
+      .from('activity_manual_overrides')
+      .select('activity_id, venue_id, reason')
+      .in('venue_id', chunk);
+    if (error) throw error;
+    (data as ManualOverrideRow[] | null)?.forEach((row) => {
+      if (!map.has(row.venue_id)) {
+        map.set(row.venue_id, []);
+      }
+      map.get(row.venue_id)!.push(row);
+    });
+  }
   return map;
 }
 
@@ -547,9 +628,7 @@ async function loadPlaceActivityEvidence(client: SupabaseClient, placeIds: strin
   if (!uniqueIds.length) return map;
 
   const sessionRows: SessionEvidenceRow[] = [];
-  const chunkSize = 180;
-  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
-    const chunk = uniqueIds.slice(index, index + chunkSize);
+  for (const chunk of chunkValues(uniqueIds, MATCHER_QUERY_CHUNK_SIZE)) {
     const { data, error } = await client
       .from('sessions')
       .select('place_id,activity_id')
@@ -590,15 +669,13 @@ async function loadActivityEvidenceLookup(
   if (!activityIds.length) return map;
 
   const rows: ActivityEvidenceRow[] = [];
-  const chunkSize = 180;
   let includeCatalogActivityId = true;
   // Generated DB types do not currently model the legacy activities table well enough
   // for typed select parsing here, so keep this lookup intentionally untyped.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activitiesTable = client.from('activities') as any;
 
-  for (let index = 0; index < activityIds.length; index += chunkSize) {
-    const chunk = activityIds.slice(index, index + chunkSize);
+  for (const chunk of chunkValues(activityIds, MATCHER_QUERY_CHUNK_SIZE)) {
     let result = await activitiesTable
       .select(includeCatalogActivityId ? 'id,catalog_activity_id,name,tags' : 'id,name,tags')
       .in('id', chunk);

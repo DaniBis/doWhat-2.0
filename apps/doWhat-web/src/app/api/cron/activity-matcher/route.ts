@@ -39,6 +39,14 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Activity matcher failed';
+    console.error('[cron/activity-matcher] request failed', {
+      city: city ?? null,
+      placeId: placeId ?? null,
+      limit: limit ?? null,
+      offset: offset ?? null,
+      dryRun,
+      error,
+    });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

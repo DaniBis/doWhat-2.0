@@ -1,5 +1,46 @@
 # Changes Log
 
+### 2026-03-12 11:42 UTC — Local cron activity matcher 500 fix / batch-size-sensitive preload queries
+- Issue: local `inventory:rematch` was failing against `POST /api/cron/activity-matcher` for full-city rematch runs (`--all --batchSize=500`) in Hanoi and Bangkok with `500 {"error":"Activity matcher failed"}` even though smaller authenticated manual calls succeeded.
+- Files changed:
+   - `apps/doWhat-web/src/app/api/cron/activity-matcher/route.ts`
+   - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - the failure was not cron auth: `requireCronAuth()` only accepts `Authorization: Bearer <CRON_SECRET>`, which matches the working curl/script contract and explains why `x-cron-secret` does not work for this route,
+   - the 500 happened before per-place matching, not because of one poison place row,
+   - `matchActivitiesForPlaces()` already chunked session/activity evidence lookups, but `loadFoursquareCategoryMap()` and `loadManualOverrides()` still executed single large `.in(...)` Supabase queries across the entire `placeIds` batch,
+   - `limit=250` stayed under that threshold, while `limit=500` city batches caused those unchunked preload queries to fail and bubble out as a route-level 500.
+- Exact fix:
+   - chunked `place_sources` and `activity_manual_overrides` preloads with the same bounded query size used elsewhere in the matcher (`MATCHER_QUERY_CHUNK_SIZE = 180`),
+   - reused the same chunk helper for the other evidence loaders so all matcher preload queries now scale consistently,
+   - added narrow dev-time diagnostics around matcher preload stages (`catalog`, `places-batch`, `foursquare-category-preload`, `manual-override-preload`, `activity-evidence-preload`),
+   - added per-place warnings that include `placeId`, `name`, `city`, `locality`, and the runtime shapes of `categories`, `tags`, and `metadata` when a row-level match fails,
+   - added route-level catch logging in `apps/doWhat-web/src/app/api/cron/activity-matcher/route.ts` so future 500s log `city`, `placeId`, `limit`, `offset`, `dryRun`, and the full error object.
+- Exact commands run:
+   - `curl -s -X POST "http://localhost:3002/api/cron/activity-matcher?city=hanoi&limit=250&offset=0&dryRun=1" -H "authorization: Bearer $CRON_SECRET"`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=hanoi','--all','--batchSize=500', ...])) ..."`
+   - `node --input-type=module -e "... POST /api/cron/activity-matcher?city=<city>&limit=500&offset=<offset>&dryRun=1 ..."`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=bangkok','--all','--batchSize=500', ...])) ..."`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=danang','--all','--batchSize=500', ...])) ..."`
+- Results before fix:
+   - exact Hanoi rematch script reproduction failed with `SCRIPT_ERROR request failed 500 {"error":"Activity matcher failed"}`,
+   - `limit=500` local cron probes for Hanoi and Bangkok returned `500`,
+   - Danang returned `200`, which helped isolate the problem to batch-size-sensitive matcher preload behavior rather than auth or the route shell itself.
+- Results after fix:
+   - Hanoi `POST /api/cron/activity-matcher?city=hanoi&limit=500&offset=0&dryRun=1` → `200`
+   - Bangkok `POST /api/cron/activity-matcher?city=bangkok&limit=500&offset=0&dryRun=1` → `200`
+   - Hanoi full rematch dry run → `runStatus: ok`, `processed: 2220`, `batchCount: 5`, `errorCount: 0`
+   - Bangkok full rematch dry run → `runStatus: ok`, `processed: 2702`, `batchCount: 6`, `errorCount: 0`
+   - Danang full rematch dry run remains stable → `runStatus: ok`, `processed: 329`, `upserts: 0`, `deletes: 0`
+- Verification:
+   - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts` passed,
+   - direct localhost route probes for Hanoi/Bangkok/Danang `limit=500` now return `200`.
+- Remaining risks / follow-up:
+   - Danang still produces `0` dry-run upserts, but that is matcher-output/data quality behavior rather than the local cron route crash and was intentionally left out of scope,
+   - if another future preload path exceeds request-size limits, the new route/matcher diagnostics should expose the failing stage immediately.
+
 ### 2026-03-11 15:05 UTC — Launch-city scope, canonical city normalization, and seed relevance hardened
 - Issue: implement the highest-value fixes proven by the target-city diagnosis pass so Hanoi, Da Nang, and Bangkok can generate materially better activity-first place inventory without weakening hospitality exclusion.
 - Files changed:
