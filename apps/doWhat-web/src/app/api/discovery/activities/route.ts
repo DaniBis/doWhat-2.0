@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import type { DiscoveryFacets, DiscoveryFilterSupport } from '@/lib/discovery/engine';
 import { discoverNearbyActivities } from '@/lib/discovery/engine';
+import { parseNearbyQuery } from '@/lib/filters';
 import { normalizePlaceLabel } from '@/lib/places/labels';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
@@ -95,18 +96,19 @@ const alignFacetsWithItems = (facets: DiscoveryFacets, items: Array<{
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  const q = parseNearbyQuery(url.searchParams);
   const bounds = parseBounds(url);
-  const refresh = parseBoolean(url.searchParams.get('refresh'));
-  const debug = parseBoolean(url.searchParams.get('debug'));
-  const explain = parseBoolean(url.searchParams.get('explain'));
+  const refresh = q.refresh;
+  const debug = q.debug;
+  const explain = q.explain;
 
   const center = resolveCenter(url, bounds);
   if (!center) {
     return NextResponse.json({ error: 'lat and lng are required' }, { status: 400 });
   }
 
-  const radiusMeters = clampNumber(parseNumber(url.searchParams.get('radius')) ?? DEFAULT_RADIUS_METERS, 100, 100_000);
-  const limit = clampNumber(parseNumber(url.searchParams.get('limit')) ?? DEFAULT_LIMIT, 1, 200);
+  const radiusMeters = clampNumber(q.radiusMeters ?? DEFAULT_RADIUS_METERS, 100, 100_000);
+  const limit = clampNumber(q.limit ?? DEFAULT_LIMIT, 1, 200);
 
   try {
     const result = await discoverNearbyActivities(
@@ -115,6 +117,7 @@ export async function GET(request: Request) {
         radiusMeters,
         limit,
         bounds: bounds ?? undefined,
+        filters: q.filters,
       },
       { bypassCache: refresh, includeDebug: debug || explain, debugMetrics: debug },
     );
@@ -196,7 +199,7 @@ function parseNumber(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseBoolean(value: string | null): boolean {
+function _parseBoolean(value: string | null): boolean {
   return value === '1' || value === 'true';
 }
 

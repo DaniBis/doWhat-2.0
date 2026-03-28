@@ -38,6 +38,191 @@ describe('/api/nearby payload', () => {
     discoverNearbyActivities.mockReset();
   });
 
+  it('includes debug timings in the nearby payload when debug=1 is present', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 1, lng: 2 },
+      radiusMeters: 2000,
+      count: 0,
+      items: [],
+      filterSupport: {
+        activityTypes: true,
+        tags: true,
+        traits: true,
+        taxonomyCategories: true,
+        priceLevels: true,
+        capacityKey: true,
+        timeWindow: true,
+      },
+      facets: {
+        activityTypes: [],
+        tags: [],
+        traits: [],
+        taxonomyCategories: [],
+        priceLevels: [],
+        capacityKey: [],
+        timeWindow: [],
+      },
+      sourceBreakdown: {},
+      cache: { key: 'k', hit: false },
+      source: 'postgis',
+      debug: {
+        cacheHit: false,
+        cacheKey: 'k',
+        tilesTouched: ['w21z0g'],
+        providerCounts: { openstreetmap: 0, foursquare: 0, google_places: 0 },
+        timings: {
+          cacheReadMs: 1,
+          taxonomyFetchMs: 1.5,
+          rpcFetchMs: 2,
+          fallbackFetchMs: 3,
+          seedRefreshMs: 4,
+          metadataHydrationMs: 5,
+          rankingAndGatingMs: 6,
+          placeHydrationMs: 7,
+          dedupeShieldMs: 8,
+          payloadShapeMs: 9,
+          totalMs: 45,
+        },
+        pagesFetched: 0,
+        nextPageTokensUsed: 0,
+        itemsBeforeDedupe: 0,
+        itemsAfterDedupe: 0,
+        itemsAfterGates: 0,
+        itemsAfterFilters: 0,
+        dropReasons: {},
+        candidateCounts: {
+          afterRpc: 0,
+          afterFallbackMerge: 0,
+          afterMetadataFilter: 0,
+          afterPlaceGate: 0,
+          afterConfidenceGate: 0,
+          afterDedupe: 0,
+          final: 0,
+        },
+        dropped: { notPlaceBacked: 0, lowConfidence: 0, genericLabels: 0, deduped: 0 },
+        ranking: { enabled: true, placeMinConfidence: 0.8 },
+      },
+    });
+
+    await GET({ url: 'http://localhost/api/nearby?lat=1&lng=2&radius=2000&limit=5&debug=1' } as unknown as Request);
+
+    const payload = responseJsonMock.mock.calls[0]?.[0] as {
+      debug?: {
+        timings?: { totalMs: number; taxonomyFetchMs: number };
+        routeTimings?: { requestMs: number; payloadShapeMs: number; appliedLimit: number };
+        requestMeta?: { requestId: string; queryText: string; radiusMeters: number; requestedLimit: number; cityScope: string | null };
+      };
+    };
+    expect(payload.debug?.timings?.totalMs).toBe(45);
+    expect(payload.debug?.timings?.taxonomyFetchMs).toBe(1.5);
+    expect(payload.debug?.routeTimings?.requestMs).toEqual(expect.any(Number));
+    expect(payload.debug?.routeTimings?.payloadShapeMs).toEqual(expect.any(Number));
+    expect(payload.debug?.routeTimings?.appliedLimit).toBe(5);
+    expect(payload.debug?.requestMeta?.requestId).toEqual(expect.any(String));
+    expect(payload.debug?.requestMeta?.queryText).toBe('');
+    expect(payload.debug?.requestMeta?.radiusMeters).toBe(2000);
+    expect(payload.debug?.requestMeta?.requestedLimit).toBe(5);
+  });
+
+  it('includes exact Hanoi strict-climb request metadata in debug payloads', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 21.0285, lng: 105.8542 },
+      radiusMeters: 25_000,
+      count: 2,
+      items: [],
+      filterSupport: {
+        activityTypes: true,
+        tags: true,
+        traits: true,
+        taxonomyCategories: true,
+        priceLevels: true,
+        capacityKey: true,
+        timeWindow: true,
+      },
+      facets: {
+        activityTypes: [],
+        tags: [],
+        traits: [],
+        taxonomyCategories: [],
+        priceLevels: [],
+        capacityKey: [],
+        timeWindow: [],
+      },
+      sourceBreakdown: {},
+      cache: { key: 'k-hanoi', hit: false },
+      source: 'supabase-places',
+      debug: {
+        cacheHit: false,
+        cacheKey: 'k-hanoi',
+        tilesTouched: ['w7er8u'],
+        providerCounts: { openstreetmap: 0, foursquare: 0, google_places: 0 },
+        timings: {
+          cacheReadMs: 1,
+          taxonomyFetchMs: 0,
+          rpcFetchMs: 2,
+          fallbackFetchMs: 30_500,
+          seedRefreshMs: 30_100,
+          metadataHydrationMs: 5,
+          rankingAndGatingMs: 6,
+          placeHydrationMs: 7,
+          dedupeShieldMs: 8,
+          payloadShapeMs: 9,
+          totalMs: 30_900,
+        },
+        pagesFetched: 0,
+        nextPageTokensUsed: 0,
+        itemsBeforeDedupe: 0,
+        itemsAfterDedupe: 0,
+        itemsAfterGates: 0,
+        itemsAfterFilters: 0,
+        dropReasons: {},
+        candidateCounts: {
+          afterRpc: 0,
+          afterFallbackMerge: 2,
+          afterMetadataFilter: 2,
+          afterPlaceGate: 2,
+          afterConfidenceGate: 2,
+          afterDedupe: 2,
+          final: 2,
+        },
+        dropped: { notPlaceBacked: 0, lowConfidence: 0, genericLabels: 0, deduped: 0 },
+        ranking: { enabled: true, placeMinConfidence: 0.8 },
+      },
+    });
+
+    await GET({
+      url: 'http://localhost/api/nearby?lat=21.0285&lng=105.8542&radius=25000&limit=2000&q=climb&debug=1&explain=1',
+      headers: new Headers({ 'x-map-request-id': 'hanoi-climb-truth' }),
+    } as unknown as Request);
+
+    const payload = responseJsonMock.mock.calls[0]?.[0] as {
+      debug?: {
+        requestMeta?: {
+          requestId: string;
+          queryText: string;
+          radiusMeters: number;
+          requestedLimit: number;
+          appliedLimit: number;
+          cityScope: string | null;
+          finalCount: number;
+        };
+        timings?: { fallbackFetchMs: number; seedRefreshMs: number };
+      };
+    };
+
+    expect(payload.debug?.requestMeta).toEqual({
+      requestId: 'hanoi-climb-truth',
+      queryText: 'climb',
+      radiusMeters: 25_000,
+      requestedLimit: 2000,
+      appliedLimit: 2000,
+      cityScope: 'hanoi',
+      finalCount: 2,
+    });
+    expect(payload.debug?.timings?.fallbackFetchMs).toBe(30_500);
+    expect(payload.debug?.timings?.seedRefreshMs).toBe(30_100);
+  });
+
   it('passes discovery payload through with hydrated place labels', async () => {
     discoverNearbyActivities.mockResolvedValue({
       center: { lat: 1, lng: 2 },
@@ -548,9 +733,9 @@ describe('/api/nearby payload', () => {
     expect(payload.count).toBe(19);
   });
 
-  it('expands radius iteratively for sparse unfiltered inventory', async () => {
+  it('caps Hanoi unfiltered inventory browse before iterative expansion', async () => {
     discoverNearbyActivities.mockImplementation(
-      async (query: { radiusMeters: number }) => ({
+      async (query: { radiusMeters: number; limit: number }) => ({
         center: { lat: 21.03, lng: 105.84 },
         radiusMeters: query.radiusMeters,
         count: query.radiusMeters < 3200 ? 210 : query.radiusMeters < 5000 ? 340 : 560,
@@ -583,16 +768,64 @@ describe('/api/nearby payload', () => {
       url: 'http://localhost/api/nearby?lat=21.03&lng=105.84&radius=2000&limit=1200',
     } as unknown as Request);
 
-    expect(discoverNearbyActivities).toHaveBeenCalledTimes(3);
+    expect(discoverNearbyActivities).toHaveBeenCalledTimes(1);
+    expect(discoverNearbyActivities).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 250, radiusMeters: 2000 }),
+      expect.any(Object),
+    );
     const payload = responseJsonMock.mock.calls[0]?.[0] as {
       radiusExpansion?: { fromRadiusMeters: number; toRadiusMeters: number; expandedCount: number };
       count: number;
     };
-    expect(payload.radiusExpansion).toMatchObject({
-      fromRadiusMeters: 2000,
-      toRadiusMeters: 5000,
-      expandedCount: 560,
-    });
-    expect(payload.count).toBe(560);
+    expect(payload.radiusExpansion).toBeUndefined();
+    expect(payload.count).toBe(210);
+  });
+
+  it('skips Hanoi broad-browse expansion when the initial capped result set is already dense enough', async () => {
+    discoverNearbyActivities.mockImplementation(
+      async (query: { radiusMeters: number; limit: number }) => ({
+        center: { lat: 21.0285, lng: 105.8542 },
+        radiusMeters: query.radiusMeters,
+        count: 48,
+        items: [],
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: true,
+          taxonomyCategories: true,
+          priceLevels: true,
+          capacityKey: true,
+          timeWindow: true,
+        },
+        facets: {
+          activityTypes: [],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        sourceBreakdown: {},
+        cache: { key: 'k', hit: false },
+        source: 'supabase-places',
+      }),
+    );
+
+    await GET({
+      url: 'http://localhost/api/nearby?lat=21.0285&lng=105.8542&radius=2500&limit=250',
+    } as unknown as Request);
+
+    expect(discoverNearbyActivities).toHaveBeenCalledTimes(1);
+    expect(discoverNearbyActivities).toHaveBeenCalledWith(
+      expect.objectContaining({ radiusMeters: 2500, limit: 250 }),
+      expect.any(Object),
+    );
+    const payload = responseJsonMock.mock.calls[0]?.[0] as {
+      radiusExpansion?: { fromRadiusMeters: number; toRadiusMeters: number; expandedCount: number };
+      count: number;
+    };
+    expect(payload.radiusExpansion).toBeUndefined();
+    expect(payload.count).toBe(48);
   });
 });

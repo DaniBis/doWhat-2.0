@@ -3,6 +3,7 @@ import { countActiveDiscoveryFilters } from '@dowhat/shared';
 import { discoverNearbyActivities } from '@/lib/discovery/engine';
 import { recordDiscoveryExposure } from '@/lib/discovery/telemetry';
 import { parseNearbyQuery } from '@/lib/filters';
+import { resolveCityScopeForCoordinate } from '@/lib/places/cityScope';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,16 @@ const AUTO_EXPAND_MIN_RESULTS_INVENTORY = 500;
 const AUTO_EXPAND_MAX_RADIUS_INVENTORY_METERS = 12_500;
 const AUTO_EXPAND_MAX_RADIUS_FILTERED_METERS = 25_000;
 const AUTO_EXPAND_RADIUS_BUCKETS = [1200, 2000, 3200, 5000, 7500, 10000, 15000, 20000, 25000];
+const HANOI_BROAD_BROWSE_LIMIT = 250;
+const HANOI_BROAD_BROWSE_TARGET_RESULTS = 40;
+const HANOI_BROAD_BROWSE_MAX_RADIUS_METERS = 5_000;
+
+const createNearbyRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `nearby-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
 
 const nextRadiusBucket = (radiusMeters: number): number | null => {
   for (const bucket of AUTO_EXPAND_RADIUS_BUCKETS) {
@@ -21,8 +32,10 @@ const nextRadiusBucket = (radiusMeters: number): number | null => {
 };
 
 export async function GET(request: Request) {
+  const requestStartedAt = performance.now();
   const { searchParams } = new URL(request.url);
   const q = parseNearbyQuery(searchParams);
+  const requestId = request.headers?.get?.('x-map-request-id')?.trim() || createNearbyRequestId();
 
   if (!Number.isFinite(q.lat) || !Number.isFinite(q.lng)) {
     return Response.json({ error: 'lat and lng are required' }, { status: 400 });
@@ -35,13 +48,28 @@ export async function GET(request: Request) {
   const limit = Math.max(q.limit ?? 50, 1);
   const resolvedFilters = q.filters;
   const hasFilters = countActiveDiscoveryFilters(resolvedFilters) > 0;
+  const cityScope = resolveCityScopeForCoordinate({ lat: q.lat, lng: q.lng });
+  const isHanoiBroadBrowse = cityScope?.slug === 'hanoi' && !hasFilters;
+  const effectiveLimit = isHanoiBroadBrowse ? Math.min(limit, HANOI_BROAD_BROWSE_LIMIT) : limit;
+  const routeTimings: {
+    requestMs?: number;
+    payloadShapeMs?: number;
+    expansionMs?: number;
+    cityScope: string | null;
+    appliedLimit: number;
+    hanoiBroadBrowse: boolean;
+  } = {
+    cityScope: cityScope?.slug ?? null,
+    appliedLimit: effectiveLimit,
+    hanoiBroadBrowse: isHanoiBroadBrowse,
+  };
 
   try {
     let result = await discoverNearbyActivities(
       {
         center: { lat: q.lat, lng: q.lng },
         radiusMeters,
-        limit,
+        limit: effectiveLimit,
         filters: resolvedFilters,
       },
       {
@@ -53,15 +81,20 @@ export async function GET(request: Request) {
     let radiusExpansion:
       | { fromRadiusMeters: number; toRadiusMeters: number; note: string; previousCount: number; expandedCount: number }
       | undefined;
+    const expansionStartedAt = performance.now();
     const targetResultCount = Math.min(
-      limit,
-      hasFilters
-        ? AUTO_EXPAND_MIN_RESULTS_FILTERED
-        : AUTO_EXPAND_MIN_RESULTS_INVENTORY,
+      effectiveLimit,
+      isHanoiBroadBrowse
+        ? HANOI_BROAD_BROWSE_TARGET_RESULTS
+        : hasFilters
+          ? AUTO_EXPAND_MIN_RESULTS_FILTERED
+          : AUTO_EXPAND_MIN_RESULTS_INVENTORY,
     );
-    const maxExpansionRadius = hasFilters
-      ? AUTO_EXPAND_MAX_RADIUS_FILTERED_METERS
-      : AUTO_EXPAND_MAX_RADIUS_INVENTORY_METERS;
+    const maxExpansionRadius = isHanoiBroadBrowse
+      ? HANOI_BROAD_BROWSE_MAX_RADIUS_METERS
+      : hasFilters
+        ? AUTO_EXPAND_MAX_RADIUS_FILTERED_METERS
+        : AUTO_EXPAND_MAX_RADIUS_INVENTORY_METERS;
     const maxExpansionSteps = AUTO_EXPAND_RADIUS_BUCKETS.length;
     if (result.count < targetResultCount) {
       const initialRadius = radiusMeters;
@@ -80,7 +113,7 @@ export async function GET(request: Request) {
           {
             center: { lat: q.lat, lng: q.lng },
             radiusMeters: nextRadius,
-            limit,
+            limit: effectiveLimit,
             filters: resolvedFilters,
           },
           {
@@ -111,6 +144,7 @@ export async function GET(request: Request) {
         result = bestResult;
       }
     }
+    routeTimings.expansionMs = Number((performance.now() - expansionStartedAt).toFixed(1));
 
     if (q.debug && process.env.NODE_ENV !== 'production') {
       console.info('[nearby.debug.summary]', JSON.stringify({
@@ -118,6 +152,8 @@ export async function GET(request: Request) {
         cacheHit: result.cache?.hit ?? false,
         source: result.source ?? null,
         dropped: result.debug?.dropped ?? null,
+        timings: result.debug?.timings ?? null,
+        routeTimings,
       }));
     }
 
@@ -133,7 +169,8 @@ export async function GET(request: Request) {
       result,
     });
 
-    return Response.json({
+    const payloadShapeStartedAt = performance.now();
+    const payload = {
       center: result.center,
       radiusMeters: result.radiusMeters,
       count: result.count,
@@ -148,8 +185,29 @@ export async function GET(request: Request) {
       fallbackError: result.fallbackError,
       fallbackSource: result.fallbackSource,
       radiusExpansion,
-      debug: q.explain || q.debug ? result.debug : undefined,
-    });
+      debug: q.explain || q.debug
+        ? {
+            ...(result.debug ?? {}),
+            requestMeta: {
+              requestId,
+              queryText: resolvedFilters.searchText?.trim() ?? '',
+              radiusMeters,
+              requestedLimit: limit,
+              appliedLimit: effectiveLimit,
+              cityScope: cityScope?.slug ?? null,
+              finalCount: result.count,
+            },
+            routeTimings: {
+              ...routeTimings,
+              payloadShapeMs: Number((performance.now() - payloadShapeStartedAt).toFixed(1)),
+              requestMs: Number((performance.now() - requestStartedAt).toFixed(1)),
+            },
+          }
+        : undefined,
+    };
+    const response = Response.json(payload);
+    response.headers?.set?.('x-nearby-request-id', requestId);
+    return response;
   } catch (error: unknown) {
     const message = getErrorMessage(error);
     const isFetchFailure = message.toLowerCase().includes('fetch failed');

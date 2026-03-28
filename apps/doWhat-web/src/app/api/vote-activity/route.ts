@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { rateLimit } from '@/lib/rateLimit';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
-import { isActivityName } from '@/lib/venues/search';
+import { isActivityName, normalizeActivityName } from '@/lib/venues/search';
 
 const VOTE_RATE_LIMIT = { capacity: 40, intervalMs: 60_000 };
 
@@ -31,6 +31,10 @@ export async function POST(req: NextRequest) {
   if (!isActivityName(activityName)) {
     return NextResponse.json({ error: 'Invalid activity name.' }, { status: 400 });
   }
+  const normalizedActivityName = normalizeActivityName(activityName);
+  if (!normalizedActivityName) {
+    return NextResponse.json({ error: 'Invalid activity name.' }, { status: 400 });
+  }
   if (voteValue == null) {
     return NextResponse.json({ error: 'vote must be true or false.' }, { status: 400 });
   }
@@ -43,7 +47,7 @@ export async function POST(req: NextRequest) {
         {
           venue_id: venueId,
           user_id: user.id,
-          activity_name: activityName,
+          activity_name: normalizedActivityName,
           vote: voteValue,
         },
         { onConflict: 'venue_id,user_id,activity_name' },
@@ -60,7 +64,7 @@ export async function POST(req: NextRequest) {
       .from('v_venue_activity_votes')
       .select('yes_votes,no_votes')
       .eq('venue_id', venueId)
-      .eq('activity_name', activityName)
+      .eq('activity_name', normalizedActivityName)
       .maybeSingle();
     if (totalsError) throw totalsError;
 

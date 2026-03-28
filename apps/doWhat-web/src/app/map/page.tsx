@@ -2,6 +2,73 @@
 
 type ActivityMetadataChip = { key: string; label: string; icon?: string };
 type MapToast = { message: string; tone: 'success' | 'info' | 'error' };
+type TruthPassRenderState = 'browse-rows' | 'strict-results' | 'empty-state';
+type TruthPassNearbyRequest = {
+  requestId: string | null;
+  serverRequestId: string | null;
+  url: string;
+  queryText: string;
+  centerLat: number;
+  centerLng: number;
+  radiusMeters: number;
+  limit: number;
+  cityScope: string | null;
+  mode: 'browse' | 'strict';
+  refresh: boolean;
+  timeoutMs: number;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  timedOut: boolean;
+  responseStatus?: number;
+  resultCount?: number;
+  errorMessage?: string;
+  serverTimings?: {
+    cacheReadMs: number;
+    taxonomyFetchMs: number;
+    rpcFetchMs: number;
+    fallbackFetchMs: number;
+    seedRefreshMs: number;
+    metadataHydrationMs: number;
+    rankingAndGatingMs: number;
+    placeHydrationMs: number;
+    dedupeShieldMs: number;
+    payloadShapeMs: number;
+    totalMs: number;
+  } | null;
+};
+type TruthPassUiState = {
+  activeMode: 'browse' | 'strict';
+  queryText: string;
+  cityScope: string | null;
+  centerLat: number | null;
+  centerLng: number | null;
+  radiusMeters: number | null;
+  requestTimedOutInUi: boolean;
+  renderState: TruthPassRenderState;
+  staleBrowseRowsRendered: boolean;
+  filteredActivitiesCount: number;
+  strictResponseCount: number;
+  browseSnapshotCount: number;
+  visibleActivities: Array<{
+    id: string;
+    placeId: string | null;
+    name: string;
+    placeLabel: string | null;
+  }>;
+  errorMessage: string | null;
+  updatedAt: string;
+};
+
+declare global {
+  interface Window {
+    __HANOI_TRUTH_PASS__?: {
+      nearbyRequests: TruthPassNearbyRequest[];
+      uiState: TruthPassUiState | null;
+      updatedAt: string;
+    };
+  }
+}
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { Route } from "next";
@@ -10,9 +77,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DEFAULT_RADIUS_METERS,
+  countActiveDiscoveryFilters,
   createEventsFetcher,
   createNearbyActivitiesFetcher,
   formatEventTimeRange,
+  getEventSessionId,
   sortEventsByStart,
   trackAnalyticsEvent,
   type EventSummary,
@@ -37,6 +106,7 @@ import PlaceBrandMark from "@/components/PlaceBrandMark";
 
 import WebMap, { type MapMovePayload, type ViewBounds } from "@/components/WebMap";
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
+import { resolveCityScopeForCoordinate } from '@/lib/places/cityScope';
 import { useDebouncedCallback } from '@/lib/hooks/useDebouncedCallback';
 import { haversineMeters } from '@/lib/places/utils';
 import { supabase } from "@/lib/supabase/browser";
@@ -46,6 +116,7 @@ import { parseCoordinateLabel, resolveMapCenterFromProfile, type MapProfileLocat
 import {
   clampReliabilityScore,
   describeEventOrigin,
+  describeEventPrimaryAction,
   describeEventState,
   describeEventVerification,
   describeReliabilityConfidence,
@@ -76,6 +147,8 @@ const BOUNDS_UPDATE_THRESHOLD = 0.0008;
 const EVENTS_QUERY_COORD_PRECISION = 3;
 const MAP_NEARBY_LIMIT = 1200;
 const MAP_SEARCH_AUGMENT_LIMIT = 2000;
+const HANOI_DEFAULT_BROWSE_LIMIT = 250;
+const HANOI_STRICT_SEARCH_LIMIT = 250;
 const MAP_SPARSE_RESULTS_THRESHOLD = 8;
 const MAP_EVENTS_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 const MAP_NEARBY_FETCH_TIMEOUT_MS = 20_000;
@@ -195,51 +268,40 @@ const activityPlaceLabel = (activity: MapActivity): string => {
 
 type StoredMapFilters = MapFilterPreferences & { version?: number };
 
-const sanitizeVisibleMapFilters = (prefs?: MapFilterPreferences | null): MapFilterPreferences => {
-  const normalized = normaliseMapFilterPreferences(prefs);
-  return {
-    ...normalized,
-    priceLevels: [],
-    capacityKey: 'any',
-    timeWindow: 'any',
-  };
-};
+const sanitizeVisibleMapFilters = (value?: Partial<MapFilterPreferences> | null): MapFilterPreferences =>
+  normaliseMapFilterPreferences({
+    ...DEFAULT_MAP_FILTER_PREFERENCES,
+    ...(value ?? {}),
+  });
 
-const isCurrentMapFilters = (value: unknown): value is StoredMapFilters => {
-  if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return false;
-  const version = (value as StoredMapFilters).version ?? null;
-  return version === MAP_FILTERS_VERSION;
+const resolveStoredMapFilters = (value?: StoredMapFilters | null): MapFilterPreferences | null => {
+  if (!value || typeof value !== 'object') return null;
+  return sanitizeVisibleMapFilters(value);
 };
 
 const readLocalMapFilters = (): MapFilterPreferences | null => {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(MAP_FILTERS_LOCAL_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isCurrentMapFilters(parsed)) return null;
-    return sanitizeVisibleMapFilters(parsed as MapFilterPreferences);
-  } catch (error) {
-    console.warn("[map] unable to parse cached map filters", error);
+    const parsed = JSON.parse(raw) as StoredMapFilters;
+    return resolveStoredMapFilters(parsed);
+  } catch {
     return null;
   }
 };
 
-const writeLocalMapFilters = (prefs: MapFilterPreferences) => {
-  if (typeof window === "undefined") return;
+const writeLocalMapFilters = (value: MapFilterPreferences): void => {
+  if (typeof window === 'undefined') return;
   try {
-    const normalised = sanitizeVisibleMapFilters(prefs);
-    const payload = { ...normalised, version: MAP_FILTERS_VERSION };
+    const payload: StoredMapFilters = {
+      ...sanitizeVisibleMapFilters(value),
+      version: MAP_FILTERS_VERSION,
+    };
     window.localStorage.setItem(MAP_FILTERS_LOCAL_KEY, JSON.stringify(payload));
-  } catch (error) {
-    console.warn("[map] unable to cache map filters locally", error);
+  } catch {
+    // ignore storage failures
   }
-};
-
-const resolveStoredMapFilters = (value: unknown): MapFilterPreferences | null => {
-  if (!isCurrentMapFilters(value)) return null;
-  return sanitizeVisibleMapFilters(value as MapFilterPreferences);
 };
 
 const formatKilometres = (meters?: number | null) => {
@@ -273,13 +335,6 @@ const isWithinRadius = (
   return finiteFallback == null || finiteFallback <= maxDistance;
 };
 
-const getSessionIdFromMetadata = (metadata: unknown): string | null => {
-  if (!metadata || typeof metadata !== "object") return null;
-  const record = metadata as Record<string, unknown>;
-  const candidate = record.sessionId ?? record.session_id;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
-};
-
 type Bounds = ViewBounds;
 type MovePayload = MapMovePayload;
 
@@ -307,6 +362,13 @@ const EMPTY_FILTER_SUPPORT: FilterSupportFlags = {
 
 const roundCoordinate = (value: number, precision = 6) =>
   Number.isFinite(value) ? Number(value.toFixed(precision)) : 0;
+
+const createTruthPassRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `map-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
 
 const resolveActivityVerificationState = (activity: MapActivity): 'suggested' | 'verified' | 'needs_votes' => {
   if (activity.verification_state === 'verified') return 'verified';
@@ -416,6 +478,7 @@ export default function MapPage() {
     searchParams?.get('debug') === '1'
     || searchParams?.get('debugDiscovery') === '1'
     || process.env.NEXT_PUBLIC_DISCOVERY_DEBUG === '1';
+  const truthPassEnabled = debugDiscovery;
   const e2eBypassAuth =
     process.env.NEXT_PUBLIC_E2E_ADMIN_BYPASS === 'true'
     && searchParams?.get('e2e') === '1';
@@ -428,6 +491,25 @@ export default function MapPage() {
   const [storedHighlightSessionId, setStoredHighlightSessionId] = useState<string | null>(null);
   const effectiveHighlightSessionId = highlightSessionId ?? storedHighlightSessionId;
   const attemptedHighlightFetchRef = useRef<Set<string>>(new Set());
+
+  const updateTruthPassDebug = useCallback((updater: (current: NonNullable<Window['__HANOI_TRUTH_PASS__']>) => NonNullable<Window['__HANOI_TRUTH_PASS__']>) => {
+    if (!truthPassEnabled || typeof window === 'undefined') return;
+    const current = window.__HANOI_TRUTH_PASS__ ?? {
+      nearbyRequests: [],
+      uiState: null,
+      updatedAt: new Date().toISOString(),
+    };
+    window.__HANOI_TRUTH_PASS__ = updater(current);
+  }, [truthPassEnabled]);
+
+  useEffect(() => {
+    if (!truthPassEnabled || typeof window === 'undefined') return;
+    window.__HANOI_TRUTH_PASS__ = {
+      nearbyRequests: [],
+      uiState: null,
+      updatedAt: new Date().toISOString(),
+    };
+  }, [truthPassEnabled]);
 
   useEffect(() => {
     if (highlightSessionId) {
@@ -462,11 +544,17 @@ export default function MapPage() {
   const lastSyncedActivityIdRef = useRef<string | null>(searchParams?.get('activity') ?? null);
   const pendingActivityParamSyncRef = useRef<string | null>(null);
   const centeredForActivityIdRef = useRef<string | null>(null);
-  const primeCenter = useCallback((next: MapCoordinates) => {
+  const primeCenter = useCallback((next: MapCoordinates, options?: { query?: boolean }) => {
+    const shouldSeedQueryCenter = options?.query !== false;
     centerRef.current = next;
-    queryCenterRef.current = next;
     setCenter(next);
-    setQueryCenter(next);
+    if (shouldSeedQueryCenter) {
+      queryCenterRef.current = next;
+      setQueryCenter(next);
+      return;
+    }
+    queryCenterRef.current = null;
+    setQueryCenter(null);
   }, []);
   const updateFilters = useCallback(
     (updater: (prev: MapFilterPreferences) => MapFilterPreferences) => {
@@ -718,7 +806,8 @@ export default function MapPage() {
     const applyDeviceOrFallbackCenter = () => {
       const fallback = () => {
         if (!cancelled && !centerRef.current) {
-          primeCenter(FALLBACK_CENTER);
+          // Keep a visible map center, but do not silently search the fallback city.
+          primeCenter(FALLBACK_CENTER, { query: false });
         }
       };
 
@@ -853,8 +942,68 @@ export default function MapPage() {
         },
         includeCredentials: true,
         timeoutMs: MAP_NEARBY_FETCH_TIMEOUT_MS,
+        getRequestHeaders: truthPassEnabled
+          ? () => ({
+              'x-map-request-id': createTruthPassRequestId(),
+            })
+          : undefined,
+        onRequestStart: truthPassEnabled
+          ? ({ url, query, refresh, timeoutMs, requestId }) => {
+              const queryText = query.filters?.searchText?.trim() ?? '';
+              const cityScope = resolveCityScopeForCoordinate(query.center)?.slug ?? null;
+              const mode: 'browse' | 'strict' = countActiveDiscoveryFilters(query.filters) > 0 ? 'strict' : 'browse';
+              updateTruthPassDebug((current) => ({
+                nearbyRequests: [
+                  ...current.nearbyRequests,
+                  {
+                    requestId,
+                    serverRequestId: null,
+                    url,
+                    queryText,
+                    centerLat: query.center.lat,
+                    centerLng: query.center.lng,
+                    radiusMeters: query.radiusMeters,
+                    limit: query.limit ?? MAP_NEARBY_LIMIT,
+                    cityScope,
+                    mode,
+                    refresh,
+                    timeoutMs,
+                    startedAt: new Date().toISOString(),
+                    timedOut: false,
+                  },
+                ].slice(-25),
+                uiState: current.uiState,
+                updatedAt: new Date().toISOString(),
+              }));
+            }
+          : undefined,
+        onRequestEnd: truthPassEnabled
+          ? ({ url, requestId, durationMs, timedOut, responseStatus, resultCount, errorMessage, response, refresh, timeoutMs }) => {
+              const nextRequestId = response?.debug?.requestMeta?.requestId ?? requestId ?? null;
+              updateTruthPassDebug((current) => ({
+                nearbyRequests: current.nearbyRequests.map((entry) => {
+                  if (entry.requestId !== requestId || entry.url !== url || entry.finishedAt) return entry;
+                  return {
+                    ...entry,
+                    serverRequestId: nextRequestId,
+                    finishedAt: new Date().toISOString(),
+                    durationMs,
+                    timedOut,
+                    responseStatus,
+                    resultCount,
+                    errorMessage,
+                    refresh,
+                    timeoutMs,
+                    serverTimings: response?.debug?.timings ?? null,
+                  };
+                }),
+                uiState: current.uiState,
+                updatedAt: new Date().toISOString(),
+              }));
+            }
+          : undefined,
       }),
-    [debugDiscovery],
+    [debugDiscovery, truthPassEnabled, updateTruthPassDebug],
   );
 
   const eventsFetcher = useMemo(
@@ -878,18 +1027,25 @@ export default function MapPage() {
   );
 
   const accessAllowed = isAuthenticated === true;
+  const nearbyLimit = useMemo(() => {
+    if (!queryCenter) return MAP_NEARBY_LIMIT;
+    if (filtersForQuery && Object.keys(filtersForQuery).length > 0) return MAP_NEARBY_LIMIT;
+    return resolveCityScopeForCoordinate(queryCenter)?.slug === 'hanoi'
+      ? HANOI_DEFAULT_BROWSE_LIMIT
+      : MAP_NEARBY_LIMIT;
+  }, [filtersForQuery, queryCenter]);
   const query = useMemo(
     () =>
       accessAllowed && queryCenter
         ? {
             center: queryCenter,
             radiusMeters,
-            limit: MAP_NEARBY_LIMIT,
+            limit: nearbyLimit,
             filters: filtersForQuery,
             bounds: bounds ?? undefined,
           }
         : null,
-    [accessAllowed, queryCenter, radiusMeters, filtersForQuery, bounds],
+    [accessAllowed, queryCenter, radiusMeters, nearbyLimit, filtersForQuery, bounds],
   );
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
@@ -907,59 +1063,29 @@ export default function MapPage() {
       || next.searchText,
     );
   }, [query?.filters]);
-  const searchActivityTokens = useMemo(
-    () => extractActivitySearchTokens(normalizedSearchTerm),
-    [normalizedSearchTerm],
-  );
-
-  const filteredAugmentedQuery = useMemo(() => {
+  const hasStrictSearchState = hasQueryFilterConstraints;
+  const browseQuery = hasStrictSearchState ? null : query;
+  const strictQuery = useMemo(() => {
     if (!query) return null;
-    if (normalizedSearchTerm) return null;
-    if (!hasQueryFilterConstraints) return null;
+    if (!hasStrictSearchState) return null;
+
+    const strictLimit = resolveCityScopeForCoordinate(query.center)?.slug === 'hanoi'
+      ? HANOI_STRICT_SEARCH_LIMIT
+      : Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT);
 
     return {
       ...query,
       radiusMeters: Math.max(query.radiusMeters, 25_000),
-      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
+      limit: strictLimit,
     };
-  }, [query, normalizedSearchTerm, hasQueryFilterConstraints]);
-
-  const searchAugmentedQuery = useMemo(() => {
-    if (!query) return null;
-    if (!normalizedSearchTerm) return null;
-
-    return {
-      ...query,
-      radiusMeters: Math.max(query.radiusMeters, 25_000),
-      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
-    };
-  }, [query, normalizedSearchTerm]);
-
-  const searchAugmentedTypeQuery = useMemo(() => {
-    if (!query) return null;
-    if (!normalizedSearchTerm) return null;
-    if (!searchActivityTokens.length) return null;
-
-    const baseFilters = query.filters ?? {};
-    const activityTypes = Array.from(new Set([...(baseFilters.activityTypes ?? []), ...searchActivityTokens]));
-
-    return {
-      ...query,
-      radiusMeters: Math.max(query.radiusMeters, 25_000),
-      limit: Math.max(query.limit, MAP_SEARCH_AUGMENT_LIMIT),
-      filters: {
-        ...baseFilters,
-        activityTypes,
-      },
-    };
-  }, [query, normalizedSearchTerm, searchActivityTokens]);
+  }, [query, hasStrictSearchState]);
 
   const loadActivities = accessAllowed && dataMode !== 'events';
   const loadEvents = accessAllowed && dataMode !== 'activities';
 
-  const nearby = useNearbyActivities(query, {
+  const nearby = useNearbyActivities(browseQuery, {
     fetcher,
-    enabled: Boolean(query) && loadActivities,
+    enabled: Boolean(browseQuery) && loadActivities,
     placeholderData: (previous) => previous,
     staleTime: 2 * 60_000,
     gcTime: 30 * 60_000,
@@ -974,10 +1100,9 @@ export default function MapPage() {
     },
   });
 
-  const nearbySearch = useNearbyActivities(searchAugmentedQuery, {
+  const nearbyStrict = useNearbyActivities(strictQuery, {
     fetcher,
-    enabled: Boolean(searchAugmentedQuery) && loadActivities,
-    placeholderData: (previous) => previous,
+    enabled: Boolean(strictQuery) && loadActivities,
     staleTime: 60_000,
     gcTime: 10 * 60_000,
     refetchOnMount: false,
@@ -985,53 +1110,10 @@ export default function MapPage() {
     retry: 1,
   });
 
-  const nearbySearchByType = useNearbyActivities(searchAugmentedTypeQuery, {
-    fetcher,
-    enabled: Boolean(searchAugmentedTypeQuery) && loadActivities,
-    placeholderData: (previous) => previous,
-    staleTime: 60_000,
-    gcTime: 10 * 60_000,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    retry: 1,
-  });
-
-  const nearbyFilteredAugment = useNearbyActivities(filteredAugmentedQuery, {
-    fetcher,
-    enabled: Boolean(filteredAugmentedQuery) && loadActivities,
-    placeholderData: (previous) => previous,
-    staleTime: 60_000,
-    gcTime: 10 * 60_000,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    retry: 1,
-  });
-
-  const stableNearby = useStableNearbyData(nearby);
-  const nearbyData = stableNearby.data ?? nearby.data ?? null;
-
-  const searchActivities = nearbySearch.data?.activities ?? EMPTY_ACTIVITIES;
-  const searchTypeActivities = nearbySearchByType.data?.activities ?? EMPTY_ACTIVITIES;
-  const filteredAugmentActivities = nearbyFilteredAugment.data?.activities ?? EMPTY_ACTIVITIES;
-  const activities = useMemo(() => {
-    if (!searchActivities.length && !searchTypeActivities.length && !filteredAugmentActivities.length) {
-      return nearbyData?.activities ?? EMPTY_ACTIVITIES;
-    }
-    const merged = new Map<string, MapActivity>();
-    for (const activity of nearbyData?.activities ?? EMPTY_ACTIVITIES) {
-      merged.set(activity.id, activity);
-    }
-    for (const activity of searchActivities) {
-      merged.set(activity.id, activity);
-    }
-    for (const activity of searchTypeActivities) {
-      merged.set(activity.id, activity);
-    }
-    for (const activity of filteredAugmentActivities) {
-      merged.set(activity.id, activity);
-    }
-    return Array.from(merged.values());
-  }, [nearbyData?.activities, searchActivities, searchTypeActivities, filteredAugmentActivities]);
+  const stableNearby = useStableNearbyData(nearby, { enabled: Boolean(browseQuery) && loadActivities });
+  const activeNearbyQuery = hasStrictSearchState ? nearbyStrict : nearby;
+  const nearbyData = hasStrictSearchState ? (nearbyStrict.data ?? null) : (stableNearby.data ?? nearby.data ?? null);
+  const activities = nearbyData?.activities ?? EMPTY_ACTIVITIES;
   const filterSupport = nearbyData?.filterSupport ?? null;
   const effectiveFilterSupport = filterSupport ?? lastFilterSupport ?? EMPTY_FILTER_SUPPORT;
   const facets = nearbyData?.facets ?? null;
@@ -1300,7 +1382,7 @@ export default function MapPage() {
 
     const match = filteredEvents.find((eventSummary) => {
       if (eventSummary.id === effectiveHighlightSessionId) return true;
-      const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+      const sessionId = getEventSessionId(eventSummary);
       return sessionId === effectiveHighlightSessionId;
     });
     if (match) {
@@ -1699,7 +1781,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     hasUrl: Boolean(eventSummary.url),
   });
 
-  const sessionId = getSessionIdFromMetadata(eventSummary.metadata);
+  const sessionId = getEventSessionId(eventSummary);
   if (sessionId) {
     router.push(`/sessions/${sessionId}` as Route);
     return;
@@ -1789,7 +1871,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   const activeFiltersCount = activeFilterChips.length;
 
   const handleRefreshSearch = useCallback(async () => {
-    if (!query) return;
+    const refreshQuery = strictQuery ?? browseQuery;
+    if (!refreshQuery) return;
     setIsRefreshing(true);
     track('map_refresh_search', {
       radiusMeters,
@@ -1797,8 +1880,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       dataMode,
     });
     try {
-      const refreshed = await fetcher({ ...query, refresh: true });
-      queryClient.setQueryData(mapActivitiesQueryKey(query), refreshed);
+      const refreshed = await fetcher({ ...refreshQuery, refresh: true });
+      queryClient.setQueryData(mapActivitiesQueryKey(refreshQuery), refreshed);
       if (loadEvents) {
         void eventsQuery.refetch();
       }
@@ -1810,7 +1893,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
       setIsRefreshing(false);
     }
   }, [
-    query,
+    browseQuery,
     radiusMeters,
     activeFiltersCount,
     dataMode,
@@ -1820,6 +1903,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     track,
     loadEvents,
     eventsQuery,
+    strictQuery,
   ]);
 
   const handleWidenRadius = useCallback(() => {
@@ -1838,14 +1922,14 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }, [queryCenter, router]);
 
   useEffect(() => {
-    if (!nearby.data) return;
+    if (!activeNearbyQuery.data) return;
     track('map_view', {
-      activityCount: nearby.data.activities.length,
-      radiusMeters: nearby.data.radiusMeters,
+      activityCount: activeNearbyQuery.data.activities.length,
+      radiusMeters: activeNearbyQuery.data.radiusMeters,
       filtersApplied: activeFiltersCount,
-      source: nearby.data.source ?? 'unknown',
+      source: activeNearbyQuery.data.source ?? 'unknown',
     });
-  }, [nearby.data, activeFiltersCount, track]);
+  }, [activeNearbyQuery.data, activeFiltersCount, track]);
 
   useEffect(() => {
     if (!eventsQuery.data || !loadEvents) return;
@@ -1879,8 +1963,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
 
   const selectedActivity = useMemo(() => {
     if (!selectedActivityId) return null;
-    return activities.find((activity) => activity.id === selectedActivityId) ?? null;
-  }, [activities, selectedActivityId]);
+    return sortedActivities.find((activity) => activity.id === selectedActivityId) ?? null;
+  }, [sortedActivities, selectedActivityId]);
+
+  useEffect(() => {
+    if (!selectedActivityId) return;
+    if (sortedActivities.some((activity) => activity.id === selectedActivityId)) return;
+    setSelectedActivityId(null);
+    syncFocusedActivityParam(null, 'replace');
+  }, [selectedActivityId, sortedActivities, syncFocusedActivityParam]);
 
   useEffect(() => {
     if (!selectedActivity) {
@@ -1968,15 +2059,20 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
     syncFocusedActivityParam(null, 'push');
   }, [setSelectedActivityId, syncFocusedActivityParam]);
 
-  const radiusLabel = formatKilometres(radiusMeters);
-  const headerTitle = dataMode === 'events' ? 'Nearby events' : dataMode === 'both' ? 'Activities & events nearby' : 'Nearby activities';
+  const displayedRadiusMeters = hasStrictSearchState
+    ? (strictQuery?.radiusMeters ?? Math.max(radiusMeters, 25_000))
+    : radiusMeters;
+  const radiusLabel = formatKilometres(displayedRadiusMeters);
+  const headerTitle = dataMode === 'events' ? 'Nearby sessions & events' : dataMode === 'both' ? 'Activities · sessions & events nearby' : 'Nearby activities';
   const filteredActivitiesCount = filteredActivities.length;
   const filteredEventsCount = filteredEvents.length;
+  const radiusSummaryCopy = hasStrictSearchState ? `~${radiusLabel} search radius` : `~${radiusLabel} radius`;
   const headerSummary = dataMode === 'events'
-    ? `Showing ${filteredEventsCount} events in ~${radiusLabel} radius`
+    ? `Showing ${filteredEventsCount} sessions/events in ${radiusSummaryCopy}`
     : dataMode === 'both'
-      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events in ~${radiusLabel} radius`
-      : `Showing ${filteredActivitiesCount} activities in ~${radiusLabel} radius`;
+      ? `${filteredActivitiesCount} activities · ${filteredEventsCount} sessions/events in ${radiusSummaryCopy}`
+      : `Showing ${filteredActivitiesCount} activities in ${radiusSummaryCopy}`;
+  const needsManualSearchArea = locationErrored && !queryCenter;
 
   const eventTimeFormatter = useMemo(
     () =>
@@ -1999,13 +2095,19 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   const mapActivities = loadActivities ? filteredActivities : EMPTY_ACTIVITIES;
   const mapEvents = loadEvents ? filteredEvents : EMPTY_EVENTS;
   const radiusExpansion = nearbyData?.radiusExpansion ?? null;
-  const mapLoading = (loadActivities && stableNearby.isInitialLoading) || (loadEvents && eventsQuery.isLoading);
-  const refreshDisabled = !query || isRefreshing || stableNearby.isRefreshing;
+  const activityInitialLoading = hasStrictSearchState ? nearbyStrict.isLoading : stableNearby.isInitialLoading;
+  const activityRefreshing = hasStrictSearchState ? nearbyStrict.isFetching : stableNearby.isRefreshing;
+  const activityErrored = loadActivities ? activeNearbyQuery.isError : false;
+  const activityError = loadActivities ? activeNearbyQuery.error : null;
+  const mapLoading = (loadActivities && activityInitialLoading) || (loadEvents && eventsQuery.isLoading);
+  const refreshDisabled = !(strictQuery ?? browseQuery) || isRefreshing || activityRefreshing;
   const filtersButtonDisabled = !loadActivities && !loadEvents;
 
-  const activityListEmpty = loadActivities && !stableNearby.isInitialLoading && filteredActivities.length === 0;
+  const activityListEmpty = loadActivities && !activityInitialLoading && filteredActivities.length === 0;
   const eventListEmpty = loadEvents && !eventsQuery.isLoading && filteredEvents.length === 0;
-  const activityEmptyCopy = hasSearchFilter
+  const activityEmptyCopy = activityErrored
+    ? 'Search could not be completed. Retry or widen the radius to run it again.'
+    : hasSearchFilter
     ? `No activities match "${searchTerm}". Try another name or clear the search.`
     : selectedTrustMode === 'verified_only'
       ? 'No confirmed activities match here yet. Try showing all results or widening the map.'
@@ -2013,12 +2115,65 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
         ? 'No suggestion-first activities match here yet. Try showing all results or widening the map.'
         : "No activities match those filters yet. Try widening your search.";
   const eventEmptyCopy = hasSearchFilter
-    ? `No events match "${searchTerm}". Try another name or clear the search.`
+    ? `No sessions or events match "${searchTerm}". Try another name or clear the search.`
     : selectedTrustMode === 'verified_only'
-      ? 'No confirmed events match here yet. Try showing all results or widening the map.'
+      ? 'No confirmed sessions or events match here yet. Try showing all results or widening the map.'
       : selectedTrustMode === 'ai_only'
-        ? 'No suggestion-first events match here yet. Try showing all results or widening the map.'
-        : "No events match those filters yet. Try widening your search.";
+        ? 'No suggestion-first sessions or events match here yet. Try showing all results or widening the map.'
+        : "No sessions or events match those filters yet. Try widening your search.";
+
+    useEffect(() => {
+      if (!truthPassEnabled) return;
+
+      const browseIds = new Set((stableNearby.data?.activities ?? []).map((activity) => activity.id));
+      const strictIds = new Set((nearbyStrict.data?.activities ?? []).map((activity) => activity.id));
+      const staleBrowseRowsRendered = hasStrictSearchState
+        && filteredActivities.some((activity) => browseIds.has(activity.id) && !strictIds.has(activity.id));
+      const renderState: TruthPassRenderState = filteredActivities.length > 0
+        ? hasStrictSearchState && !staleBrowseRowsRendered
+          ? 'strict-results'
+          : 'browse-rows'
+        : 'empty-state';
+
+      updateTruthPassDebug((current) => ({
+        nearbyRequests: current.nearbyRequests,
+        uiState: {
+          activeMode: hasStrictSearchState ? 'strict' : 'browse',
+          queryText: searchTerm.trim(),
+          cityScope: queryCenter ? resolveCityScopeForCoordinate(queryCenter)?.slug ?? null : null,
+          centerLat: queryCenter?.lat ?? null,
+          centerLng: queryCenter?.lng ?? null,
+          radiusMeters: displayedRadiusMeters,
+          requestTimedOutInUi: activityErrored && /timed out/i.test(activityError?.message ?? ''),
+          renderState,
+          staleBrowseRowsRendered,
+          filteredActivitiesCount: filteredActivities.length,
+          strictResponseCount: nearbyStrict.data?.activities?.length ?? 0,
+          browseSnapshotCount: stableNearby.data?.activities?.length ?? 0,
+          visibleActivities: filteredActivities.map((activity) => ({
+            id: activity.id,
+            placeId: activity.place_id ?? null,
+            name: activity.name,
+            placeLabel: activityPlaceLabel(activity),
+          })),
+          errorMessage: activityError?.message ?? null,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      }));
+    }, [
+      truthPassEnabled,
+      updateTruthPassDebug,
+      stableNearby.data?.activities,
+      nearbyStrict.data?.activities,
+      hasStrictSearchState,
+      filteredActivities,
+      searchTerm,
+      queryCenter,
+      activityErrored,
+      activityError,
+      displayedRadiusMeters,
+    ]);
 
   if (!e2eBypassAuth && (coreAccessState !== 'allowed' || isAuthenticated !== true)) {
     return (
@@ -2037,7 +2192,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-64px)] flex-col bg-surface-canvas/80">
+    <div data-map-root="true" className="flex h-[calc(100dvh-64px)] flex-col bg-surface-canvas/80">
       <div className="flex flex-wrap items-center justify-between gap-sm border-b border-white/40 bg-white/80 px-4 py-3 text-sm shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center gap-xs">
           <button
@@ -2065,7 +2220,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     dataMode === mode ? 'bg-brand-teal text-white shadow-sm' : 'bg-white/80 text-ink-strong hover:bg-white'
                 }`}
               >
-                {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Events' : 'Both'}
+                {mode === 'activities' ? 'Activities' : mode === 'events' ? 'Schedules' : 'Both'}
               </button>
             ))}
           </div>
@@ -2108,6 +2263,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 key={chip.key}
                 type="button"
                 onClick={chip.onRemove}
+                data-map-filter-chip={chip.key}
                 className="inline-flex items-center gap-xxs rounded-full border border-midnight-border/40 bg-surface-alt px-xs py-hairline text-[11px] font-medium text-ink hover:border-brand-teal/60 hover:text-brand-teal"
               >
                 <span>{chip.label}</span>
@@ -2128,6 +2284,15 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
         <div className="border-b border-sky-200 bg-sky-50 px-md py-sm text-xs text-sky-900">
           <p className="font-semibold text-sky-800">Search radius auto-expanded</p>
           <p className="mt-hairline">{radiusExpansion.note}</p>
+        </div>
+      )}
+      {needsManualSearchArea && (
+        <div
+          data-map-location-warning="true"
+          className="border-b border-amber-200 bg-amber-50 px-md py-sm text-xs text-amber-900"
+        >
+          <p className="font-semibold text-amber-800">Location unavailable</p>
+          <p className="mt-hairline">Move the map to choose a search area before running nearby activity search.</p>
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -2162,7 +2327,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                   ? `${filteredActivitiesCount} activities · ${filteredEventsCount} events`
                   : `${sortedActivities.length} activities`}
             </span>
-            <span>Radius ~{radiusLabel}</span>
+            <span data-map-radius-label="list">{hasStrictSearchState ? `Search radius ~${radiusLabel}` : `Radius ~${radiusLabel}`}</span>
           </div>
           {selectedActivitySummary && loadActivities && (
             <div className="border-b border-midnight-border/40 px-md py-sm text-[11px] text-ink-muted">
@@ -2261,19 +2426,19 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     <p className="text-xs text-ink-muted">Recurring sessions hosted on doWhat.</p>
                   </div>
                 </header>
-                {stableNearby.isInitialLoading && (
+                {activityInitialLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
                     Loading nearby activities…
                   </div>
                 )}
-                {stableNearby.isRefreshing && !stableNearby.isInitialLoading && (
+                {activityRefreshing && !activityInitialLoading && (
                   <div className="rounded-lg border border-midnight-border/30 bg-surface-alt p-xs text-[11px] text-ink-muted">
                     Refreshing results…
                   </div>
                 )}
-                {nearby.isError && (
+                {activityErrored && (
                   <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
-                    {(nearby.error?.message ?? "Failed to load activities")}
+                    {(activityError?.message ?? "Failed to load activities")}
                   </div>
                 )}
                 {activityListEmpty && (
@@ -2316,7 +2481,13 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const verificationLabel = activityVerificationLabel(activity);
                     const verificationClass = activityVerificationClass(activity);
                     return (
-                      <li key={activity.id}>
+                      <li
+                        key={activity.id}
+                        data-map-sidebar-activity-row="true"
+                        data-activity-id={activity.id}
+                        data-place-id={activity.place_id ?? ''}
+                        data-activity-name={activity.name}
+                      >
                         <div
                           role="button"
                           tabIndex={0}
@@ -2408,7 +2579,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                 }}
                                 className="rounded-full border border-brand-teal/40 px-sm py-xxs text-[11px] font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
                               >
-                                View events{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
+                                View sessions{upcomingSessions > 0 ? ` (${upcomingSessions})` : ''} →
                               </button>
                             )}
                             <button
@@ -2440,22 +2611,22 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               </section>
             )}
             {loadEvents && (
-              <section className={listSectionCardClass} aria-label="Events list">
+              <section className={listSectionCardClass} aria-label="Sessions and events list">
                 <header className="mb-sm flex items-start gap-sm">
                   <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-feedback-warning/10 text-lg">🎟️</span>
                   <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Events</h3>
-                    <p className="text-xs text-ink-muted">One-off happenings around this area.</p>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Sessions &amp; events</h3>
+                    <p className="text-xs text-ink-muted">doWhat sessions plus imported happenings around this area.</p>
                   </div>
                 </header>
                 {eventsQuery.isLoading && (
                   <div className="rounded-lg border border-midnight-border/40 bg-surface-alt p-md text-sm text-ink-medium">
-                    Loading events…
+                    Loading sessions &amp; events…
                   </div>
                 )}
                 {eventsQuery.isError && (
                   <div className="rounded-lg border border-feedback-danger/30 bg-feedback-danger/5 p-md text-sm text-feedback-danger">
-                    {(eventsQuery.error?.message ?? "Failed to load events")}
+                    {(eventsQuery.error?.message ?? "Failed to load sessions and events")}
                   </div>
                 )}
                 {eventListEmpty && (
@@ -2481,6 +2652,10 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const reliabilityWidth = reliabilityScore == null ? 12 : reliabilityScore;
                     const verificationProgress = buildEventVerificationProgress(eventSummary);
                     const verificationProgressClass = verificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
+                    const eventAction = describeEventPrimaryAction(eventSummary);
+                    const externalSourceUrl = typeof eventSummary.url === 'string' && /^https?:\/\//i.test(eventSummary.url)
+                      ? eventSummary.url
+                      : null;
                     return (
                       <li key={eventSummary.id}>
                         <div
@@ -2559,6 +2734,29 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                                   />
                                 </div>
                               </div>
+                              <div className="mt-sm flex flex-wrap gap-xs text-xs">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleEventDetails(eventSummary);
+                                  }}
+                                  className="rounded-full border border-feedback-warning/40 px-sm py-xxs text-[11px] font-semibold text-feedback-warning hover:border-feedback-warning hover:bg-feedback-warning/5"
+                                >
+                                  {eventAction.label}
+                                </button>
+                                {eventAction.secondaryLabel && externalSourceUrl ? (
+                                  <a
+                                    href={externalSourceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(event) => event.stopPropagation()}
+                                    className="rounded-full border border-midnight-border/40 px-sm py-xxs text-[11px] font-medium text-ink-medium hover:border-brand-teal/60 hover:text-brand-teal"
+                                  >
+                                    {eventAction.secondaryLabel}
+                                  </a>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2632,7 +2830,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                 <p className="mt-xxs text-[11px] text-ink-muted">
                   The visible map controls where we search. Move or zoom the map to change the area.
                 </p>
-                <p className="mt-xxs text-[11px] font-medium text-ink">Current area: radius ~{radiusLabel}</p>
+                <p data-map-radius-label="drawer" className="mt-xxs text-[11px] font-medium text-ink">Current search radius: ~{radiusLabel}</p>
               </section>
               <section className="rounded-2xl border border-midnight-border/30 bg-surface-alt/70 px-md py-sm">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">Result strictness</h3>
@@ -2746,7 +2944,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
               ) : null}
               {!loadActivities ? (
                 <div className="rounded-xl border border-midnight-border/30 bg-surface-alt px-md py-sm text-xs text-ink-muted">
-                  Activity filters only apply when “Activities” or “Both” is active. Events still follow the same search text, trust mode, and map area.
+                  Activity filters only apply when “Activities” or “Both” is active. Sessions/events still follow the same search text, trust mode, and map area.
                 </div>
               ) : null}
             </div>

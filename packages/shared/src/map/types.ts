@@ -126,6 +126,28 @@ export interface MapActivitiesResponse {
       enabled: boolean;
       placeMinConfidence: number;
     };
+    timings?: {
+      cacheReadMs: number;
+      taxonomyFetchMs: number;
+      rpcFetchMs: number;
+      fallbackFetchMs: number;
+      seedRefreshMs: number;
+      metadataHydrationMs: number;
+      rankingAndGatingMs: number;
+      placeHydrationMs: number;
+      dedupeShieldMs: number;
+      payloadShapeMs: number;
+      totalMs: number;
+    };
+    requestMeta?: {
+      requestId: string;
+      queryText: string;
+      radiusMeters: number;
+      requestedLimit: number;
+      appliedLimit: number;
+      cityScope: string | null;
+      finalCount: number;
+    };
   };
 }
 

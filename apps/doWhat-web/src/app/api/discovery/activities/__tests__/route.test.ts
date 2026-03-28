@@ -71,6 +71,7 @@ describe('/api/discovery/activities', () => {
         center: { lat: 1, lng: 2 },
         radiusMeters: 1500,
         limit: 1,
+        filters: expect.objectContaining({ searchText: '' }),
       }),
       { bypassCache: false, includeDebug: false, debugMetrics: false },
     );
@@ -132,6 +133,7 @@ describe('/api/discovery/activities', () => {
         center: { lat: 1, lng: 2 },
         radiusMeters: 2000,
         limit: 5,
+        filters: expect.objectContaining({ searchText: '' }),
       }),
       { bypassCache: false, includeDebug: false, debugMetrics: false },
     );
@@ -224,8 +226,33 @@ describe('/api/discovery/activities', () => {
           sw: { lat: 13.7, lng: 100.5 },
           ne: { lat: 13.8, lng: 100.6 },
         },
+        filters: expect.objectContaining({ searchText: '' }),
       }),
       { bypassCache: true, includeDebug: false, debugMetrics: false },
+    );
+  });
+
+  it('forwards parsed discovery filters from query params', async () => {
+    discoverNearbyActivities.mockResolvedValue({
+      center: { lat: 21.0285, lng: 105.8542 },
+      radiusMeters: 3000,
+      items: [],
+    });
+
+    await GET(buildRequest('lat=21.0285&lng=105.8542&radius=3000&limit=10&q=bouldering&types=climbing&tags=indoor'));
+
+    expect(discoverNearbyActivities).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: { lat: 21.0285, lng: 105.8542 },
+        radiusMeters: 3000,
+        limit: 10,
+        filters: expect.objectContaining({
+          searchText: 'bouldering',
+          activityTypes: ['climbing'],
+          tags: ['indoor'],
+        }),
+      }),
+      { bypassCache: false, includeDebug: false, debugMetrics: false },
     );
   });
 

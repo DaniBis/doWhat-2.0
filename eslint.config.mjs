@@ -70,6 +70,12 @@ export default [
     }
   },
   {
+    files: ['scripts/__tests__/**/*.test.js', 'scripts/__tests__/**/*.test.cjs'],
+    rules: {
+      '@typescript-eslint/no-var-requires': 'off',
+    }
+  },
+  {
     files: ['**/*.ts', '**/*.tsx'],
     ignores: [
       '**/node_modules/**',

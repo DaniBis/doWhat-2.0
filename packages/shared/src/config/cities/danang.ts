@@ -23,6 +23,7 @@ export const danangCityConfig: CityConfig = {
   slug: "danang",
   name: "Da Nang",
   label: "Showing results near Da Nang, Vietnam",
+  scopeAliases: ["Da Nang", "DaNang", "Đà Nẵng", "Da Nang, Vietnam", "Đà Nẵng, Việt Nam", "Da Nang City", "Đà Nẵng City"],
   center: {
     lat: 16.0544,
     lng: 108.2022,
@@ -37,10 +38,10 @@ export const danangCityConfig: CityConfig = {
     ne: { lat: 16.20, lng: 108.33 },
   },
   enabledCategories: [
-    category("climbing_bouldering", ["fitness"], ["climbing", "bouldering", "rock_climbing", "leo nui"]),
-    category("padel", ["fitness"], ["padel", "pádel"]),
-    category("running", ["outdoors"], ["running", "jogging", "track", "chạy bộ"]),
-    category("yoga", ["fitness"], ["yoga", "thiền"]),
-    category("chess", ["community"], ["chess", "cờ vua", "board_games"]),
+    category("climbing_bouldering", ["fitness"], ["climbing", "climbing gym", "bouldering", "bouldering gym", "rock_climbing", "leo nui", "leo núi", "phong tap leo nui", "phòng tập leo núi"]),
+    category("padel", ["fitness"], ["padel", "pádel", "san padel", "sân padel", "padel club"]),
+    category("running", ["outdoors"], ["running", "jogging", "track", "athletics", "chạy bộ", "điền kinh"]),
+    category("yoga", ["fitness"], ["yoga", "yoga studio", "thiền", "phòng tập yoga"]),
+    category("chess", ["community"], ["chess", "cờ vua", "câu lạc bộ cờ vua", "board_games"]),
   ],
 };
