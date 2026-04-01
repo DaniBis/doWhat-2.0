@@ -45,5 +45,8 @@ describe('places utils', () => {
   test('expandCategoryAliases includes pilot activity aliases', () => {
     expect(expandCategoryAliases(['badminton'])).toContain('fitness');
     expect(expandCategoryAliases(['rock_climbing'])).toContain('fitness');
+    expect(expandCategoryAliases(['padel'])).toContain('fitness');
+    expect(expandCategoryAliases(['running_parks'])).toContain('outdoors');
+    expect(expandCategoryAliases(['climbing_bouldering'])).toContain('fitness');
   });
 });
