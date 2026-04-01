@@ -45,7 +45,7 @@
     "verify:required-fields": "node scripts/verify-required-fields.mjs",
     "verify:discovery-contract": "node scripts/verify-discovery-contract.mjs",
     "verify:seed-health": "node scripts/verify-seed-health.mjs",
-    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node temp/hanoi-map-browser-truth.mjs",
+    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node scripts/verify-hanoi-strict-climb-live.mjs",
     "test:onboarding-progress": "pnpm --filter dowhat-web test -- OnboardingProgressBanner apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx && pnpm --filter doWhat-mobile test -- onboarding-index profile.simple.cta OnboardingNavPrompt OnboardingNavPill people-filter"
   },
   "devDependencies": {

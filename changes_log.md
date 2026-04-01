@@ -1,5 +1,25 @@
 # Changes Log
 
+### 2026-04-01 UTC — PR #6 review follow-up removed temp-only Hanoi references and cleaned low-risk blockers
+- Issue: live PR #6 review correctly flagged checked-in temp-only script references plus a few low-risk cleanliness issues that could block merge safety.
+- Files changed:
+   - `package.json`
+   - `apps/doWhat-web/package.json`
+   - `scripts/hanoi-climb-completeness-audit.mjs`
+   - `apps/doWhat-web/src/app/api/search-venues/route.ts`
+   - `apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+   - `apps/doWhat-web/src/lib/discovery/__tests__/placeFallbackInference.test.ts`
+   - `scripts/hanoi-read-quality-audit.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact fix:
+   - replaced the temp-wrapper `scripts/hanoi-climb-completeness-audit.mjs` with the durable checked-in implementation and repointed both `verify:hanoi:browser-truth` scripts to checked-in `scripts/verify-hanoi-strict-climb-live.mjs`.
+   - removed the unused `_ActivityName` import and dead `_parseBoolean` helper, moved the stray top-level place-fallback test back inside `describe(...)`, and deduped the repeated `inferAdmissionReason(...)` call.
+- Verification:
+   - `node --check scripts/hanoi-climb-completeness-audit.mjs`, targeted ESLint on touched files, focused Jest for `placeFallbackInference.test.ts` (`9 passed`), and `apps/doWhat-web` typecheck all passed.
+- Result:
+   - PR #6 no longer contains checked-in temp-path dependencies for the reviewed Hanoi scripts, and the audited low-risk blockers are cleared.
+
 ## 2026-03-07
 
 ### 2026-03-07 04:02 UTC — Final verification checkpoint / duplicate-logo-count-discovery work validated, lint cleanup applied

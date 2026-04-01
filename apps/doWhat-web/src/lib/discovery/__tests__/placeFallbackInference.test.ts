@@ -144,19 +144,19 @@ describe('place fallback activity inference', () => {
       } as any),
     ).toBe(false);
   });
+
+  test('suppresses hospitality rows from inheriting running or walking via generic garden text', () => {
+    const types = __discoveryEngineTestUtils.buildPlaceActivityTypes({
+      id: 'place-10',
+      name: 'Bia Hơi Corner',
+      address: 'Hanoi',
+      lat: 21.03,
+      lng: 105.84,
+      tags: ['beer garden', 'street food gathering'],
+      categories: [],
+    } as any);
+
+    expect(types ?? []).not.toContain('running');
+    expect(types ?? []).not.toContain('walking');
+  });
 });
-
-      test('suppresses hospitality rows from inheriting running or walking via generic garden text', () => {
-        const types = __discoveryEngineTestUtils.buildPlaceActivityTypes({
-          id: 'place-10',
-          name: 'Bia Hơi Corner',
-          address: 'Hanoi',
-          lat: 21.03,
-          lng: 105.84,
-          tags: ['beer garden', 'street food gathering'],
-          categories: [],
-        } as any);
-
-        expect(types ?? []).not.toContain('running');
-        expect(types ?? []).not.toContain('walking');
-      });

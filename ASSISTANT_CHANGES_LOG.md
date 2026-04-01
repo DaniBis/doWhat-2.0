@@ -1,6 +1,12 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2026-04-01
+- Closed the PR #6 merge-safety follow-up in the Hanoi worktree by removing checked-in temp-only dependencies from the reviewed Hanoi scripts.
+- Replaced `scripts/hanoi-climb-completeness-audit.mjs` with the durable checked-in implementation and repointed both `verify:hanoi:browser-truth` scripts to `scripts/verify-hanoi-strict-climb-live.mjs`.
+- Cleared the low-risk review nits in the same pass: removed the unused `_ActivityName` import, removed the dead `_parseBoolean` helper, moved the stray `placeFallbackInference` test back inside `describe(...)`, and deduped the repeated `inferAdmissionReason(...)` call.
+- Revalidated the focused slice cleanly with `node --check`, targeted ESLint, focused Jest for `placeFallbackInference.test.ts` (`9 passed`), and `apps/doWhat-web` typecheck.
+
 ## 2026-03-07
 - Completed the strict duplicate/logo/session-count/discovery verification pass without reworking already-correct code: current source still contains the `VietClimb` semantic dedupe, the doWhat/place logo pipeline, the mobile home event-count fix, and the mobile discovery parity/performance helpers, so I validated those paths with focused Jest coverage instead of rewriting them.
 - Ran focused regressions for `dedupe.test.ts`, `branding.test.ts`, `/api/place-logo` route tests, `homeActivityCounts.test.ts`, and `mobileDiscovery.test.ts` (`20 passed, 0 failed`), then reran workspace `typecheck`, `lint`, and `/api/health`.
