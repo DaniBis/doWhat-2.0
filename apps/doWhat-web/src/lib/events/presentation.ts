@@ -1,7 +1,6 @@
 import {
   describeEventDiscoveryPresentation,
   inferEventLocationKind,
-  inferEventOriginKind,
   inferEventParticipationTruth,
   type EventSummary,
 } from '@dowhat/shared';
@@ -31,7 +30,9 @@ export const eventStateClass = (state?: EventSummary['event_state'] | null): str
 export const describeEventOrigin = (
   event: EventSummary | null | undefined,
 ): { label: string; helper: string } => {
-  if (event && inferEventOriginKind(event) === 'session') {
+  const summary = describeEventDiscoveryPresentation(event);
+
+  if (summary.primaryActionKind === 'view_session') {
     return {
       label: 'Community session',
       helper:
@@ -41,7 +42,6 @@ export const describeEventOrigin = (
     };
   }
 
-  const summary = describeEventDiscoveryPresentation(event);
   return { label: summary.badgeLabel, helper: summary.helper };
 };
 

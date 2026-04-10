@@ -1,5 +1,33 @@
 # Changes Log
 
+### 2026-04-10 UTC — PR #6-only follow-up pass clears the remaining in-scope web blockers on current head
+- Issue: use live PR #6 head `6995d71de5c281ea52bbc9af251a0182f137390f` as source of truth, prove whether the two still-current Copilot comments explain `build-test-health`, and fix only the remaining real PR #6-scoped blockers.
+- Files changed:
+   - `apps/doWhat-web/src/lib/events/presentation.ts`
+   - `apps/doWhat-web/src/app/map/searchMatching.ts`
+   - `apps/doWhat-web/src/app/map/page.tsx`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Live comment audit:
+   - `package.json:49` is already resolved in the current diff because the script points at checked-in `scripts/verify-hanoi-strict-climb-live.mjs`.
+   - `scripts/hanoi-read-quality-audit.mjs:133` is already resolved in the current diff because the admission reason is computed once and reused.
+   - therefore the current review comments do **not** explain the failing check.
+- Exact fix:
+   - `apps/doWhat-web/src/lib/events/presentation.ts` now derives the session-origin helper from discovery presentation state rather than the brittle `inferEventOriginKind(...)` import path.
+   - `apps/doWhat-web/src/app/map/searchMatching.ts` now combines delimiter-gated exact structured token matching with the shared canonical search-intent matcher and a guarded non-hospitality phrase fallback.
+   - `apps/doWhat-web/src/app/map/page.tsx` restores the local map-card session badge text `doWhat session` while preserving the shared `Community session` contract elsewhere.
+- Validation run:
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` → passed (`4` suites, `22` tests)
+   - `pnpm -w run test` → still fails only in `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx` with the existing `supabase.auth.getSession()` mock mismatch already proven outside PR #6 scope.
+- Remaining out-of-scope blockers after this pass:
+   - mobile contest-analytics failure remains baseline/out of PR #6 scope.
+   - `Vercel` remains external/policy scope and unchanged.
+- Superseded statement:
+   - This supersedes the earlier 2026-04-09 note that “No broad CI rerun, commit, or push was performed.” A broader local rerun happened in this exact pass; commit/push status must be recorded separately if this pass is committed.
+
 ### 2026-04-09 UTC — PR #6-only regression fix pass for the proven in-scope blockers
 - Issue: apply the smallest safe PR #6-only fix pass using the latest scope audit as source of truth, touching only `scripts/verify-no-hardcoded-discovery.mjs`, `apps/doWhat-web/src/lib/events/presentation.ts`, and `apps/doWhat-web/src/app/map/searchMatching.ts`, while leaving mobile baseline failures and Vercel external blockers out of scope.
 - Files changed:

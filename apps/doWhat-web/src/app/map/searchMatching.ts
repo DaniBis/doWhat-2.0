@@ -1,6 +1,9 @@
 import type { MapActivity } from '@dowhat/shared';
 
+import { matchesDiscoverySearchText } from '@/lib/discovery/searchIntent';
+
 const STRUCTURED_SEARCH_DELIMITER = /[,;|/]/;
+const HOSPITALITY_TOKEN_PATTERN = /\b(bar|cafe|coffee|restaurant|pub|lounge|cocktail|spa|massage|rooftop|shop|retail|mall|nightclub)\b/i;
 
 const normalizeSet = (values?: (string | null | undefined)[] | null): Set<string> => {
   const set = new Set<string>();
@@ -36,7 +39,6 @@ export const matchesActivitySearch = (
 
   const hasStructuredMultiActivityInput =
     STRUCTURED_SEARCH_DELIMITER.test(term) && input.structuredSearchTokens.length >= 2;
-
   if (hasStructuredMultiActivityInput) {
     const typeTokens = normalizeSet(activity.activity_types);
     const tagTokens = normalizeSet(activity.tags);
@@ -46,17 +48,13 @@ export const matchesActivitySearch = (
     );
   }
 
-  const haystack = buildHaystack(activity);
-  if (haystack.includes(term)) return true;
-  if (input.searchPhrases.some((searchWord) => haystack.includes(searchWord))) return true;
+  if (matchesDiscoverySearchText(activity, term)) {
+    return true;
+  }
 
-  if (input.searchTokens.length > 0) {
-    const typeTokens = normalizeSet(activity.activity_types);
-    const tagTokens = normalizeSet(activity.tags);
-    const taxonomyTokens = normalizeSet(activity.taxonomy_categories);
-    return input.searchTokens.some((token) =>
-      typeTokens.has(token) || tagTokens.has(token) || taxonomyTokens.has(token),
-    );
+  const haystack = buildHaystack(activity);
+  if (input.searchPhrases.some((searchPhrase) => haystack.includes(searchPhrase))) {
+    return !HOSPITALITY_TOKEN_PATTERN.test(haystack);
   }
 
   return false;

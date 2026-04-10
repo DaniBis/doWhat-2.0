@@ -1,6 +1,28 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2026-04-10
+- Ran a PR #6-only follow-up pass on live head `6995d71de5c281ea52bbc9af251a0182f137390f` from branch `hanoi-keepset-from-origin-main-20260328` to resolve the remaining current in-scope blockers without touching PR #7, `main`, mobile baseline paths, or `apps/doWhat-web/vercel.json`.
+- Live-review audit result for the two still-current Copilot comments:
+  - `package.json:49` is already semantically resolved in the current diff because `verify:hanoi:browser-truth` now points at checked-in `scripts/verify-hanoi-strict-climb-live.mjs`, not a missing temp script.
+  - `scripts/hanoi-read-quality-audit.mjs:133` is already semantically resolved in the current diff because `inferAdmissionReason(...)` is computed once and reused for both `whyIncluded` and `evidenceSource`.
+- The current `build-test-health` failure was therefore **not** explained by those review comments. Reproducing the test phase on the current head showed the real in-scope blockers were the current PR #6 web regressions in `apps/doWhat-web/src/lib/events/presentation.ts`, `apps/doWhat-web/src/app/map/searchMatching.ts`, and the connected map surface rendering in `apps/doWhat-web/src/app/map/page.tsx`.
+- Exact code changes in this pass:
+  - `apps/doWhat-web/src/lib/events/presentation.ts`: removed the brittle `inferEventOriginKind(...)` dependency from `describeEventOrigin(...)` and keyed the session-origin helper off the existing discovery presentation action instead, preserving the `Community session` contract expected by the focused presentation tests.
+  - `apps/doWhat-web/src/app/map/searchMatching.ts`: restored delimiter-gated structured token matching, then delegated non-structured activity-intent matching to `matchesDiscoverySearchText(...)` while keeping phrase recall only for non-hospitality rows.
+  - `apps/doWhat-web/src/app/map/page.tsx`: restored the map-card session badge copy to `doWhat session` locally on that surface while leaving the shared presentation helper contract unchanged.
+- Validation run exactly in this pass:
+  - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts -- --runInBand` ✅
+  - `pnpm test apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts -- --runInBand` ✅
+  - `pnpm test apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` ✅
+  - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` ✅ (`4` suites, `22` tests)
+  - `pnpm -w run test` ❌ but now fails only in `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx` with the already-proven baseline `supabase.auth.getSession()` mock mismatch outside PR #6 scope.
+- Remaining non-PR-#6 blockers after this pass remain unchanged:
+  - mobile contest-analytics test failure is still outside PR #6 scope and was not touched.
+  - `Vercel` remains an external/out-of-scope policy blocker tied to the unchanged cron configuration.
+- Superseded statement:
+  - This supersedes the earlier 2026-04-09 wording that “No broad CI rerun, commit, or push was performed in this pass.” A broader local rerun **was** performed in this exact pass (`pnpm -w run test`), and commit/push state should be recorded separately if this pass is later committed.
+
 ## 2026-04-09
 - Completed the next PR #6-only code pass on branch `hanoi-keepset-from-origin-main-20260328` without widening scope. Changed exactly three code files: `scripts/verify-no-hardcoded-discovery.mjs`, `apps/doWhat-web/src/lib/events/presentation.ts`, and `apps/doWhat-web/src/app/map/searchMatching.ts`.
 - Exact fixes applied:
