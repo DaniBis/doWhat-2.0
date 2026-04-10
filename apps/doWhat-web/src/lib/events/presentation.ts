@@ -32,7 +32,7 @@ export const describeEventOrigin = (
 ): { label: string; helper: string } => {
   const summary = describeEventDiscoveryPresentation(event);
 
-  if (summary.primaryActionKind === 'view_session') {
+  if (event && summary.primaryActionKind === 'view_session') {
     return {
       label: 'Community session',
       helper:
