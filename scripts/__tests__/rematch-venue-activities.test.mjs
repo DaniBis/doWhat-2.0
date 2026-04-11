@@ -49,6 +49,28 @@ test('buildRematchReport exposes partial run status when matcher returns errors'
   assert.equal(report.hospitalityKeywordDeletes, 1);
 });
 
+test('buildRematchReport rejects invalid numeric args before JSON serialization', () => {
+  assert.throws(
+    () => buildRematchReport({
+      args: { city: 'hanoi', placeId: '', dryRun: false, limit: 'abc', offset: '10' },
+      payload: { errors: [], details: [] },
+      requestedAt: '2026-03-11T06:15:00.000Z',
+      baseUrl: 'https://example.test',
+    }),
+    /--limit must be a non-negative integer/,
+  );
+
+  assert.throws(
+    () => buildRematchReport({
+      args: { city: 'hanoi', placeId: '', dryRun: false, limit: '10', offset: '-1' },
+      payload: { errors: [], details: [] },
+      requestedAt: '2026-03-11T06:15:00.000Z',
+      baseUrl: 'https://example.test',
+    }),
+    /--offset must be a non-negative integer/,
+  );
+});
+
 test('summarizeRematchBatches aggregates full-city rematch reports', () => {
   const report = summarizeRematchBatches({
     args: { city: 'danang', placeId: '', dryRun: false, batchSize: '500' },
@@ -95,4 +117,16 @@ test('summarizeRematchBatches aggregates full-city rematch reports', () => {
   assert.equal(report.upserts, 29);
   assert.equal(report.hospitalityKeywordDeletes, 5);
   assert.equal(report.batchCount, 2);
+});
+
+test('summarizeRematchBatches rejects invalid batch size before numeric coercion', () => {
+  assert.throws(
+    () => summarizeRematchBatches({
+      args: { city: 'danang', placeId: '', dryRun: false, batchSize: 'bad-batch' },
+      reports: [],
+      requestedAt: '2026-03-11T14:42:00.000Z',
+      baseUrl: 'https://example.test',
+    }),
+    /--batchSize must be a non-negative integer/,
+  );
 });

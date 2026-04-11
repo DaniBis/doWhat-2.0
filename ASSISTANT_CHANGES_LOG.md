@@ -1,6 +1,17 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2026-04-11
+- Completed a PR #7-only blocker-fix pass on branch `launch-city-inventory-tooling-20260331` after rechecking live review state on head `97d52e1fd7c5e84bf44441e2c5bd5f7357df67cd`.
+- Fixed only the still-current in-scope PR #7 review blockers:
+  - `scripts/city-inventory-status-report.mjs`: empty or missing `audit.coverage` now reports `missing` instead of defaulting to `acceptable`; missing audit buckets for `duplicateClusters`, `staleMappings`, `weakMappings`, and `sessionMappingGaps` now report `missing`; and launch recommendation now blocks when those required sections are missing so incomplete artifacts cannot surface as launch-acceptable.
+  - `scripts/rematch-venue-activities.mjs`: `--limit`, `--offset`, and `--batchSize` are now validated as non-negative integers before numeric coercion, so invalid input fails explicitly instead of silently turning into `NaN` / `null` in JSON output.
+  - `scripts/city-inventory-audit.mjs`: normalized the zero-risk same-file style nit from `] ;` to `];`.
+- Added focused regression coverage in `scripts/__tests__/city-inventory-status-report.test.mjs` and `scripts/__tests__/rematch-venue-activities.test.mjs` for the exact missing-artifact and invalid-numeric-input cases raised by the live Copilot comments.
+- Narrow validation run exactly for this pass:
+  - `node --test scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/rematch-venue-activities.test.mjs` ✅ (`13` tests, `0` failed)
+  - `grep -n '] ;' scripts/city-inventory-audit.mjs` ✅ no match
+
 ## 2026-03-07
 - Completed the strict duplicate/logo/session-count/discovery verification pass without reworking already-correct code: current source still contains the `VietClimb` semantic dedupe, the doWhat/place logo pipeline, the mobile home event-count fix, and the mobile discovery parity/performance helpers, so I validated those paths with focused Jest coverage instead of rewriting them.
 - Ran focused regressions for `dedupe.test.ts`, `branding.test.ts`, `/api/place-logo` route tests, `homeActivityCounts.test.ts`, and `mobileDiscovery.test.ts` (`20 passed, 0 failed`), then reran workspace `typecheck`, `lint`, and `/api/health`.

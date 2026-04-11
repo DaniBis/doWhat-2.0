@@ -1,5 +1,26 @@
 # Changes Log
 
+### 2026-04-11 UTC — PR #7 review-blocker fix pass for launch-city inventory tooling
+- Issue: fix only the still-current in-scope PR #7 Copilot review blockers on `launch-city-inventory-tooling-20260331` without widening scope beyond the launch-city inventory surface.
+- Files changed:
+   - `scripts/city-inventory-status-report.mjs`
+   - `scripts/rematch-venue-activities.mjs`
+   - `scripts/city-inventory-audit.mjs`
+   - `scripts/__tests__/city-inventory-status-report.test.mjs`
+   - `scripts/__tests__/rematch-venue-activities.test.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact fix:
+   - `scripts/city-inventory-status-report.mjs` now treats missing or empty `audit.coverage` as `missing`, treats missing duplicate/stale/weak/session-gap audit buckets as `missing`, and blocks launch recommendation when those required audit sections are missing.
+   - `scripts/rematch-venue-activities.mjs` now validates `--limit`, `--offset`, and `--batchSize` as non-negative integers before coercion so invalid user input cannot silently serialize as JSON `null`.
+   - `scripts/city-inventory-audit.mjs` now uses the normalized `];` style for `HOSPITALITY_STEMS`.
+   - focused tests now cover the exact missing-artifact and invalid-numeric-input cases raised by the live review comments.
+- Narrow validation run:
+   - `node --test scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/rematch-venue-activities.test.mjs` → passed (`13` tests, `0` failed)
+   - `grep -n '] ;' scripts/city-inventory-audit.mjs` → no match
+- Expected review-state effect:
+   - the four previously current Copilot comments on `scripts/city-inventory-status-report.mjs`, `scripts/city-inventory-audit.mjs`, and `scripts/rematch-venue-activities.mjs` should become stale/already resolved once this branch head is pushed and GitHub re-evaluates the diff.
+
 ## 2026-03-07
 
 ### 2026-03-07 04:02 UTC — Final verification checkpoint / duplicate-logo-count-discovery work validated, lint cleanup applied

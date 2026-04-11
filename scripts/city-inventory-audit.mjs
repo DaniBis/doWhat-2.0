@@ -82,7 +82,7 @@ const HOSPITALITY_STEMS = [
   'roaster',
   'tasting',
   'wine',
-] ;
+];
 
 const ACTIVITY_STEMS = [
   'activity',
