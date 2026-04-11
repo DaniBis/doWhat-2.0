@@ -1,4 +1,11 @@
-import { calculateActivityScore, resolveActivityConfidence, isActivityName, withinClassificationTTL } from '@/lib/venues/search';
+import {
+  calculateActivityScore,
+  resolveActivityConfidence,
+  isActivityName,
+  normalizeActivityName,
+  normalizeVenueSearchActivities,
+  withinClassificationTTL,
+} from '@/lib/venues/search';
 import type { ActivityName } from '@/lib/venues/constants';
 import type { Json } from '@/types/database';
 
@@ -26,8 +33,19 @@ describe('venue search helpers', () => {
 
   test('isActivityName guards allowed values', () => {
     expect(isActivityName('climbing')).toBe(true);
+    expect(isActivityName('table tennis')).toBe(true);
     expect(isActivityName('random')).toBe(false);
     expect(isActivityName(123)).toBe(false);
+  });
+
+  test('normalizeActivityName canonicalizes aliases', () => {
+    expect(normalizeActivityName('table tennis')).toBe('ping pong');
+    expect(normalizeActivityName('สนามพาเดล')).toBe('padel');
+  });
+
+  test('normalizeVenueSearchActivities expands martial arts family queries safely', () => {
+    expect(normalizeVenueSearchActivities('martial arts')).toEqual(['boxing', 'kickboxing', 'judo', 'bjj', 'mma']);
+    expect(normalizeVenueSearchActivities('table tennis')).toEqual(['ping pong']);
   });
 
   test('withinClassificationTTL validates timestamps', () => {

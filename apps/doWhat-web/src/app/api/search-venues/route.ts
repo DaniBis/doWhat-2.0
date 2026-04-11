@@ -4,9 +4,8 @@ import { rateLimit } from '@/lib/rateLimit';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 import { discoverNearbyVenues } from '@/lib/discovery/engine';
 import { haversineMeters } from '@/lib/places/utils';
-import { isActivityName } from '@/lib/venues/search';
+import { normalizeVenueSearchActivities } from '@/lib/venues/search';
 import { VENUE_SEARCH_DEFAULT_RADIUS, VENUE_SEARCH_MAX_LIMIT } from '@/lib/venues/constants';
-import type { ActivityName } from '@/lib/venues/constants';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -21,9 +20,11 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const activityParam = url.searchParams.get('activity');
-  if (!isActivityName(activityParam)) {
+  const activities = normalizeVenueSearchActivities(activityParam);
+  if (!activities?.length) {
     return NextResponse.json({ error: 'Invalid or missing activity parameter.' }, { status: 400 });
   }
+  const activity = typeof activityParam === 'string' ? activityParam.trim().toLowerCase().replace(/\s+/g, ' ') : activities[0];
 
   const limit = clampLimit(parseNumber(url.searchParams.get('limit')), VENUE_SEARCH_MAX_LIMIT);
   const bounds = parseBounds(url);
@@ -43,31 +44,100 @@ export async function GET(request: Request) {
         )
       : radius?.radiusMeters ?? VENUE_SEARCH_DEFAULT_RADIUS;
 
-    const { result, venues, debug } = await discoverNearbyVenues(
-      {
-        center: resolvedCenter,
-        radiusMeters,
-        limit,
-        bounds: bounds ?? undefined,
-      },
-      activityParam as ActivityName,
-      { includeUnverified },
+    const venueResponses = await Promise.all(
+      activities.map((candidateActivity) =>
+        discoverNearbyVenues(
+          {
+            center: resolvedCenter,
+            radiusMeters,
+            limit,
+            bounds: bounds ?? undefined,
+          },
+          candidateActivity,
+          { includeUnverified },
+        ),
+      ),
     );
 
+    const baseResult = venueResponses[0]?.result;
+    const mergedItems = dedupeById(
+      venueResponses.flatMap(({ result }) => result.items),
+      (item) => item.id,
+      (left, right) => ((right.rank_score ?? 0) > (left.rank_score ?? 0) ? right : left),
+    ).sort((left, right) => (right.rank_score ?? 0) - (left.rank_score ?? 0)).slice(0, limit);
+    const mergedVenues = dedupeById(
+      venueResponses.flatMap(({ venues }) => venues),
+      (venue) => venue.venueId,
+      (left, right) => ((right.score ?? 0) > (left.score ?? 0) ? right : left),
+    ).sort((left, right) => (right.score ?? 0) - (left.score ?? 0)).slice(0, limit);
+    const debug = {
+      limitApplied: limit,
+      venueCount: mergedVenues.length,
+      voteCount: venueResponses.reduce((sum, entry) => sum + (entry.debug?.voteCount ?? 0), 0),
+    };
+
+    if (!baseResult) {
+      return NextResponse.json({ error: 'Failed to load venues.' }, { status: 500 });
+    }
+
     return NextResponse.json({
-      activity: activityParam,
-      results: venues,
-      items: result.items,
-      filterSupport: result.filterSupport,
-      facets: result.facets,
-      sourceBreakdown: result.sourceBreakdown,
-      cache: result.cache,
-      source: result.source,
+      activity,
+      results: mergedVenues,
+      items: mergedItems,
+      filterSupport: baseResult.filterSupport,
+      facets: mergeFacetCounts(venueResponses.map(({ result }) => result.facets)),
+      sourceBreakdown: mergeSourceBreakdowns(venueResponses.map(({ result }) => result.sourceBreakdown ?? {})),
+      cache: baseResult.cache,
+      source: activities.length > 1 ? 'family-search' : baseResult.source,
       debug,
     });
   } catch (error) {
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
+}
+
+function dedupeById<T>(items: T[], getId: (item: T) => string, choose: (left: T, right: T) => T): T[] {
+  const byId = new Map<string, T>();
+  items.forEach((item) => {
+    const id = getId(item);
+    const current = byId.get(id);
+    byId.set(id, current ? choose(current, item) : item);
+  });
+  return Array.from(byId.values());
+}
+
+function mergeFacetCounts(facetsList: Array<Record<string, Array<{ value: string; count: number }>> | undefined>) {
+  const merged = {
+    activityTypes: [] as Array<{ value: string; count: number }>,
+    tags: [] as Array<{ value: string; count: number }>,
+    traits: [] as Array<{ value: string; count: number }>,
+    taxonomyCategories: [] as Array<{ value: string; count: number }>,
+    priceLevels: [] as Array<{ value: string; count: number }>,
+    capacityKey: [] as Array<{ value: string; count: number }>,
+    timeWindow: [] as Array<{ value: string; count: number }>,
+  };
+  (Object.keys(merged) as Array<keyof typeof merged>).forEach((key) => {
+    const counts = new Map<string, number>();
+    facetsList.forEach((facets) => {
+      (facets?.[key] ?? []).forEach((entry) => {
+        counts.set(entry.value, (counts.get(entry.value) ?? 0) + entry.count);
+      });
+    });
+    merged[key] = Array.from(counts.entries())
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([value, count]) => ({ value, count }));
+  });
+  return merged;
+}
+
+function mergeSourceBreakdowns(sourceBreakdowns: Array<Record<string, number>>) {
+  const merged: Record<string, number> = {};
+  sourceBreakdowns.forEach((sourceBreakdown) => {
+    Object.entries(sourceBreakdown).forEach(([key, value]) => {
+      merged[key] = (merged[key] ?? 0) + value;
+    });
+  });
+  return merged;
 }
 
 function parseBounds(url: URL) {

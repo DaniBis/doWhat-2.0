@@ -12,7 +12,7 @@ const SPECIALTY_SEARCH_ACTIVITY_ALIASES: Record<string, string> = {
 };
 
 const SEARCH_TOKEN_EXPANSIONS: Record<string, string[]> = {
-  billiards: ['pool', 'snooker'],
+  billiards: ['snooker'],
   climbing: ['bouldering'],
   poker: ['holdem'],
 };

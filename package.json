@@ -7,6 +7,7 @@
     "build": "pnpm -r --filter ./packages/shared build && pnpm -r --filter \"./apps/*\" build",
     "health:env": "node scripts/health-env.mjs",
     "dev:web": "pnpm --filter dowhat-web dev",
+    "dev:web:verify": "pnpm --filter dowhat-web run dev:verify",
     "dev:mobile": "pnpm --filter doWhat-mobile start",
     "dev:mobile:env": "bash scripts/start-mobile.sh",
     "clean": "pnpm -r --filter \"./**\" run clean || true",
@@ -35,6 +36,7 @@
     "seed:city": "node scripts/seed-city.mjs",
     "seed:events:bangkok": "node scripts/seed-events-bangkok.mjs",
     "seed:taxonomy": "node scripts/seed-activity-taxonomy.mjs",
+    "qa:hanoi:read-quality": "node scripts/hanoi-read-quality-audit.mjs",
     "seed:dowhat": "node scripts/seed-dowhat.mjs",
     "rollback:dowhat": "node scripts/rollback-dowhat.mjs",
     "verify:dowhat": "node scripts/verify-dowhat-guardrails.mjs",
@@ -43,6 +45,7 @@
     "verify:required-fields": "node scripts/verify-required-fields.mjs",
     "verify:discovery-contract": "node scripts/verify-discovery-contract.mjs",
     "verify:seed-health": "node scripts/verify-seed-health.mjs",
+    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node scripts/verify-hanoi-strict-climb-live.mjs",
     "test:onboarding-progress": "pnpm --filter dowhat-web test -- OnboardingProgressBanner apps/doWhat-web/src/app/people-filter/__tests__/page.test.tsx && pnpm --filter doWhat-mobile test -- onboarding-index profile.simple.cta OnboardingNavPrompt OnboardingNavPill people-filter"
   },
   "devDependencies": {

@@ -1,13 +1,11 @@
-import { inferEventLocationKind, inferEventOriginKind, type EventSummary } from '@dowhat/shared';
+import {
+  describeEventDiscoveryPresentation,
+  inferEventLocationKind,
+  inferEventParticipationTruth,
+  type EventSummary,
+} from '@dowhat/shared';
 
 import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from '@/lib/places/labels';
-
-const eventMetadata = (event: EventSummary | null | undefined): Record<string, unknown> | null => {
-  if (!event || !event.metadata || typeof event.metadata !== 'object') {
-    return null;
-  }
-  return event.metadata as Record<string, unknown>;
-};
 
 export const describeEventState = (state?: EventSummary['event_state'] | null): string =>
   state === 'canceled' ? 'Cancelled' : 'Scheduled';
@@ -32,35 +30,63 @@ export const eventStateClass = (state?: EventSummary['event_state'] | null): str
 export const describeEventOrigin = (
   event: EventSummary | null | undefined,
 ): { label: string; helper: string } => {
-  if (!event) {
-    return {
-      label: 'Event',
-      helper: 'Schedule details may still change.',
-    };
-  }
+  const summary = describeEventDiscoveryPresentation(event);
 
-  const originKind = inferEventOriginKind(event);
-  const locationKind = inferEventLocationKind(event);
-
-  if (originKind === 'session') {
+  if (event && summary.primaryActionKind === 'view_session') {
     return {
       label: 'Community session',
-      helper: locationKind === 'canonical_place' ? 'Created on doWhat at a confirmed place' : 'Created on doWhat',
+      helper:
+        inferEventLocationKind(event) === 'canonical_place'
+          ? 'Created on doWhat at a confirmed place'
+          : 'Created on doWhat',
     };
   }
 
-  const metadata = eventMetadata(event);
-  const sourceUrl = typeof metadata?.sourceUrl === 'string' ? metadata.sourceUrl : null;
-  if (sourceUrl) {
-    return {
-      label: 'Published event',
-      helper: locationKind === 'canonical_place' ? 'Imported listing pinned to a confirmed place' : 'Imported listing from a source page',
-    };
-  }
+  return { label: summary.badgeLabel, helper: summary.helper };
+};
 
+export const describeEventPrimaryAction = (
+  event: EventSummary | null | undefined,
+): { label: string; secondaryLabel: string | null } => {
+  const summary = describeEventDiscoveryPresentation(event);
   return {
-    label: 'Open event',
-    helper: locationKind === 'flexible' ? 'Location still being finalized' : 'Organizer-supplied event listing',
+    label: summary.primaryActionLabel,
+    secondaryLabel: summary.secondaryActionLabel,
+  };
+};
+
+export const describeEventParticipation = (
+  event: EventSummary | null | undefined,
+): { label: string; helper: string } => {
+  if (!event) {
+    return {
+      label: 'Attendance unavailable',
+      helper: 'Attendance details are not available for this listing yet.',
+    };
+  }
+
+  const participation = inferEventParticipationTruth(event);
+  if (participation.participation_truth_level === 'linked_first_party') {
+    return {
+      label: 'Session-managed attendance',
+      helper: 'doWhat manages RSVPs and attendance on the linked session page.',
+    };
+  }
+  if (participation.participation_truth_level === 'external_source') {
+    return {
+      label: 'Source-managed attendance',
+      helper: 'RSVPs and attendance stay on the original event source.',
+    };
+  }
+  if (participation.participation_truth_level === 'first_party') {
+    return {
+      label: 'doWhat attendance',
+      helper: 'doWhat manages RSVPs and attendance for this event.',
+    };
+  }
+  return {
+    label: 'Attendance unavailable',
+    helper: 'This listing does not expose a doWhat RSVP or attendance flow.',
   };
 };
 
@@ -94,10 +120,18 @@ export const eventPlaceLabel = (
 ): string | null => {
   const fallback =
     options?.fallback === undefined
-      ? (event && inferEventLocationKind(event) === 'flexible' ? 'Location to be confirmed' : PLACE_FALLBACK_LABEL)
+      ? (
+        event
+          ? inferEventLocationKind(event) === 'flexible'
+            ? 'Location to be confirmed'
+            : inferEventLocationKind(event) === 'custom_location'
+              ? 'Pinned meetup point'
+              : PLACE_FALLBACK_LABEL
+          : PLACE_FALLBACK_LABEL
+      )
       : options.fallback;
   if (!event) return fallback ?? null;
-  const label = normalizePlaceLabel(event.place_label, event.venue_name, event.address);
+  const label = normalizePlaceLabel(event.place?.name ?? null, event.place_label, event.venue_name, event.address);
   if (label === PLACE_FALLBACK_LABEL && fallback && fallback !== PLACE_FALLBACK_LABEL) {
     return fallback;
   }

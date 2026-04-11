@@ -44,8 +44,8 @@ const sampleResponse: MapActivitiesResponse = {
   ],
 };
 
-const Harness = ({ query }: { query: UseQueryResult<MapActivitiesResponse, Error> }) => {
-  const state = useStableNearbyData(query);
+const Harness = ({ query, enabled = true }: { query: UseQueryResult<MapActivitiesResponse, Error>; enabled?: boolean }) => {
+  const state = useStableNearbyData(query, { enabled });
   return (
     <div>
       <span data-testid="count">{state.data?.activities.length ?? 0}</span>
@@ -84,5 +84,14 @@ describe('useStableNearbyData', () => {
 
     rerender(<Harness query={makeQuery({ data: updatedResponse })} />);
     expect(screen.getByTestId('count').textContent).toBe('2');
+  });
+
+  it('clears the snapshot when stable browse caching is disabled', () => {
+    const { rerender } = render(<Harness query={makeQuery({ data: sampleResponse })} enabled />);
+    expect(screen.getByTestId('count').textContent).toBe('1');
+
+    rerender(<Harness query={makeQuery({ isFetching: true })} enabled={false} />);
+    expect(screen.getByTestId('count').textContent).toBe('0');
+    expect(screen.getByTestId('refreshing').textContent).toBe('false');
   });
 });
