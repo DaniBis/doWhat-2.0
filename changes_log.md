@@ -11,16 +11,808 @@
    - `changes_log.md`
    - `ASSISTANT_CHANGES_LOG.md`
 - Exact fix:
-   - `scripts/city-inventory-status-report.mjs` now treats missing or empty `audit.coverage` as `missing`, treats missing duplicate/stale/weak/session-gap audit buckets as `missing`, and blocks launch recommendation when those required audit sections are missing.
-   - `scripts/rematch-venue-activities.mjs` now validates `--limit`, `--offset`, and `--batchSize` as non-negative integers before coercion so invalid user input cannot silently serialize as JSON `null`.
-   - `scripts/city-inventory-audit.mjs` now uses the normalized `];` style for `HOSPITALITY_STEMS`.
-   - focused tests now cover the exact missing-artifact and invalid-numeric-input cases raised by the live review comments.
-- Narrow validation run:
-   - `node --test scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/rematch-venue-activities.test.mjs` → passed (`13` tests, `0` failed)
-   - `grep -n '] ;' scripts/city-inventory-audit.mjs` → no match
-- Expected review-state effect:
-   - the four previously current Copilot comments on `scripts/city-inventory-status-report.mjs`, `scripts/city-inventory-audit.mjs`, and `scripts/rematch-venue-activities.mjs` should become stale/already resolved once this branch head is pushed and GitHub re-evaluates the diff.
+    Issue: fix only the still-current in-scope PR #7 Copilot review blockers on `launch-city-inventory-tooling-20260331` without widening scope beyond the launch-city inventory surface.
+    Files changed:
+       - `scripts/city-inventory-status-report.mjs`
+       - `scripts/rematch-venue-activities.mjs`
+       - `scripts/city-inventory-audit.mjs`
+       - `scripts/__tests__/city-inventory-status-report.test.mjs`
+       - `scripts/__tests__/rematch-venue-activities.test.mjs`
+       - `changes_log.md`
+       - `ASSISTANT_CHANGES_LOG.md`
+       - Exact fix:
+          - `scripts/city-inventory-status-report.mjs` now treats missing or empty `audit.coverage` as `missing`, treats missing duplicate/stale/weak/session-gap audit buckets as `missing`, and blocks launch recommendation when those required audit sections are missing.
+          - `scripts/rematch-venue-activities.mjs` now validates `--limit`, `--offset`, and `--batchSize` as non-negative integers before coercion so invalid user input cannot silently serialize as JSON `null`.
+          - `scripts/city-inventory-audit.mjs` now uses the normalized `];` style for `HOSPITALITY_STEMS`.
+          - focused tests now cover the exact missing-artifact and invalid-numeric-input cases raised by the live review comments.
+   - `apps/doWhat-web/src/app/map/page.tsx`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Live comment audit:
+   - `package.json:49` is already resolved in the current diff because the script points at checked-in `scripts/verify-hanoi-strict-climb-live.mjs`.
+   - `scripts/hanoi-read-quality-audit.mjs:133` is already resolved in the current diff because the admission reason is computed once and reused.
+   - therefore the current review comments do **not** explain the failing check.
+- Exact fix:
+   - `apps/doWhat-web/src/lib/events/presentation.ts` now derives the session-origin helper from discovery presentation state rather than the brittle `inferEventOriginKind(...)` import path.
+   - `apps/doWhat-web/src/app/map/searchMatching.ts` now combines delimiter-gated exact structured token matching with the shared canonical search-intent matcher and a guarded non-hospitality phrase fallback.
+   - `apps/doWhat-web/src/app/map/page.tsx` restores the local map-card session badge text `doWhat session` while preserving the shared `Community session` contract elsewhere.
+- Validation run:
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx -- --runInBand` → passed (`4` suites, `22` tests)
+   - `pnpm -w run test` → still fails only in `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx` with the existing `supabase.auth.getSession()` mock mismatch already proven outside PR #6 scope.
+- Remaining out-of-scope blockers after this pass:
+   - mobile contest-analytics failure remains baseline/out of PR #6 scope.
+   - `Vercel` remains external/policy scope and unchanged.
+- Superseded statement:
+   - This supersedes the earlier 2026-04-09 note that “No broad CI rerun, commit, or push was performed.” A broader local rerun happened in this exact pass; commit/push status must be recorded separately if this pass is committed.
 
+### 2026-04-09 UTC — PR #6-only regression fix pass for the proven in-scope blockers
+- Issue: apply the smallest safe PR #6-only fix pass using the latest scope audit as source of truth, touching only `scripts/verify-no-hardcoded-discovery.mjs`, `apps/doWhat-web/src/lib/events/presentation.ts`, and `apps/doWhat-web/src/app/map/searchMatching.ts`, while leaving mobile baseline failures and Vercel external blockers out of scope.
+- Files changed:
+   - `scripts/verify-no-hardcoded-discovery.mjs`
+   - `apps/doWhat-web/src/lib/events/presentation.ts`
+   - `apps/doWhat-web/src/app/map/searchMatching.ts`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact fix:
+   - preserved the narrow `verify-no-hardcoded-discovery` exemption for `packages/shared/src/activityIntelligence/taxonomy.ts` only, which is the proven remote PR #6 `build-test-health` false positive.
+   - restored the existing `describeEventOrigin(...)` contract for session-origin events in `apps/doWhat-web/src/lib/events/presentation.ts` without changing any mobile/session files or broader wording contracts.
+   - restored the existing delimiter-gated structured matching and haystack/token matching behavior in `apps/doWhat-web/src/app/map/searchMatching.ts` so the current `origin/main`-proven contract is back for the failing web suite.
+- Narrow validation run:
+   - `node scripts/verify-no-hardcoded-discovery.mjs` → passed
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts -- --runInBand` → passed
+   - `pnpm test apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts -- --runInBand` → passed
+- Proven remaining out-of-scope blockers after this pass:
+   - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx` remains a baseline `origin/main` failure and was intentionally not touched.
+   - `Vercel` remains an external deployment blocker tied to unchanged `apps/doWhat-web/vercel.json` and plan limits, not PR #6 code scope.
+- Superseded statement:
+   - This supersedes the earlier 2026-04-09 entry that stopped after the guard-only local fix and reported additional newly exposed in-scope web regressions. Those two proven in-scope web regressions are now fixed locally and pass the requested narrow validation slice. No broad CI rerun, commit, or push was performed.
+
+### 2026-04-09 UTC — PR #6 build-test-health root cause reproduced; Vercel remains external
+- Issue: handle the next safest PR #6 action only by proving whether the live blockers on `hanoi-keepset-from-origin-main-20260328` head `8e17b61e51684f2b460c1aee444d4d064aa381b0` are code-related or external, without widening scope, touching PR #7, or using dirty `main` as a base.
+- Files changed:
+   - `scripts/verify-no-hardcoded-discovery.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact proof:
+   - live GitHub state still shows `build-test-health = failure` and `Vercel = failure` on PR #6 head `8e17b61e51684f2b460c1aee444d4d064aa381b0`.
+   - local reproduction from the PR #6 worktree with the exact workflow command `pnpm run ci` fails immediately in `verify:no-hardcoded-discovery`, before typecheck/lint/tests/build, with: `packages/shared/src/activityIntelligence/taxonomy.ts:118 [hardcoded_discovery_array] Likely hardcoded discovery inventory array literal -> const CANONICAL_ACTIVITY_DEFINITIONS = [`.
+   - the failing file `packages/shared/src/activityIntelligence/taxonomy.ts` is in the current PR #6 diff against `origin/main`.
+   - GitHub check annotations for `build-test-health` only expose `Process completed with exit code 1`; unauthenticated job-log download remains blocked with `403`, so the local reproduction is the exact root-cause evidence.
+- Root cause classification:
+   - `CODE_BLOCKER = yes`
+   - `EXTERNAL_BLOCKER = yes`
+   - code blocker: `scripts/verify-no-hardcoded-discovery.mjs` falsely classified the checked-in canonical taxonomy array as a hardcoded discovery inventory artifact.
+   - external blocker: the linked Vercel failure resolves to Vercel Cron Jobs pricing docs, which state Hobby deployments fail for schedules running more than once per day; the repo’s existing `apps/doWhat-web/vercel.json` contains `"schedule": "0 */6 * * *"`, and that file is **not** part of the PR #6 diff.
+- Exact fix:
+   - limited `hardcoded_discovery_array` scanning in `scripts/verify-no-hardcoded-discovery.mjs` so it skips only `packages/shared/src/activityIntelligence/taxonomy.ts`, preserving the guardrail everywhere else.
+- Validation result:
+   - `node scripts/verify-no-hardcoded-discovery.mjs` now passes, so the reproduced false-positive blocker is cleared locally.
+   - the exact full CI command `pnpm run ci` still fails, but it now reaches Jest instead of stopping in the guard script.
+   - newly exposed failures inside the PR #6 diff:
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts` vs `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/app/map/__tests__/searchMatching.test.ts` vs `apps/doWhat-web/src/app/map/searchMatching.ts`
+   - newly exposed failure outside the PR #6 diff:
+      - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx` crashes because its mocked `supabase.auth` exposes `getUser()` only, while `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx` calls `supabase.auth.getSession()`.
+   - because that mobile failure path is outside the PR #6 diff, continuing to fix it here would widen scope beyond the current branch mandate. No commit or push was made.
+- Superseded statement:
+   - This supersedes the earlier 2026-04-09 verification entry that only localized the CI failure to the broad workflow step `Typecheck + Lint + Tests + Health`, and it also supersedes the narrower interim statement that the code blocker was only the false-positive discovery guard. That guard is fixed locally, but full PR #6 CI still exposes additional downstream failures, including one outside the PR #6 diff.
+
+### 2026-04-09 UTC — PR #6 post-fix verification: code comments resolved, live checks still block merge
+- Issue: perform a strict post-fix verification pass on PR #6 (`hanoi-keepset-from-origin-main-20260328` -> `main`) after the temp-only Hanoi audit dependency cleanup, without widening scope or touching PR #7 code.
+- Files changed:
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Live GitHub / git proof:
+   - PR #6 is still open with base `main`, head `hanoi-keepset-from-origin-main-20260328`, head SHA `8e17b61e51684f2b460c1aee444d4d064aa381b0`, `mergeable=true`, and `mergeable_state=unstable`.
+   - remote ancestry is still the intended stack: `origin/main...origin/hanoi-keepset-from-origin-main-20260328` = `0 2` and `origin/hanoi-keepset-from-origin-main-20260328...origin/launch-city-inventory-tooling-20260331` = `1 1`.
+   - PR #7 bleed check stayed clean: the PR #7-only file set still has `0` overlap with the current PR #6 remote diff.
+   - all 7 live Copilot review comments on PR #6 are now resolved in code: the temp-only script references are gone, the unused `_ActivityName` import is gone, the dead `_parseBoolean` helper is gone, the stray fallback test is back inside the suite, and `inferAdmissionReason(...)` is computed once then reused.
+   - temp-only dependency check across the entire current PR #6 changed-file set returned `violations 0` for `temp/hanoi-map-browser-truth.mjs` and `temp/hanoi-climb-completeness-audit.mjs`.
+- Merge-readiness verdict:
+   - PR #6 is **not merge-ready yet**.
+   - the remaining blocker is live GitHub check state, not a surviving Copilot code-review issue.
+   - current head-check proof: `GitGuardian Security Checks = success`, `build-test-health = failure` (failing step: `Typecheck + Lint + Tests + Health`), and commit status `Vercel = failure` with `Deployment failed.` / Hobby cron limitation.
+- Superseded statement:
+   - This supersedes any earlier implication that finishing the PR #6 temp-path cleanup was sufficient to merge immediately. The code-review blockers are cleared, but the live PR is still blocked on failing checks as of this verification pass.
+- Exact next action:
+   - do **not** merge PR #6 yet.
+   - inspect / rerun the failing `build-test-health` workflow and account for the failing `Vercel` deployment status before calling PR #6 merge-ready.
+
+### 2026-03-17 09:40 UTC — Hanoi `/map` strict search now stays truthful instead of leaking broad browse rows
+- Issue: the live Hanoi `/map` path could look truthful in a stable browse state but still lie once a user entered a specific search. The page kept two nearby-query paths alive at once, could retain stale browse snapshots while a strict query was running or failed, and the smoke harness was too brittle to prove the fix because it was leaking storage state, depending on unstable mock identities, and missing shared helpers used by the rendered activity cards.
+- Files changed:
+   - `apps/doWhat-web/src/app/map/page.tsx`
+   - `apps/doWhat-web/src/app/map/useStableNearbyData.ts`
+   - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+   - `apps/doWhat-web/src/app/map/__tests__/useStableNearbyData.test.tsx`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - `page.tsx` was still capable of mixing broad browse state with strict search state, especially when the strict request errored or returned empty after browse data had already populated.
+   - the restored refactor helpers for filter persistence had been accidentally dropped earlier, causing mount-time failures (`sanitizeVisibleMapFilters`, `resolveStoredMapFilters`, `readLocalMapFilters`, `writeLocalMapFilters`).
+   - `useStableNearbyData.ts` updated its snapshot on object identity alone, which made smoke tests vulnerable to render loops when mocks returned fresh-but-equivalent nearby payloads.
+   - the smoke suite itself was not accurately reproducing live behavior because it leaked `localStorage` / `sessionStorage`, used a non-Hanoi location, and lacked shared helper mocks now exercised by the rendered cards and strict search intent path.
+- Exact fix:
+   - restored the missing map-filter persistence helpers in `page.tsx` and kept the strict-vs-browse split explicit: browse requests are disabled whenever any real query constraint exists, and strict requests become the sole source of visible nearby data for that state.
+   - hardened `useStableNearbyData.ts` so browse snapshots only update when the nearby payload is meaningfully different, preventing stale loops and keeping browse caching stable.
+   - stabilized the smoke harness in `page.smoke.test.tsx` by clearing browser storage between cases, centering mocked geolocation on the Hanoi fixture coordinates, adding the missing `@dowhat/shared` helper mocks (`resolvePlaceBranding`, `resolveCanonicalActivityId`, `evaluateCanonicalActivityMatch`, `evaluateLaunchVisibleActivityPlace`), and switching duplicate-label assertions to count-based checks.
+- Verification:
+   - focused regression slice passed (`11 passed, 0 failed`) across:
+     - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+     - `apps/doWhat-web/src/app/map/__tests__/useStableNearbyData.test.tsx`
+   - live Hanoi nearby truth was rechecked directly against the running app on `localhost:3002` with these observed requests:
+     - default browse: `/api/nearby?lat=21.0285&lng=105.8542&radius=2000&limit=120&debug=1` → `200`, expanded `2000m → 5000m`, `113` activities, broad browse inventory headed by `VietClimb`, gyms, and parks.
+     - strict `climb`: `/api/nearby?lat=21.0285&lng=105.8542&radius=25000&limit=1200&q=climb&debug=1` → `200`, `1` activity, `VietClimb` only.
+     - strict `chess`: `/api/nearby?lat=21.0285&lng=105.8542&radius=25000&limit=1200&q=chess&debug=1` → `200`, `0` activities, `source: client-filter`.
+     - strict `billiards chess climb`: `/api/nearby?lat=21.0285&lng=105.8542&radius=25000&limit=1200&q=billiards%20chess%20climb&debug=1` → `200`, `1` activity, `VietClimb` only.
+- Browser verification note:
+   - a clean anonymous browser session on the existing `localhost:3002` app is redirected by the core-access guard, so I could not capture authenticated end-to-end screenshots from that running instance.
+   - I also attempted a separate bypass-enabled dev server on `3003`, but that instance failed server-side with a pre-existing Tailwind build error in `apps/doWhat-web/src/app/globals.css` (`font-display` class missing). That blocker is unrelated to the map fix, so I did not change it here.
+- User-visible outcome:
+   - default browse still shows broad Hanoi inventory.
+   - `climb` now resolves to strict climbing inventory instead of silently blending with browse rows.
+   - `chess` now stays truthfully empty instead of reusing browse results.
+   - `billiards chess climb` now shows only the strict surviving row (`VietClimb`) and does not fall back to broad browse inventory.
+
+### 2026-03-15 00:18 UTC — Hanoi blocker pass confirms four inventory gaps and fixes martial-arts family query handling
+- Issue: after the Hanoi read-path fixes, the remaining launch blockers were narrowed to `boxing`, `dance`, `chess`, `pottery`, and `martial arts`. This pass needed to determine whether each blocker was caused by missing Hanoi supply, unmapped persisted supply, suppression, or a canonical/query alias gap.
+- Files changed:
+   - `apps/doWhat-web/src/lib/venues/search.ts`
+   - `apps/doWhat-web/src/app/api/search-venues/route.ts`
+   - `apps/doWhat-web/src/lib/__tests__/venueSearch.test.ts`
+   - `apps/doWhat-web/src/app/api/search-venues/__tests__/route.test.ts`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Investigation summary:
+   - latest read-surface artifacts confirmed `boxing`, `dance`, `chess`, and `pottery` were already empty on `/map`, `/api/nearby`, `/api/discovery/activities`, and `/api/search-venues`.
+   - persisted Hanoi inventory review found no strong boxing supply, no pottery supply, only weak/ambiguous dance rows, and only generic/unnamed community-centre chess rows.
+   - `martial arts` was the only remaining query-shaping inconsistency: the rest of the read path treated it as free text, but `/api/search-venues` rejected it with `400 Invalid or missing activity parameter.` because it is a family term, not a searchable canonical activity id.
+- Exact fix:
+   - added `normalizeVenueSearchActivities(...)` in `apps/doWhat-web/src/lib/venues/search.ts`.
+   - `search-venues` now accepts `martial arts` as a launch-safe family term and fans out to the already searchable canonicals `boxing`, `kickboxing`, `judo`, `bjj`, and `mma`, then merges/dedupes the results.
+   - this pass intentionally did not invent Hanoi supply or add speculative manual overrides for weak dance/chess candidates.
+- Hanoi blocker classification:
+   - `boxing`: no real strong Hanoi supply found in persisted inventory; remains an acceptable known gap.
+   - `dance`: persisted hints exist, but they are weak/ambiguous and not launch-safe enough for manual mapping; remains an acceptable known gap.
+   - `chess`: persisted rows exist and some are already mapped, but they are generic community/unnamed noise rather than launch-ready true positives; remains an acceptable known gap.
+   - `pottery`: no real Hanoi supply found in persisted inventory; remains an acceptable known gap.
+   - `martial arts`: canonical family-term gap fixed; live `search-venues` now returns `200` with empty results instead of `400`, while map/nearby/discovery continue to suppress the lone generic sports-centre false positive.
+- Exact Hanoi venues reviewed:
+   - `boxing`: `T-Box` reviewed and classified as false positive hospitality noise.
+   - `dance`: `Double Dragons Statue (Đôi Rồng Thiêng Hồ Tây)` and `I` reviewed as weak ambiguous candidates; `La Salsa` reviewed as hospitality noise.
+   - `chess`: `Unnamed place`, `Nhà Sinh Hoạt Khu Dân Cư`, `Nhà Văn hóa Khu dân cư số 1`, `Nhà văn hóa thể thao và sinh hoạt cộng đồng phường Vĩnh Tuy`, `Nhà văn hóa tổ 9 phường Long Biên`, `Nhà văn hoá Tương Mai`, `Titops`, and `Trung tâm Văn hóa Thể thao phường Tương Mai` reviewed as weak/generic launch-noise rows.
+   - `martial arts`: `Nhà thi đấu Tương Mai` preserved only as a suppressible audit finding, not a visible true positive.
+- Verification:
+   - focused regression slice passed (`8 passed, 0 failed`) across:
+     - `apps/doWhat-web/src/lib/__tests__/venueSearch.test.ts`
+     - `apps/doWhat-web/src/app/api/search-venues/__tests__/route.test.ts`
+   - live validation: `/api/search-venues?activity=martial%20arts...` now returns `200` with `{ source: "family-search", results: 0, items: 0 }`.
+   - refreshed Hanoi blocker artifact written to `artifacts/hanoi-read-quality/2026-03-15_00-00-00/hanoi-read-quality-blockers-pass.json`.
+- Launch status:
+   - Hanoi is **launchable with known gaps**.
+   - the remaining blockers for these five activities are now conclusively inventory-quality gaps, not unresolved query-shaping bugs.
+
+### 2026-03-14 05:42 UTC — Hanoi read-surface query intent is now launch-safe across map, nearby, discovery, and venue search
+- Issue: Hanoi launch-readiness audit found that visible activity search quality was still broken on live read surfaces: `/api/search-venues` returned zero results for most canonical activities because it only searched the legacy `venues` table, `/api/discovery/activities` ignored query filters entirely, and the shared map/discovery search logic still admitted weak hospitality/community/sports-centre noise for specific intents like `bouldering` and `martial arts`.
+- Files changed:
+   - `apps/doWhat-web/src/lib/discovery/searchIntent.ts`
+   - `apps/doWhat-web/src/lib/discovery/__tests__/searchIntent.test.ts`
+   - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - `apps/doWhat-web/src/app/map/searchMatching.ts`
+   - `apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`
+   - `apps/doWhat-web/src/app/api/discovery/activities/route.ts`
+   - `apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts`
+   - `scripts/hanoi-read-quality-audit.mjs`
+   - `scripts/__tests__/hanoi-read-quality-audit.test.js`
+   - `package.json`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - the map and nearby surfaces were using loose text/tag matching, so broad `activity_types`, amenity words, or community/hospitality context could satisfy specific queries.
+   - the discovery activities route never parsed query filters, so `q=` was silently ignored and the surface kept returning broad browse inventory even for specific intents.
+   - venue search depended on the `venues` table alone, which is too sparse for Hanoi compared with the place-backed discovery inventory.
+- Exact fix:
+   - added a narrow shared helper in `apps/doWhat-web/src/lib/discovery/searchIntent.ts` that resolves canonical activity ids, requires stronger evidence for specific intent, preserves exact structured matches, and blocks hospitality-first rows from matching on amenity words alone.
+   - switched both the discovery engine searchText filtering and the map search pipeline to use that helper instead of loose haystack matching.
+   - fixed `/api/discovery/activities` to parse and forward the same discovery filters as `/api/nearby`, including `q`, `types`, and `tags`.
+   - added a place-backed fallback in `discoverNearbyVenues()` so `/api/search-venues` returns real Hanoi discovery supply when the legacy `venues` table has no hits.
+   - built a reproducible live Hanoi harness in `scripts/hanoi-read-quality-audit.mjs` and corrected it to audit the real query-shaped `/api/nearby` and `/api/discovery/activities` paths rather than simulating client filtering over browse payloads.
+- Before/after examples:
+   - before: `climbing` / `bouldering` returned `0` venue results from `/api/search-venues`; after: all read surfaces now return `VietClimb`, and `climbing` also returns `Beefy Boulders Tay Ho`.
+   - before: `bouldering` and `martial arts` audits surfaced generic sports/community noise through loose matching; after: `bouldering` on map/nearby/discovery reduces to `VietClimb`, and the remaining `martial arts` row is explicitly classified by the audit as a suppressible false positive rather than broad browse noise.
+   - before: `/api/discovery/activities?q=...` effectively behaved like browse; after: discovery now aligns with query intent and matches the corrected map/nearby surfaces for strong queries like `climbing`, `bouldering`, and `yoga`.
+- Verification:
+   - focused regression slice passed (`15 passed, 0 failed`) across:
+     - `apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts`
+     - `apps/doWhat-web/src/lib/discovery/__tests__/searchIntent.test.ts`
+     - `apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`
+   - live Hanoi audit rerun written to `artifacts/hanoi-read-quality/2026-03-14_05-20-00/hanoi-read-quality-after.json`.
+   - audited queries: `climbing`, `bouldering`, `yoga`, `running`, `badminton`, `tennis`, `football`, `basketball`, `swimming`, `boxing`, `martial arts`, `dance`, `chess`, `pottery`.
+- Launch status:
+   - Hanoi is now **close / launchable with known gaps** for the audited read surfaces: core sports/wellness queries are materially improved and no longer blocked by the earlier route/search bugs.
+   - remaining weak spots are inventory coverage, not the repaired query path: `boxing`, `dance`, `chess`, and `pottery` still return zero visible results in the audited radius, and family query `martial arts` is still unsupported by `/api/search-venues` because it is not a canonical activity id.
+
+### 2026-03-14 05:05 UTC — Production activity taxonomy and venue matching now use a layered, evidence-based canonical system
+- Issue: replace the small handmade activity list with a production-grade, explainable taxonomy and venue-matching system that fits current architecture, prefers precision over recall for specific intent, and avoids broadening discovery by guessing.
+- Files changed:
+   - `packages/shared/src/activityIntelligence/types.ts`
+   - `packages/shared/src/activityIntelligence/taxonomy.ts`
+   - `packages/shared/src/activityIntelligence/matching.ts`
+   - `packages/shared/src/activities/catalog.ts`
+   - `packages/shared/src/index.ts`
+   - `packages/shared/src/__tests__/activityIntelligence.test.ts`
+   - `packages/shared/src/__tests__/activityTaxonomy.test.ts`
+   - `apps/doWhat-web/src/lib/venues/constants.ts`
+   - `apps/doWhat-web/src/lib/venues/search.ts`
+   - `apps/doWhat-web/src/lib/venues/types.ts`
+   - `apps/doWhat-web/src/app/api/search-venues/route.ts`
+   - `apps/doWhat-web/src/app/api/vote-activity/route.ts`
+   - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+   - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+   - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - `apps/doWhat-web/src/lib/discovery/__tests__/placeFallbackInference.test.ts`
+   - `apps/doWhat-web/src/lib/__tests__/venueSearch.test.ts`
+   - `docs/activity_intelligence_taxonomy.md`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - the existing activity system depended on a small preset list plus ad hoc keyword/category logic spread across shared and web layers.
+   - that made activity handling too narrow, too hard to explain, and too permissive for specific intent queries when raw provider categories or weak keywords were present.
+- Exact fix:
+   - added a shared canonical taxonomy with broad global families, multilingual aliases, venue/facility types, provider mappings, hard negatives, evidence weights, query-intent thresholds, and launch-city relevance.
+   - added shared matching helpers that normalize aliases, infer compatible venue types, score evidence across provider/session/manual/internal sources, and reject weak specific-intent matches unless the score and evidence profile clear the activity threshold.
+   - kept the current DB contract stable by deriving legacy `ACTIVITY_CATALOG_PRESETS` from the new taxonomy via optional `legacyCatalogId`.
+   - switched venue search and route validation to canonical activity ids, and filtered user-facing specific queries to only venues that remain eligible under the strict evidence policy.
+   - switched cron/activity matching and discovery fallback inference to the shared canonical matcher so fresh, cached, and durable mapping flows stay aligned.
+- Verification:
+   - focused regression slice passed (`29 passed, 0 failed`) across:
+     - `packages/shared/src/__tests__/activityIntelligence.test.ts`
+     - `packages/shared/src/__tests__/activityTaxonomy.test.ts`
+     - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+     - `apps/doWhat-web/src/lib/discovery/__tests__/placeFallbackInference.test.ts`
+     - `apps/doWhat-web/src/lib/__tests__/venueSearch.test.ts`
+   - file-level error scans reported no errors in all touched code files.
+- Guardrails preserved:
+   - raw provider category membership alone is not enough to rank or admit a place highly for specific intent.
+   - generic parks, hospitality-first places, and consumerist venues remain rejected for specific activity queries unless strong counter-evidence exists.
+   - the implementation stays production-practical by fitting the current matcher/search/discovery flows without a schema migration.
+
+### 2026-03-14 04:10 UTC — Hanoi read-surface launch smoke verification passed for nearby/discovery/search/map shaping
+- Issue: verify the newly landed Hanoi-only read-surface duplicate shield without reopening DB canonicalization, matcher semantics, seed packs, auth, or city-wide inventory tooling.
+- Files changed:
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact verification run:
+   - web-only TypeScript check passed with no output/errors: `pnpm --filter dowhat-web exec tsc --noEmit --pretty false`
+   - focused Jest slice passed (`32 passed, 0 failed`) across:
+     - `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`
+     - `apps/doWhat-web/src/app/api/nearby/__tests__/payload.test.ts`
+     - `apps/doWhat-web/src/app/api/discovery/activities/__tests__/route.test.ts`
+     - `apps/doWhat-web/src/app/api/search-venues/__tests__/route.test.ts`
+     - `apps/doWhat-web/src/app/map/__tests__/searchPipeline.integration.test.ts`
+     - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+   - live Hanoi nearby smoke returned `200` on fresh and cached requests at `lat=21.0285&lng=105.8542&radius=2000&limit=12`; debug probe confirmed cached reconstruction is active with `cache.hit=true`, `debug.cacheHit=true`, and `itemsBeforeDedupe=12/itemsAfterDedupe=12`.
+- Verified surfaces:
+   - `/api/nearby` request/response shaping still works with Hanoi coordinates.
+   - `/api/discovery/activities` route shaping remains intact through focused route tests.
+   - `/api/search-venues` still aligns visible `items` and ranked `results` through focused route tests.
+   - map/list/search presentation shaping remains intact through map search pipeline and page smoke tests.
+   - cached reconstruction path remains compatible with the Hanoi shield in the live local environment.
+- Remaining Hanoi-visible risks:
+   - this pass confirms the read surfaces still function, but it does not prove that every real Hanoi duplicate cluster now resolves ideally; manual scan of the top nearby/map/search results is still needed.
+   - the cached debug probe showed `itemsBeforeDedupe=12` and `itemsAfterDedupe=12` for this specific query, so this smoke proves cache compatibility, not that this coordinate/radius happened to include an active duplicate collision.
+
+### 2026-03-14 03:40 UTC — Hanoi launch shield now suppresses weak read-surface duplicate place echoes without mutating DB truth
+- Issue: make Hanoi launchable on visible discovery/map/search surfaces by adding a conservative read-layer duplicate shield, while explicitly avoiding another DB canonicalization pass, matcher-semantics changes, seed-pack rewrites, auth changes, or broad discovery refactors.
+- Files changed:
+   - `apps/doWhat-web/src/lib/discovery/engine.ts`
+   - `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - the existing shared discovery dedupe already collapsed exact identity/provider echoes, but it intentionally preserved separate canonical place ids even when Hanoi read surfaces still showed obvious same-name same-location duplicates.
+   - that left Hanoi list/map/search feeds vulnerable to weak duplicate rows and `Unnamed place` clusters surviving all the way to the user-facing payload, even when a clearly stronger activity-backed candidate was present.
+- Exact fix:
+   - added a Hanoi-only final presentation shield inside `apps/doWhat-web/src/lib/discovery/engine.ts`, after activity-first gating/ranking and before response/cache shaping.
+   - the shield clusters only obvious same-label same-location Hanoi candidates, scores each cluster to prefer stronger activity/session/verified/place-backed rows, penalizes unnamed/generic and food-drink-noise rows, and keeps one merged visible winner.
+   - unnamed Hanoi clusters are now suppressed entirely when none of the rows carry meaningful activity evidence.
+   - applied the same shield to cached discovery reconstruction and venue-search discovery items so fresh and cached nearby/discovery/search outputs stay aligned.
+   - filtered cached/fresh `discoverNearbyVenues()` ranked venue results to the same visible discovery-item ids so venue search no longer returns hidden duplicate echoes alongside a deduped item feed.
+- Guardrails preserved:
+   - no DB writes or truth deletion were added.
+   - activity-first eligibility remains unchanged.
+   - generic merge behavior outside Hanoi remains unchanged.
+   - distinct nearby venues with different labels still remain visible.
+- Verification:
+   - `apps/doWhat-web/src/lib/discovery/__tests__/dedupeMerge.test.ts` passed (`7 passed, 0 failed`).
+   - added focused regressions covering: strongest-candidate wins for same-name same-location Hanoi duplicates, unnamed-cluster suppression, low-signal food/drink duplicate losing to a real activity venue, and non-suppression of legitimate nearby distinct venues.
+
+### 2026-03-14 01:50 UTC — Narrow canonical duplicate merge pass suppressed the smallest safe Hanoi/Bangkok duplicate set
+- Issue: move beyond the proven-no-op delete-only duplicate cleanup by implementing the smallest reference-safe canonicalization path for launch-city duplicate clusters in Hanoi and Bangkok, without reopening cron auth, matcher semantics, audit connectivity, discovery/UI/filter logic, or inventing new venue truth.
+- Files changed:
+   - `scripts/lib/canonicalize-launch-city-duplicates.cjs`
+   - `scripts/canonicalize-launch-city-duplicates.mjs`
+   - `scripts/city-inventory-audit.mjs`
+   - `scripts/__tests__/canonicalize-launch-city-duplicates.test.cjs`
+   - `scripts/__tests__/city-inventory-audit.test.mjs`
+   - `scripts/jest.config.cjs`
+   - `package.json`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+   - verification artifacts under `artifacts/inventory-live/2026-03-14_01-47-40/`
+   - removed temporary probe: `temp/inspect_canonical_duplicate_candidates.mjs`
+- Root cause:
+   - the 2026-03-13 delete-only pass proved that some apparent duplicate place rows cannot be safely removed because downstream truth still depends on them, especially via `sessions.place_id`.
+   - the launch blocker was therefore not “find more delete candidates,” but “preserve canonical truth while suppressing only the smallest defensible duplicate subset.”
+   - the official launch audit still needs the broad `120m` duplicate-cluster definition, while safe canonicalization eligibility must stay much narrower; conflating those thresholds would undercount blockers.
+- Exact fix:
+   - added `scripts/lib/canonicalize-launch-city-duplicates.cjs`, which centralizes duplicate clustering, canonical row selection, suppression metadata, and reference-safety checks.
+   - added `scripts/canonicalize-launch-city-duplicates.mjs`, a live operator script that loads all places in the Hanoi/Bangkok bbox, inspects downstream refs across `activities`, `events`, `sessions`, `place_sources`, `venue_activities`, `activity_manual_overrides`, and `user_saved_activities`, then applies only reference-safe canonicalization.
+   - the new path never deletes place rows; it writes suppression/canonical state into `places.metadata.duplicate_canonicalization`, keeps one canonical row, rewrites only safe refs (`activities`, `events`, `sessions`) when needed, and blocks duplicates carrying risky source/mapping/manual/save state.
+   - updated `scripts/city-inventory-audit.mjs` so suppressed duplicates are excluded from official duplicate blocker counts while the audit’s blocker distance stays at the intended `120m` threshold.
+   - added focused coverage in `scripts/__tests__/canonicalize-launch-city-duplicates.test.cjs` and a regression in `scripts/__tests__/city-inventory-audit.test.mjs` proving suppressed duplicates no longer count toward duplicate blockers.
+- Exact live duplicate decisions:
+   - Hanoi: canonicalized three exact-coordinate placeholder/session-backfill pairs — `this is it`, `asda`, and `qdwevdwcsa`.
+   - Bangkok: canonicalized one defensible pair — `Jetts`.
+   - Bangkok blocked on purpose: `สวนสราญรมย์` remained unmerged because the duplicate side did not match the canonical category signature (`category-signature-mismatch`).
+- Verification:
+   - focused scripts Jest run passed for the new canonicalization coverage and the audit suppression regression (`2 passed, 0 failed`).
+   - `artifacts/inventory-live/2026-03-14_01-47-40/hanoi-duplicate-canonicalization-dry-run.json` reports `beforeDuplicateBlockerCount=70`, `afterDuplicateBlockerCount=67`, `candidateClusters=3`, `blockedClusters=0`.
+   - `artifacts/inventory-live/2026-03-14_01-47-40/hanoi-duplicate-canonicalization-apply.json` reports `appliedMerges=3`, `appliedSuppressions=3`, with no downstream rewrites required.
+   - `artifacts/inventory-live/2026-03-14_01-47-40/bangkok-duplicate-canonicalization-dry-run.json` reports `beforeDuplicateBlockerCount=83`, `afterDuplicateBlockerCount=82`, `candidateClusters=1`, `blockedClusters=1`.
+   - `artifacts/inventory-live/2026-03-14_01-47-40/bangkok-duplicate-canonicalization-apply.json` reports `appliedMerges=1`, `appliedSuppressions=1`; the blocked `สวนสราญรมย์` pair is recorded with `blockedReasons=["category-signature-mismatch"]`.
+   - official post-apply city audits now report `duplicateClusters.count=68` for Hanoi and `duplicateClusters.count=84` for Bangkok in `hanoi-audit-after-canonicalization.json` and `bangkok-audit-after-canonicalization.json`.
+   - Bangkok `padel` remains unchanged at `count=1` in `artifacts/inventory-live/2026-03-14_01-47-40/bangkok-audit-after-canonicalization.json`; this pass did not alter activity supply truth.
+- Commands / tests run:
+   - `node scripts/canonicalize-launch-city-duplicates.mjs --city=hanoi --output=artifacts/inventory-live/2026-03-14_01-47-40/hanoi-duplicate-canonicalization-dry-run.json`
+   - `node scripts/canonicalize-launch-city-duplicates.mjs --city=bangkok --output=artifacts/inventory-live/2026-03-14_01-47-40/bangkok-duplicate-canonicalization-dry-run.json`
+   - `node scripts/canonicalize-launch-city-duplicates.mjs --city=hanoi --apply --output=artifacts/inventory-live/2026-03-14_01-47-40/hanoi-duplicate-canonicalization-apply.json`
+   - `node scripts/canonicalize-launch-city-duplicates.mjs --city=bangkok --apply --output=artifacts/inventory-live/2026-03-14_01-47-40/bangkok-duplicate-canonicalization-apply.json`
+   - `pnpm inventory:audit:city --city=hanoi --strict --format=json --output=artifacts/inventory-live/2026-03-14_01-47-40/hanoi-audit-after-canonicalization.json`
+   - `pnpm inventory:audit:city --city=bangkok --strict --format=json --output=artifacts/inventory-live/2026-03-14_01-47-40/bangkok-audit-after-canonicalization.json`
+- Resulting launch status:
+   - Hanoi duplicate blockers are reduced but still failing at `68`, so launch remains blocked on duplicate cleanup follow-up, not on unsafe delete pressure.
+   - Bangkok duplicate blockers are reduced but still failing at `84`; Bangkok also still has only one persisted-source-supported `padel` venue.
+   - Da Nang remains unchanged in this pass and still has `0` persisted-source-supported `padel` venues.
+- Remaining risks / follow-up:
+   - this pass intentionally avoids deleting places and intentionally avoids canonicalizing duplicates that carry `place_sources`, `venue_activities`, `activity_manual_overrides`, or `user_saved_activities` on the duplicate side.
+   - any broader duplicate cleanup now needs a deliberately larger canonical merge strategy, not another delete-only sweep.
+
+### 2026-03-13 10:58 UTC — Narrow duplicate/padel pass proved no safe duplicate deletes and confirmed thin padel supply
+- Issue: continue the narrow 13 March launch-quality pass without reopening cron auth, route batching, audit connectivity, matcher semantics, discovery/UI/filter logic, or speculative venue creation; only act on duplicate cleanup in Hanoi/Bangkok and persisted-source padel evidence in Bangkok/Da Nang.
+- Files changed:
+   - `scripts/lib/cleanup-launch-city-duplicates.cjs`
+   - `scripts/cleanup-launch-city-duplicates.mjs`
+   - `scripts/__tests__/cleanup-launch-city-duplicates.test.js`
+   - `scripts/city-padel-evidence.mjs`
+   - `scripts/jest.config.cjs`
+   - `package.json`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+   - verification artifacts under `artifacts/inventory-live/2026-03-13_16-42-00/`
+- Root cause:
+   - the apparent Hanoi exact duplicates (`asda`, `qdwevdwcsa`, `this is it`) are not safe cleanup targets in the live database because at least some of those rows are already referenced by downstream `sessions.place_id`, so deleting them would break persisted session truth.
+   - Bangkok has no deterministic exact same-name/same-coordinate low-signal duplicate buckets after a full-city paginated scan, so there is no safe narrow duplicate delete set there either.
+   - Bangkok `padel` remains thin because full-city persisted-source evidence still finds exactly one real padel place (`No Drama Padel`), already correctly mapped.
+   - Da Nang `padel` remains empty because full-city persisted-source evidence finds zero places or provider-source rows containing padel signals.
+- Exact fix:
+   - added `scripts/lib/cleanup-launch-city-duplicates.cjs` and `scripts/cleanup-launch-city-duplicates.mjs`, a deterministic duplicate-cleanup path that only permits exact same-name/same-coordinate duplicates when every row is low-signal (`primary_source=null`, no categories/tags) and has zero downstream references across `place_sources`, `venue_activities`, `activity_manual_overrides`, `activities`, `sessions`, and `events`.
+   - added focused Jest coverage in `scripts/__tests__/cleanup-launch-city-duplicates.test.js` and wired the scripts Jest project through `scripts/jest.config.cjs` / root `jest.config.js`.
+   - added `scripts/city-padel-evidence.mjs`, a paginated persisted-source evidence reporter for Bangkok and Da Nang padel supply using only `places`, `place_sources`, `venue_activities`, and `activity_manual_overrides` truth.
+   - fixed both new scripts to paginate over the full city bbox so the reports are not truncated at the first PostgREST page.
+- Verification:
+   - focused test: `scripts/__tests__/cleanup-launch-city-duplicates.test.js` passed (`2 passed, 0 failed`).
+   - direct live reference probe against the candidate Hanoi IDs showed downstream `sessions.place_id` rows still reference `f992cb7a-650c-4a57-9a2f-b312c8f07ceb` (`asda`) and `927269e6-5a2d-4749-ba6d-2261370aba88` (`qdwevdwcsa`), which correctly disqualifies deletion.
+   - `artifacts/inventory-live/2026-03-13_16-42-00/hanoi-duplicate-cleanup-dry-run.json` reports `candidateBuckets=0`, `candidateDeletes=0`.
+   - `artifacts/inventory-live/2026-03-13_16-42-00/bangkok-duplicate-cleanup-dry-run.json` reports `candidateBuckets=0`, `candidateDeletes=0`.
+   - `artifacts/inventory-live/2026-03-13_16-42-00/bangkok-padel-evidence.json` reports `placesInBbox=2711`, `candidatePlaces=1`, `mappedPadelCandidates=1`, `unmappedPadelCandidates=0`; the only persisted-source padel venue is `No Drama Padel`, already mapped.
+   - `artifacts/inventory-live/2026-03-13_16-42-00/danang-padel-evidence.json` reports `placesInBbox=334`, `candidatePlaces=0`, `mappedPadelCandidates=0`, `unmappedPadelCandidates=0`.
+- Resulting launch status:
+   - Hanoi remains blocked on duplicate clusters because the narrow deterministic delete path finds no live-safe deletions under current truth.
+   - Bangkok remains blocked on duplicate clusters and thin padel supply; there is still only one persisted-source padel venue.
+   - Da Nang remains blocked on padel supply; current persisted-source truth still shows zero padel venues.
+- Remaining risks / follow-up:
+   - no further duplicate cleanup should be applied without a broader canonical merge/update plan that preserves downstream `sessions`/`events`/mapping references.
+   - no Bangkok/Da Nang padel improvement is justified without new persisted-source provider data or a strongly justified manual override based on real venue evidence.
+
+### 2026-03-12 18:10 UTC — Launch-city running coverage was blocked by a missing canonical `running` catalog row, not by city seeds or matcher semantics
+- Issue: finish the next narrow launch-quality pass for Hanoi, Bangkok, and Da Nang without reopening rematch auth/batching, audit connectivity, cron auth, or discovery semantics; only fix blockers proven by live evidence.
+- Files changed:
+   - `apps/doWhat-web/supabase/migrations/069_activity_catalog_running_seed_fix.sql`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+   - live verification artifacts under `artifacts/inventory-live/2026-03-12_18-10-00/`
+- Root cause:
+   - Hanoi `running`, Bangkok `running`, and Da Nang `running` were all failing for the same cross-city reason: the live `activity_catalog` did not contain any `running` row at all, so the matcher had no canonical activity to emit even when place names/tags/categories already contained strong `track` / `stadium` / `athletics` / `running` evidence.
+   - This was not a city seed-pack problem: the launch-city seed/config surfaces already included `running` and `padel` for Hanoi, Bangkok, and Da Nang.
+   - This was not a matcher keyword problem: the matcher and shared catalog already recognized `running` signals like `track` and `stadium`.
+   - Bangkok `padel` remained thin because current persisted evidence still shows only one real venue (`No Drama Padel`), and Da Nang `padel` remained empty because current persisted inventory still shows no real padel venue evidence.
+   - Hanoi/Bangkok duplicate blockers remain dominated by `Unnamed place` clusters and other low-signal duplicate noise, not launch-specific activity-mapping regressions.
+- Exact fix:
+   - added `apps/doWhat-web/supabase/migrations/069_activity_catalog_running_seed_fix.sql` to upsert the canonical `running` activity row (id `10`, slug `running`) with the expected running keyword set so future environments cannot miss it,
+   - inserted/upserted the same `running` row immediately in the live environment via the existing Supabase service-role REST path,
+   - reran only the smallest relevant verification loop: city rematch apply, strict city audit, and combined status for Hanoi, Bangkok, and Da Nang.
+- Verification:
+   - pre-fix live query showed `activity_catalog` had rows for `chess`, `climbing`, `yoga`, `padel`, and `bouldering`, but no `running` row.
+   - Hanoi: `artifacts/inventory-live/2026-03-12_18-10-00/hanoi-rematch-apply.json` shows `processed=2220`, `matches=46`, `upserts=24`; `artifacts/inventory-live/2026-03-12_18-10-00/hanoi-audit.json` shows `mappedPlaces` improved `21 → 45` and `running` improved `0 → 24`, moving Hanoi coverage to `acceptable`.
+   - Bangkok: `artifacts/inventory-live/2026-03-12_18-10-00/bangkok-rematch-apply.json` shows `processed=2707`, `matches=49`, `upserts=22`; `artifacts/inventory-live/2026-03-12_18-10-00/bangkok-audit.json` shows `mappedPlaces` improved `24 → 46` and `running` improved `0 → 22`, while `padel` remains `1` (`suspicious`).
+   - Da Nang: `artifacts/inventory-live/2026-03-12_18-10-00/danang-rematch-apply.json` shows `processed=333`, `matches=10`, `upserts=5`; `artifacts/inventory-live/2026-03-12_18-10-00/danang-audit.json` shows `mappedPlaces` improved `3 → 9`, `running` improved `0 → 5`, and duplicate clusters remain `acceptable`.
+   - combined status in `artifacts/inventory-live/2026-03-12_18-10-00/live-inventory-status.md` now shows:
+     - Hanoi `coverage status: acceptable`
+     - Bangkok `coverage status: suspicious`
+     - Da Nang `coverage status: failing` only because `padel` remains `0`
+- Resulting launch status:
+   - Hanoi remains `blocked`, but no longer on coverage; the remaining blocker is duplicate cleanup (`71` duplicate clusters in the latest audit).
+   - Bangkok remains `blocked` on two known issues: duplicate cleanup (`85` duplicate clusters) and thin `padel` coverage (`1`).
+   - Da Nang remains `blocked`, but now only on proven padel-market thinness / missing persisted padel supply; `running` is no longer a blocker.
+- Remaining risks / follow-up:
+   - no further auth, batching, cron, or discovery-semantics work is indicated by this pass,
+   - the next pass should be a targeted duplicate-noise cleanup for Hanoi/Bangkok plus a separate evidence pass for real Bangkok/Da Nang padel supply; it should not reopen matcher semantics unless new evidence disproves this catalog-root-cause fix.
+
+### 2026-03-12 16:20 UTC — Launch-city quality pass closed the proven Hanoi/Bangkok session gaps and re-measured Da Nang
+- Issue: complete a narrow launch-quality pass for Hanoi, Bangkok, and Da Nang without reopening rematch auth/batching, audit connectivity, or discovery semantics; only fix concrete audit blockers proven by the live artifacts.
+- Files changed:
+   - `scripts/apply-launch-city-manual-overrides.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+   - live verification artifacts under `artifacts/inventory-live/2026-03-12_16-20-00/`
+- Root cause:
+   - Hanoi still had one real session-to-mapping gap: `VietClimb` had session evidence for `bouldering` but no equivalent `venue_activities` mapping.
+   - Bangkok still had one real session-to-mapping gap: `Smiths Bar` had session evidence for `chess` but no equivalent `venue_activities` mapping.
+   - Da Nang was not blocked by a rematch failure anymore; it remained thin because the mapped base is still only a few real activity places, leaving `running` and `padel` uncovered.
+   - Remaining Hanoi/Bangkok blockers after the session gaps were true coverage / duplicate-cleanliness issues, not execution issues.
+- Exact fix:
+   - added `scripts/apply-launch-city-manual-overrides.mjs`, an idempotent Supabase REST helper that upserts only the two proven launch blockers into `activity_manual_overrides`:
+     - Hanoi `VietClimb` → `bouldering`
+     - Bangkok `Smiths Bar` → `chess`
+   - reran only the narrow city-specific rematch/audit loops needed to verify those overrides and compare the new artifacts against the earlier baseline.
+- Verification:
+   - Hanoi: `artifacts/inventory-live/2026-03-12_16-20-00/hanoi-rematch-apply.json` shows `manualApplied=1`; `artifacts/inventory-live/2026-03-12_16-20-00/hanoi-audit.json` now shows `manualOverridePlaces=1`, `bouldering` remains `acceptable`, and `sessionMappingGaps` is now `acceptable`.
+   - Bangkok: `artifacts/inventory-live/2026-03-12_16-20-00/bangkok-rematch-apply.json` shows `manualApplied=1`; `artifacts/inventory-live/2026-03-12_16-20-00/bangkok-audit.json` now shows `manualOverridePlaces=1`, `chess` is manual-backed, and `sessionMappingGaps` is now `acceptable`.
+   - Da Nang: `artifacts/inventory-live/2026-03-12_14-15-00/danang-audit.json` confirms the city is no longer at a zero-mapped base: `climbing`, `bouldering`, and `yoga` are acceptable, duplicate clusters are acceptable, and the remaining failures are `running` and `padel` coverage only.
+- Resulting launch status:
+   - Hanoi remains `blocked`, but the blocker is now narrowed to `running` coverage plus duplicate clusters (`71` in the latest audit), not the old `VietClimb` session gap.
+   - Bangkok remains `blocked`, but the blocker is now narrowed to `running` coverage, thin `padel` coverage (`1`), and duplicate clusters (`85`), not the old `Smiths Bar` session gap.
+   - Da Nang remains `blocked`, but only on thin `running` / `padel` coverage; duplicate clusters are already acceptable.
+- Remaining risks / follow-up:
+   - no further infra work is indicated by these runs; the next pass should focus on real city coverage depth (`running`, `padel`) and duplicate cleanup, not matcher plumbing.
+
+### 2026-03-12 14:15 UTC — City inventory audit switched off unreachable direct DB dependency in local operator env
+- Issue: `pnpm inventory:audit:city --city=<slug> --strict --format=json` was still failing in the local operator environment with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co` even though city rematch dry-run/apply already worked live.
+- Files changed:
+   - `scripts/city-inventory-audit.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - `scripts/city-inventory-audit.mjs` only supported direct PostgreSQL via `pg`, and it resolved `DATABASE_URL` first (falling back to `SUPABASE_DB_URL`), both of which point at `postgresql://...@db.kdviydoftmjuglaglsmm.supabase.co:5432/postgres` in the current env files,
+   - the working rematch path does **not** depend on that hostname; it calls the local `/api/cron/activity-matcher` route with `CRON_SECRET`, while the repo already has reachable HTTP-based Supabase credentials (`SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`) used by the diagnostics path.
+- Exact fix:
+   - added an explicit REST/service-role execution mode to `scripts/city-inventory-audit.mjs` using the same Supabase REST access pattern already proven in `scripts/city-inventory-diagnostics.mjs`,
+   - made REST mode the preferred local/operator path when `SUPABASE_URL` (or public variant) plus `SUPABASE_SERVICE_ROLE_KEY` are present,
+   - kept direct PostgreSQL as fallback only when REST env is unavailable,
+   - upgraded the usage/help and failure messaging so a direct-DB failure now explains the env precedence, the resolved host, and the REST fallback strategy instead of silently depending on `db.<project>.supabase.co`.
+- Verification:
+   - `pnpm inventory:audit:city --city=hanoi --strict --format=json --output=artifacts/inventory-live/2026-03-12_14-15-00/hanoi-audit.json` now executes successfully and writes the audit artifact; exit code is `1` only because `--strict` correctly flags the resulting audit as `overallStatus=failing`.
+   - `pnpm inventory:audit:city --city=bangkok --strict --format=json --output=artifacts/inventory-live/2026-03-12_14-15-00/bangkok-audit.json` now executes successfully and writes the audit artifact; exit code is `1` only because `overallStatus=failing`.
+   - `pnpm inventory:audit:city --city=danang --strict --format=json --output=artifacts/inventory-live/2026-03-12_14-15-00/danang-audit.json` now executes successfully and writes the audit artifact; exit code is `1` only because `overallStatus=failing`.
+   - `pnpm inventory:status --dir=artifacts/inventory-live/2026-03-12_13-07-22 --all --format=markdown --output=artifacts/inventory-live/2026-03-12_13-07-22/live-inventory-status.md` now includes audit results instead of `missing` artifacts.
+- Resulting launch status:
+   - launch remains `blocked` for Hanoi, Da Nang, and Bangkok because the audits are now present and still genuinely `failing` on coverage / duplicate-stale / session-gap criteria, not because the audit execution path is broken.
+- Remaining risks / follow-up:
+   - the audit now depends on Supabase REST + service role in local operator environments; if those env vars are removed, operators still need reachable direct PostgreSQL connectivity,
+   - the remaining blocker is inventory quality, not audit execution.
+
+### 2026-03-12 12:18 UTC — Danang `matches: 4 / upserts: 0` verified as expected no-op
+- Issue: explain why the Danang city-wide matcher dry run completes successfully but reports `matches: 4` with `upserts: 0`, without touching cron auth, batch pagination, or reopening the Hanoi/Bangkok crash fix.
+- Files changed:
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - there is no new Danang write-suppression bug in the matcher,
+   - `matchActivitiesForPlaces()` only increments `upserts` when a matched activity has no existing `venue_activities` row or when the stored `source` / `confidence` changed,
+   - the full Danang run still finds exactly 4 matches, but all 4 already exist in `venue_activities` with the same matcher output, so the run is a legitimate no-op.
+- Concrete Danang places verified:
+   - `Danang Climbing Gym` (`3aa7d84d-f42a-40bc-95b0-ef904e7904d4`) matches `climbing` and `bouldering`; both rows already exist as `source=keyword`, `confidence=0.6`, so `upserts=0`.
+   - `GLG Yoga School` (`c489e981-630f-4cd8-b4b6-91f9062935bb`) matches `yoga`; the existing `venue_activities` row already matches `source=keyword`, `confidence=0.6`, so `upserts=0`.
+   - `Xuan Truc Aerobic Yoga` (`af93be12-96d3-4606-9697-aa913b882c31`) matches `yoga`; the existing `venue_activities` row already matches `source=keyword`, `confidence=0.6`, so `upserts=0`.
+- Exact investigation performed:
+   - re-read the matcher, city scope, seed pack, and category normalization logic to check for Danang-specific suppression,
+   - bundled a temporary diagnostic against the real matcher/service-client code path,
+   - ran a full Danang dry run and then a per-place Danang scan to identify the exact matched venues and compare them with persisted `venue_activities` rows.
+- Results:
+   - full Danang dry run remains `processed: 329`, `matches: 4`, `upserts: 0`, `deletes: 0`, `errors: 0`,
+   - the 4 matches come from 3 places only: one climbing gym with two matched activities plus two yoga venues with one match each,
+   - every matched activity is already persisted identically, so there is nothing to upsert and no code fix was needed.
+- Verification:
+   - reran the real matcher logic locally against Danang and confirmed the same aggregate result,
+   - confirmed place-level parity between inferred Danang matches and existing `venue_activities` rows for the three concrete venues above.
+- Remaining risks / follow-up:
+   - Danang still has very low total match coverage (`4` matches across `329` scoped places), but that is a seed/inventory breadth question rather than a write-path failure,
+   - no matcher/auth/batching code was changed in this pass.
+
+### 2026-03-12 11:42 UTC — Local cron activity matcher 500 fix / batch-size-sensitive preload queries
+- Issue: local `inventory:rematch` was failing against `POST /api/cron/activity-matcher` for full-city rematch runs (`--all --batchSize=500`) in Hanoi and Bangkok with `500 {"error":"Activity matcher failed"}` even though smaller authenticated manual calls succeeded.
+- Files changed:
+   - `apps/doWhat-web/src/app/api/cron/activity-matcher/route.ts`
+   - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+   - the failure was not cron auth: `requireCronAuth()` only accepts `Authorization: Bearer <CRON_SECRET>`, which matches the working curl/script contract and explains why `x-cron-secret` does not work for this route,
+   - the 500 happened before per-place matching, not because of one poison place row,
+   - `matchActivitiesForPlaces()` already chunked session/activity evidence lookups, but `loadFoursquareCategoryMap()` and `loadManualOverrides()` still executed single large `.in(...)` Supabase queries across the entire `placeIds` batch,
+   - `limit=250` stayed under that threshold, while `limit=500` city batches caused those unchunked preload queries to fail and bubble out as a route-level 500.
+- Exact fix:
+   - chunked `place_sources` and `activity_manual_overrides` preloads with the same bounded query size used elsewhere in the matcher (`MATCHER_QUERY_CHUNK_SIZE = 180`),
+   - reused the same chunk helper for the other evidence loaders so all matcher preload queries now scale consistently,
+   - added narrow dev-time diagnostics around matcher preload stages (`catalog`, `places-batch`, `foursquare-category-preload`, `manual-override-preload`, `activity-evidence-preload`),
+   - added per-place warnings that include `placeId`, `name`, `city`, `locality`, and the runtime shapes of `categories`, `tags`, and `metadata` when a row-level match fails,
+   - added route-level catch logging in `apps/doWhat-web/src/app/api/cron/activity-matcher/route.ts` so future 500s log `city`, `placeId`, `limit`, `offset`, `dryRun`, and the full error object.
+- Exact commands run:
+   - `curl -s -X POST "http://localhost:3002/api/cron/activity-matcher?city=hanoi&limit=250&offset=0&dryRun=1" -H "authorization: Bearer $CRON_SECRET"`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=hanoi','--all','--batchSize=500', ...])) ..."`
+   - `node --input-type=module -e "... POST /api/cron/activity-matcher?city=<city>&limit=500&offset=<offset>&dryRun=1 ..."`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=bangkok','--all','--batchSize=500', ...])) ..."`
+   - `node --input-type=module -e "... mod.executeRematch(parseArgs(['--city=danang','--all','--batchSize=500', ...])) ..."`
+- Results before fix:
+   - exact Hanoi rematch script reproduction failed with `SCRIPT_ERROR request failed 500 {"error":"Activity matcher failed"}`,
+   - `limit=500` local cron probes for Hanoi and Bangkok returned `500`,
+   - Danang returned `200`, which helped isolate the problem to batch-size-sensitive matcher preload behavior rather than auth or the route shell itself.
+- Results after fix:
+   - Hanoi `POST /api/cron/activity-matcher?city=hanoi&limit=500&offset=0&dryRun=1` → `200`
+   - Bangkok `POST /api/cron/activity-matcher?city=bangkok&limit=500&offset=0&dryRun=1` → `200`
+   - Hanoi full rematch dry run → `runStatus: ok`, `processed: 2220`, `batchCount: 5`, `errorCount: 0`
+   - Bangkok full rematch dry run → `runStatus: ok`, `processed: 2702`, `batchCount: 6`, `errorCount: 0`
+   - Danang full rematch dry run remains stable → `runStatus: ok`, `processed: 329`, `upserts: 0`, `deletes: 0`
+- Verification:
+   - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts` passed,
+   - direct localhost route probes for Hanoi/Bangkok/Danang `limit=500` now return `200`.
+- Remaining risks / follow-up:
+   - Danang still produces `0` dry-run upserts, but that is matcher-output/data quality behavior rather than the local cron route crash and was intentionally left out of scope,
+   - if another future preload path exceeds request-size limits, the new route/matcher diagnostics should expose the failing stage immediately.
+
+### 2026-03-11 15:05 UTC — Launch-city scope, canonical city normalization, and seed relevance hardened
+- Issue: implement the highest-value fixes proven by the target-city diagnosis pass so Hanoi, Da Nang, and Bangkok can generate materially better activity-first place inventory without weakening hospitality exclusion.
+- Files changed:
+  - `packages/shared/src/config/cities/types.ts`
+  - `packages/shared/src/config/cities/hanoi.ts`
+  - `packages/shared/src/config/cities/danang.ts`
+  - `packages/shared/src/config/cities/bangkok.ts`
+  - `apps/doWhat-web/src/lib/places/categories.ts`
+  - `apps/doWhat-web/src/lib/places/cityScope.ts`
+  - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `apps/doWhat-web/src/lib/places/aggregator.ts`
+  - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+  - `apps/doWhat-web/src/app/api/cron/activity-matcher/route.ts`
+  - `scripts/utils/launch-city-config.mjs`
+  - `scripts/city-inventory-diagnostics.mjs`
+  - `scripts/city-inventory-audit.mjs`
+  - `scripts/rematch-venue-activities.mjs`
+  - `apps/doWhat-web/src/lib/places/__tests__/cityScope.test.ts`
+  - `apps/doWhat-web/src/lib/seed/__tests__/citySeeding.test.ts`
+  - `apps/doWhat-web/src/lib/__tests__/placesUtils.test.ts`
+  - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `scripts/__tests__/rematch-venue-activities.test.mjs`
+  - `docs/discovery_playbook.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/live_inventory_execution_pack.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+  - the canonical matcher still scoped `city` runs by raw `city/locality ilike` matching, which is why live rematch runs only touched `6 / 0 / 1` rows despite large bbox inventories,
+  - persisted `places.city/locality` values were not being canonicalized for known launch cities, so district-level or null city fields kept future operator runs city-blind,
+  - seed packs were still using broad raw category terms instead of the city-specific category keys and local-language tag filters already defined in shared city config, which reduced provider relevance and left Bangkok missing a padel seed/filter path entirely,
+  - the rematch operator could only process a single page per city run instead of a full city sweep.
+- Exact fix:
+  - added canonical launch-city scope aliases to shared city config and expanded city-specific activity tag filters for Hanoi, Da Nang, and Bangkok, including a real Bangkok `padel` category,
+  - added `apps/doWhat-web/src/lib/places/cityScope.ts` and used it to:
+    - select city-scoped matcher batches by known-city bbox instead of raw string matching,
+    - normalize persisted `places.city/locality` into canonical `Hanoi` / `Da Nang` / `Bangkok` city truth while preserving district/locality detail when present,
+  - strengthened seed-pack resolution so launch-city packs now resolve to the correct city-category keys (`climbing_bouldering`, `rock_climbing`, `running`, `running_parks`, `padel`, `yoga`, `chess`) instead of broad raw strings,
+  - added launch-city operator helpers in `scripts/utils/launch-city-config.mjs`,
+  - updated diagnostics and audit tooling to use bbox-aware launch-city scope and to keep `legacyStringScopeCount` visible as the old failure baseline,
+  - added batched rematch execution via `--all --batchSize=<n>` and `offset` support on `/api/cron/activity-matcher`.
+- Why:
+  - inventory quality could not improve materially while the matcher only saw 6/0/1 raw city-string rows,
+  - canonical city normalization reduces future city-blind persistence drift instead of only papering over it in scripts,
+  - city-specific pack keys let provider queries and matcher policy pull activity-native inventory more reliably without reopening hospitality leakage,
+  - full-city batching is required for meaningful operator reruns once scope selection is corrected.
+- How tested:
+  - targeted ESLint over all touched code/scripts passed,
+  - focused web tests passed:
+    - `src/lib/places/__tests__/cityScope.test.ts`
+    - `src/lib/places/__tests__/activityMatching.test.ts`
+    - `src/lib/seed/__tests__/citySeeding.test.ts`
+    - `src/lib/__tests__/placesUtils.test.ts`
+    - `src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - script tests passed:
+    - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+    - `scripts/__tests__/rematch-venue-activities.test.mjs`
+    - `scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter @dowhat/shared typecheck` passed,
+  - `pnpm --filter dowhat-web typecheck` passed,
+  - `node scripts/verify-discovery-contract.mjs` passed,
+  - live diagnostics via Supabase REST passed:
+    - Hanoi now reports `currentScopeCount=2220`, `legacyStringScopeCount=6`,
+    - Da Nang now reports `currentScopeCount=329`, `legacyStringScopeCount=0`,
+    - Bangkok now reports `currentScopeCount=2706`, `legacyStringScopeCount=1`.
+- Result:
+  - the repo can now see the real bbox-scoped launch-city inventories instead of the old raw-string subset,
+  - launch-city persistence will normalize future canonical place city fields toward `Hanoi`, `Da Nang`, and `Bangkok`,
+  - the operator path can now run a full batched city rematch,
+  - the remaining launch blockers are now correctly exposed as:
+    - missing target-city seed cache entries,
+    - large null/district-level city-field hygiene gaps,
+    - effectively zero mapped `venue_activities` coverage,
+    - duplicate/noise cleanup still needed after reseed/rematch.
+- Remaining risks / follow-up:
+  - I did not run the live rematch apply from this shell because that still requires `CRON_SECRET` and the operator environment,
+  - direct Postgres access is still unavailable from this shell, so seed-cache root cause is still proven through REST/diagnostics rather than raw SQL,
+  - current live diagnostics still show `mappedCount=0` after the scope fix, so the next necessary proof is a live reseed + batched rematch rerun, not more local code speculation.
+
+### 2026-03-11 14:34 UTC — Target-city inventory quality implementation pass kickoff
+- Issue: begin the highest-value inventory quality fixes after the target-city diagnosis pass proved that Hanoi, Da Nang, and Bangkok are not truly empty, but current city scoping, seed relevance, and persisted canonical city/locality behavior are preventing meaningful activity-first inventory from being generated.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: keep this pass narrow and deterministic by focusing on three proven weak points only:
+  1. target-city rematch/audit scope selection,
+  2. canonical city/locality normalization for persisted known-city places,
+  3. stronger city-specific seed relevance using activity-first city-category keys and local-language hints.
+- Why:
+  - live diagnostics already proved that raw `city/locality ilike` scope selection is collapsing against large bbox inventories,
+  - persisted `places.city/locality` truth is weak enough to make future operator runs city-blind,
+  - current seed packs use generic raw category terms that do not fully leverage the city-specific category/tag configuration already present in shared config.
+- How tested: reviewed `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`, `CURRENT_STATE.md`, `OPEN_BUGS.md`, `DISCOVERY_TRUTH.md`, `FILTER_CONTRACT.md`, `docs/discovery_playbook.md`, `docs/inventory_truth_policy.md`, `docs/launch_city_inventory_checklist.md`, `docs/live_inventory_execution_pack.md`, the live artifact directory `artifacts/inventory-live/2026-03-11_13-14-07`, and the current `city-inventory-diagnostics`, `city-inventory-audit`, `citySeeding`, `activityMatching`, and place persistence code paths.
+- Result: implementation scope is locked to city-scope/bbox normalization, seed-pack strengthening, and test-backed operator improvements for Hanoi, Da Nang, and Bangkok.
+- Remaining risks / follow-up: direct Postgres access is still unavailable from this shell, so the final proof of material improvement will require rerunning the live operator flow after these code changes land.
+
+### 2026-03-11 04:59 UTC — Inventory truth policy + stale mapping cleanup pass kickoff
+- Issue: begin the inventory truth policy and stale mapping cleanup pass now that rollout, event/session/place truth, attendance truth, and mixed discovery truth are complete enough to move forward.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: keep rollout/filter redesign/speculative SQL refactors out of scope and focus this pass on inventory truth sources, stale `venue_activities` cleanup, hospitality leakage suppression, and test-backed matching hardening.
+- Why: the current control layer identifies stale remote `venue_activities` rows and inventory truth quality as the highest-priority readiness gap after the recent truth-hardening passes.
+- How tested: control-layer review of `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`, `CURRENT_STATE.md`, `OPEN_BUGS.md`, `DISCOVERY_TRUTH.md`, and `FILTER_CONTRACT.md` before starting implementation.
+- Result: pass scope is locked to inventory truth policy, stale mapping cleanup, and shared/web/mobile discovery consistency.
+- Remaining risks / follow-up: remote data issues may require a maintenance script and a documented rerun flow in addition to code-side suppression; the audit must confirm the exact failure points before cleanup logic is changed.
+
+### 2026-03-11 05:15 UTC — Inventory truth audit completed / stale mapping persistence traced
+- Issue: audit the current inventory truth pipeline across `places`, `place_sources`, `place_tiles`, `activity_catalog`, `activity_manual_overrides`, `venue_activities`, votes, seeding, and hospitality suppression before implementing cleanup.
+- Files changed: `changes_log.md`, `ASSISTANT_CHANGES_LOG.md`.
+- Decision made: implement cleanup through the canonical matcher plus explicit operator tooling, instead of a UI-only suppression patch or a broad SQL rewrite.
+- Why:
+  - `activity_catalog` + `place_sources` + `places` create the canonical structured inventory inputs,
+  - `matchActivitiesForPlaces()` is the canonical writer for `venue_activities`, but stale rows persist remotely until that matcher is rerun against existing places,
+  - `activity_manual_overrides` already provides the strongest admin-confirmed mapping layer,
+  - `venue_activity_votes` still only strengthen legacy `venues` search, not canonical `places` matching,
+  - the current matcher blocks hospitality-first keyword matches, but it does **not** yet consider real `sessions`/`events` evidence when deciding whether a hospitality venue is a valid activity host exception,
+  - city seeding still contains a chess pack oriented around “cafes and clubs” with a `cafe chess` term, which is broader than the current activity-first product boundary.
+- Audit findings:
+  - Source of activity truth:
+    - `activity_catalog` keywords + Foursquare category ids define candidate activities,
+    - `place_sources` supplies structured provider categories,
+    - `activity_manual_overrides` can force keep a mapping,
+    - `venue_activities` persists inferred/manual mappings with `source` and `confidence`,
+    - `place_tiles.discovery_cache` controls seeded place inventory reuse, not mapping truth.
+  - How mappings are created:
+    - `seedCityInventory()` warms place inventory and optionally triggers `matchActivitiesForPlaces()`,
+    - `matchActivitiesForPlaces()` loads places, Foursquare categories, and manual overrides, then writes/deletes `venue_activities`.
+  - How stale mappings persist:
+    - historical `venue_activities` rows survive until the matcher is rerun for those places/cities,
+    - the repo had no dedicated operator wrapper for a full rematch/cleanup pass,
+    - the current matcher cannot preserve hospitality exceptions based on real event/session evidence because it never loads that evidence.
+  - Where hospitality/noise can leak in:
+    - older remote `venue_activities.source='keyword'` rows created before the activity-first boundary,
+    - city seed pack keywords such as `cafe chess`,
+    - legacy `venue_activity_votes` live on `venues`, so canonical place matching cannot currently use them as first-class evidence.
+  - Where matching is too broad or too weak:
+    - too broad: hospitality-era keyword mappings can remain in `venue_activities` after policy changes,
+    - too weak: legitimate hospitality exceptions with real session/event evidence can be dropped because matcher policy only sees manual overrides + place tags/categories today.
+- How tested:
+  - reviewed `packages/shared/src/discovery/activityBoundary.ts`,
+  - reviewed `packages/shared/src/places/filtering.ts`,
+  - reviewed `apps/doWhat-web/src/lib/places/activityMatching.ts`,
+  - reviewed `apps/doWhat-web/src/lib/discovery/placeActivityFilter.ts`,
+  - reviewed `apps/doWhat-web/src/lib/discovery/engine.ts`,
+  - reviewed `apps/doWhat-web/src/lib/seed/citySeeding.ts`,
+  - reviewed `apps/doWhat-web/supabase/migrations/024_smart_activity_discovery.sql`, `026_activity_catalog.sql`, and `067_activity_catalog_city_keyword_pack.sql`,
+  - reviewed `docs/seeding.md`, `docs/discovery_playbook.md`, and `docs/activity_discovery_overview.md`,
+  - attempted live DB audit query from this shell and confirmed direct Postgres access is still blocked here with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`.
+- Result: the next implementation slice is now clear: add real event/session evidence to matcher policy, narrow the seeding pack vocabulary, and add explicit rematch/cleanup tooling so stale `venue_activities` rows can be audited and removed deterministically.
+- Remaining risks / follow-up: live remote inventory counts still cannot be measured from this shell, so cleanup validation here will be code/test based plus operator tooling rather than a fresh remote DB apply.
+
+### 2026-03-11 05:31 UTC — Canonical matcher hardened for inventory cleanup / operator rematch flow added
+- Issue: implement the minimum safe code-side hardening needed to clean stale `venue_activities` rows and reduce hospitality leakage without hiding bad data in the UI.
+- Files changed:
+  - `apps/doWhat-web/src/lib/places/activityMatching.ts`
+  - `apps/doWhat-web/src/lib/seed/citySeeding.ts`
+  - `scripts/rematch-venue-activities.mjs`
+  - `package.json`
+  - `docs/inventory_truth_policy.md`
+  - `docs/seeding.md`
+  - `docs/discovery_playbook.md`
+  - `packages/shared/src/__tests__/activityBoundary.test.ts`
+  - `apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts`
+  - `apps/doWhat-web/src/lib/seed/__tests__/citySeeding.test.ts`
+- Root cause:
+  - stale remote `venue_activities` rows were only cleaned when the matcher happened to rerun,
+  - the matcher did not consider activity-specific first-party session evidence, so valid hospitality exceptions could be dropped,
+  - seed vocabulary still included a `cafe chess`-style term that widened inventory toward hospitality noise.
+- Exact fix:
+  - `matchActivitiesForPlaces()` now loads activity-specific session evidence per canonical place and uses it to protect only the matching activity when a hospitality-primary place is otherwise blocked from keyword inference,
+  - matcher summaries now expose `hospitalityKeywordDeletes` and `eventEvidenceProtectedMatches` so cleanup runs are auditable,
+  - added `pnpm inventory:rematch` via `scripts/rematch-venue-activities.mjs`; it calls the canonical cron matcher with a dry-run default and apply mode,
+  - narrowed the chess city seed pack from “cafes and clubs” to “clubs and community boards” and removed `cafe chess`,
+  - documented the canonical inventory truth policy and rematch flow.
+- Why:
+  - inventory cleanup should happen through the same matcher that creates `venue_activities`, not via ad-hoc deletions or presentation-only suppression,
+  - activity-specific session evidence is a real product-truth exception and should protect valid hosts without letting unrelated hospitality keywords back in,
+  - reducing hospitality vocabulary at seed time lowers future cleanup pressure.
+- How tested: targeted unit and integration coverage added/updated before full verification:
+  - shared boundary test for hospitality venues with real event/session evidence,
+  - activity-matching regressions for stale hospitality keyword deletion and evidence-protected exceptions,
+  - city-seeding regression to keep `cafe chess` out of the chess pack.
+- Result: the repo now has a deterministic inventory cleanup path (`inventory:rematch`) and the canonical matcher is stricter about stale hospitality keyword rows while preserving legitimate session-backed exceptions.
+- Remaining risks / follow-up:
+  - imported external events are still not used as activity-specific matcher evidence,
+  - direct remote cleanup still requires a machine that can reach the live cron route or DB,
+  - legacy `venue_activity_votes` remain a `venues`-only signal and are not yet canonical place truth.
+
+### 2026-03-11 05:47 UTC — Inventory truth pass verification + control layer updates completed
+- Issue: complete verification for the inventory truth pass and update the control docs with the new canonical policy and remaining operational risks.
+- Files changed:
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause:
+  - the first implementation pass introduced a type-only problem in `activityMatching.ts` because Supabase’s generated parser types do not model the `activities` select shape (`catalog_activity_id,name,tags`) well enough,
+  - the control docs still described stale inventory cleanup as an unresolved question instead of a now-defined rematch policy.
+- Exact fix:
+  - replaced the typed `activities` evidence lookup query with an intentionally narrow untyped select guarded by a comment, keeping the runtime fallback logic unchanged,
+  - updated the control layer to state that inventory cleanup now uses `pnpm inventory:rematch` and that the remaining gap is operational execution against live cities, not missing repo policy.
+- Why:
+  - the type failure was tooling-only and did not justify changing the runtime behavior,
+  - current docs must reflect the actual repo state so future passes do not reopen already-settled policy questions.
+- How tested:
+  - `pnpm exec eslint apps/doWhat-web/src/lib/places/activityMatching.ts apps/doWhat-web/src/lib/places/__tests__/activityMatching.test.ts apps/doWhat-web/src/lib/seed/citySeeding.ts apps/doWhat-web/src/lib/seed/__tests__/citySeeding.test.ts packages/shared/src/__tests__/activityBoundary.test.ts scripts/rematch-venue-activities.mjs`
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/activityBoundary.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts`
+  - `node scripts/rematch-venue-activities.mjs --help`
+  - `pnpm --filter @dowhat/shared typecheck`
+  - `pnpm --filter dowhat-web typecheck`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - targeted lint passed,
+  - shared activity-boundary tests passed (`4/4`),
+  - focused web inventory/matching tests passed (`12/12`, then rerun critical subset `6/6` after the type-only fix),
+  - shared typecheck passed,
+  - web typecheck passed after replacing the over-typed query,
+  - discovery contract verification passed,
+  - the new rematch script prints correct usage/help output.
+- Remaining risks / follow-up:
+  - direct Postgres access from this shell is still blocked (`getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`), so live city cleanup was not executed here,
+  - imported external events are still not used as activity-specific matcher evidence,
+  - legacy `venue_activity_votes` remain a `venues`-only signal.
+
+	migrations 060/065/066/067/068 were verified and registered
+	•	health-migrations --dowhat --remote-rest --strict passed
+	•	verify-discovery-rollout-pack.mjs passed
+	•	verify-discovery-sql-contract.mjs passed
+	•	verify-discovery-contract.mjs passed
+	•	focused web/mobile discovery tests passed
+	•	rollout baseline is complete
+	•	next phase is event/session/place truth hardening
+   
 ## 2026-03-07
 
 ### 2026-03-07 04:02 UTC — Final verification checkpoint / duplicate-logo-count-discovery work validated, lint cleanup applied
@@ -5278,3 +6070,694 @@
       - The control docs now describe the final visible filter architecture without overstating mobile parity beyond what the code actually exposes.
    - Remaining risks or follow-up notes:
       - Mobile still intentionally omits the web-only result-kind toggle because the mobile map surface remains place-first.
+
+81. Timestamp: 2026-03-10 12:26 +07
+   - Issue being worked on: Event / session / place truth hardening pass kickoff.
+   - Files inspected:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+   - Decision made:
+      - Treat remote discovery rollout as complete baseline for this pass and do not revisit rollout work unless a new regression proves it necessary.
+      - Focus this pass on canonical truth, payload hardening, discovery hydration, create-flow correctness, and web/mobile parity for places, sessions, and events.
+   - Why the decision was made:
+      - The next unresolved product-level risk is semantic drift between place-backed items, session-backed items, ingested events, and flexible/custom location states.
+   - How it was tested:
+      - Control-layer document audit only at this stage.
+   - Result:
+      - Phase kickoff logged before code changes.
+   - Remaining risks or follow-up notes:
+      - Current control docs still describe remote rollout as incomplete, so this pass must verify and update those docs if the code evidence confirms the new baseline.
+
+82. Timestamp: 2026-03-10 16:24 +07
+   - Issue being worked on: Event / session / place truth audit before implementation.
+   - Files inspected:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/truth.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/app/api/sessions/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+   - Decision made:
+      - Treat the main truth bugs as narrow session/event contract issues instead of a discovery-engine rewrite.
+      - Fix session hydration, session create/update writes, and the event/session payload tests together so flexible locations stop being misrepresented as meaningful place labels.
+   - Why the decision was made:
+      - The audit showed that the highest-risk semantic drift is not ranking or rollout anymore. It is the mismatch between stored fallback labels, derived location kinds, and what the API/UI present as real place truth.
+   - How it was tested:
+      - Static audit only in this step.
+   - Result:
+      - Confirmed four concrete contradictions:
+        1. `hydrateSessions()` can normalize internal fallback labels into `Nearby spot`, then incorrectly classify flexible sessions as `custom_location`.
+        2. `POST /api/sessions` still persists a fabricated fallback location label for sessions with no canonical/custom location truth because the current schema path requires a non-empty `place_label`.
+        3. `PATCH /api/sessions/[sessionId]` does not keep `place_id`, `place_label`, and legacy `venue_id` semantics synchronized when location data changes.
+        4. `/api/events` tests still lock in dishonest behavior by expecting every event payload to expose a non-empty `place_label`.
+   - Remaining risks or follow-up notes:
+      - The remote rollout baseline is now a user-provided project truth, but the control docs still need to be updated later in this pass so they stop describing rollout as incomplete.
+
+83. Timestamp: 2026-03-10 16:37 +07
+   - Issue being worked on: Event / session / place truth hardening implementation, regression coverage, and control-layer alignment.
+   - Files changed:
+      - `packages/shared/src/events/truth.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/events/route.ts`
+      - `apps/doWhat-web/src/app/api/events/[id]/route.ts`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/create/page.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/add-event.tsx`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `FILTER_CONTRACT.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Keep the DB-facing `sessions.place_label` fallback for compatibility, but stop exposing that fallback as user-facing place truth.
+      - Use one shared “meaningful location label” rule across event/session hydration and presentation.
+      - Re-derive `place_id` and `place_label` together on session PATCH so edited sessions cannot keep stale location truth.
+      - Remove the fake activity-name fallback for `activities.place_label` so standalone activity/session creation no longer manufactures a location label from the activity title.
+      - Update create-flow copy to say `Place` / custom location instead of implying everything is a canonical venue record.
+   - Why the decision was made:
+      - The pass needed to eliminate semantic drift without reopening rollout or doing a broad SQL rewrite. The smallest safe path was to harden the shared truth helper, then thread that rule through session hydration, session writes, event payload normalization, and the touched web/mobile surfaces.
+   - How it was tested:
+      - `pnpm exec eslint packages/shared/src/events/truth.ts packages/shared/src/__tests__/eventTruth.test.ts apps/doWhat-web/src/lib/sessions/server.ts apps/doWhat-web/src/lib/sessions/__tests__/server.test.ts apps/doWhat-web/src/app/api/sessions/route.ts apps/doWhat-web/src/app/api/sessions/[sessionId]/route.ts apps/doWhat-web/src/app/api/sessions/__tests__/route.test.ts apps/doWhat-web/src/app/api/sessions/[sessionId]/__tests__/route.test.ts apps/doWhat-web/src/app/api/events/route.ts apps/doWhat-web/src/app/api/events/[id]/route.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/sessions/[id]/page.tsx apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx apps/doWhat-mobile/src/app/(tabs)/map/index.tsx apps/doWhat-web/src/app/create/page.tsx apps/doWhat-mobile/src/app/add-event.tsx apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/sessions/[sessionId]/__tests__/route.test.ts src/lib/sessions/__tests__/server.test.ts src/app/api/sessions/__tests__/route.test.ts src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/sessionApi.test.ts`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Flexible sessions are no longer misclassified as `custom_location` just because fallback labels were normalized through the generic place-label helper.
+      - Unlabeled custom/flexible sessions and events now expose `place_label: null` and rely on explicit `location_kind`-based presentation instead of fake printable place names.
+      - Session PATCH now keeps canonical `place_id`, derived `place_label`, and legacy `venue_id` behavior synchronized when a host edits location data.
+      - `/api/events` and event detail payloads now avoid generic fallback labels for custom/flexible locations while preserving canonical place and legacy venue truth.
+      - Mobile and web session/event consumers now use the same truth contract for flexible/custom location states on the touched surfaces.
+      - Control docs now treat remote rollout as complete baseline and record the remaining open risks accurately.
+   - Remaining risks or follow-up notes:
+      - `sessions.place_label` still stores an internal fallback string because of the legacy DB constraint; the truth layer now hides that fallback from clients, but the storage model is not fully normalized yet.
+      - Event discovery still merges ingested `events` with first-party `sessions`.
+      - Standalone user-created events are still not a separate product capability.
+      - Attendance / hosting truth still needs a dedicated follow-through pass.
+
+84. Timestamp: 2026-03-10 19:41 +07
+   - Issue being worked on: Attendance / hosting truth hardening kickoff and surface audit.
+   - Files changed:
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Treat this as the dedicated attendance / hosting truth pass, keep rollout and filter redesign out of scope, and audit every touched attendance surface before changing payloads or UI.
+   - Why the decision was made:
+      - Attendance truth is the next remaining real-life readiness blocker. The existing code already has first-party session attendance logic, but the semantics are implicit and split across web session APIs, mobile edge-function helpers, and event/session presentation.
+   - How it was tested:
+      - Static repo audit only in this step.
+   - Result:
+      - Confirmed the main contradictions to fix:
+        1. `/api/sessions/[sessionId]/attendance` only exposes counts/status/maxAttendees and does not declare whether attendance is supported, first-party, or host-owned.
+        2. `/api/sessions/[sessionId]/attendance/host` exposes host roster mutations but the contract does not declare host/organizer/verification truth explicitly.
+        3. `supabase/functions/mobile-session-attendance` and `apps/doWhat-mobile/src/lib/sessionAttendance.ts` still use a thinner summary/mutation contract than web, so mobile cannot express attendance ownership/support truth.
+        4. `apps/doWhat-web/src/app/events/[id]/page.tsx` is honest in copy, but that honesty is UI-local; event payloads still need explicit attendance source/support fields instead of relying on inference from `origin_kind` and URLs.
+        5. `apps/doWhat-web/src/app/sessions/[id]/page.tsx`, `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`, and `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx` infer host/attendance capability from raw fields instead of a shared participation truth contract.
+   - Remaining risks or follow-up notes:
+      - Mobile parity will require touching both the edge function and the shared/mobile TypeScript contract.
+      - External events should likely surface attendance as unavailable/source-owned, but that still needs to be made explicit in payloads and tests.
+
+85. Timestamp: 2026-03-10 19:56 +07
+   - Issue being worked on: Attendance / hosting truth hardening implementation, parity alignment, and regression coverage.
+   - Files changed:
+      - `packages/shared/src/events/types.ts`
+      - `packages/shared/src/events/truth.ts`
+      - `packages/shared/src/__tests__/eventTruth.test.ts`
+      - `apps/doWhat-web/src/lib/sessions/server.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/join/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/leave/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/interested/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts`
+      - `apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts`
+      - `apps/doWhat-web/src/components/SessionAttendancePanel.tsx`
+      - `apps/doWhat-web/src/components/__tests__/SessionAttendancePanel.test.tsx`
+      - `apps/doWhat-web/src/lib/events/presentation.ts`
+      - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+      - `apps/doWhat-web/src/app/events/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/sessions/[id]/page.tsx`
+      - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+      - `apps/doWhat-mobile/src/lib/sessionApi.ts`
+      - `apps/doWhat-mobile/src/lib/sessionAttendance.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts`
+      - `apps/doWhat-mobile/src/lib/__tests__/sessionAttendance.test.ts`
+      - `apps/doWhat-mobile/src/components/SessionAttendanceQuickActions.tsx`
+      - `apps/doWhat-mobile/src/components/SessionAttendanceBadges.tsx`
+      - `apps/doWhat-mobile/src/components/__tests__/SessionAttendanceQuickActions.test.tsx`
+      - `apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx`
+      - `apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx`
+      - `supabase/functions/mobile-session-attendance/index.ts`
+      - `CURRENT_STATE.md`
+      - `OPEN_BUGS.md`
+      - `DISCOVERY_TRUTH.md`
+      - `changes_log.md`
+      - `ASSISTANT_CHANGES_LOG.md`
+   - Decision made:
+      - Introduce one explicit shared `participation` truth object instead of leaving attendance ownership/support/host semantics implicit.
+      - Keep first-party session attendance explicit in session payloads and session attendance APIs.
+      - Keep session-backed event mirrors explicit as `linked_first_party` instead of pretending the event detail page itself owns RSVP controls.
+      - Keep imported/open events explicit as `external_source` or `unavailable`.
+      - Rename the host roster verification copy from `Verified via GPS` to `Host confirmed attendance` because the backend only knows a checked-in/confirmed flag, not actual GPS proof.
+   - Why the decision was made:
+      - The repo already had attendance behavior, but web, mobile, and event/session presentation were inferring different truths from sparse fields. The smallest safe fix was to add one shared truth contract, then thread it through API payloads, mobile parity helpers, and touched presentation surfaces.
+   - How it was tested:
+      - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/truth.ts packages/shared/src/__tests__/eventTruth.test.ts apps/doWhat-web/src/lib/sessions/server.ts 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/join/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/leave/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/interested/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/host/route.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts' 'apps/doWhat-web/src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts' apps/doWhat-web/src/components/SessionAttendancePanel.tsx apps/doWhat-web/src/components/__tests__/SessionAttendancePanel.test.tsx apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts 'apps/doWhat-web/src/app/events/[id]/page.tsx' apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-mobile/src/lib/sessionApi.ts apps/doWhat-mobile/src/lib/sessionAttendance.ts apps/doWhat-mobile/src/lib/__tests__/sessionApi.test.ts apps/doWhat-mobile/src/lib/__tests__/sessionAttendance.test.ts apps/doWhat-mobile/src/components/SessionAttendanceQuickActions.tsx apps/doWhat-mobile/src/components/SessionAttendanceBadges.tsx apps/doWhat-mobile/src/components/__tests__/SessionAttendanceQuickActions.test.tsx apps/doWhat-mobile/src/app/__tests__/sessions.contest-analytics.test.tsx 'apps/doWhat-mobile/src/app/(tabs)/sessions/[id].tsx' supabase/functions/mobile-session-attendance/index.ts`
+      - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts`
+      - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath 'src/app/api/sessions/[sessionId]/attendance/__tests__/route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/join.route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/leave.route.test.ts' 'src/app/api/sessions/[sessionId]/attendance/__tests__/host.route.test.ts' src/components/__tests__/SessionAttendancePanel.test.tsx src/lib/events/__tests__/presentation.test.ts src/app/api/events/__tests__/payload.test.ts`
+      - `pnpm --filter doWhat-mobile test -- --runInBand src/lib/__tests__/sessionAttendance.test.ts src/lib/__tests__/sessionApi.test.ts src/components/__tests__/SessionAttendanceQuickActions.test.tsx src/app/__tests__/sessions.contest-analytics.test.tsx`
+      - `pnpm --filter @dowhat/shared typecheck`
+      - `pnpm --filter dowhat-web typecheck`
+      - `pnpm --filter doWhat-mobile typecheck`
+      - `node scripts/verify-discovery-contract.mjs`
+   - Result:
+      - Session payloads and session attendance APIs now declare first-party attendance truth explicitly via `participation`.
+      - Session-backed event mirrors now expose linked first-party attendance truth, while imported/open events explicitly expose source-owned or unavailable participation.
+      - Web event detail, web session detail, web host roster UI, mobile session detail, mobile quick actions, and the mobile attendance edge function now all use the same participation semantics.
+      - No touched UI still implies that imported/open events have doWhat-owned RSVP controls.
+      - The host roster no longer claims checked-in attendance is GPS-verified.
+      - Control docs now reflect that attendance truth is explicit on the touched surfaces and that the remaining gap is the absence of a standalone first-party event attendance model.
+   - Remaining risks or follow-up notes:
+      - There is still no standalone first-party event attendance model; open/imported events remain source-owned or unavailable by design.
+      - Discovery still merges ingested `events` with first-party `sessions`, so mixed-model truth remains a follow-up area.
+      - Untouched secondary surfaces may still need the same copy/contract sweep when they are modified later.
+
+## 2026-03-10 22:37:50 +0700 — MIXED EVENT / SESSION DISCOVERY TRUTH HARDENING PASS kickoff
+
+- Issue being worked on:
+  - Mixed discovery truth across map, nearby, and feed/list surfaces where first-party sessions, session-backed event mirrors, imported external events, and place-backed activity results can appear close together.
+- Files planned for investigation first:
+  - `apps/doWhat-web/src/app/page.tsx`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/lib/discovery/*`
+  - `apps/doWhat-mobile/src/app/home.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+  - shared event/discovery types under `packages/shared/src`
+- Decision made:
+  - Keep this pass tightly scoped to mixed discovery truth, merge/dedupe behavior, labels, CTA wording, and parity. Rollout, broad filter redesign, speculative SQL work, and a standalone first-party event product model stay out of scope.
+- Why the decision was made:
+  - The highest-priority remaining product-truth gap is that mixed discovery entities are still partially synthesized and labeled in separate pipelines, which risks ambiguous session/event/mirror semantics even though location and attendance truth were hardened already.
+- How it was tested:
+  - Required control docs were read first; code audit is now in progress before implementation.
+- Result:
+  - Kickoff logged and mixed discovery audit started.
+- Remaining risks or follow-up notes:
+  - Until this pass lands, `/api/events`, web map event presentation, and mobile fallback event synthesis may still drift in how they distinguish source sessions, linked mirrors, and imported events.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery audit findings
+
+- Issue being worked on:
+  - Audit of every touched mixed discovery surface before code changes.
+- Files inspected:
+  - `apps/doWhat-web/src/app/page.tsx`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-web/src/app/api/nearby/route.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine-core.ts`
+  - `apps/doWhat-web/src/lib/discovery/engine.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-mobile/src/app/home.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/lib/mobileDiscovery.ts`
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/map/types.ts`
+  - `packages/shared/src/events/api.ts`
+  - `packages/shared/src/events/utils.ts`
+- Root cause / finding:
+  - Mixed discovery truth is still split across three different models:
+    - `/api/nearby` returns place/activity discovery items only and is already honest about that.
+    - `/api/events` merges imported `events` with session-derived event mirrors, but the only explicit truth fields on the payload are `origin_kind`, `location_kind`, and `participation`.
+    - Mobile map still has an independent Supabase fallback that synthesizes `EventSummary` rows from sessions with its own session-to-event and dedupe rules instead of reusing one shared helper.
+  - The current UI is therefore still partially inference-driven:
+    - Web map list/popup uses generic `Events` headings and generic `View details` / `View source` affordances even when the row is really a linked session mirror.
+    - Mobile map event rail presents all items under `Community confirmations nearby`, without an explicit session/imported/open badge or CTA distinction.
+    - `apps/doWhat-web/src/app/page.tsx` is session-only and honest, but it proves the product already has separate truth models for sessions vs event summaries instead of a single mixed-discovery contract.
+  - Dedupe is only partially explicit:
+    - `/api/events` dedupes by `sessionId` metadata or `id`, which suppresses session-origin duplicates but does not expose to clients that a surviving row is a session mirror.
+    - Mobile fallback dedupes only by `event.id`, so it can diverge from the web path if imported rows and synthesized session rows collide differently.
+- Decision made:
+  - Introduce one shared mixed-discovery event truth layer on top of `EventSummary` instead of letting web/mobile keep inferring mirror/imported/open distinctions independently.
+  - Keep `/api/nearby` activity-only; do not merge activities and event summaries into one broad payload in this pass.
+- Why the decision was made:
+  - The backend already exposes enough truth to classify mixed event rows cleanly. The current product risk is duplicated local inference and CTA drift, not the absence of one more broad entity union.
+- How it was tested:
+  - Static audit only so far; implementation and regression tests follow next.
+- Result:
+  - Audit completed for the primary mixed discovery surfaces. The highest-leverage fix is shared event discovery identity + shared dedupe key + shared card/CTA presentation.
+- Remaining risks or follow-up notes:
+  - Untouched secondary feeds may still use older event wording until they are migrated to the shared identity helper later.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery truth hardening implementation
+
+- Issue being worked on:
+  - Make mixed discovery surfaces explicit and deterministic when they include place/activity results, doWhat session mirrors, and imported events.
+- Files changed:
+  - `packages/shared/src/events/types.ts`
+  - `packages/shared/src/events/truth.ts`
+  - `packages/shared/src/events/presentation.ts`
+  - `packages/shared/src/events/utils.ts`
+  - `packages/shared/src/__tests__/eventTruth.test.ts`
+  - `packages/shared/src/__tests__/eventDiscovery.test.ts`
+  - `apps/doWhat-web/src/app/api/events/route.ts`
+  - `apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts`
+  - `apps/doWhat-web/src/lib/events/presentation.ts`
+  - `apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts`
+  - `apps/doWhat-web/src/app/map/page.tsx`
+  - `apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx`
+  - `apps/doWhat-web/src/components/WebMap.tsx`
+  - `apps/doWhat-mobile/src/app/(tabs)/map/index.tsx`
+  - `apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `FILTER_CONTRACT.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - Mixed discovery truth still depended on local inference. `/api/events` only exposed generic `EventSummary` rows, web map UI still used generic event wording/CTAs, and mobile map had its own separate session-to-event fallback + dedupe logic.
+- Decision made:
+  - Add one explicit shared mixed-discovery identity layer to `EventSummary`:
+    - `result_kind`
+    - `discovery_kind`
+    - `discovery_dedupe_key`
+  - Centralize linked-session detection, discovery dedupe keys, duplicate merging, and badge/CTA wording in shared helpers.
+  - Keep `/api/nearby` activity-only and keep `/api/events` as the mixed event/session-mirror surface instead of widening the payload architecture in this pass.
+  - Rename misleading activity CTAs from `View events` to `View sessions` on the touched web map surfaces.
+- Why the decision was made:
+  - The product problem was split event/session/mirror inference, not missing rollout work or missing filter/UI features. One shared truth layer fixes the ambiguity with less risk than another endpoint or schema redesign.
+- How it was tested:
+  - `pnpm exec eslint packages/shared/src/events/types.ts packages/shared/src/events/truth.ts packages/shared/src/events/presentation.ts packages/shared/src/events/utils.ts packages/shared/src/__tests__/eventTruth.test.ts packages/shared/src/__tests__/eventDiscovery.test.ts apps/doWhat-web/src/lib/events/presentation.ts apps/doWhat-web/src/lib/events/__tests__/presentation.test.ts apps/doWhat-web/src/app/api/events/route.ts apps/doWhat-web/src/app/api/events/__tests__/payload.test.ts apps/doWhat-web/src/app/map/page.tsx apps/doWhat-web/src/app/map/__tests__/page.smoke.test.tsx apps/doWhat-web/src/components/WebMap.tsx 'apps/doWhat-mobile/src/app/(tabs)/map/index.tsx' apps/doWhat-mobile/src/app/__tests__/map-filter-surface.test.ts`
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts src/__tests__/eventDiscovery.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts src/app/map/__tests__/page.smoke.test.tsx`
+  - `pnpm --filter doWhat-mobile test -- --runInBand src/app/__tests__/map-filter-surface.test.ts`
+  - `pnpm --filter @dowhat/shared typecheck`
+  - `pnpm --filter dowhat-web typecheck`
+  - `pnpm --filter doWhat-mobile typecheck`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - Event summaries now expose explicit mixed-discovery identity and a stable dedupe key.
+  - Shared dedupe now prefers the doWhat session mirror when a linked session row collides with a mirrored/imported event row for the same session.
+  - `/api/events` now dedupes through the shared logic instead of local `sessionId-or-id` heuristics.
+  - Web map event list and map popup now use session/imported/open labels and truthful CTAs (`View session` vs `View event`).
+  - Mobile map fallback now uses the same event dedupe and discovery identity logic, and the rail copy now explicitly says `Sessions & events nearby`.
+  - Control docs now reflect that mixed discovery truth is explicit on the primary map surfaces; the remaining risks are stale remote activity mappings, the explicit `/api/events` filter subset, and untouched secondary wording.
+- Remaining risks or follow-up notes:
+  - Untouched secondary discovery/supporting screens may still use older generic event wording until they are swept when next modified.
+  - There is still no standalone first-party event attendance model; imported/open events remain source-owned or unavailable by design.
+  - `/api/events` still intentionally exposes only a documented subset of the full discovery filter contract.
+  - Older remote `venue_activities` rows may still need cleanup/rematch even though the mixed-discovery presentation is now explicit.
+
+## 2026-03-10 22:37:50 +0700 — mixed discovery dedupe safety follow-up
+
+- Issue being worked on:
+  - Final review of the new shared event dedupe key.
+- Files changed:
+  - `packages/shared/src/events/truth.ts`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The first implementation allowed `discovery_dedupe_key` to fall back to a raw external source URL when `source_id/source_uid` were absent, which could over-collapse two distinct imported events that happened to share one provider page.
+- Decision made:
+  - Remove the raw-URL fallback and keep dedupe conservative: session id first, provider source ids second, otherwise discovery kind + event id.
+- Why the decision was made:
+  - It is safer to leave a rare duplicate visible than to silently hide a real imported event.
+- How it was tested:
+  - `pnpm --filter @dowhat/shared test -- --runInBand src/__tests__/eventTruth.test.ts src/__tests__/eventDiscovery.test.ts`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/app/api/events/__tests__/payload.test.ts src/lib/events/__tests__/presentation.test.ts src/app/map/__tests__/page.smoke.test.tsx`
+  - `pnpm exec eslint packages/shared/src/events/truth.ts`
+- Result:
+  - Shared event dedupe remains deterministic for session mirrors and provider-backed external events, while avoiding URL-based over-collapse risk.
+- Remaining risks or follow-up notes:
+  - Imported rows without stable provider ids can still appear as separate items if upstream sources duplicate them under different event ids; that is acceptable until there is a stronger proven-safe external-event identity strategy.
+
+## 2026-03-11 12:26:51 +0700 — target city validation + inventory audit tooling kickoff
+
+- Issue being worked on:
+  - Build deterministic city validation standards and audit tooling for Hanoi, Da Nang, and Bangkok so launch inventory can be checked for hospitality leakage, stale mappings, duplicate clusters, weak-confidence matches, and missing expected activity coverage.
+- Files planned to change:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - new city validation docs/scripts/tests under `docs/`, `scripts/`, and `apps/doWhat-web/src/lib/.../__tests__`
+- Decision made:
+  - Extend the existing seed-health + rematch workflow with city-specific inventory audit tooling instead of reopening matcher/discovery semantics.
+- Why the decision was made:
+  - The previous pass already established the inventory policy and cleanup path. The current launch blocker is repeatable validation for Hanoi, Da Nang, and Bangkok, not another policy rewrite.
+- How it will be tested:
+  - Targeted unit tests for the validation/audit helpers.
+  - Targeted verification of any new script contracts.
+  - Existing discovery/inventory verification scripts rerun where relevant.
+- Result:
+  - Kickoff logged. Audit of current scripts/docs is in progress.
+- Remaining risks or follow-up notes:
+  - Live city validation still depends on DB-connected environments; this shell may only support static/tooling verification if direct database access remains unavailable.
+
+## 2026-03-11 12:36:17 +0700 — target city validation + inventory audit tooling implemented
+
+- Issue being worked on:
+  - Create deterministic launch-city inventory validation for Hanoi, Da Nang, and Bangkok so the team can detect hospitality leakage, stale/weak mappings, duplicate clusters, session-to-mapping gaps, and missing activity coverage after seeding/rematch.
+- Files changed:
+  - `scripts/city-inventory-audit.mjs`
+  - `scripts/__tests__/city-inventory-audit.test.mjs`
+  - `package.json`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The repo had seed-health verification and the canonical rematch path, but it still lacked a deterministic city-level audit for launch-quality inventory. There was no single tool that could grade target cities for hospitality leakage, stale keyword matches, duplicate place clusters, session-backed mapping gaps, or required category coverage.
+- Decision made:
+  - Add a DB-backed inventory audit CLI instead of another passive doc-only checklist.
+  - Keep the audit deterministic and policy-aligned by grading explicit metrics:
+    - `hospitalityLeakage`
+    - `weakMappings`
+    - `staleMappings`
+    - `duplicateClusters`
+    - `providerDisagreements`
+    - `sessionMappingGaps`
+    - `manualOverrides`
+    - city-specific activity coverage minima
+  - Use review-only coverage for chess, and city-specific required minima for climbing, bouldering, yoga, running, and padel where appropriate.
+- Why the decision was made:
+  - Launch readiness needs repeatable pass/fail checks, not subjective inventory review. The existing seed/rematch tooling already handled freshness and cleanup; the missing piece was a city audit layer that translates the current inventory truth policy into actionable launch checks.
+- How it is run:
+  - `pnpm inventory:audit:city --city=hanoi --strict`
+  - `pnpm inventory:audit:city --city=danang --strict`
+  - `pnpm inventory:audit:city --city=bangkok --strict`
+  - `pnpm inventory:audit:cities --format=json --output=launch-city-inventory-audit.json`
+- What a pass means:
+  - No failing required coverage gaps for the city.
+  - No unacceptable hospitality leakage / stale keyword leakage / duplicate clusters / session-to-mapping gaps under the scripted thresholds.
+  - Manual-override and provider-disagreement review lists are visible for human follow-up.
+- What a fail means:
+  - The city inventory is not launch-trustworthy yet and needs rematch, reseed, manual override review, duplicate cleanup, or explicit documentation of missing categories.
+- How it was tested:
+  - `node scripts/city-inventory-audit.mjs --help`
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/seed/__tests__/citySeeding.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `node scripts/verify-discovery-contract.mjs`
+  - `pnpm inventory:audit:city --city=hanoi --strict`
+- Result:
+  - The new audit CLI and node tests passed.
+  - Existing inventory/matcher regressions still passed.
+  - Control docs now describe the target-city launch checklist and the new audit commands.
+  - A real audit attempt from this shell failed with `getaddrinfo ENOTFOUND db.kdviydoftmjuglaglsmm.supabase.co`, confirming the tooling is ready but live target-city validation still requires a DB-connected environment.
+- Remaining risks or follow-up notes:
+  - The scripted audit cannot prove real-world market completeness; it only proves the current repo baseline can be audited consistently.
+  - Imported external events are still not treated as canonical activity-mapping evidence in the audit.
+  - Live city status for Hanoi, Da Nang, and Bangkok is still unknown until the audit is run from a connected machine.
+
+## 2026-03-11 12:37:28 +0700 — city audit manual-override grading correction
+
+- Issue being worked on:
+  - Final verification of the new city audit report semantics.
+- Files changed:
+  - `scripts/city-inventory-audit.mjs`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The first implementation graded `manualOverrides` as `suspicious` when a city had zero manual overrides, which would have incorrectly penalized a genuinely clean city with no override debt.
+- Decision made:
+  - Make `manualOverrides` informational-only and always `acceptable`, while still exposing the sample list/count for operators.
+- Why the decision was made:
+  - Manual overrides are a visibility/audit signal, not a required launch-quality minimum.
+- How it was tested:
+  - `node --test scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/city-inventory-audit.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+- Result:
+  - City audit status now depends on real inventory quality metrics instead of the incidental presence of manual overrides.
+- Remaining risks or follow-up notes:
+  - Live city audits still require a DB-connected environment.
+
+## 2026-03-11 13:04:49 +0700 — live inventory execution pack + manual review sweep prep kickoff
+
+- Issue being worked on:
+  - Package the live operator flow for Hanoi, Da Nang, and Bangkok so a DB-connected human can run rematch, capture artifacts, run city audits, summarize status, and complete the manual review sweep without guessing.
+- Files planned to change:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - `scripts/rematch-venue-activities.mjs`
+  - new operator/reporting script(s) under `scripts/`
+  - new or updated docs under `docs/`
+  - targeted node tests for the operator/reporting flow
+- Decision made:
+  - Keep discovery semantics stable and focus on execution packaging: artifact capture, report summarization, exact command order, and manual-review handoff.
+- Why the decision was made:
+  - The repo already has the cleanup policy and city audit tooling. The remaining launch-readiness gap is operator usability against the live environment.
+- How it will be tested:
+  - Node-level tests for the new reporting flow.
+  - Targeted ESLint on new/changed operator scripts.
+  - Existing inventory verification scripts rerun where relevant.
+- Result:
+  - Kickoff logged. Operator flow packaging is underway.
+- Remaining risks or follow-up notes:
+  - This shell still cannot execute the live DB-connected run, so the pass must stay honest about artifacts and commands rather than pretending to complete the live sweep.
+
+## 2026-03-11 13:07:46 +0700 — live inventory execution pack + operator status reporting implemented
+
+- Issue being worked on:
+  - Make the live target-city rematch + audit flow operator-readable and capture-ready for Hanoi, Da Nang, and Bangkok.
+- Files changed:
+  - `scripts/rematch-venue-activities.mjs`
+  - `scripts/city-inventory-status-report.mjs`
+  - `scripts/__tests__/rematch-venue-activities.test.mjs`
+  - `scripts/__tests__/city-inventory-status-report.test.mjs`
+  - `package.json`
+  - `docs/live_inventory_execution_pack.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `docs/inventory_truth_policy.md`
+  - `docs/discovery_playbook.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Root cause / finding:
+  - The repo had the right cleanup and audit primitives, but the live operator flow still required too much guesswork:
+    - rematch output was stdout-only and awkward to preserve,
+    - there was no single summary format that combined rematch + audit outputs into launch guidance,
+    - the target-city checklist described what to inspect but not the exact artifact naming and per-city run order.
+- Exact fix:
+  - `scripts/rematch-venue-activities.mjs`
+    - now supports `--output=<file>`
+    - now emits a stable report object with `city`, `requestedAt`, `runStatus`, `errorCount`, and the cleanup counters needed for launch review
+    - was refactored into testable exports (`parseArgs`, `buildRematchReport`, `executeRematch`, `main`)
+  - Added `scripts/city-inventory-status-report.mjs`
+    - reads `<city>-rematch-dry-run.json`, `<city>-rematch-apply.json`, and `<city>-audit.json`
+    - outputs a compact per-city status with:
+      - `city`
+      - `rematchRunStatus`
+      - `auditStatus`
+      - `coverageStatus`
+      - `hospitalityLeakageStatus`
+      - `duplicateStaleStatus`
+      - `manualReviewRequired`
+      - `launchRecommendation`
+    - also lists manual-review candidate buckets for operator follow-through
+  - Added the live runbook in `docs/live_inventory_execution_pack.md`
+    - exact command order
+    - artifact directory convention
+    - pass/fail meaning
+    - final combined status report step
+    - manual review note template
+  - Updated the existing checklist and control docs so the next human step is now the execution pack, not an improvised live sweep.
+- Why the decision was made:
+  - Launch readiness now depends more on consistent operator execution than on new discovery semantics. The cleanest improvement was to package the already-approved rematch/audit flow into one deterministic artifact/reporting process.
+- How it is run:
+  - Create an artifact directory:
+    - `export INVENTORY_RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"`
+    - `export INVENTORY_ARTIFACT_DIR="artifacts/inventory-live/${INVENTORY_RUN_ID}"`
+    - `mkdir -p "$INVENTORY_ARTIFACT_DIR"`
+  - For each city:
+    - `pnpm verify:seed-health --city=<slug> --packVersion=2026-03-04.v1`
+    - `pnpm inventory:rematch --city=<slug> --output="$INVENTORY_ARTIFACT_DIR/<slug>-rematch-dry-run.json"`
+    - `pnpm inventory:rematch --city=<slug> --apply --output="$INVENTORY_ARTIFACT_DIR/<slug>-rematch-apply.json"`
+    - `pnpm inventory:audit:city --city=<slug> --strict --format=json --output="$INVENTORY_ARTIFACT_DIR/<slug>-audit.json"`
+    - `pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --city=<slug> --format=markdown --output="$INVENTORY_ARTIFACT_DIR/<slug>-status.md"`
+  - Final combined summary:
+    - `pnpm inventory:status --dir="$INVENTORY_ARTIFACT_DIR" --all --format=markdown --output="$INVENTORY_ARTIFACT_DIR/live-inventory-status.md"`
+- What a pass means:
+  - The rematch apply artifact is clean (`runStatus=ok`, `errorCount=0`).
+  - The audit artifact is `acceptable`.
+  - The final status report says `launchRecommendation=launch-acceptable`.
+- What a fail / block means:
+  - Rematch apply is missing or errored.
+  - Audit is missing or `failing`.
+  - Coverage, hospitality leakage, or duplicate/stale mapping status is `failing`.
+- How it was tested:
+  - `node scripts/rematch-venue-activities.mjs --help`
+  - `node scripts/city-inventory-status-report.mjs --help`
+  - `node --test scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm exec eslint scripts/rematch-venue-activities.mjs scripts/city-inventory-status-report.mjs scripts/city-inventory-audit.mjs scripts/__tests__/rematch-venue-activities.test.mjs scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - The repo now has a complete live inventory execution pack:
+    - deterministic artifact capture
+    - deterministic per-city status reporting
+    - deterministic manual review handoff
+  - Local script/tests passed.
+  - No discovery semantics were changed.
+- Remaining risks or follow-up notes:
+  - This shell still cannot run the real DB-connected sweep, so no live city status was produced here.
+  - Operator discipline still matters: the report summarizes artifacts, but a human must still inspect suspicious sample buckets and write the manual review note.
+
+## 2026-03-11 13:22:50 +0700 — target-city live inventory diagnosis kickoff
+
+- Issue being worked on:
+  - Diagnose why the live target-city inventory is too small, irrelevant, or polluted in Hanoi, Da Nang, and Bangkok after the operator rematch flow ran successfully.
+- Files planned to change:
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+  - inventory diagnostics scripts/tests/docs under `scripts/`, `docs/`, and possibly `apps/doWhat-web/src/lib/...`
+- Decision made:
+  - Treat this as a diagnosis + instrumentation pass, not another rollout or discovery-policy rewrite.
+- Why the decision was made:
+  - Live operator artifacts now prove the bottleneck has moved from rollout mechanics to actual inventory reality. The next useful work is to explain where the city inventory path is failing and make those failures observable.
+- How it will be tested:
+  - artifact-backed diagnosis from the saved live run outputs,
+  - targeted tests for any new diagnostic helpers/scripts,
+  - existing inventory/discovery guardrails rerun where relevant.
+- Result:
+  - Kickoff logged. Artifact review and end-to-end city inventory path tracing are in progress.
+- Remaining risks or follow-up notes:
+  - If the live results cannot be fully explained from the repo and the saved artifacts alone, the exact next DB-connected proving step will be documented explicitly.
+
+## 2026-03-11 13:36:12 +0700 — target-city inventory diagnosis proven from live artifacts + Supabase REST
+
+- Issue being worked on:
+  - Explain why Hanoi, Da Nang, and Bangkok look nearly empty or irrelevant in live rematch runs even though the operator flow itself executed successfully.
+- Root cause found:
+  - The bottleneck is primarily city-scope collapse, not empty bounding boxes:
+    - Hanoi live proof: `bboxPlaceCount=2220`, `currentScopeCount=6`, `nullCityFieldsCount=1477`
+    - Da Nang live proof: `bboxPlaceCount=329`, `currentScopeCount=0`, `nullCityFieldsCount=125`
+    - Bangkok live proof: `bboxPlaceCount=2706`, `currentScopeCount=1`, `nullCityFieldsCount=1717`
+  - Current rematch scoping uses raw `city/locality ilike` matching, which misses:
+    - accent-folded names like `Hà Nội` / `Đà Nẵng`
+    - spaced variants like `Da Nang`
+    - native-script / Thai locality labels
+    - district-level localities inside Bangkok
+    - rows where `city` and `locality` are null
+  - Additional proven issue: `place_tiles.discovery_cache` currently has **no** target-city seed cache entries for pack version `2026-03-04.v1`, even though unrelated discovery cache entries still exist in the same environment.
+  - Additional proven issue: `venue_activities` coverage is effectively zero in all three cities on the current canonical place base.
+- Affected entity/model/query/mapping:
+  - `places.city` / `places.locality`
+  - `place_tiles.discovery_cache`
+  - `venue_activities`
+  - operator rematch scope in `activityMatching.loadPlacesBatch`
+- Files touched:
+  - `scripts/city-inventory-diagnostics.mjs`
+  - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `package.json`
+  - `docs/discovery_playbook.md`
+  - `docs/live_inventory_execution_pack.md`
+  - `docs/launch_city_inventory_checklist.md`
+  - `CURRENT_STATE.md`
+  - `OPEN_BUGS.md`
+  - `DISCOVERY_TRUTH.md`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Exact fix / decision:
+  - Added a new deterministic diagnostics script:
+    - `pnpm inventory:diagnose:city --city=<slug>`
+    - `pnpm inventory:diagnose:cities`
+  - The report now exposes:
+    - seed cache counts (`cacheEntries`, `fetchedCount`, `rejectedByReason`, `providerCounts`)
+    - bbox inventory counts
+    - current rematch scope count
+    - normalized alias match count
+    - null city/locality counts
+    - mapped vs unmatched counts
+    - hospitality-primary noise counts
+    - ranked root-cause summaries
+  - Updated operator docs so diagnostics run before trusting tiny rematch counts.
+- Why the decision was made:
+  - The existing rematch artifacts only showed `processed=0/1/6`, which was too little to distinguish “city empty” from “scope broken.” The new diagnostics make that distinction explicit and reproducible.
+- Tests added / updated:
+  - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+- How it was tested:
+  - `pnpm exec eslint scripts/city-inventory-diagnostics.mjs scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `node --test scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `node scripts/city-inventory-diagnostics.mjs --city=hanoi`
+  - `node scripts/city-inventory-diagnostics.mjs --city=danang --format=json`
+  - `node scripts/city-inventory-diagnostics.mjs --city=bangkok --format=json`
+  - ad-hoc Supabase REST probes against `places` and `place_tiles`
+- Result:
+  - Ranked diagnosis is now proven and operator-friendly instead of anecdotal.
+  - Target-city launch work can now distinguish:
+    - scope collapse
+    - missing seed cache
+    - zero mapping base
+    - hospitality/noise pockets
+    - duplicate-cluster pressure
+- Remaining risks or follow-up notes:
+  - The current pass diagnosed and instrumented the failure but did **not** change live rematch semantics yet.
+  - The next proving/fix step is to harden city scope selection and canonical place city/locality normalization, then rerun the live operator flow.
+
+## 2026-03-11 13:36:59 +0700 — target-city diagnosis verification completed
+
+- Issue being worked on:
+  - Verify that the new city-inventory diagnostics tooling is stable and that existing inventory truth guardrails still pass.
+- Files touched:
+  - `scripts/city-inventory-diagnostics.mjs`
+  - `scripts/__tests__/city-inventory-diagnostics.test.mjs`
+  - `changes_log.md`
+  - `ASSISTANT_CHANGES_LOG.md`
+- Decision made:
+  - Keep this pass scoped to diagnosis + operator tooling; do not change discovery semantics until the next fix pass.
+- Why the decision was made:
+  - The live proof is sufficient to show where inventory is being lost. Another semantics change in the same pass would blur diagnosis and fix.
+- How it was tested:
+  - `pnpm exec eslint scripts/city-inventory-diagnostics.mjs scripts/__tests__/city-inventory-diagnostics.test.mjs scripts/city-inventory-audit.mjs scripts/city-inventory-status-report.mjs`
+  - `node --test scripts/__tests__/city-inventory-diagnostics.test.mjs scripts/__tests__/city-inventory-audit.test.mjs`
+  - `pnpm --filter dowhat-web test -- --runInBand --runTestsByPath src/lib/places/__tests__/activityMatching.test.ts src/lib/discovery/__tests__/placeActivityFilter.test.ts`
+  - `node scripts/verify-discovery-contract.mjs`
+- Result:
+  - New diagnostics tests passed (`14/14`).
+  - Existing matcher + place-activity filter tests passed (`11/11`).
+  - Discovery contract verification passed.
+  - The repo is ready for a focused city-scope / canonical city-normalization fix pass.
+- Remaining risks or follow-up notes:
+  - Seed cache absence for the target-city pack version is still a live-environment problem, not a repo-only proof artifact.
+  - Direct Postgres access from this shell remains unavailable; all live proof in this pass came through the Supabase REST path.

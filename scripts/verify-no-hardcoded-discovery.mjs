@@ -22,6 +22,12 @@ const EXCLUDE_PATH_SEGMENTS = [
   '/node_modules/',
 ];
 
+const RULE_EXCLUDED_FILES = {
+  hardcoded_discovery_array: new Set([
+    'packages/shared/src/activityIntelligence/taxonomy.ts',
+  ]),
+};
+
 const RULES = [
   {
     id: 'placeholder_discovery_phrase',
@@ -79,14 +85,18 @@ for (const relDir of INCLUDE_DIRS) {
 
   const files = walkFiles(absDir);
   for (const absFile of files) {
+    const relativeFile = normalizePath(path.relative(ROOT, absFile));
     const source = fs.readFileSync(absFile, 'utf8');
     for (const rule of RULES) {
+      if (RULE_EXCLUDED_FILES[rule.id]?.has(relativeFile)) {
+        continue;
+      }
       rule.regex.lastIndex = 0;
       let match;
       while ((match = rule.regex.exec(source)) !== null) {
         const line = findLineNumber(source, match.index);
         failures.push({
-          file: normalizePath(path.relative(ROOT, absFile)),
+          file: relativeFile,
           line,
           rule: rule.id,
           description: rule.description,

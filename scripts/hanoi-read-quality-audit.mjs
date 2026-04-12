@@ -116,6 +116,7 @@ const classifyVisibleResult = (query, item) => {
 
 const summarizeVisibleItem = (query, item, surface) => {
   const classification = classifyVisibleResult(query, item);
+  const admissionReason = inferAdmissionReason(item, query, surface);
   return {
     id: item.id ?? item.venueId ?? null,
     name: item.name ?? item.venueName ?? null,
@@ -126,8 +127,8 @@ const summarizeVisibleItem = (query, item, surface) => {
     taxonomyCategories: item.taxonomy_categories ?? [],
     verification: item.verification_state ?? item.verificationState ?? null,
     score: item.score ?? item.rank_score ?? item.trustScore ?? null,
-    whyIncluded: inferAdmissionReason(item, query, surface),
-    evidenceSource: inferAdmissionReason(item, query, surface),
+    whyIncluded: admissionReason,
+    evidenceSource: admissionReason,
     ...classification,
   };
 };

@@ -199,10 +199,6 @@ function parseNumber(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function _parseBoolean(value: string | null): boolean {
-  return value === '1' || value === 'true';
-}
-
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }

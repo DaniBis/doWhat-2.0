@@ -31,6 +31,17 @@ export const describeEventOrigin = (
   event: EventSummary | null | undefined,
 ): { label: string; helper: string } => {
   const summary = describeEventDiscoveryPresentation(event);
+
+  if (event && summary.primaryActionKind === 'view_session') {
+    return {
+      label: 'Community session',
+      helper:
+        inferEventLocationKind(event) === 'canonical_place'
+          ? 'Created on doWhat at a confirmed place'
+          : 'Created on doWhat',
+    };
+  }
+
   return { label: summary.badgeLabel, helper: summary.helper };
 };
 

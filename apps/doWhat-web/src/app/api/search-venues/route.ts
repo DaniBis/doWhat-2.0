@@ -6,7 +6,6 @@ import { discoverNearbyVenues } from '@/lib/discovery/engine';
 import { haversineMeters } from '@/lib/places/utils';
 import { normalizeVenueSearchActivities } from '@/lib/venues/search';
 import { VENUE_SEARCH_DEFAULT_RADIUS, VENUE_SEARCH_MAX_LIMIT } from '@/lib/venues/constants';
-import type { ActivityName as _ActivityName } from '@/lib/venues/constants';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
