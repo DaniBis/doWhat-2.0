@@ -1,6 +1,16 @@
 # Assistant Change Log
 # Assistant Change Log
 
+## 2026-04-11
+- Completed a PR #7-only blocker-fix pass on branch `launch-city-inventory-tooling-20260331` after rechecking live review state on head `97d52e1fd7c5e84bf44441e2c5bd5f7357df67cd`.
+- Fixed only the still-current in-scope PR #7 review blockers:
+  - `scripts/city-inventory-status-report.mjs`: empty or missing `audit.coverage` now reports `missing` instead of defaulting to `acceptable`; missing audit buckets for `duplicateClusters`, `staleMappings`, `weakMappings`, and `sessionMappingGaps` now report `missing`; and launch recommendation now blocks when those required sections are missing so incomplete artifacts cannot surface as launch-acceptable.
+  - `scripts/rematch-venue-activities.mjs`: `--limit`, `--offset`, and `--batchSize` are now validated as non-negative integers before numeric coercion, so invalid input fails explicitly instead of silently turning into `NaN` / `null` in JSON output.
+  - `scripts/city-inventory-audit.mjs`: normalized the zero-risk same-file style nit from `] ;` to `];`.
+- Added focused regression coverage in `scripts/__tests__/city-inventory-status-report.test.mjs` and `scripts/__tests__/rematch-venue-activities.test.mjs` for the exact missing-artifact and invalid-numeric-input cases raised by the live Copilot comments.
+- Narrow validation run exactly for this pass:
+  - `node --test scripts/__tests__/city-inventory-status-report.test.mjs scripts/__tests__/rematch-venue-activities.test.mjs` ✅ (`13` tests, `0` failed)
+  - `grep -n '] ;' scripts/city-inventory-audit.mjs` ✅ no match
 ## 2026-04-10
 - Ran a PR #6-only follow-up pass on live head `6995d71de5c281ea52bbc9af251a0182f137390f` from branch `hanoi-keepset-from-origin-main-20260328` to resolve the remaining current in-scope blockers without touching PR #7, `main`, mobile baseline paths, or `apps/doWhat-web/vercel.json`.
 - Live-review audit result for the two still-current Copilot comments:

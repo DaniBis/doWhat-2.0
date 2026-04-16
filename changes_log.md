@@ -1,10 +1,30 @@
 # Changes Log
 
-### 2026-04-10 UTC — PR #6-only follow-up pass clears the remaining in-scope web blockers on current head
-- Issue: use live PR #6 head `6995d71de5c281ea52bbc9af251a0182f137390f` as source of truth, prove whether the two still-current Copilot comments explain `build-test-health`, and fix only the remaining real PR #6-scoped blockers.
+### 2026-04-11 UTC — PR #7 review-blocker fix pass for launch-city inventory tooling
+- Issue: fix only the still-current in-scope PR #7 Copilot review blockers on `launch-city-inventory-tooling-20260331` without widening scope beyond the launch-city inventory surface.
 - Files changed:
-   - `apps/doWhat-web/src/lib/events/presentation.ts`
-   - `apps/doWhat-web/src/app/map/searchMatching.ts`
+   - `scripts/city-inventory-status-report.mjs`
+   - `scripts/rematch-venue-activities.mjs`
+   - `scripts/city-inventory-audit.mjs`
+   - `scripts/__tests__/city-inventory-status-report.test.mjs`
+   - `scripts/__tests__/rematch-venue-activities.test.mjs`
+   - `changes_log.md`
+   - `ASSISTANT_CHANGES_LOG.md`
+- Exact fix:
+    Issue: fix only the still-current in-scope PR #7 Copilot review blockers on `launch-city-inventory-tooling-20260331` without widening scope beyond the launch-city inventory surface.
+    Files changed:
+       - `scripts/city-inventory-status-report.mjs`
+       - `scripts/rematch-venue-activities.mjs`
+       - `scripts/city-inventory-audit.mjs`
+       - `scripts/__tests__/city-inventory-status-report.test.mjs`
+       - `scripts/__tests__/rematch-venue-activities.test.mjs`
+       - `changes_log.md`
+       - `ASSISTANT_CHANGES_LOG.md`
+       - Exact fix:
+          - `scripts/city-inventory-status-report.mjs` now treats missing or empty `audit.coverage` as `missing`, treats missing duplicate/stale/weak/session-gap audit buckets as `missing`, and blocks launch recommendation when those required audit sections are missing.
+          - `scripts/rematch-venue-activities.mjs` now validates `--limit`, `--offset`, and `--batchSize` as non-negative integers before coercion so invalid user input cannot silently serialize as JSON `null`.
+          - `scripts/city-inventory-audit.mjs` now uses the normalized `];` style for `HOSPITALITY_STEMS`.
+          - focused tests now cover the exact missing-artifact and invalid-numeric-input cases raised by the live review comments.
    - `apps/doWhat-web/src/app/map/page.tsx`
    - `changes_log.md`
    - `ASSISTANT_CHANGES_LOG.md`

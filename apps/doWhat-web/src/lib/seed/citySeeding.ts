@@ -27,6 +27,7 @@ type SeedPack = {
   key: string;
   label: string;
   categories: string[];
+  queryCategoriesByCity?: Partial<Record<string, string[]>>;
   limitMultiplier?: number;
 };
 
@@ -149,43 +150,56 @@ const PACK_REGISTRY: Record<string, SeedPack> = {
   climbing_bouldering: {
     key: 'climbing_bouldering',
     label: 'Climbing + bouldering',
-    categories: [
-      'fitness',
-      'climbing',
-      'bouldering',
-      'rock_climbing',
-      'climbing gym',
-      'boulder',
-      'sala escalada',
-      'leo nui',
-      'phong tap leo nui',
-      'ยิมปีนผา',
-      'โบลเดอร์',
-    ],
+    categories: ['fitness', 'rock_climbing', 'climbing', 'bouldering'],
+    queryCategoriesByCity: {
+      hanoi: ['fitness', 'climbing_bouldering'],
+      danang: ['fitness', 'climbing_bouldering'],
+      bangkok: ['fitness', 'rock_climbing'],
+    },
     limitMultiplier: 1.6,
   },
   padel: {
     key: 'padel',
     label: 'Padel courts',
-    categories: ['fitness', 'padel', 'pádel', 'padel court', 'padel club', 'สนามพาเดล', 'sân padel'],
+    categories: ['fitness', 'padel'],
+    queryCategoriesByCity: {
+      hanoi: ['fitness', 'padel'],
+      danang: ['fitness', 'padel'],
+      bangkok: ['fitness', 'padel'],
+    },
     limitMultiplier: 1.4,
   },
   running: {
     key: 'running',
     label: 'Running parks and tracks',
-    categories: ['outdoors', 'running', 'jogging', 'track', 'trail', 'park', 'công viên chạy bộ'],
+    categories: ['outdoors', 'running', 'track', 'park'],
+    queryCategoriesByCity: {
+      hanoi: ['outdoors', 'running'],
+      danang: ['outdoors', 'running'],
+      bangkok: ['outdoors', 'running_parks'],
+    },
     limitMultiplier: 1.2,
   },
   yoga: {
     key: 'yoga',
     label: 'Yoga studios',
-    categories: ['fitness', 'wellness', 'yoga', 'yoga studio', 'phòng yoga', 'สตูดิโอโยคะ'],
+    categories: ['fitness', 'yoga'],
+    queryCategoriesByCity: {
+      hanoi: ['fitness', 'yoga'],
+      danang: ['fitness', 'yoga'],
+      bangkok: ['fitness', 'yoga'],
+    },
     limitMultiplier: 1.1,
   },
   chess: {
     key: 'chess',
-    label: 'Chess cafes and clubs',
-    categories: ['community', 'chess', 'chess club', 'board games', 'cafe chess', 'cờ vua', 'หมากรุก'],
+    label: 'Chess clubs and community boards',
+    categories: ['community', 'chess', 'board_games'],
+    queryCategoriesByCity: {
+      hanoi: ['community', 'chess'],
+      danang: ['community', 'chess'],
+      bangkok: ['community', 'chess', 'board_games'],
+    },
     limitMultiplier: 1.05,
   },
 };
@@ -396,6 +410,11 @@ const resolvePacks = (city: CitySeedPreset, requested?: string[]): SeedPack[] =>
   return resolved;
 };
 
+const resolvePackCategories = (city: CitySeedPreset, pack: SeedPack): string[] => {
+  const scopedCategories = pack.queryCategoriesByCity?.[city.slug];
+  return scopedCategories?.length ? scopedCategories : pack.categories;
+};
+
 const round = (value: number) => Number(value.toFixed(6));
 
 const inBbox = (coord: Coordinate, bbox: ViewportBounds): boolean => {
@@ -511,21 +530,22 @@ const runInferenceForPlaces = async (placeIds: string[], city?: string): Promise
   return summarizeInference(summaries);
 };
 
-const buildPackFilterSignature = (pack: SeedPack): string => {
-  const categories = [...pack.categories]
+const buildPackFilterSignature = (categories: string[]): string => {
+  const normalized = [...categories]
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
-  return categories.join('|');
+  return normalized.join('|');
 };
 
 const buildSeedCacheKey = (input: {
   city: string;
   geohash6: string;
   pack: SeedPack;
+  queryCategories: string[];
   packVersion: string;
 }): string => {
-  const signature = buildPackFilterSignature(input.pack);
+  const signature = buildPackFilterSignature(input.queryCategories);
   const hash = createHash('sha1').update(signature).digest('hex').slice(0, 10);
   return `seed:${input.packVersion}:${input.city}:${input.geohash6}:${input.pack.key}:${hash}`;
 };
@@ -608,6 +628,16 @@ export const listSeedCities = (): string[] => Object.keys(CITY_PRESETS);
 
 export const listSeedPacks = (): string[] => Object.keys(PACK_REGISTRY);
 
+export const __citySeedingTestUtils = {
+  getSeedPack: (key: string): SeedPack | null => PACK_REGISTRY[key] ?? null,
+  resolvePackCategories: (city: string, key: string): string[] => {
+    const preset = CITY_PRESETS[city];
+    const pack = PACK_REGISTRY[key];
+    if (!preset || !pack) return [];
+    return resolvePackCategories(preset, pack);
+  },
+};
+
 export const seedCityInventory = async (options: SeedCityOptions): Promise<CitySeedResult> => {
   const service = createServiceClient();
 
@@ -644,9 +674,10 @@ export const seedCityInventory = async (options: SeedCityOptions): Promise<CityS
 
   for (const tile of tiles) {
     for (const pack of packs) {
+      const packCategories = resolvePackCategories(city, pack);
       const query: PlacesQuery = {
         bounds: tile.bounds,
-        categories: pack.categories,
+        categories: packCategories,
         city: city.slug,
         limit: Math.max(
           80,
@@ -663,6 +694,7 @@ export const seedCityInventory = async (options: SeedCityOptions): Promise<CityS
         city: city.slug,
         geohash6: tile.geohash6,
         pack,
+        queryCategories: packCategories,
         packVersion,
       });
 
@@ -728,7 +760,7 @@ export const seedCityInventory = async (options: SeedCityOptions): Promise<CityS
           hotspot: tile.hotspot,
           mode,
           refresh,
-          filterSignature: buildPackFilterSignature(pack),
+          filterSignature: buildPackFilterSignature(packCategories),
           providerCounts: result.providerCounts,
           explain: {
             cacheHit: result.cacheHit,
