@@ -1,24 +1,8 @@
-export const ACTIVITY_NAMES = [
-  'padel',
-  'chess',
-  'board games',
-  'bouldering',
-  'climbing',
-  'yoga',
-  'tennis',
-  'dancing',
-  'karaoke',
-  'ping pong',
-  'badminton',
-  'pool',
-  'billiards',
-  'archery',
-  'gaming',
-  'running',
-  'bowling',
-] as const;
+import { getSearchableCanonicalActivityIds, type CanonicalActivityId } from '@dowhat/shared';
 
-export type ActivityName = (typeof ACTIVITY_NAMES)[number];
+export const ACTIVITY_NAMES = getSearchableCanonicalActivityIds();
+
+export type ActivityName = CanonicalActivityId;
 
 export const CLASSIFICATION_MODEL = 'gpt-4o-mini';
 

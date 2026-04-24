@@ -10,6 +10,10 @@ const { discoverNearbyVenues } = jest.requireMock('@/lib/discovery/engine') as {
 
 let GET: typeof import('../route').GET;
 
+beforeEach(() => {
+  discoverNearbyVenues.mockReset();
+});
+
 beforeAll(async () => {
   if (!globalThis.TextEncoder) {
     const { TextEncoder, TextDecoder } = await import('node:util');
@@ -127,5 +131,49 @@ describe('/api/search-venues', () => {
     expect(payload.sourceBreakdown).toEqual({ venues: 1 });
     expect(payload.filterSupport.activityTypes).toBe(true);
     expect(payload.facets.activityTypes).toEqual([{ value: 'chess', count: 1 }]);
+  });
+
+  it('accepts martial arts as a family query and fans out to canonical searches', async () => {
+    const discoverMock = discoverNearbyVenues as jest.Mock;
+    discoverMock.mockResolvedValue({
+      result: {
+        center: { lat: 1, lng: 2 },
+        radiusMeters: 2000,
+        count: 0,
+        items: [],
+        filterSupport: {
+          activityTypes: true,
+          tags: true,
+          traits: false,
+          taxonomyCategories: false,
+          priceLevels: false,
+          capacityKey: false,
+          timeWindow: false,
+        },
+        facets: {
+          activityTypes: [],
+          tags: [],
+          traits: [],
+          taxonomyCategories: [],
+          priceLevels: [],
+          capacityKey: [],
+          timeWindow: [],
+        },
+        sourceBreakdown: {},
+        source: 'venues',
+      },
+      venues: [],
+      debug: { limitApplied: 1, venueCount: 0, voteCount: 0 },
+    });
+
+    const request = new Request('http://localhost/api/search-venues?activity=martial%20arts&lat=1&lng=2&radius=2000&limit=1');
+    const response = await GET(request);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(discoverMock).toHaveBeenCalledTimes(5);
+    expect(discoverMock.mock.calls.map((call) => call[1])).toEqual(['boxing', 'kickboxing', 'judo', 'bjj', 'mma']);
+    expect(payload.activity).toBe('martial arts');
+    expect(payload.results).toEqual([]);
   });
 });

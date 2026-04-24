@@ -53,6 +53,7 @@ export interface RankedVenueActivity {
   verified: boolean;
   needsVerification: boolean;
   verificationState: 'suggested' | 'verified' | 'needs_votes';
+  eligibleForSpecificQuery?: boolean;
 }
 
 export interface ActivityAvailabilitySummary {

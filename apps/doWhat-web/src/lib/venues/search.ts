@@ -8,6 +8,11 @@ import {
   VENUE_SEARCH_MAX_LIMIT,
 } from '@/lib/venues/constants';
 import type { ActivityName } from '@/lib/venues/constants';
+import {
+  evaluateCanonicalActivityMatch,
+  getCanonicalActivityDefinition,
+  resolveCanonicalActivityId,
+} from '@dowhat/shared';
 import type { ActivityAvailabilitySummary, RankedVenueActivity } from '@/lib/venues/types';
 import { computeTrustScore, type VerificationState } from '@/lib/discovery/trust';
 import type { Json, VenueRow } from '@/types/database';
@@ -106,6 +111,7 @@ export async function searchVenueActivities(
 
   const results = filtered
     .map((row) => buildRankedActivity(row, params.activity, voteMap.get(row.id)))
+    .filter((row) => row.eligibleForSpecificQuery)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
@@ -255,7 +261,23 @@ async function fetchVoteMap(supabase: Supabase, venueIds: string[], activity: Ac
 function venueSupportsActivity(row: VenueRowLite, activity: ActivityName): boolean {
   const aiTags = filterActivityNames(row.ai_activity_tags);
   const verified = filterActivityNames(row.verified_activities);
-  return aiTags.includes(activity) || verified.includes(activity);
+  if (!aiTags.includes(activity) && !verified.includes(activity)) return false;
+
+  const discovery = extractDiscoveryMetadata(row.metadata ?? null);
+  const eligibility = evaluateCanonicalActivityMatch(
+    activity,
+    {
+      name: row.name,
+      categories: discovery.categories,
+      tags: discovery.keywords,
+      verifiedActivities: verified,
+      aiActivities: aiTags,
+      venueTypes: discovery.categories,
+    },
+    'specific',
+  );
+
+  return eligibility.eligible;
 }
 
 function buildRankedActivity(
@@ -299,6 +321,18 @@ function buildRankedActivity(
     trustScore: trust.trustScore,
   });
   const displayAddress = formatVenueAddress(row, discovery);
+  const eligibility = evaluateCanonicalActivityMatch(
+    activity,
+    {
+      name: row.name,
+      categories: discovery.categories,
+      tags: discovery.keywords,
+      verifiedActivities: Array.from(verifiedSet),
+      aiActivities: Array.from(aiTags),
+      venueTypes: discovery.categories,
+    },
+    'specific',
+  );
 
   return {
     venueId: row.id,
@@ -323,6 +357,7 @@ function buildRankedActivity(
     verified: verificationState === 'verified',
     needsVerification: verificationState === 'needs_votes',
     verificationState,
+    eligibleForSpecificQuery: eligibility.eligible,
   };
 }
 
@@ -407,13 +442,20 @@ function extractDiscoveryMetadata(metadata: Json | null): DiscoveryMetadata {
 }
 
 function matchesDiscovery(values: string[], activity: ActivityName): boolean {
-  const normalized = activity.toLowerCase();
-  return values.some((value) => value.toLowerCase() === normalized || value.toLowerCase().includes(normalized));
+  const definition = getCanonicalActivityDefinition(activity);
+  const aliases = definition ? [definition.id, definition.displayLabel, ...definition.aliases, ...definition.queryIntent.aliases] : [activity];
+  const normalizedAliases = aliases.map((value) => value.toLowerCase());
+  return values.some((value) => {
+    const normalized = value.toLowerCase();
+    return normalizedAliases.some((alias) => normalized === alias || normalized.includes(alias));
+  });
 }
 
 function filterActivityNames(values?: string[] | null): ActivityName[] {
   if (!values?.length) return [];
-  return values.filter((value): value is ActivityName => ACTIVITY_SET.has(value as ActivityName));
+  return values
+    .map((value) => normalizeActivityName(value))
+    .filter((value): value is ActivityName => Boolean(value));
 }
 
 function toStringArray(value: unknown): string[] {
@@ -476,8 +518,26 @@ function clampLimit(limit?: number | null) {
   return Math.max(1, Math.min(VENUE_SEARCH_MAX_LIMIT, Math.floor(limit)));
 }
 
+const MARTIAL_ARTS_FAMILY_ACTIVITIES: ActivityName[] = ['boxing', 'kickboxing', 'judo', 'bjj', 'mma'];
+
 export function isActivityName(value: unknown): value is ActivityName {
-  return typeof value === 'string' && ACTIVITY_SET.has(value as ActivityName);
+  return normalizeActivityName(value) != null;
+}
+
+export function normalizeActivityName(value: unknown): ActivityName | null {
+  if (typeof value !== 'string') return null;
+  const resolved = resolveCanonicalActivityId(value);
+  return resolved && ACTIVITY_SET.has(resolved) ? resolved : null;
+}
+
+export function normalizeVenueSearchActivities(value: unknown): ActivityName[] | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (normalized === 'martial arts' || normalized === 'martial art') {
+    return [...MARTIAL_ARTS_FAMILY_ACTIVITIES];
+  }
+  const activity = normalizeActivityName(value);
+  return activity ? [activity] : null;
 }
 
 export function withinClassificationTTL(lastUpdateIso: string | null): boolean {

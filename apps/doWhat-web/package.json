@@ -4,13 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3002",
+    "dev:verify": "NEXT_PUBLIC_E2E_ADMIN_BYPASS=true next dev -p 3003",
     "build": "next build",
     "start": "next start -p 3002",
     "lint": "next lint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node ../../temp/hanoi-map-browser-truth.mjs"
   },
   "dependencies": {
     "@dowhat/shared": "workspace:^",

@@ -8,6 +8,27 @@ export interface CreateNearbyActivitiesFetcherOptions {
   fetchImpl?: typeof fetch;
   includeCredentials?: boolean;
   timeoutMs?: number;
+  getRequestHeaders?: (query: MapActivitiesQuery) => HeadersInit | undefined;
+  onRequestStart?: (info: {
+    url: string;
+    query: MapActivitiesQuery;
+    refresh: boolean;
+    timeoutMs: number;
+    requestId: string | null;
+  }) => void;
+  onRequestEnd?: (info: {
+    url: string;
+    query: MapActivitiesQuery;
+    refresh: boolean;
+    timeoutMs: number;
+    requestId: string | null;
+    durationMs: number;
+    timedOut: boolean;
+    responseStatus?: number;
+    resultCount?: number;
+    errorMessage?: string;
+    response?: MapActivitiesResponse;
+  }) => void;
 }
 
 export interface FetchNearbyActivitiesArgs extends MapActivitiesQuery {
@@ -60,7 +81,15 @@ const createRequestSignal = (signal: AbortSignal | undefined, timeoutMs: number)
 };
 
 export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFetcherOptions): FetchNearbyActivities => {
-  const { buildUrl, fetchImpl, includeCredentials, timeoutMs = DEFAULT_NEARBY_FETCH_TIMEOUT_MS } = options;
+  const {
+    buildUrl,
+    fetchImpl,
+    includeCredentials,
+    timeoutMs = DEFAULT_NEARBY_FETCH_TIMEOUT_MS,
+    getRequestHeaders,
+    onRequestStart,
+    onRequestEnd,
+  } = options;
   const http = fetchImpl ?? globalThis.fetch;
   if (!http) {
     throw new Error('Global fetch API is not available. Pass fetchImpl explicitly.');
@@ -79,6 +108,24 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
       url.searchParams.set(key, value);
     });
 
+    const requestHeaders = new Headers({
+      Accept: 'application/json',
+    });
+    const customHeaders = getRequestHeaders?.(query);
+    if (customHeaders) {
+      const normalizedHeaders = new Headers(customHeaders);
+      normalizedHeaders.forEach((value, key) => requestHeaders.set(key, value));
+    }
+    const requestId = requestHeaders.get('x-map-request-id');
+    const startedAt = Date.now();
+    onRequestStart?.({
+      url: url.toString(),
+      query,
+      refresh: Boolean(refresh),
+      timeoutMs,
+      requestId,
+    });
+
     const request = createRequestSignal(signal, timeoutMs);
     let res: Response;
     try {
@@ -86,11 +133,19 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
         method: 'GET',
         signal: request.signal,
         credentials: includeCredentials ? 'include' : 'same-origin',
-        headers: {
-          Accept: 'application/json',
-        },
+        headers: requestHeaders,
       });
     } catch (error) {
+      onRequestEnd?.({
+        url: url.toString(),
+        query,
+        refresh: Boolean(refresh),
+        timeoutMs,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        timedOut: request.didTimeOut(),
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       if (request.didTimeOut()) {
         throw new Error('Nearby activities request timed out.');
       }
@@ -110,13 +165,47 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
         (typeof info === 'object' && info && 'error' in info && typeof (info as { error?: unknown }).error === 'string'
           ? (info as { error: string }).error
           : null) || `Failed to load nearby activities (${res.status})`;
+      onRequestEnd?.({
+        url: url.toString(),
+        query,
+        refresh: Boolean(refresh),
+        timeoutMs,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        timedOut: false,
+        responseStatus: res.status,
+        errorMessage: message,
+      });
       throw new Error(message);
     }
 
     const payload = (await res.json()) as MapActivitiesResponse;
     if (!payload || !Array.isArray(payload.activities)) {
+      onRequestEnd?.({
+        url: url.toString(),
+        query,
+        refresh: Boolean(refresh),
+        timeoutMs,
+        requestId,
+        durationMs: Date.now() - startedAt,
+        timedOut: false,
+        responseStatus: res.status,
+        errorMessage: 'Unexpected nearby activities response shape.',
+      });
       throw new Error('Unexpected nearby activities response shape.');
     }
+    onRequestEnd?.({
+      url: url.toString(),
+      query,
+      refresh: Boolean(refresh),
+      timeoutMs,
+      requestId,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+      responseStatus: res.status,
+      resultCount: payload.count,
+      response: payload,
+    });
     return payload;
   };
 };

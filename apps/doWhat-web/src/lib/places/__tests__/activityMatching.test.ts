@@ -200,4 +200,124 @@ describe('activity matching inference', () => {
     expect(result.deletes).toEqual([4001]);
     expect(result.hospitalityKeywordDeletes).toBe(1);
   });
+
+  test('rejects generic parks for climbing without explicit activity evidence', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: 'place-6',
+        name: 'Riverside Park',
+        description: 'Large public park with paths and trees',
+        categories: ['park'],
+        tags: ['garden'],
+        metadata: { openstreetmap: { tags: { leisure: 'park' } } },
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: null,
+        updated_at: new Date().toISOString(),
+        venue_activities: [],
+      },
+      catalog: [
+        {
+          id: 2001,
+          slug: 'climbing',
+          name: 'Climbing',
+          description: null,
+          keywords: ['climbing', 'climbing gym'],
+          fsq_categories: ['4bf58dd8d48988d1e1931735'],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys())).toEqual([]);
+  });
+
+  test('accepts explicit provider-backed padel venues across providers', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: 'place-7',
+        name: 'Hanoi Padel Club',
+        description: 'Indoor padel courts',
+        categories: ['sports_centre'],
+        tags: ['court'],
+        metadata: {
+          google: { types: ['sports_complex'] },
+          openstreetmap: { tags: { sport: 'padel', leisure: 'pitch' } },
+          foursquare: { categories: [{ name: 'Padel Court' }] },
+        },
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: 'fsq-1',
+        updated_at: new Date().toISOString(),
+        venue_activities: [],
+      },
+      catalog: [
+        {
+          id: 3001,
+          slug: 'padel',
+          name: 'Padel',
+          description: null,
+          keywords: ['padel', 'padel court'],
+          fsq_categories: [],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [],
+      activityEvidenceIds: new Set<number>(),
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys())).toEqual([3001]);
+    expect(result.upserts[0]?.source).toBe('category');
+  });
+
+  test('keeps manual climbing and bouldering mappings for Beefy Boulders My Dinh', () => {
+    const result = __activityMatchingTestUtils.computeMatchesForPlace({
+      place: {
+        id: '45b2cc2b-3e2d-4ab4-baec-e338306af813',
+        name: 'Beefy Boulders My Dinh',
+        description: 'Indoor climbing gym in Hanoi',
+        categories: ['fitness'],
+        tags: ['climbing', 'sports_centre'],
+        metadata: null,
+        city: 'Hanoi',
+        locality: 'Hanoi',
+        foursquare_id: null,
+        updated_at: new Date().toISOString(),
+        venue_activities: [{ activity_id: 3, source: 'keyword', confidence: 0.6 }],
+      },
+      catalog: [
+        {
+          id: 3,
+          slug: 'climbing',
+          name: 'Climbing',
+          description: null,
+          keywords: ['climbing', 'climbing gym'],
+          fsq_categories: [],
+        },
+        {
+          id: 17,
+          slug: 'bouldering',
+          name: 'Bouldering',
+          description: null,
+          keywords: ['bouldering', 'boulder gym'],
+          fsq_categories: [],
+        },
+      ],
+      fsqCategories: new Set<string>(),
+      manualOverrides: [
+        { activity_id: 3, venue_id: '45b2cc2b-3e2d-4ab4-baec-e338306af813', reason: 'Hanoi climb completeness audit' },
+        { activity_id: 17, venue_id: '45b2cc2b-3e2d-4ab4-baec-e338306af813', reason: 'Hanoi climb completeness audit' },
+      ],
+      activityEvidenceIds: new Set<number>(),
+      nowIso: new Date().toISOString(),
+    } as Parameters<typeof __activityMatchingTestUtils.computeMatchesForPlace>[0]);
+
+    expect(Array.from(result.matches.keys()).sort((a, b) => a - b)).toEqual([3, 17]);
+    expect(result.upserts.map((row) => `${row.activity_id}:${row.source}`).sort()).toEqual(['17:manual', '3:manual']);
+    expect(result.manualCount).toBe(2);
+  });
 });

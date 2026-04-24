@@ -10,6 +10,7 @@ import {
   getTier3Category,
   resolveTagToTier3,
 } from "../taxonomy";
+import { getSearchableCanonicalActivityIds } from '../index';
 
 describe("activityTaxonomy", () => {
   it("uses a semantic date version string", () => {
@@ -61,5 +62,11 @@ describe("activityTaxonomy", () => {
     expect(discoveryIds.has("natural-wine-tastings")).toBe(false);
     expect(discoveryIds.has("architecture-walks")).toBe(true);
     expect(relabeledTier1?.label).toBe("Explore & Culture");
+  });
+
+  it('exposes a broad searchable canonical activity list for activity intelligence', () => {
+    expect(getSearchableCanonicalActivityIds()).toEqual(
+      expect.arrayContaining(['climbing', 'padel', 'pottery', 'boxing', 'language-exchange']),
+    );
   });
 });

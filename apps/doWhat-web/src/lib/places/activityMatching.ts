@@ -1,5 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ACTIVITY_CATALOG_PRESETS, evaluateActivityFirstDiscoveryPolicy, type ActivityCatalogEntry } from '@dowhat/shared';
+import {
+  ACTIVITY_CATALOG_PRESETS,
+  evaluateActivityFirstDiscoveryPolicy,
+  evaluateCanonicalActivityMatch,
+  type ActivityCatalogEntry,
+} from '@dowhat/shared';
 
 import { resolveCityScope } from '@/lib/places/cityScope';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -335,7 +340,7 @@ function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
 
   catalog.forEach((activity) => {
     if (typeof activity.id !== 'number') return;
-    const match = evaluateActivityMatch(activity, searchIndex, fsqCategories, matchingPolicy);
+    const match = evaluateActivityMatch(activity, place, searchIndex, fsqCategories, matchingPolicy);
     if (!match) return;
     const existing = matches.get(activity.id);
     if (existing && SOURCE_PRIORITY[existing.source] >= SOURCE_PRIORITY[match.source]) {
@@ -384,33 +389,90 @@ function computeMatchesForPlace(context: PlaceMatchContext): PlaceMatchResult {
 
 function evaluateActivityMatch(
   activity: ActivityCatalogRow,
+  place: PlaceRow,
   searchIndex: SearchIndex,
   fsqCategories: Set<string>,
   policy: ActivityMatchingPolicy = { allowKeywordMatch: true, activityEvidenceIds: new Set<number>() },
 ): ActivityMatch | null {
-  const fsqMatch = findFsqCategoryMatch(activity, fsqCategories);
-  if (fsqMatch) {
-    return { activityId: activity.id, source: 'category', confidence: CATEGORY_CONFIDENCE, detail: fsqMatch };
-  }
-
   const hasEventEvidence = policy.activityEvidenceIds.has(activity.id);
-  if (!policy.allowKeywordMatch && !hasEventEvidence) return null;
+  const providerSignals = extractProviderSignals(place.metadata, fsqCategories);
+  const evaluated = evaluateCanonicalActivityMatch(
+    activity.slug,
+    {
+      name: place.name,
+      description: place.description,
+      categories: place.categories,
+      tags: place.tags,
+      sessionActivityIds: hasEventEvidence ? [activity.slug] : [],
+      foursquareCategoryIds: Array.from(fsqCategories),
+      googleTypes: providerSignals.googleTypes,
+      foursquareLabels: providerSignals.foursquareLabels,
+      osmTags: providerSignals.osmTags,
+    },
+    'browse',
+  );
+  if (!evaluated.eligible) return null;
+
+  const hasProviderEvidence = evaluated.evidence.some((entry) =>
+    entry.source === 'explicit_provider_tag' || entry.source === 'provider_category_match',
+  );
+  const hasStrongNonKeywordEvidence = evaluated.evidence.some((entry) =>
+    entry.source === 'manual_override'
+    || entry.source === 'session_evidence'
+    || entry.source === 'venue_activity_mapping'
+    || entry.source === 'explicit_provider_tag'
+    || entry.source === 'exact_taxonomy_match',
+  );
+  if (!policy.allowKeywordMatch && !hasEventEvidence && !hasStrongNonKeywordEvidence) return null;
 
   const keywordMatch = findKeywordMatch(activity, searchIndex);
-  if (keywordMatch) {
-    return {
-      activityId: activity.id,
-      source: 'keyword',
-      confidence: KEYWORD_CONFIDENCE,
-      detail: keywordMatch,
-      usedEventEvidence: !policy.allowKeywordMatch && hasEventEvidence,
-    };
-  }
+  const source: VenueActivitySource = hasProviderEvidence ? 'category' : 'keyword';
+  const confidence = source === 'category'
+    ? Math.max(CATEGORY_CONFIDENCE, evaluated.score)
+    : Math.max(KEYWORD_CONFIDENCE, evaluated.score);
+
+  return {
+    activityId: activity.id,
+    source,
+    confidence,
+    detail: evaluated.evidence.map((entry) => entry.detail).join('; ') || keywordMatch || activity.slug,
+    usedEventEvidence: !policy.allowKeywordMatch && hasEventEvidence,
+  };
 
   return null;
 }
 
-function findFsqCategoryMatch(activity: ActivityCatalogRow, fsqCategories: Set<string>): string | null {
+function extractProviderSignals(metadata: unknown, fsqCategories: Set<string>) {
+  const normalized = normalizeJson(metadata);
+  const record = normalized && typeof normalized === 'object' ? (normalized as Record<string, unknown>) : {};
+  const google = asObject(record.google) ?? asObject(record.google_places) ?? asObject(record.googlePlace);
+  const foursquare = asObject(record.foursquare);
+  const openstreetmap = asObject(record.openstreetmap);
+  const fsqCategoryRows = Array.isArray(foursquare?.categories) ? foursquare.categories : [];
+  const foursquareLabels = fsqCategoryRows
+    .flatMap((row) => {
+      const entry = asObject(row);
+      return [entry?.name, entry?.short_name, entry?.plural_name];
+    })
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const googleTypes = [
+    ...(Array.isArray(google?.types) ? google.types : []),
+    ...(Array.isArray(asObject(google?.place)?.types) ? (asObject(google?.place)?.types as unknown[]) : []),
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const osmTags = asObject(openstreetmap?.tags) as Record<string, string | null | undefined> | null;
+
+  return {
+    googleTypes,
+    foursquareLabels: Array.from(new Set([...foursquareLabels, ...Array.from(fsqCategories)])),
+    osmTags,
+  };
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function _findFsqCategoryMatch(activity: ActivityCatalogRow, fsqCategories: Set<string>): string | null {
   if (!activity.fsq_categories?.length || !fsqCategories.size) return null;
   const normalizedTargets = activity.fsq_categories
     .map(normalizeFsqId)
@@ -785,5 +847,6 @@ export const __activityMatchingTestUtils = {
   evaluateActivityMatch,
   buildSearchIndex,
   inferCatalogActivityIdsFromText,
+  extractProviderSignals,
   resolveCityScope,
 };

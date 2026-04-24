@@ -117,6 +117,19 @@ export type DiscoveryDebug = {
   cacheKey: string;
   tilesTouched: string[];
   providerCounts: Record<string, number>;
+  timings?: {
+    cacheReadMs: number;
+    taxonomyFetchMs: number;
+    rpcFetchMs: number;
+    fallbackFetchMs: number;
+    seedRefreshMs: number;
+    metadataHydrationMs: number;
+    rankingAndGatingMs: number;
+    placeHydrationMs: number;
+    dedupeShieldMs: number;
+    payloadShapeMs: number;
+    totalMs: number;
+  };
   pagesFetched: number;
   nextPageTokensUsed: number;
   itemsBeforeDedupe: number;
@@ -142,6 +155,93 @@ export type DiscoveryDebug = {
   ranking: {
     enabled: boolean;
     placeMinConfidence: number;
+  };
+  searchProbe?: Array<{
+    id: string;
+    name: string;
+    matchedBuckets: string[];
+    evidenceSources: string[];
+    survivedBy: string[];
+  }>;
+  stageItems?: {
+    afterFallbackMerge?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
+    afterLaunchVisibility?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
+    afterMetadataFilter?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
+    afterConfidenceGate?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
+    afterDedupe?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
+    final?: Array<{
+      id: string;
+      placeId: string | null;
+      name: string;
+      placeLabel: string | null;
+      source: string | null;
+      activityTypes: string[];
+      verificationState: 'suggested' | 'verified' | 'needs_votes' | null;
+      placeMatchConfidence: number | null;
+      qualityConfidence: number | null;
+      lat: number;
+      lng: number;
+    }>;
   };
 };
 
