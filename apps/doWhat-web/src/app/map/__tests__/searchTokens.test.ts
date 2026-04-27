@@ -15,8 +15,9 @@ describe('map search tokens', () => {
 
   test('extracts multiple activity tokens from mixed queries', () => {
     expect(extractActivitySearchTokens('billiards climbing')).toEqual(
-      expect.arrayContaining(['billiards', 'climbing', 'pool', 'snooker', 'bouldering']),
+      expect.arrayContaining(['billiards', 'climbing', 'snooker', 'bouldering']),
     );
+    expect(extractActivitySearchTokens('billiards climbing')).not.toEqual(expect.arrayContaining(['pool']));
   });
 
   test('maps strict activity aliases to canonical tokens', () => {
