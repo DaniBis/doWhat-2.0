@@ -116,7 +116,7 @@ describe("OnboardingHomePage", () => {
 
     const OnboardingPage = await loadOnboardingPage();
     await expect(OnboardingPage()).rejects.toThrow("redirect called");
-    expect(redirectMock).toHaveBeenCalledWith("/auth/login?next=%2Fonboarding");
+    expect(redirectMock).toHaveBeenCalledWith("/auth?intent=signin&next=%2Fonboarding");
     expect(mockClient.auth.getUser).toHaveBeenCalled();
   });
 

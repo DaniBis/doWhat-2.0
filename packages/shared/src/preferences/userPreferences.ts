@@ -1,5 +1,3 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-
 export type PreferenceKey =
   | 'activity_filters'
   | 'people_filters'
@@ -15,23 +13,37 @@ export type RawPreferenceRow = {
   updated_at: string;
 };
 
-export type MinimalSupabaseClient = SupabaseClient;
+type QueryBuilderResult<T> = Promise<{ data: T | null; error: { message: string } | null }>;
+type MutationResult = Promise<{ error: { message: string } | null }>;
+
+type PreferencesQueryBuilder = {
+  select: (columns: string) => PreferencesQueryBuilder;
+  eq: (column: string, value: unknown) => PreferencesQueryBuilder;
+  maybeSingle: <T>() => QueryBuilderResult<T>;
+  upsert: (value: unknown, options: { onConflict: string }) => MutationResult;
+};
+
+export type MinimalSupabaseClient = {
+  from: (table: string) => unknown;
+};
 
 export const loadUserPreference = async <T>(
   client: MinimalSupabaseClient,
   userId: string,
   key: PreferenceKey,
 ): Promise<T | null> => {
-  const { data, error } = await client
-    .from(TABLE)
+  const { data: loadedData, error: loadError } = await (client
+    .from(TABLE) as PreferencesQueryBuilder)
     .select('value')
     .eq('user_id', userId)
     .eq('key', key)
     .maybeSingle<{ value: T | null }>();
-  if (error) {
-    throw error;
+
+  if (loadError) {
+    throw loadError;
   }
-  return (data?.value ?? null) as T | null;
+
+  return (loadedData?.value ?? null) as T | null;
 };
 
 export const saveUserPreference = async <T>(
@@ -47,8 +59,8 @@ export const saveUserPreference = async <T>(
     updated_at: new Date().toISOString(),
   } satisfies Omit<RawPreferenceRow, 'value'> & { value: T };
 
-  const { error } = await client
-    .from(TABLE)
+  const { error } = await (client
+    .from(TABLE) as PreferencesQueryBuilder)
     .upsert(payload, { onConflict: 'user_id,key' });
 
   if (error) {

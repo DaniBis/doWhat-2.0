@@ -137,7 +137,7 @@ const webApiSession = {
 
 const mockSupabaseAuthGetUser = jest.fn(async () => ({ data: { user: { id: 'user-9' } }, error: null }));
 const mockSupabaseAuthGetSession = jest.fn(async () => ({
-  data: { session: { access_token: 'token-123', user: { id: 'user-9' } } },
+  data: { session: { access_token: 'test-access-token', user: { id: 'user-9' } } },
   error: null,
 }));
 const mockSupabaseRemoveChannel = jest.fn();

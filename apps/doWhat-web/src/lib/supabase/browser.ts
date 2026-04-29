@@ -1,10 +1,13 @@
 // apps/doWhat-web/src/lib/supabase/browser.ts
 import { createBrowserClient } from "@supabase/ssr";
 import type { AuthChangeEvent, Session, SupabaseClient } from "@supabase/supabase-js";
+import { getSupabasePublicEnv } from "@/lib/supabase/env";
+
+const { url, anonKey } = getSupabasePublicEnv();
 
 export const supabase: SupabaseClient = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  url,
+  anonKey
 );
 
 type GetUserResponse = Awaited<ReturnType<(typeof supabase)["auth"]["getUser"]>>;

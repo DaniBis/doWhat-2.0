@@ -88,8 +88,6 @@ import {
   type MapActivity,
   type MapCoordinates,
   mapActivitiesQueryKey,
-  useEvents,
-  useNearbyActivities,
   DEFAULT_MAP_FILTER_PREFERENCES,
   normaliseMapFilterPreferences,
   mapPreferencesToQueryFilters,
@@ -128,6 +126,7 @@ import {
   formatReliabilityLabel,
 } from "@/lib/events/presentation";
 import { useStableNearbyData } from './useStableNearbyData';
+import { useEvents, useNearbyActivities } from './queryHooks';
 import { extractActivitySearchTokens, extractSearchPhrases, extractStructuredActivityTokens } from './searchTokens';
 import { matchesActivitySearch } from './searchMatching';
 import { resolveMapCenterFromSession } from './highlightSession';

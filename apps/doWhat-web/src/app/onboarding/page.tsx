@@ -81,7 +81,7 @@ export default async function OnboardingHomePage() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect(`/auth/login?next=${encodeURIComponent("/onboarding")}`);
+    redirect(`/auth?intent=signin&next=${encodeURIComponent("/onboarding")}`);
   }
 
   const [{ data: profileRow, error: profileError }, traitsCountResult] = await Promise.all([
