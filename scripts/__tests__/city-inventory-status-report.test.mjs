@@ -107,6 +107,39 @@ test('buildCityStatusSummary marks blocked when rematch apply has errors', () =>
   assert.equal(summary.launchRecommendation, 'blocked');
 });
 
+test('buildCityStatusSummary treats empty coverage as missing', () => {
+  const audit = createAudit();
+  audit.coverage = {};
+
+  const summary = buildCityStatusSummary({
+    city: 'hanoi',
+    dryRun: { runStatus: 'ok', errorCount: 0 },
+    apply: { runStatus: 'ok', errorCount: 0 },
+    audit,
+  });
+
+  assert.equal(summary.coverageStatus, 'missing');
+  assert.equal(summary.launchRecommendation, 'blocked');
+});
+
+test('buildCityStatusSummary treats missing duplicate and stale audit buckets as missing', () => {
+  const audit = createAudit();
+  delete audit.audits.duplicateClusters;
+  delete audit.audits.staleMappings;
+  delete audit.audits.weakMappings;
+  delete audit.audits.sessionMappingGaps;
+
+  const summary = buildCityStatusSummary({
+    city: 'hanoi',
+    dryRun: { runStatus: 'ok', errorCount: 0 },
+    apply: { runStatus: 'ok', errorCount: 0 },
+    audit,
+  });
+
+  assert.equal(summary.duplicateStaleStatus, 'missing');
+  assert.equal(summary.launchRecommendation, 'blocked');
+});
+
 test('formatStatusReport emits markdown with manual review candidates', () => {
   const report = formatStatusReport(
     [

@@ -13,6 +13,7 @@ const createPlace = ({
   lng,
   categories = ['fitness'],
   tags = [],
+  metadata = {},
   mappings = [],
   manualOverrides = [],
   sessionEvidenceSlugs = [],
@@ -27,6 +28,7 @@ const createPlace = ({
   lat,
   lng,
   categories,
+  metadata,
   tags,
   primarySource: 'foursquare',
   mappings,
@@ -233,6 +235,30 @@ test('detects duplicate clusters by normalized name and proximity', () => {
 
   assert.equal(report.audits.duplicateClusters.count, 1);
   assert.equal(report.audits.duplicateClusters.samples[0].normalizedName, 'peakclimbinggym');
+});
+
+test('ignores suppressed duplicate rows in duplicate cluster counts', () => {
+  const report = buildCityInventoryReport({
+    city: 'hanoi',
+    places: [
+      ...buildHanoiRequiredCoverage(),
+      createPlace({
+        id: 'suppressed-duplicate',
+        name: 'Peak Climbing Gym',
+        lat: 21.0304,
+        lng: 105.8403,
+        mappings: [mapping('climbing')],
+        metadata: {
+          duplicate_canonicalization: {
+            status: 'suppressed',
+            canonical_place_id: 'place-climbing-1',
+          },
+        },
+      }),
+    ],
+  });
+
+  assert.equal(report.audits.duplicateClusters.count, 0);
 });
 
 test('flags session evidence without venue activity mapping', () => {

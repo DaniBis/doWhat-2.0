@@ -93,9 +93,11 @@ const readJsonIfPresent = async (path) => {
   }
 };
 
+const getAuditBucketStatus = (audit, key) => audit?.audits?.[key]?.status ?? 'missing';
+
 const deriveCoverageStatus = (audit) =>
-  audit
-    ? Object.values(audit.coverage ?? {}).reduce(
+  audit && audit.coverage && Object.keys(audit.coverage).length > 0
+    ? Object.values(audit.coverage).reduce(
       (status, entry) => combineStatus(status, entry?.status ?? 'missing'),
       'acceptable',
     )
@@ -104,10 +106,10 @@ const deriveCoverageStatus = (audit) =>
 const deriveDuplicateStaleStatus = (audit) =>
   audit
     ? combineStatus(
-      audit.audits?.duplicateClusters?.status ?? 'acceptable',
-      audit.audits?.staleMappings?.status ?? 'acceptable',
-      audit.audits?.weakMappings?.status ?? 'acceptable',
-      audit.audits?.sessionMappingGaps?.status ?? 'acceptable',
+      getAuditBucketStatus(audit, 'duplicateClusters'),
+      getAuditBucketStatus(audit, 'staleMappings'),
+      getAuditBucketStatus(audit, 'weakMappings'),
+      getAuditBucketStatus(audit, 'sessionMappingGaps'),
     )
     : 'missing';
 
@@ -119,7 +121,13 @@ const deriveManualReviewRequired = (summary) =>
   || summary.sessionMappingGapCount > 0;
 
 const deriveLaunchRecommendation = (summary) => {
-  if (summary.auditStatus === 'missing' || summary.rematchRunStatus === 'missing') return 'blocked';
+  if (
+    summary.auditStatus === 'missing'
+    || summary.rematchRunStatus === 'missing'
+    || summary.coverageStatus === 'missing'
+    || summary.hospitalityLeakageStatus === 'missing'
+    || summary.duplicateStaleStatus === 'missing'
+  ) return 'blocked';
   if (summary.rematchRunStatus === 'error') return 'blocked';
   if (summary.auditStatus === 'failing' || summary.coverageStatus === 'failing' || summary.hospitalityLeakageStatus === 'failing' || summary.duplicateStaleStatus === 'failing') {
     return 'blocked';

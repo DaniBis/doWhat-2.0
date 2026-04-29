@@ -2,11 +2,15 @@
 
 import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 import { LAUNCH_CITY_CONFIG } from './utils/launch-city-config.mjs';
 import loadEnv from './utils/load-env.mjs';
+
+const require = createRequire(import.meta.url);
+const { buildDuplicateClusters } = require('./lib/canonicalize-launch-city-duplicates.cjs');
 
 loadEnv(['.env.local', 'apps/doWhat-web/.env.local', 'apps/doWhat-mobile/.env.local']);
 
@@ -78,7 +82,7 @@ const HOSPITALITY_STEMS = [
   'roaster',
   'tasting',
   'wine',
-] ;
+];
 
 const ACTIVITY_STEMS = [
   'activity',
@@ -132,6 +136,8 @@ const SAMPLE_LIMIT_DEFAULT = 8;
 const SESSION_EVIDENCE_WINDOW_DAYS_DEFAULT = 365;
 const STALE_MAPPING_DAYS_DEFAULT = 120;
 const DUPLICATE_DISTANCE_METERS = 120;
+const QUERY_CHUNK_SIZE = 180;
+const REST_PAGE_SIZE = 1000;
 
 const STATUS_ORDER = {
   acceptable: 0,
@@ -139,12 +145,27 @@ const STATUS_ORDER = {
   failing: 2,
 };
 
-const pickEnv = (...keys) => {
+const pickEnvEntry = (...keys) => {
   for (const key of keys) {
     const value = process.env[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'string' && value.trim()) {
+      return { key, value: value.trim() };
+    }
   }
-  return undefined;
+  return null;
+};
+
+const extractConnectionHost = (value) => {
+  if (!value) return null;
+  try {
+    return new URL(value).host;
+  } catch {
+    try {
+      return new URL(value.replace(/^postgres(ql)?:\/\//i, 'http://')).host;
+    } catch {
+      return null;
+    }
+  }
 };
 
 const normalizeToken = (value) =>
@@ -174,17 +195,6 @@ const coerceNumber = (value) => {
   return null;
 };
 
-const haversineMeters = (left, right) => {
-  const lat1 = (left.lat * Math.PI) / 180;
-  const lat2 = (right.lat * Math.PI) / 180;
-  const dLat = ((right.lat - left.lat) * Math.PI) / 180;
-  const dLng = ((right.lng - left.lng) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-
 const tokenIncludesStem = (token, stems) =>
   stems.some((stem) => token === stem || token.startsWith(`${stem}_`) || token.endsWith(`_${stem}`));
 
@@ -211,6 +221,35 @@ const combineStatus = (...statuses) =>
   statuses.reduce((current, next) => (STATUS_ORDER[next] > STATUS_ORDER[current] ? next : current), 'acceptable');
 
 const formatPercent = (value) => `${(value * 100).toFixed(1)}%`;
+
+const isDirectConnectivityError = (error) => {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return [
+    'ENOTFOUND',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'ECONNRESET',
+  ].includes(code) || /getaddrinfo|could not translate host name|connect ECONNREFUSED|network is unreachable/i.test(message);
+};
+
+const buildAuditEnvError = ({ directConnection, restContext, reason } = {}) => {
+  const parts = [];
+  if (reason) parts.push(reason);
+  parts.push(
+    'City inventory audit requires either REST mode (`SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_URL` or `EXPO_PUBLIC_SUPABASE_URL` plus `SUPABASE_SERVICE_ROLE_KEY`) or direct PostgreSQL mode (`DATABASE_URL` or `SUPABASE_DB_URL`).',
+  );
+  if (directConnection) {
+    parts.push(`Resolved direct DB env: ${directConnection.envKey}${directConnection.host ? ` -> ${directConnection.host}` : ''}.`);
+  }
+  if (restContext) {
+    parts.push(`Resolved REST env: ${restContext.urlEnvKey} -> ${restContext.host}.`);
+  }
+  parts.push('In the current local operator environment, REST mode avoids the unreachable direct `db.<project>.supabase.co` hostname dependency.');
+  return parts.join(' ');
+};
 
 const toSample = (place, extra = {}) => ({
   placeId: place.id,
@@ -247,56 +286,6 @@ const evaluatePlaceBoundary = (place) => {
     hasActivityCategoryEvidence,
     isHospitalityPrimary: hasHospitalitySignals && !hasActivityCategoryEvidence,
   };
-};
-
-const buildDuplicateClusters = (places) => {
-  const buckets = new Map();
-
-  places.forEach((place) => {
-    const key = normalizeComparable(place.name);
-    if (!key) return;
-    const bucket = buckets.get(key) ?? [];
-    bucket.push(place);
-    buckets.set(key, bucket);
-  });
-
-  const clusters = [];
-
-  buckets.forEach((bucket, normalizedName) => {
-    if (bucket.length < 2) return;
-    const visited = new Set();
-    bucket.forEach((place) => {
-      if (visited.has(place.id)) return;
-      const cluster = [place];
-      visited.add(place.id);
-      bucket.forEach((candidate) => {
-        if (visited.has(candidate.id)) return;
-        const distanceMeters = haversineMeters(place, candidate);
-        if (distanceMeters <= DUPLICATE_DISTANCE_METERS) {
-          cluster.push(candidate);
-          visited.add(candidate.id);
-        }
-      });
-      if (cluster.length > 1) {
-        clusters.push({
-          normalizedName,
-          size: cluster.length,
-          placeIds: cluster.map((entry) => entry.id),
-          names: uniq(cluster.map((entry) => entry.name)),
-          samples: cluster.map((entry) => ({
-            placeId: entry.id,
-            name: entry.name,
-            lat: entry.lat,
-            lng: entry.lng,
-            mappedActivities: uniq(entry.mappings.map((mapping) => mapping.slug)).sort(),
-          })),
-        });
-      }
-    });
-  });
-
-  clusters.sort((left, right) => right.size - left.size || left.normalizedName.localeCompare(right.normalizedName));
-  return clusters;
 };
 
 const buildCoverageReport = (standard, places, sampleLimit) => {
@@ -601,10 +590,12 @@ const printUsage = () => {
   pnpm inventory:audit:cities --format=json --output=inventory-audit.json
 
 Environment:
-  DATABASE_URL or SUPABASE_DB_URL   Required Postgres connection string
+  Preferred: SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_URL) + SUPABASE_SERVICE_ROLE_KEY
+  Fallback:  DATABASE_URL or SUPABASE_DB_URL   Direct Postgres connection string
 
 Notes:
-  - This audit is deterministic but requires a DB-connected environment.
+  - This audit is deterministic and prefers REST/service-role mode in local operator environments.
+  - Direct PostgreSQL mode is only used when REST env is unavailable.
   - Overall status becomes non-zero with --strict when any city is suspicious or failing.
   - Use pnpm inventory:rematch --city=<slug> --apply before rerunning when stale/hospitality rows are detected.`);
 };
@@ -616,18 +607,91 @@ const ensureSupportedCities = (cities) => {
   process.exit(1);
 };
 
-const createPool = () => {
-  const databaseUrl = pickEnv('DATABASE_URL', 'SUPABASE_DB_URL');
-  if (!databaseUrl) {
+const resolveDirectConnection = () => {
+  const entry = pickEnvEntry('DATABASE_URL', 'SUPABASE_DB_URL');
+  if (!entry) return null;
+  return {
+    envKey: entry.key,
+    connectionString: entry.value,
+    host: extractConnectionHost(entry.value),
+  };
+};
+
+const createPool = (directConnection) => {
+  if (!directConnection?.connectionString) {
     throw new Error('Missing DATABASE_URL (or SUPABASE_DB_URL).');
   }
-  const needsSsl = !/localhost|127\.0\.0\.1/i.test(databaseUrl);
+  const needsSsl = !/localhost|127\.0\.0\.1/i.test(directConnection.connectionString);
   return new Pool({
-    connectionString: databaseUrl,
+    connectionString: directConnection.connectionString,
     ssl: needsSsl ? { rejectUnauthorized: false } : false,
     max: 2,
     idleTimeoutMillis: 5000,
   });
+};
+
+const createRestContext = () => {
+  const urlEntry = pickEnvEntry('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_URL');
+  const keyEntry = pickEnvEntry('SUPABASE_SERVICE_ROLE_KEY');
+  if (!urlEntry || !keyEntry) return null;
+  const url = urlEntry.value.replace(/\/+$/, '');
+  return {
+    url,
+    host: extractConnectionHost(url),
+    urlEnvKey: urlEntry.key,
+    serviceRoleEnvKey: keyEntry.key,
+    headers: {
+      apikey: keyEntry.value,
+      Authorization: `Bearer ${keyEntry.value}`,
+    },
+  };
+};
+
+const fetchRestPage = async (context, path, { from = 0, to = REST_PAGE_SIZE - 1 } = {}) => {
+  const response = await fetch(`${context.url}/rest/v1/${path}`, {
+    method: 'GET',
+    headers: {
+      ...context.headers,
+      Range: `${from}-${to}`,
+      Prefer: 'count=exact',
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Supabase REST request failed (${response.status}) for ${path}: ${body}`);
+  }
+
+  const contentRange = response.headers.get('content-range');
+  const totalMatch = contentRange?.match(/\/(\d+)$/);
+  const total = totalMatch ? Number.parseInt(totalMatch[1], 10) : null;
+  const rows = await response.json();
+  return { rows, total };
+};
+
+const fetchAllRestRows = async (context, path) => {
+  const first = await fetchRestPage(context, path, { from: 0, to: REST_PAGE_SIZE - 1 });
+  const rows = [...first.rows];
+  const total = first.total ?? rows.length;
+  for (let from = rows.length; from < total; from += REST_PAGE_SIZE) {
+    const page = await fetchRestPage(context, path, { from, to: from + REST_PAGE_SIZE - 1 });
+    rows.push(...page.rows);
+  }
+  return rows;
+};
+
+const fetchActivitySlugMap = async (context, ids, cache = new Map()) => {
+  const missingIds = ids.filter((id) => !cache.has(id));
+  for (const idsChunk of chunk(missingIds, QUERY_CHUNK_SIZE)) {
+    const query = `activity_catalog?select=id,slug&id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    rows.forEach((row) => {
+      if (typeof row.id === 'number' && typeof row.slug === 'string') {
+        cache.set(row.id, row.slug);
+      }
+    });
+  }
+  return cache;
 };
 
 const queryCityPlaces = async (pool, cityKey) => {
@@ -648,7 +712,8 @@ const queryCityPlaces = async (pool, cityKey) => {
         lng,
         categories,
         tags,
-        primary_source
+        primary_source,
+        metadata
       from public.places
       where lat >= $1
         and lat <= $2
@@ -670,6 +735,42 @@ const queryCityPlaces = async (pool, cityKey) => {
     categories: Array.isArray(row.categories) ? row.categories : [],
     tags: Array.isArray(row.tags) ? row.tags : [],
     primarySource: row.primary_source ?? null,
+    metadata: row.metadata ?? {},
+    mappings: [],
+    manualOverrides: [],
+    sessionEvidenceSlugs: [],
+    providerCategories: [],
+  }));
+};
+
+const queryCityPlacesViaRest = async (context, cityKey) => {
+  const config = LAUNCH_CITY_CONFIG[cityKey];
+  if (!config) {
+    throw new Error(`Unknown launch city '${cityKey}'`);
+  }
+  const query = [
+    'places?select=id,name,city,locality,region,country,lat,lng,categories,tags,primary_source,metadata',
+    `lat=gte.${config.bbox.sw.lat}`,
+    `lat=lte.${config.bbox.ne.lat}`,
+    `lng=gte.${config.bbox.sw.lng}`,
+    `lng=lte.${config.bbox.ne.lng}`,
+    'order=name.asc',
+  ].join('&');
+
+  const rows = await fetchAllRestRows(context, query);
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    city: row.city ?? null,
+    locality: row.locality ?? null,
+    region: row.region ?? null,
+    country: row.country ?? null,
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    categories: Array.isArray(row.categories) ? row.categories : [],
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    primarySource: row.primary_source ?? null,
+    metadata: row.metadata ?? {},
     mappings: [],
     manualOverrides: [],
     sessionEvidenceSlugs: [],
@@ -687,7 +788,7 @@ const chunk = (values, size) => {
 
 const attachMappings = async (pool, placesById) => {
   const ids = Array.from(placesById.keys());
-  for (const idsChunk of chunk(ids, 180)) {
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
     const { rows } = await pool.query(
       `
         select
@@ -719,7 +820,7 @@ const attachMappings = async (pool, placesById) => {
 
 const attachManualOverrides = async (pool, placesById) => {
   const ids = Array.from(placesById.keys());
-  for (const idsChunk of chunk(ids, 180)) {
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
     const { rows } = await pool.query(
       `
         select
@@ -747,7 +848,7 @@ const attachManualOverrides = async (pool, placesById) => {
 
 const attachPlaceSources = async (pool, placesById) => {
   const ids = Array.from(placesById.keys());
-  for (const idsChunk of chunk(ids, 180)) {
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
     const { rows } = await pool.query(
       `
         select
@@ -770,7 +871,7 @@ const attachPlaceSources = async (pool, placesById) => {
 
 const attachSessionEvidence = async (pool, placesById, sessionWindowDays) => {
   const ids = Array.from(placesById.keys());
-  for (const idsChunk of chunk(ids, 180)) {
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
     const { rows } = await pool.query(
       `
         select
@@ -802,6 +903,121 @@ const attachSessionEvidence = async (pool, placesById, sessionWindowDays) => {
   });
 };
 
+const attachMappingsViaRest = async (context, placesById, activitySlugCache) => {
+  const ids = Array.from(placesById.keys());
+  const activityIds = new Set();
+  const rawRows = [];
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
+    const query = `venue_activities?select=venue_id,activity_id,source,confidence,matched_at&venue_id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    rows.forEach((row) => {
+      rawRows.push(row);
+      if (typeof row.activity_id === 'number') activityIds.add(row.activity_id);
+    });
+  }
+
+  const slugMap = await fetchActivitySlugMap(context, Array.from(activityIds), activitySlugCache);
+  rawRows.forEach((row) => {
+    const place = placesById.get(row.venue_id);
+    if (!place) return;
+    const slug = slugMap.get(row.activity_id);
+    if (!slug) return;
+    place.mappings.push({
+      activityId: row.activity_id,
+      slug,
+      source: row.source,
+      confidence: typeof row.confidence === 'number' ? row.confidence : null,
+      matchedAt: row.matched_at ?? null,
+    });
+  });
+};
+
+const attachManualOverridesViaRest = async (context, placesById, activitySlugCache) => {
+  const ids = Array.from(placesById.keys());
+  const activityIds = new Set();
+  const rawRows = [];
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
+    const query = `activity_manual_overrides?select=venue_id,activity_id,reason&venue_id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    rows.forEach((row) => {
+      rawRows.push(row);
+      if (typeof row.activity_id === 'number') activityIds.add(row.activity_id);
+    });
+  }
+
+  const slugMap = await fetchActivitySlugMap(context, Array.from(activityIds), activitySlugCache);
+  rawRows.forEach((row) => {
+    const place = placesById.get(row.venue_id);
+    if (!place) return;
+    const slug = slugMap.get(row.activity_id);
+    if (!slug) return;
+    place.manualOverrides.push({
+      activityId: row.activity_id,
+      slug,
+      reason: row.reason ?? null,
+    });
+  });
+};
+
+const attachPlaceSourcesViaRest = async (context, placesById) => {
+  const ids = Array.from(placesById.keys());
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
+    const query = `place_sources?select=place_id,categories&place_id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    rows.forEach((row) => {
+      const place = placesById.get(row.place_id);
+      if (!place) return;
+      if (Array.isArray(row.categories) && row.categories.length) {
+        place.providerCategories.push(row.categories);
+      }
+    });
+  }
+};
+
+const attachSessionEvidenceViaRest = async (context, placesById, sessionWindowDays, activitySlugCache) => {
+  const ids = Array.from(placesById.keys());
+  const activityIds = new Set();
+  const cutoff = new Date(Date.now() - sessionWindowDays * 24 * 60 * 60 * 1000).toISOString();
+  const rawRows = [];
+
+  for (const idsChunk of chunk(ids, QUERY_CHUNK_SIZE)) {
+    const query = `sessions?select=place_id,activity_id,starts_at,created_at&place_id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    rows.forEach((row) => {
+      const reference = row.starts_at ?? row.created_at;
+      if (!reference || reference < cutoff) return;
+      rawRows.push(row);
+      if (typeof row.activity_id === 'string') activityIds.add(row.activity_id);
+    });
+  }
+
+  const activityRows = [];
+  for (const idsChunk of chunk(Array.from(activityIds), QUERY_CHUNK_SIZE)) {
+    const query = `activities?select=id,catalog_activity_id,name,tags&id=in.(${idsChunk.join(',')})`;
+    const rows = await fetchAllRestRows(context, query);
+    activityRows.push(...rows);
+  }
+  const activityMap = new Map(activityRows.map((row) => [row.id, row]));
+
+  const catalogIds = uniq(activityRows.map((row) => row.catalog_activity_id).filter((value) => typeof value === 'number'));
+  const catalogSlugMap = await fetchActivitySlugMap(context, catalogIds, activitySlugCache);
+
+  rawRows.forEach((row) => {
+    const place = placesById.get(row.place_id);
+    const activity = activityMap.get(row.activity_id);
+    if (!place || !activity) return;
+    const slugs = uniq([
+      typeof activity.catalog_activity_id === 'number' ? catalogSlugMap.get(activity.catalog_activity_id) : '',
+      ...inferActivitySlugsFromText(activity.name ?? '', ...(Array.isArray(activity.tags) ? activity.tags : [])),
+    ]);
+    place.sessionEvidenceSlugs.push(...slugs);
+  });
+
+  placesById.forEach((place) => {
+    place.sessionEvidenceSlugs = uniq(place.sessionEvidenceSlugs).sort();
+  });
+};
+
 const loadCityInventory = async (pool, cityKey, sessionWindowDays) => {
   const places = await queryCityPlaces(pool, cityKey);
   const placesById = new Map(places.map((place) => [place.id, place]));
@@ -812,8 +1028,44 @@ const loadCityInventory = async (pool, cityKey, sessionWindowDays) => {
   return places;
 };
 
+const loadCityInventoryViaRest = async (context, cityKey, sessionWindowDays, activitySlugCache) => {
+  const places = await queryCityPlacesViaRest(context, cityKey);
+  const placesById = new Map(places.map((place) => [place.id, place]));
+  await attachMappingsViaRest(context, placesById, activitySlugCache);
+  await attachManualOverridesViaRest(context, placesById, activitySlugCache);
+  await attachPlaceSourcesViaRest(context, placesById);
+  await attachSessionEvidenceViaRest(context, placesById, sessionWindowDays, activitySlugCache);
+  return places;
+};
+
 export const runCityInventoryAudit = async (options) => {
-  const pool = createPool();
+  const directConnection = resolveDirectConnection();
+  const restContext = createRestContext();
+
+  if (restContext) {
+    console.error(
+      `[city-inventory-audit] Using REST mode via ${restContext.urlEnvKey} (${restContext.host}) with ${restContext.serviceRoleEnvKey}.`,
+    );
+    const activitySlugCache = new Map();
+    const reports = [];
+    for (const city of options.cities) {
+      const places = await loadCityInventoryViaRest(restContext, city, options.sessionWindowDays, activitySlugCache);
+      reports.push(
+        buildCityInventoryReport({
+          city,
+          places,
+          sampleLimit: options.sampleLimit,
+        }),
+      );
+    }
+    return reports;
+  }
+
+  if (!directConnection) {
+    throw new Error(buildAuditEnvError());
+  }
+
+  const pool = createPool(directConnection);
   try {
     const reports = [];
     for (const city of options.cities) {
@@ -827,6 +1079,16 @@ export const runCityInventoryAudit = async (options) => {
       );
     }
     return reports;
+  } catch (error) {
+    if (isDirectConnectivityError(error)) {
+      throw new Error(
+        buildAuditEnvError({
+          directConnection,
+          reason: `Direct PostgreSQL connectivity failed via ${directConnection.envKey}${directConnection.host ? ` (${directConnection.host})` : ''}: ${error instanceof Error ? error.message : String(error)}.`,
+        }),
+      );
+    }
+    throw error;
   } finally {
     await pool.end();
   }

@@ -12,7 +12,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node ../../temp/hanoi-map-browser-truth.mjs"
+    "verify:hanoi:browser-truth": "HANOI_MAP_BASE_URL=http://127.0.0.1:3003 node ../../scripts/verify-hanoi-strict-climb-live.mjs"
   },
   "dependencies": {
     "@dowhat/shared": "workspace:^",

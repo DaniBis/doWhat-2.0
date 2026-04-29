@@ -7,6 +7,15 @@ import { pathToFileURL } from 'node:url';
 const BASE_URL = process.env.CRON_BASE_URL || 'http://localhost:3002';
 const secret = process.env.CRON_SECRET;
 
+const parseOptionalNonNegativeInteger = (value, flagName, fallback = null) => {
+  if (value === '' || value == null) return fallback;
+  if (!/^\d+$/.test(String(value))) {
+    throw new Error(`${flagName} must be a non-negative integer.`);
+  }
+
+  return Number.parseInt(String(value), 10);
+};
+
 export const parseArgs = (argv) => {
   const result = {
     city: '',
@@ -62,6 +71,9 @@ Notes:
 
 export const buildRematchReport = ({ args, payload, requestedAt, baseUrl }) => {
   const errorCount = Array.isArray(payload?.errors) ? payload.errors.length : 0;
+  const limit = parseOptionalNonNegativeInteger(args.limit, '--limit');
+  const offset = parseOptionalNonNegativeInteger(args.offset, '--offset', 0);
+
   return {
     city: args.city || null,
     scope: args.placeId ? { placeId: args.placeId } : { city: args.city || '(all)' },
@@ -69,8 +81,8 @@ export const buildRematchReport = ({ args, payload, requestedAt, baseUrl }) => {
     all: Boolean(args.all),
     requestedAt,
     baseUrl,
-    limit: args.limit ? Number(args.limit) : null,
-    offset: args.offset ? Number(args.offset) : 0,
+    limit,
+    offset,
     runStatus: errorCount > 0 ? 'partial' : 'ok',
     processed: payload?.processed ?? null,
     matches: payload?.matches ?? null,
@@ -86,6 +98,9 @@ export const buildRematchReport = ({ args, payload, requestedAt, baseUrl }) => {
 };
 
 export const summarizeRematchBatches = ({ args, reports, requestedAt, baseUrl }) => {
+  const limit = parseOptionalNonNegativeInteger(args.batchSize, '--batchSize')
+    ?? parseOptionalNonNegativeInteger(args.limit, '--limit');
+
   const batches = reports.map((report) => ({
     offset: report.offset ?? 0,
     limit: report.limit ?? null,
@@ -105,7 +120,7 @@ export const summarizeRematchBatches = ({ args, reports, requestedAt, baseUrl })
     all: true,
     requestedAt,
     baseUrl,
-    limit: args.batchSize ? Number(args.batchSize) : (args.limit ? Number(args.limit) : null),
+    limit,
     offset: 0,
     runStatus: hasPartial ? 'partial' : 'ok',
     processed: reports.reduce((sum, report) => sum + (report.processed ?? 0), 0),
@@ -136,6 +151,10 @@ export const executeRematch = async (args) => {
   if (!args.city && !args.placeId) {
     throw new Error('Provide --city=<slug> or --placeId=<uuid>.');
   }
+
+  parseOptionalNonNegativeInteger(args.limit, '--limit');
+  parseOptionalNonNegativeInteger(args.offset, '--offset', 0);
+  parseOptionalNonNegativeInteger(args.batchSize, '--batchSize');
 
   const executeBatch = async (batchArgs) => {
     const url = new URL('/api/cron/activity-matcher', BASE_URL);
@@ -173,9 +192,12 @@ export const executeRematch = async (args) => {
   };
 
   if (args.all && args.city && !args.placeId) {
-    const batchSize = String(Math.min(500, Math.max(1, Number.parseInt(args.batchSize || args.limit || '500', 10) || 500)));
+    const requestedBatchSize = parseOptionalNonNegativeInteger(args.batchSize, '--batchSize')
+      ?? parseOptionalNonNegativeInteger(args.limit, '--limit')
+      ?? 500;
+    const batchSize = String(Math.min(500, Math.max(1, requestedBatchSize)));
     const reports = [];
-    let offset = Number.parseInt(args.offset || '0', 10) || 0;
+    let offset = parseOptionalNonNegativeInteger(args.offset, '--offset', 0);
     while (true) {
       const batchReport = await executeBatch({ ...args, limit: batchSize, offset: String(offset), all: false });
       reports.push(batchReport);

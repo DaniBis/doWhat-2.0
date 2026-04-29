@@ -2,6 +2,7 @@ import type { MapActivity } from '@dowhat/shared';
 
 import { matchesDiscoverySearchText } from '@/lib/discovery/searchIntent';
 
+const STRUCTURED_SEARCH_DELIMITER = /[,;|/]/;
 const HOSPITALITY_TOKEN_PATTERN = /\b(bar|cafe|coffee|restaurant|pub|lounge|cocktail|spa|massage|rooftop|shop|retail|mall|nightclub)\b/i;
 
 const normalizeText = (value: string): string =>
@@ -79,8 +80,8 @@ export const matchesActivitySearch = (
   const term = input.term.trim().toLowerCase();
   if (!term) return true;
 
-  const hasStructuredMultiActivityInput = input.structuredSearchTokens.length >= 2;
-
+  const hasStructuredMultiActivityInput =
+    STRUCTURED_SEARCH_DELIMITER.test(term) && input.structuredSearchTokens.length >= 2;
   if (hasStructuredMultiActivityInput) {
     return input.structuredSearchTokens.some(
       (token) => hasLocalStructuredTokenMatch(activity, token) || matchesDiscoverySearchText(activity, token),

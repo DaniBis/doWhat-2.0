@@ -2652,6 +2652,8 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                     const verificationProgress = buildEventVerificationProgress(eventSummary);
                     const verificationProgressClass = verificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
                     const eventAction = describeEventPrimaryAction(eventSummary);
+                    const eventOriginLabel =
+                      eventAction.label === 'View session' ? 'doWhat session' : eventOrigin.label;
                     const externalSourceUrl = typeof eventSummary.url === 'string' && /^https?:\/\//i.test(eventSummary.url)
                       ? eventSummary.url
                       : null;
@@ -2676,7 +2678,7 @@ const handleEventDetails = useCallback((eventSummary: EventSummary) => {
                           <div className="flex items-start justify-between gap-md">
                             <div>
                               <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                                {eventOrigin.label}
+                                {eventOriginLabel}
                               </div>
                               <div className="mt-xxs flex items-center gap-xxs text-xs text-ink-muted">
                                 <span aria-hidden>📍</span>
