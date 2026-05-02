@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3002",
     "dev:verify": "NEXT_PUBLIC_E2E_ADMIN_BYPASS=true next dev -p 3003",
+    "prebuild": "pnpm --filter @dowhat/shared build",
     "build": "next build",
     "start": "next start -p 3002",
     "lint": "next lint",
