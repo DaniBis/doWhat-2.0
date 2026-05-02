@@ -1,4 +1,6 @@
 {
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @dowhat/shared build && pnpm --filter dowhat-web run build",
   "crons": [
     {
       "path": "/api/cron/places/bangkok",
