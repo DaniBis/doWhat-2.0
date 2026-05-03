@@ -1,5 +1,5 @@
 {
-  "installCommand": "pnpm install --frozen-lockfile",
+  "installCommand": "corepack enable && corepack prepare pnpm@9.7.1 --activate && pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @dowhat/shared build && pnpm --filter dowhat-web run build",
   "crons": [
     {
