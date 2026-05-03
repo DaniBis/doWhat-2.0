@@ -94,6 +94,16 @@ describe("attendance join route", () => {
       status: "going",
       previousStatus: null,
       counts: { going: 2, interested: 0, declined: 0, total: 2, verified: 1 },
+      participation: {
+        attendance_supported: true,
+        attendance_source_kind: "session_attendance",
+        first_party_attendance: true,
+        rsvp_supported: true,
+        verification_supported: true,
+        participation_truth_level: "first_party",
+        host_kind: "session_host",
+        organizer_kind: "dowhat_host",
+      },
     });
     expect(mockGetAttendanceCounts).toHaveBeenCalledTimes(2);
   });

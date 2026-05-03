@@ -8,6 +8,7 @@ import {
   joinSessionAttendance,
   type AttendanceCounts,
   type AttendanceStatus,
+  type AttendanceSummary,
 } from '../lib/sessionAttendance';
 
 const DEFAULT_COUNTS: AttendanceCounts = { going: 0, interested: 0, declined: 0, total: 0, verified: 0 };
@@ -22,6 +23,7 @@ export default function SessionAttendanceQuickActions({ sessionId, size = 'defau
   const [status, setStatus] = useState<AttendanceStatus>(null);
   const [counts, setCounts] = useState<AttendanceCounts>(DEFAULT_COUNTS);
   const [maxAttendees, setMaxAttendees] = useState<number | null>(null);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export default function SessionAttendanceQuickActions({ sessionId, size = 'defau
     try {
       const summary = await fetchAttendanceSummary(sessionId);
       if (!mountedRef.current) return;
+      setAttendanceSummary(summary ?? null);
       setStatus(summary?.status ?? null);
       setCounts(summary?.counts ?? DEFAULT_COUNTS);
       setMaxAttendees(summary?.maxAttendees ?? null);
@@ -99,13 +102,18 @@ export default function SessionAttendanceQuickActions({ sessionId, size = 'defau
     if (maxAttendees == null) return false;
     return (counts?.going ?? 0) >= maxAttendees;
   }, [counts?.going, maxAttendees, status]);
+  const attendanceSupported = attendanceSummary?.participation?.attendance_supported !== false;
 
-  const disableGoing = loading || status === 'going' || isFull;
-  const disableInterested = loading || status === 'interested';
+  const disableGoing = loading || !attendanceSupported || status === 'going' || isFull;
+  const disableInterested = loading || !attendanceSupported || status === 'interested';
 
   const handleMutate = useCallback(
     async (next: 'going' | 'interested') => {
       if (!sessionId || loading) return;
+      if (!attendanceSupported) {
+        setError('Attendance is not managed in doWhat for this session.');
+        return;
+      }
       if (!userId) {
         setError('Sign in to save your spot.');
         return;
@@ -129,7 +137,7 @@ export default function SessionAttendanceQuickActions({ sessionId, size = 'defau
         }
       }
     },
-    [loading, sessionId, userId],
+    [attendanceSupported, loading, sessionId, userId],
   );
 
   const handleSignIn = useCallback(async () => {
@@ -178,6 +186,11 @@ export default function SessionAttendanceQuickActions({ sessionId, size = 'defau
 
   return (
     <View style={style}>
+      {!attendanceSupported && (
+        <Text style={{ marginBottom: 8, color: '#6b7280', fontSize: 12 }}>
+          Attendance is not managed in doWhat for this session.
+        </Text>
+      )}
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Pressable
           onPress={() => handleMutate('going')}

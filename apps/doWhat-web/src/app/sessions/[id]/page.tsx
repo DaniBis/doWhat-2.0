@@ -190,6 +190,7 @@ export default async function SessionDetails({ params }: SessionPageProps) {
         initialCounts={counts}
         hostUserId={hydrated.hostUserId}
         currentUserId={user?.id ?? null}
+        participation={hydrated.participation}
       />
 
       {isHost ? (
@@ -198,7 +199,7 @@ export default async function SessionDetails({ params }: SessionPageProps) {
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Host controls</h2>
               <p className="text-sm text-gray-600">
-                You can edit or delete this session. Attendees only see roster data you share.
+                You can edit or delete this session. doWhat manages RSVPs and attendance for this session.
               </p>
             </div>
             <SessionHostActions sessionId={hydrated.id} />
@@ -393,9 +394,14 @@ function buildMapsLink(session: HydratedSession): string | null {
 }
 
 function resolveSessionLocationLabel(session: HydratedSession): string {
-  const label = session.placeLabel?.trim() || session.place?.name?.trim() || session.venue?.name?.trim() || session.activity?.venueLabel?.trim();
-  if (label && label.toLowerCase() !== 'unknown location') {
-    return label;
+  if (session.locationKind === 'canonical_place') {
+    return session.place?.name?.trim() || session.placeLabel?.trim() || session.venue?.name?.trim() || 'Location to be confirmed';
+  }
+  if (session.locationKind === 'legacy_venue') {
+    return session.venue?.name?.trim() || session.placeLabel?.trim() || 'Location to be confirmed';
+  }
+  if (session.locationKind === 'custom_location') {
+    return session.placeLabel?.trim() || session.activity?.venueLabel?.trim() || 'Pinned meetup point';
   }
   return 'Location to be confirmed';
 }

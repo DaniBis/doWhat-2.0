@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { supabase } from '@/lib/supabase/browser';
 import { buildAuthRedirectHref, isEmailConfirmed, sanitizeRedirectPath } from '@/lib/access/coreAccess';
+import { buildAuthCallbackUrl } from '@/lib/authRedirects';
 
 type ResendState = 'idle' | 'sending' | 'sent' | 'error';
 
@@ -52,12 +53,10 @@ export default function ConfirmEmailPage() {
         return;
       }
 
-      const callbackUrl = new URL('/auth/callback', window.location.origin);
-      callbackUrl.searchParams.set('next', redirectTarget);
       const { error: resendError } = await supabase.auth.resend({
         type: 'signup',
         email: user.email,
-        options: { emailRedirectTo: callbackUrl.toString() },
+        options: { emailRedirectTo: buildAuthCallbackUrl(window.location.origin, redirectTarget) },
       });
       if (resendError) {
         throw resendError;

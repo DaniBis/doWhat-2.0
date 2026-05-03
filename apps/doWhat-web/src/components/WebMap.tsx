@@ -36,6 +36,7 @@ import { PLACE_FALLBACK_LABEL, normalizePlaceLabel } from "@/lib/places/labels";
 import {
   clampReliabilityScore,
   describeEventOrigin,
+  describeEventPrimaryAction,
   describeEventState,
   describeEventVerification,
   describeReliabilityConfidence,
@@ -263,6 +264,7 @@ function WebMap({
     ? eventPlaceLabel(selectedEvent, { fallback: PLACE_FALLBACK_LABEL })
     : null;
   const selectedEventOrigin = selectedEvent ? describeEventOrigin(selectedEvent) : null;
+  const selectedEventAction = selectedEvent ? describeEventPrimaryAction(selectedEvent) : null;
   const selectedEventVerificationLabel = selectedEvent ? describeEventVerification(selectedEvent.status) : null;
   const selectedEventVerificationClass = selectedEvent ? eventVerificationClass(selectedEvent.status) : '';
   const selectedEventStateLabel = selectedEvent ? describeEventState(selectedEvent.event_state) : null;
@@ -274,6 +276,9 @@ function WebMap({
   const selectedEventReliabilityWidth = selectedEventReliabilityScore == null ? 12 : selectedEventReliabilityScore;
   const selectedEventVerificationProgress = buildEventVerificationProgress(selectedEvent);
   const selectedEventVerificationProgressClass = selectedEventVerificationProgress?.complete ? 'bg-brand-teal' : 'bg-amber-500';
+  const selectedEventExternalUrl = typeof selectedEvent?.url === 'string' && /^https?:\/\//i.test(selectedEvent.url)
+    ? selectedEvent.url
+    : null;
 
   useEffect(() => {
     const map = mapRef.current?.getMap?.();
@@ -319,9 +324,9 @@ function WebMap({
   const showActivities = mode === 'activities' || mode === 'both';
   const showEvents = mode === 'events' || mode === 'both';
   const loadingLabel = showActivities && showEvents
-    ? 'Loading activities & events…'
+    ? 'Loading activities, sessions & events…'
     : showEvents
-      ? 'Loading nearby events…'
+      ? 'Loading nearby sessions & events…'
       : 'Loading nearby activities…';
   const interactiveLayerIds = useMemo(() => {
     const ids: string[] = [];
@@ -564,7 +569,7 @@ function WebMap({
                     }}
                     className="rounded-full border border-brand-teal/40 px-sm py-xxs font-semibold text-brand-teal hover:border-brand-teal hover:bg-brand-teal/5"
                   >
-                    View events
+                    View sessions
                     {selectedActivityUpcomingSessions ? ` (${selectedActivityUpcomingSessions})` : ''} →
                   </button>
                 )}
@@ -657,16 +662,16 @@ function WebMap({
                 onClick={() => onRequestEventDetails?.(selectedEvent)}
                 className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
               >
-                View details →
+                {selectedEventAction?.label ?? 'View event'} →
               </button>
-              {selectedEvent.url && (
+              {selectedEventAction?.secondaryLabel && selectedEventExternalUrl && (
                 <a
-                  href={selectedEvent.url}
+                  href={selectedEventExternalUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-xxs text-sm font-semibold text-emerald-700 hover:text-emerald-800"
                 >
-                  View source →
+                  {selectedEventAction.secondaryLabel} →
                 </a>
               )}
             </div>

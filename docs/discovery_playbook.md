@@ -47,6 +47,11 @@ Endpoints:
 3. Run inference matcher to populate `venue_activities`.
 4. Verify filters (climbing, bouldering, padel, running, chess, yoga).
 
+Important:
+
+- The matcher is also the canonical cleanup path for stale `venue_activities`.
+- Do not rely on UI suppression or ranking penalties to hide bad hospitality-era mappings; rerun the matcher so invalid rows are deleted.
+
 ## Seeding Commands
 
 ```bash
@@ -58,12 +63,43 @@ pnpm seed:city --city=danang --packs=all --mode=full --maxTiles=90 --refresh=1 -
 ## Validation Commands
 
 ```bash
+pnpm inventory:diagnose:city --city=hanoi --format=json
+pnpm inventory:diagnose:city --city=bangkok --format=json
+pnpm inventory:diagnose:city --city=danang --format=json
 pnpm verify:no-hardcoded-discovery
 pnpm verify:discovery-contract
 pnpm verify:seed-health --city=hanoi --packVersion=2026-03-04.v1
 pnpm verify:seed-health --city=bangkok --packVersion=2026-03-04.v1
 pnpm verify:seed-health --city=danang --packVersion=2026-03-04.v1
+pnpm inventory:rematch --city=hanoi --apply --all --batchSize=500
+pnpm inventory:audit:city --city=hanoi --strict
+pnpm inventory:audit:city --city=bangkok --strict
+pnpm inventory:audit:city --city=danang --strict
 ```
+
+For launch review, use [launch_city_inventory_checklist.md](/Users/danielbisceanu/doWhat/docs/launch_city_inventory_checklist.md) after `verify:seed-health` and `inventory:rematch`, then follow [live_inventory_execution_pack.md](/Users/danielbisceanu/doWhat/docs/live_inventory_execution_pack.md) to capture per-city artifacts and a final operator-readable status report.
+
+## Target-City Diagnosis Rules
+
+Before trusting a tiny rematch count, check the diagnostics snapshot:
+
+- `scope.bboxPlaceCount`
+- `scope.currentScopeCount`
+- `scope.legacyStringScopeCount`
+- `scope.normalizedScopeCount`
+- `scope.nullCityFieldsCount`
+- `inventory.mappedCount`
+- `inventory.activityEligibleCount`
+- `seed.cacheEntries`
+
+Interpretation:
+
+- `currentScopeCount` should now be close to `bboxPlaceCount` for the launch cities because rematch/audit selection is bbox-aware
+- large `legacyStringScopeCount` gaps show why the old raw city/locality matcher used to collapse to tiny city counts
+- large `normalizedScopeCount - legacyStringScopeCount` means raw city/locality matching still misses accent or spacing variants
+- large `nullCityFieldsCount` means canonical places exist but cannot be selected by city/locality string tools
+- `mappedCount = 0` with many activity-eligible places means inventory exists but usable `venue_activities` truth does not
+- `seed.cacheEntries = 0` means the current environment lacks the target-city seed cache baseline for that pack version
 
 ## API Smoke Checks
 

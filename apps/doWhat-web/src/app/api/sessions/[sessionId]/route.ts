@@ -2,15 +2,16 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
-import { resolvePlaceFromCoordsWithClient } from '@/lib/places/resolver';
 import { isUuid } from '@dowhat/shared';
 import {
+  deriveSessionPlaceLabel,
   ensureActivity,
   ensureVenue,
   extractSessionPayload,
   getSessionOrThrow,
   hydrateSessions,
   resolveApiUser,
+  resolveSessionPlaceId,
   SessionValidationError,
 } from '@/lib/sessions/server';
 
@@ -53,20 +54,27 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const body = await req.json();
     const payload = extractSessionPayload(body);
-
+    const activityUpdateRequested = payload.activityId !== undefined || payload.activityName !== undefined;
+    const activityIdForPlaceResolution = isUuid(payload.activityId ?? null) ? payload.activityId : session.activity_id;
+    const explicitPlaceProvided = payload.placeId !== undefined;
     const explicitPlaceId = isUuid(payload.placeId ?? null) ? payload.placeId : null;
     const canResolvePlace =
       typeof payload.lat === 'number' && Number.isFinite(payload.lat) &&
       typeof payload.lng === 'number' && Number.isFinite(payload.lng);
-    const placeResolution = canResolvePlace
-      ? await resolvePlaceFromCoordsWithClient(service, {
-          lat: payload.lat!,
-          lng: payload.lng!,
+    const placeResolutionId = canResolvePlace
+      ? await resolveSessionPlaceId(service, {
+          activityId: activityIdForPlaceResolution,
+          lat: payload.lat,
+          lng: payload.lng,
           labelHint: payload.venueName ?? payload.activityName ?? null,
-          source: 'session-api',
         })
       : null;
-    const resolvedPlaceId = explicitPlaceId ?? placeResolution?.placeId ?? null;
+    const nextPlaceId =
+      explicitPlaceProvided
+        ? explicitPlaceId
+        : canResolvePlace
+          ? placeResolutionId
+          : undefined;
 
     const updates: Record<string, unknown> = {};
     if (payload.startsAt) updates.starts_at = payload.startsAt;
@@ -75,8 +83,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (payload.maxAttendees != null) updates.max_attendees = payload.maxAttendees;
     if (payload.visibility) updates.visibility = payload.visibility;
     if (payload.description !== undefined) updates.description = payload.description;
-    if (resolvedPlaceId) {
-      updates.place_id = resolvedPlaceId;
+    if (nextPlaceId !== undefined) {
+      updates.place_id = nextPlaceId;
     }
 
     if (payload.startsAt || payload.endsAt) {
@@ -87,31 +95,56 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
     }
 
-    const activityUpdateRequested = payload.activityId !== undefined || payload.activityName !== undefined;
+    let nextActivityId = session.activity_id;
     if (activityUpdateRequested) {
-      const activityId = await ensureActivity(service, {
+      nextActivityId = await ensureActivity(service, {
         activityId: payload.activityId,
         activityName: payload.activityName,
         lat: payload.lat,
         lng: payload.lng,
         venueName: payload.venueName,
-        placeId: resolvedPlaceId,
+        placeId: nextPlaceId !== undefined ? nextPlaceId : session.place_id,
       });
-      updates.activity_id = activityId;
+      updates.activity_id = nextActivityId;
     }
 
     const venueUpdateRequested = payload.venueId !== undefined || payload.venueName !== undefined;
+    let nextVenueId = session.venue_id;
     if (venueUpdateRequested) {
-      const shouldMaterializeVenue = Boolean(payload.venueId) || (!resolvedPlaceId && Boolean(payload.venueName));
+      const effectivePlaceId = nextPlaceId !== undefined ? nextPlaceId : session.place_id;
+      const shouldMaterializeVenue = Boolean(payload.venueId) || (!effectivePlaceId && Boolean(payload.venueName));
       if (shouldMaterializeVenue) {
-        const venueId = await ensureVenue(service, {
+        nextVenueId = await ensureVenue(service, {
           venueId: payload.venueId,
           venueName: payload.venueName,
           lat: payload.lat,
           lng: payload.lng,
         });
-        updates.venue_id = venueId;
+        updates.venue_id = nextVenueId;
+      } else {
+        nextVenueId = null;
+        updates.venue_id = null;
       }
+    }
+
+    const locationTruthUpdateRequested =
+      explicitPlaceProvided
+      || canResolvePlace
+      || activityUpdateRequested
+      || venueUpdateRequested;
+    if (locationTruthUpdateRequested) {
+      const effectiveVenueName = payload.venueName ?? await loadVenueName(service, nextVenueId);
+      const placeLabel = await deriveSessionPlaceLabel(service, {
+        placeId: nextPlaceId !== undefined ? nextPlaceId : session.place_id,
+        activityId: nextActivityId,
+        venueName: effectiveVenueName,
+      });
+
+      if (!placeLabel || !placeLabel.trim()) {
+        throw new SessionValidationError('Resolved place label cannot be empty.', 400);
+      }
+
+      updates.place_label = placeLabel;
     }
 
     if (!Object.keys(updates).length) {
@@ -172,6 +205,21 @@ async function revalidateSessionPaths(activityId?: string | null, sessionId?: st
   if (sessionId) paths.add(`/sessions/${sessionId}`);
   if (venueId) paths.add(`/venues/${venueId}/schedule`);
   await Promise.all(Array.from(paths).map((path) => revalidatePath(path)));
+}
+
+async function loadVenueName(
+  service: ReturnType<typeof createServiceClient>,
+  venueId?: string | null,
+): Promise<string | null> {
+  if (!venueId) return null;
+  const { data, error } = await service
+    .from('venues')
+    .select('name')
+    .eq('id', venueId)
+    .maybeSingle<{ name?: string | null }>();
+  if (error) return null;
+  const trimmed = typeof data?.name === 'string' ? data.name.trim() : '';
+  return trimmed || null;
 }
 
 function sanitizeId(value: string | null | undefined): string | null {

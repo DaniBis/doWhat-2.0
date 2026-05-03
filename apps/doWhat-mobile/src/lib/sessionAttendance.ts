@@ -1,3 +1,5 @@
+import type { ParticipationTruthSummary } from '@dowhat/shared';
+
 import { supabase } from './supabase';
 
 export type AttendanceStatus = 'going' | 'interested' | 'declined' | null;
@@ -16,6 +18,7 @@ export type AttendanceSummary = {
   status: AttendanceStatus;
   counts: AttendanceCounts;
   maxAttendees: number;
+  participation: ParticipationTruthSummary;
 };
 
 export type AttendanceMutationResult = {
@@ -24,6 +27,7 @@ export type AttendanceMutationResult = {
   status: AttendanceStatus;
   previousStatus: AttendanceStatus;
   counts: AttendanceCounts;
+  participation: ParticipationTruthSummary;
 };
 const FUNCTION_NAME = 'mobile-session-attendance';
 

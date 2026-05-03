@@ -114,7 +114,9 @@ export const createNearbyActivitiesFetcher = (options: CreateNearbyActivitiesFet
     const customHeaders = getRequestHeaders?.(query);
     if (customHeaders) {
       const normalizedHeaders = new Headers(customHeaders);
-        normalizedHeaders.forEach((value: string, key: string) => requestHeaders.set(key, value));
+      normalizedHeaders.forEach((value: string, key: string) => {
+        requestHeaders.set(key, value);
+      });
     }
     const requestId = requestHeaders.get('x-map-request-id');
     const startedAt = Date.now();

@@ -572,9 +572,9 @@ export default function AddEvent() {
         )}
       </View>
 
-      {/* Venue Section */}
+      {/* Place Section */}
       <View style={{ marginBottom: 20 }}>
-        <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Venue *</Text>
+        <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Place *</Text>
         <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 8 }}>Where will this happen?</Text>
 
         {venues.length > 0 && (
@@ -610,7 +610,7 @@ export default function AddEvent() {
         )}
 
         <TextInput
-          placeholder="Or create new venue (e.g., 'Central Park')"
+          placeholder="Or describe a custom location (e.g., 'Central Park south gate')"
           value={venueName}
           onChangeText={(text) => {
             setVenueName(text);
@@ -631,7 +631,7 @@ export default function AddEvent() {
         />
         {selectedVenueLabel && venueId && (
           <Text style={{ marginTop: -4, marginBottom: 8, fontSize: 12, color: '#0d9488' }}>
-            Using existing venue: {selectedVenueLabel}
+            Using existing place: {selectedVenueLabel}
           </Text>
         )}
 

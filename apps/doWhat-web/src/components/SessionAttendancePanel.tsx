@@ -8,6 +8,7 @@ import {
   trackVerifiedMatchesRecorded,
   RELIABILITY_BADGE_ORDER,
   RELIABILITY_BADGE_TOKENS,
+  type ParticipationTruthSummary,
 } from "@dowhat/shared";
 import type { AttendanceCounts } from "@/lib/sessions/server";
 import { cn } from "@/lib/utils/cn";
@@ -32,6 +33,7 @@ type Props = {
   initialCounts?: AttendanceCounts | null;
   hostUserId: string;
   currentUserId?: string | null;
+  participation: ParticipationTruthSummary;
 };
 
 type ApiResponse = {
@@ -40,6 +42,7 @@ type ApiResponse = {
   status: Status;
   previousStatus: Status | null;
   counts: AttendanceCounts;
+  participation?: ParticipationTruthSummary;
   error?: string;
 };
 
@@ -60,6 +63,7 @@ type HostRosterRow = {
 type HostRosterResponse = {
   sessionId: string;
   attendees: HostRosterRow[];
+  participation?: ParticipationTruthSummary;
 };
 
 const ATTENDANCE_OPTIONS: Array<{ value: AttendanceStatus; label: string }> = ATTENDANCE_STATUSES.map((status) => ({
@@ -74,6 +78,7 @@ export function SessionAttendancePanel({
   initialCounts,
   hostUserId,
   currentUserId,
+  participation,
 }: Props) {
   const [status, setStatus] = useState<Status>(initialStatus ?? null);
   const [counts, setCounts] = useState<AttendanceCounts>(initialCounts ?? DEFAULT_COUNTS);
@@ -91,9 +96,11 @@ export function SessionAttendancePanel({
   const [hostSubmitting, setHostSubmitting] = useState(false);
   const [hostToast, setHostToast] = useState<Toast | null>(null);
 
-  const helperText = isFull
-    ? "This session is full. You can still mark yourself as interested to get updates."
-    : "Reserve your spot so others know who’s joining.";
+  const helperText = !participation.attendance_supported
+    ? "Attendance is not managed in doWhat for this session."
+    : isFull
+      ? "This session is full. You can still mark yourself as interested to get updates."
+      : "Reserve your spot on doWhat so others know who’s joining.";
 
   const verifiedCount = counts.verified ?? 0;
 
@@ -280,6 +287,10 @@ export function SessionAttendancePanel({
   }
 
   async function mutate(path: "join" | "leave", payload?: Record<string, unknown>) {
+    if (!participation.attendance_supported) {
+      setToast({ type: "error", message: "Attendance is not available for this session." });
+      throw new Error("Attendance is not available for this session.");
+    }
     setLoading(true);
     setToast(null);
     try {
@@ -333,18 +344,18 @@ export function SessionAttendancePanel({
     }
   }
 
-  const disableGoing = loading || isHost || status === "going" || isFull;
-  const disableInterested = loading || isHost || status === "interested";
-  const showLeave = !isHost && Boolean(status);
+  const disableGoing = loading || !participation.attendance_supported || isHost || status === "going" || isFull;
+  const disableInterested = loading || !participation.attendance_supported || isHost || status === "interested";
+  const showLeave = participation.attendance_supported && !isHost && Boolean(status);
 
   if (isHost) {
     return (
       <section className="rounded-3xl border border-brand-teal/20 bg-surface/80 p-xl shadow-sm">
         <div className="flex flex-col gap-md">
-          <div>
-            <p className="text-sm font-semibold text-brand-dark">Attendance log</p>
-            <p className="text-sm text-ink-medium">Record who actually showed up so reliability stays accurate.</p>
-          </div>
+        <div>
+          <p className="text-sm font-semibold text-brand-dark">Attendance log</p>
+          <p className="text-sm text-ink-medium">Record who actually showed up so doWhat attendance stays accurate.</p>
+        </div>
           {summaryBadges}
           <div className="space-y-sm">
             {hostRosterLoading && <p className="text-sm text-ink-muted">Loading roster…</p>}
@@ -402,7 +413,7 @@ export function SessionAttendancePanel({
                             disabled={verifiedDisabled}
                             onChange={(event) => handleHostVerifiedToggle(row.userId, event.target.checked)}
                           />
-                          Verified via GPS
+                          Host confirmed attendance
                         </label>
                       </div>
                     </li>

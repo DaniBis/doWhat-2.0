@@ -82,17 +82,17 @@ export const resolveDiscoverySearchIntentBuckets = (searchText: string | null | 
     }
   });
   resolvedBuckets.sort((left, right) => {
-      const wordDelta = right.token.split(' ').length - left.token.split(' ').length;
-      if (wordDelta !== 0) return wordDelta;
-      return right.token.length - left.token.length;
-    });
+    const wordDelta = right.token.split(' ').length - left.token.split(' ').length;
+    if (wordDelta !== 0) return wordDelta;
+    return right.token.length - left.token.length;
+  });
 
   resolvedBuckets.forEach(({ token, activityId }) => {
-      if (AMBIGUOUS_STANDALONE_ACTIVITY_TOKENS.has(token)) return;
-      if (seen.has(activityId)) return;
-      seen.add(activityId);
-      buckets.push({ activityId, token });
-    });
+    if (AMBIGUOUS_STANDALONE_ACTIVITY_TOKENS.has(token)) return;
+    if (seen.has(activityId)) return;
+    seen.add(activityId);
+    buckets.push({ activityId, token });
+  });
 
   return buckets;
 };

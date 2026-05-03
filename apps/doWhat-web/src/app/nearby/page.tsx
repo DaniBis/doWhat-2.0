@@ -94,7 +94,6 @@ export default function NearbyPage() {
   // activities
   const [allActivities, setAllActivities] = useState<Activity[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]); // chosen by chip UI
-  const [fallbackMulti, setFallbackMulti] = useState<string[]>([]); // accessibility multi-select
 
   // results
   const [rows, setRows] = useState<SessionRow[] | null>(null);
@@ -119,7 +118,6 @@ export default function NearbyPage() {
       if (cache.day) setDay(cache.day);
       if (cache.act) {
         setSelectedIds(cache.act);
-        setFallbackMulti(cache.act);
       }
     } catch {}
 
@@ -143,14 +141,6 @@ export default function NearbyPage() {
       );
     }
   }, [lat, lng]);
-
-  // keep fallback multi and chips in sync (two entry points)
-  useEffect(() => {
-    setFallbackMulti(selectedIds);
-  }, [selectedIds]);
-  useEffect(() => {
-    setSelectedIds(fallbackMulti);
-  }, [fallbackMulti]);
 
   const selectedCount = selectedIds.length;
 
@@ -283,9 +273,9 @@ export default function NearbyPage() {
           </label>
           <select
             multiple
-            value={fallbackMulti}
+            value={selectedIds}
             onChange={(e) =>
-              setFallbackMulti(
+              setSelectedIds(
                 Array.from(e.target.selectedOptions, (o) => o.value)
               )
             }

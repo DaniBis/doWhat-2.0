@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  buildSessionParticipationTruth,
   getSessionOrThrow,
   resolveApiUser,
   SessionValidationError,
@@ -37,6 +38,7 @@ type SupabaseRosterRow = {
 type HostRosterResponse = {
   sessionId: string;
   attendees: HostRosterRow[];
+  participation: ReturnType<typeof buildSessionParticipationTruth>;
 };
 
 type HostUpdatePayload = {
@@ -82,6 +84,7 @@ export async function GET(req: Request, context: RouteContext) {
     const body: HostRosterResponse = {
       sessionId,
       attendees,
+      participation: buildSessionParticipationTruth(),
     };
 
     return NextResponse.json(body);
@@ -166,7 +169,11 @@ export async function POST(req: Request, context: RouteContext) {
       applied.push({ ...update, verified });
     }
 
-    return NextResponse.json({ sessionId, applied: applied.length });
+    return NextResponse.json({
+      sessionId,
+      applied: applied.length,
+      participation: buildSessionParticipationTruth(),
+    });
   } catch (error) {
     return handleError(error);
   }

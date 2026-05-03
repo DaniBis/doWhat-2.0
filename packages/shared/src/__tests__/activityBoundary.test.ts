@@ -30,6 +30,21 @@ describe('activity-first discovery boundary', () => {
     });
   });
 
+  it('keeps hospitality venues when real event or session evidence exists', () => {
+    expect(
+      evaluateActivityFirstDiscoveryPolicy({
+        name: 'Rooftop Cafe',
+        categories: ['coffee'],
+        tags: ['cafe'],
+        hasEventOrSessionEvidence: true,
+      }),
+    ).toMatchObject({
+      isEligible: true,
+      isHospitalityPrimary: true,
+      hasEventOrSessionEvidence: true,
+    });
+  });
+
   it('strips blocked hospitality-first discovery selections', () => {
     expect(
       stripHospitalityFirstDiscoverySelections([

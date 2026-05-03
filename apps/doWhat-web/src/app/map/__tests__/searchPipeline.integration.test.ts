@@ -93,6 +93,29 @@ describe('map search pipeline integration', () => {
     expect(ids).not.toContain('running-only');
   });
 
+  test('running search keeps verified running activities', () => {
+    const activities: MapActivity[] = [
+      makeActivity({
+        id: 'running-club',
+        name: 'Sunday Run Club',
+        activity_types: ['running'],
+        tags: ['outdoor'],
+        verification_state: 'verified',
+      } as Partial<MapActivity>),
+      makeActivity({
+        id: 'chess-club',
+        name: 'Hanoi Chess Club',
+        activity_types: ['chess'],
+        tags: ['chess club'],
+        verification_state: 'verified',
+      } as Partial<MapActivity>),
+    ];
+
+    const ids = runSearchPipeline(activities, 'running').map((item) => item.id);
+
+    expect(ids).toEqual(['running-club']);
+  });
+
   test('bouldering search rejects broad sports-centre noise without strong evidence', () => {
     const activities: MapActivity[] = [
       makeActivity({

@@ -6,6 +6,7 @@ import type { Metadata, Route } from 'next';
 import { formatEventTimeRange, inferEventLocationKind, inferEventOriginKind, type EventSummary } from '@dowhat/shared';
 import {
   clampReliabilityScore,
+  describeEventParticipation,
   describeEventOrigin,
   describeEventState,
   describeEventVerification,
@@ -95,6 +96,7 @@ export default async function EventDetailPage({ params }: EventPageProps) {
   const sourceLink = (event.metadata && typeof event.metadata.sourceUrl === 'string')
     ? event.metadata.sourceUrl
     : event.url ?? null;
+  const participation = describeEventParticipation(event);
   const stateLabel = describeEventState(event.event_state);
   const stateClass = eventStateClass(event.event_state);
   const verificationLabel = describeEventVerification(event.status);
@@ -120,12 +122,6 @@ export default async function EventDetailPage({ params }: EventPageProps) {
     originKind === 'session' && event.url?.startsWith('/sessions/')
       ? (event.url as Route)
       : null;
-  const truthSummary =
-    originKind === 'session'
-      ? 'Attendance and host actions live on the original doWhat session page.'
-      : sourceLink
-        ? 'Imported events keep their source-page RSVP and attendance flows.'
-        : 'This listing does not expose an in-app attendance flow.';
   const locationSummary =
     locationKind === 'canonical_place'
       ? 'This listing is pinned to a canonical doWhat place.'
@@ -288,7 +284,8 @@ export default async function EventDetailPage({ params }: EventPageProps) {
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Attendance truth</h2>
-          <p className="mt-2 text-sm text-slate-600">{truthSummary}</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{participation.label}</p>
+          <p className="mt-2 text-sm text-slate-600">{participation.helper}</p>
           {sessionDetailHref ? (
             <Link href={sessionDetailHref} className="mt-4 inline-flex text-sm font-semibold text-emerald-700 hover:text-emerald-800">
               Open session details →

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 import {
+  buildSessionParticipationTruth,
   getAttendanceCounts,
   getSessionOrThrow,
   getUserAttendanceStatus,
@@ -35,6 +36,7 @@ export async function GET(req: Request, context: RouteContext) {
       counts,
       userId: user?.id ?? null,
       maxAttendees: session.max_attendees,
+      participation: buildSessionParticipationTruth(),
     });
   } catch (error) {
     return handleError(error);

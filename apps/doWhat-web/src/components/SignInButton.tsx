@@ -2,6 +2,7 @@
 "use client";
 
 import { supabase } from "../lib/supabase/browser";
+import { buildAuthCallbackUrl } from "../lib/authRedirects";
 
 
 export default function SignInButton() {
@@ -11,7 +12,7 @@ export default function SignInButton() {
         await supabase.auth.signInWithOAuth({
           provider: "google", // or 'github', etc.
           options: {
-            redirectTo: `${window.location.origin}/auth/callback`,
+            redirectTo: buildAuthCallbackUrl(window.location.origin),
           },
         });
       }}

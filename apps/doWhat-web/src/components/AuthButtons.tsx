@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import type { User } from "@supabase/supabase-js";
 
 import { supabase } from "@/lib/supabase/browser";
+import { buildAuthCallbackUrl } from "@/lib/authRedirects";
 
 const EmailAuth = dynamic(() => import("@/components/EmailAuth"), { ssr: false });
 
@@ -42,9 +43,7 @@ export default function AuthButtons({ variant = "panel", intent = "signin", redi
   const isSignupFlow = normalizedIntent === "signup";
   const callbackUrl = useMemo(() => {
     if (typeof window === "undefined") return null;
-    const url = new URL("/auth/callback", window.location.origin);
-    if (redirectTo) url.searchParams.set("next", redirectTo);
-    return url.toString();
+    return buildAuthCallbackUrl(window.location.origin, redirectTo);
   }, [redirectTo]);
 
   useEffect(() => {
@@ -144,7 +143,7 @@ export default function AuthButtons({ variant = "panel", intent = "signin", redi
   const handleSignIn = async (targetIntent: AuthIntent = normalizedIntent) => {
     try {
       setSigningIn(true);
-      const resolvedCallback = callbackUrl ?? (typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : undefined);
+      const resolvedCallback = callbackUrl ?? (typeof window !== "undefined" ? buildAuthCallbackUrl(window.location.origin) : undefined);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {

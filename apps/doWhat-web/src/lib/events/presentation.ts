@@ -34,11 +34,11 @@ export const describeEventOrigin = (
 
   if (event && summary.primaryActionKind === 'view_session') {
     return {
-      label: 'Community session',
+      label: 'doWhat session',
       helper:
         inferEventLocationKind(event) === 'canonical_place'
-          ? 'Created on doWhat at a confirmed place'
-          : 'Created on doWhat',
+          ? 'Hosted on doWhat at a confirmed place. RSVPs stay on the session page.'
+          : 'Hosted on doWhat. RSVPs stay on the session page.',
     };
   }
 

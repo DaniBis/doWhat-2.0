@@ -137,7 +137,7 @@ describe('/api/sessions POST place policy', () => {
     expect(insertedRecord.place_id).not.toBe('22222222-2222-2222-2222-222222222222');
   });
 
-  it('uses fallback non-empty place_label for standalone sessions', async () => {
+  it('stores the internal fallback place_label for flexible standalone sessions', async () => {
     const sessionInsert = jest.fn((_: Record<string, unknown>): SessionsInsertQuery => ({
       select: () => ({
         single: async () => ({

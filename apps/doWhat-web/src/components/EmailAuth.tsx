@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabase/browser";
+import { buildAuthCallbackUrl } from "@/lib/authRedirects";
 import { getErrorMessage } from "@/lib/utils/getErrorMessage";
 
 type Mode = "signin" | "signup" | "magic";
@@ -22,7 +23,7 @@ export default function EmailAuth({ onDone, callbackUrl }: EmailAuthProps) {
   const resolveCallbackUrl = () => {
     if (callbackUrl) return callbackUrl;
     if (typeof window === "undefined") return null;
-    return `${window.location.origin}/auth/callback`;
+    return buildAuthCallbackUrl(window.location.origin);
   };
 
   async function submit(e: React.FormEvent) {

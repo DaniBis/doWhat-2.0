@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { annotateEventTruth } from '@dowhat/shared';
+import { annotateEventTruth, inferEventLocationKind, isMeaningfulLocationLabel } from '@dowhat/shared';
 import { normalizeEventState } from '@/lib/events/state';
-import { hydratePlaceLabel, normalizePlaceLabel, PLACE_FALLBACK_LABEL } from '@/lib/places/labels';
+import { hydratePlaceLabel, normalizePlaceLabel } from '@/lib/places/labels';
 import { isMissingColumnError } from '@/lib/supabase/errors';
 import { createServiceClient } from '@/lib/supabase/service';
 
@@ -194,14 +194,27 @@ export async function GET(_request: Request, context: { params: { id: string } }
 
   const placeId = typeof data.place_id === 'string' ? data.place_id : null;
   const place = await fetchPlace(client, placeId);
-  const placeLabel = hydratePlaceLabel({
+  const hydratedPlaceLabel = hydratePlaceLabel({
     place,
     venue_name: data.venue_name ?? null,
     address: data.address ?? null,
   });
+  const locationKind = inferEventLocationKind({
+    ...data,
+    place_id: placeId,
+    place,
+    venue_name: data.venue_name ?? null,
+    place_label: hydratedPlaceLabel,
+  });
+  const placeLabel =
+    locationKind === 'canonical_place' || locationKind === 'legacy_venue'
+      ? hydratedPlaceLabel
+      : isMeaningfulLocationLabel(hydratedPlaceLabel)
+        ? hydratedPlaceLabel
+        : null;
   const title = normalizePlaceLabel(
     data.title,
-    placeLabel === PLACE_FALLBACK_LABEL ? null : placeLabel,
+    placeLabel,
     data.venue_name ?? null,
     'Event',
   );
@@ -212,7 +225,8 @@ export async function GET(_request: Request, context: { params: { id: string } }
     title,
     place_id: placeId,
     event_state: normalizeEventState(omitEventState ? null : data.event_state),
-    place_label: placeLabel === PLACE_FALLBACK_LABEL ? null : placeLabel,
+    location_kind: locationKind,
+    place_label: placeLabel,
     place,
   });
 

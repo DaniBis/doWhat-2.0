@@ -177,6 +177,61 @@ describe("hydrateSessions", () => {
       }),
     );
   });
+
+  it("keeps flexible sessions explicit instead of surfacing fallback labels as custom locations", async () => {
+    const sessionRows: SessionRow[] = [
+      {
+        id: "session-flexible",
+        activity_id: "activity-3",
+        venue_id: null,
+        place_id: null,
+        host_user_id: "user-3",
+        starts_at: NOW_ISO,
+        ends_at: "2025-01-01T12:00:00.000Z",
+        price_cents: 0,
+        visibility: "public",
+        max_attendees: 8,
+        place_label: "Unknown location",
+        reliability_score: null,
+        description: null,
+        created_at: NOW_ISO,
+        updated_at: NOW_ISO,
+      },
+    ];
+
+    const service = buildService({
+      activities: [
+        {
+          id: "activity-3",
+          name: "Open meetup",
+          description: null,
+          venue: null,
+          lat: null,
+          lng: null,
+        },
+      ],
+      profiles: [
+        {
+          id: "user-3",
+          username: "lee",
+          full_name: "Lee",
+          avatar_url: null,
+        },
+      ],
+    });
+
+    const [hydrated] = await hydrateSessions(service as never, sessionRows);
+
+    expect(hydrated).toEqual(
+      expect.objectContaining({
+        id: "session-flexible",
+        placeId: null,
+        placeLabel: null,
+        locationKind: "flexible",
+        isPlaceBacked: false,
+      }),
+    );
+  });
 });
 
 describe("ensureActivity", () => {
@@ -202,7 +257,6 @@ describe("ensureActivity", () => {
       name: "Chess",
       lat: 44.43384,
       lng: 26.04346,
-      place_label: "Chess",
     });
   });
 });

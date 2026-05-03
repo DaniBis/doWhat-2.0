@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getErrorMessage } from '@/lib/utils/getErrorMessage';
 import {
+  buildSessionParticipationTruth,
   getAttendanceCounts,
   getSessionOrThrow,
   getUserAttendanceStatus,
@@ -42,6 +43,7 @@ export async function POST(req: Request, context: RouteContext) {
       status: null,
       previousStatus,
       counts,
+      participation: buildSessionParticipationTruth(),
     });
   } catch (error) {
     return handleError(error);

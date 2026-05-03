@@ -469,10 +469,10 @@ export default function CreateEventPage() {
           </div>
         </div>
 
-        {/* Venue Selection */}
+        {/* Place Selection */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Venue
+            Place
           </label>
           <div className="space-y-3">
             <select
@@ -492,7 +492,7 @@ export default function CreateEventPage() {
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-brand-teal focus:outline-none focus:ring-1 focus:ring-brand-teal"
             >
-              <option value="">Select nearby venue/place (optional)</option>
+              <option value="">Select nearby place or host spot (optional)</option>
               {venues.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}
@@ -503,13 +503,13 @@ export default function CreateEventPage() {
               {venuesLoading
                 ? 'Loading nearby places around your location…'
                 : venuesError
-                  ? `Could not load nearby places (${venuesError}). You can still type a venue manually.`
+                  ? `Could not load nearby places (${venuesError}). You can still describe the location manually.`
                   : 'This list is location-aware and expands automatically when activity filters are applied.'}
             </p>
             
             <input
               type="text"
-              placeholder="Or create new venue"
+              placeholder="Or describe a custom location"
               value={venueName}
               onChange={(e) => {
                 setVenueName(e.target.value);
@@ -525,7 +525,7 @@ export default function CreateEventPage() {
             {!venueSelectionId && venueNameSuggestions.length > 0 && (
               <div className="rounded-lg border border-gray-200 bg-white p-2">
                 <p className="px-1 pb-1 text-xs text-gray-600">
-                  Matching nearby venues (optional): choose one or keep typing your own name.
+                  Matching nearby places (optional): choose one or keep typing your own location label.
                 </p>
                 <ul className="space-y-1">
                   {venueNameSuggestions.map((suggestion) => (

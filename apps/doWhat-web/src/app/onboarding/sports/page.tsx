@@ -35,7 +35,7 @@ export default async function SportsOnboardingPage() {
 
   if (!user) {
     const nextParam = encodeURIComponent(ONBOARDING_PATH);
-    redirect(`/auth/login?next=${nextParam}`);
+    redirect(`/auth?intent=signin&next=${nextParam}`);
   }
 
   const { data: profileRow } = await supabase

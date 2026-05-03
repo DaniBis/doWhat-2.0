@@ -19,12 +19,12 @@ import {
   type ActivityTier3WithAncestors,
   type PlaceSummary,
   type PlacesViewportQuery,
-  usePlaces,
 } from "@dowhat/shared";
 
 import { PlacesMap } from "@/components/PlacesMap";
 import TaxonomyCategoryPicker from "@/components/TaxonomyCategoryPicker";
 import { useRuntimeTaxonomy } from "@/hooks/useRuntimeTaxonomy";
+import { usePlaces } from "./queryHooks";
 
 const EMPTY_PLACES: PlaceSummary[] = [];
 

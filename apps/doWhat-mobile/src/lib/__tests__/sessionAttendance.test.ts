@@ -5,6 +5,17 @@ import {
 } from '../sessionAttendance';
 import { supabase } from '../supabase';
 
+const participation = {
+  attendance_supported: true,
+  attendance_source_kind: 'session_attendance',
+  first_party_attendance: true,
+  rsvp_supported: true,
+  verification_supported: true,
+  participation_truth_level: 'first_party',
+  host_kind: 'session_host',
+  organizer_kind: 'dowhat_host',
+} as const;
+
 jest.mock('../supabase', () => ({
   supabase: {
     auth: {
@@ -33,6 +44,7 @@ describe('session attendance helpers', () => {
       status: 'going',
       counts: { going: 1, interested: 2, declined: 0, total: 3, verified: 1 },
       maxAttendees: 10,
+      participation,
     };
     invokeMock.mockResolvedValue({ data: payload, error: null });
 
@@ -51,6 +63,7 @@ describe('session attendance helpers', () => {
       status: 'going',
       previousStatus: null,
       counts: { going: 1, interested: 0, declined: 0, total: 1, verified: 0 },
+      participation,
     };
     invokeMock.mockResolvedValue({ data: response, error: null });
 
@@ -77,6 +90,7 @@ describe('session attendance helpers', () => {
       status: null,
       previousStatus: 'going',
       counts: { going: 0, interested: 0, declined: 0, total: 0, verified: 0 },
+      participation,
     };
     invokeMock.mockResolvedValue({ data: response, error: null });
 

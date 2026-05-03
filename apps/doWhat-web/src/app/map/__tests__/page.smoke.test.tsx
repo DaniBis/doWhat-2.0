@@ -11,6 +11,11 @@ jest.mock('@tanstack/react-query', () => ({
   }),
 }));
 
+jest.mock('../queryHooks', () => ({
+  useEvents: (...args: unknown[]) => useEventsMock(...args),
+  useNearbyActivities: (...args: unknown[]) => useNearbyActivitiesMock(...args),
+}));
+
 jest.mock('@dowhat/shared', () => ({
   DEFAULT_RADIUS_METERS: 2000,
   listCities: () => [
@@ -120,8 +125,6 @@ jest.mock('@dowhat/shared', () => ({
   sortEventsByStart: (events: unknown[]) => events,
   trackAnalyticsEvent: jest.fn(),
   mapActivitiesQueryKey: () => ['map-activities'],
-  useEvents: (...args: unknown[]) => useEventsMock(...args),
-  useNearbyActivities: (...args: unknown[]) => useNearbyActivitiesMock(...args),
   DEFAULT_MAP_FILTER_PREFERENCES: {
     activityTypes: [],
     tags: [],
