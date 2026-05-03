@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
 import AuthButtons from '@/components/AuthButtons';
+import { sanitizeRedirectPath } from '@/lib/access/coreAccess';
 
 export default function AuthPage() {
   const searchParams = useSearchParams();
@@ -12,7 +13,7 @@ export default function AuthPage() {
   const rawRedirect = redirectCandidates
     .map((key) => searchParams.get(key))
     .find((value): value is string => typeof value === 'string' && value.length > 0) ?? null;
-  const redirectTo = rawRedirect && rawRedirect.startsWith('/') ? rawRedirect : null;
+  const redirectTo = rawRedirect ? sanitizeRedirectPath(rawRedirect, '') || null : null;
   const isSignup = intentParam === 'signup';
   const eyebrow = isSignup ? 'Start exploring' : 'Welcome back';
   const heading = isSignup ? 'Create your doWhat account' : 'Sign in to doWhat';
