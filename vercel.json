@@ -1,0 +1,10 @@
+{
+  "installCommand": "corepack enable && corepack prepare pnpm@9.7.1 --activate && pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @dowhat/shared build && pnpm --filter dowhat-web run build",
+  "crons": [
+    {
+      "path": "/api/cron/places/bangkok",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
